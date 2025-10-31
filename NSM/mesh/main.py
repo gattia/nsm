@@ -100,7 +100,8 @@ def create_mesh(
         decoder, samples, latent_vector, batch_size, objects=objects, device=device
     )
 
-    # resample SDFs into a grid:
+    # Reshape SDFs into grid: C-order reshape (default) makes last index vary fastest.
+    # Since samples have z-fastest order, this gives array[x, y, z] → (X,Y,Z) layout
     sdf_values = torch.zeros((n_pts_per_axis, n_pts_per_axis, n_pts_per_axis, objects))
     for i in range(objects):
         sdf_values[..., i] = sdf_values_[..., i].reshape(
@@ -243,11 +244,11 @@ def crop_sdf_to_narrow_band(sdf_values, voxel_origin, voxel_size, band_width=3.0
     # Extract subvolume
     sub_sdf = sdf_values[zs:ze, ys:ye, xs:xe]
     
-    # Calculate new origin for the cropped volume
+    # Calculate new origin: array[x,y,z] layout means zs→X, ys→Y, xs→Z in world coords
     crop_origin = (
-        voxel_origin[0] + zs * voxel_size,
-        voxel_origin[1] + ys * voxel_size,
-        voxel_origin[2] + xs * voxel_size
+        voxel_origin[0] + zs * voxel_size,  # X
+        voxel_origin[1] + ys * voxel_size,  # Y
+        voxel_origin[2] + xs * voxel_size   # Z
     )
     
     if verbose:
@@ -300,12 +301,13 @@ def sdf_grid_to_mesh_vtk(
     # Get grid dimensions (cropped or original)
     nx, ny, nz = sub_sdf.shape
     
-    # Create PyVista ImageData (replaces deprecated UniformGrid)
+    # Create PyVista ImageData: dimensions are (X,Y,Z) from array.shape = (nx, ny, nz)
+    # Flatten with order="F" (Fortran) so X varies fastest, matching VTK's expectation
     grid = pv.ImageData()
-    grid.dimensions = (nx, ny, nz)
+    grid.dimensions = (nx, ny, nz)  # VTK expects (X, Y, Z) counts
     grid.spacing = (voxel_size, voxel_size, voxel_size)
-    grid.origin = crop_origin  # Use the cropped origin
-    grid["sdf"] = sub_sdf.ravel(order="F")  # VTK likes column-major
+    grid.origin = crop_origin  # World coordinates (X, Y, Z)
+    grid["sdf"] = sub_sdf.ravel(order="F")  # Fortran-order: X varies fastest
     
     # Apply Flying Edges 3D algorithm
     fe = vtk.vtkFlyingEdges3D()
@@ -412,7 +414,7 @@ def create_grid_samples_in_bounds(
     indices = torch.arange(0, n_pts_total, out=torch.LongTensor())
     samples = torch.zeros(n_pts_total, 3)
     
-    # Generate samples on the bounded grid
+    # Generate samples with Z varying fastest (same pattern as create_grid_samples)
     samples[:, 2] = indices % nz
     samples[:, 1] = (indices // nz) % ny
     samples[:, 0] = ((indices // nz) // ny) % nx
@@ -510,7 +512,7 @@ def create_mesh_adaptive(
         decoder, samples, latent_vector, batch_size, objects=objects, device=device
     )
     
-    # Reshape SDF values into grid
+    # Reshape SDF values: C-order makes array[x, y, z] correspond to world (X,Y,Z)
     nx, ny, nz = grid_dims
     sdf_values = torch.zeros((nx, ny, nz, objects))
     for i in range(objects):
@@ -573,7 +575,9 @@ def create_grid_samples(
     indices = torch.arange(0, n_pts_total, out=torch.LongTensor())
     samples = torch.zeros(n_pts_total, 3)
 
-    # generate samples on a grid...
+    # Generate samples with Z varying fastest, then Y, then X
+    # samples[0] = (x=0, y=0, z=0), samples[1] = (x=0, y=0, z=1), ...
+    # When reshaped with C-order (default), this produces array[x, y, z] indexing
     samples[:, 2] = indices % n_pts_per_axis
     samples[:, 1] = (indices // n_pts_per_axis) % n_pts_per_axis
     samples[:, 0] = ((indices // n_pts_per_axis) // n_pts_per_axis) % n_pts_per_axis
