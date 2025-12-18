@@ -317,7 +317,7 @@ def sdf_grid_to_mesh_vtk(
     # Wrap the output as PyVista mesh and create mskt mesh directly
     mesh = mskt.mesh.Mesh(mesh=fe.GetOutput())    
     if verbose:
-        print(f"Extracted mesh with {mesh.n_points} vertices and {mesh.n_faces} faces")
+        print(f"Extracted mesh with {mesh.n_points} vertices and {mesh.n_faces_strict} faces")
         print("Creating final mesh object...")    
 
     return mesh
