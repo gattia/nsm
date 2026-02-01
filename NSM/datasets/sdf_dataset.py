@@ -565,7 +565,7 @@ def read_meshes_get_sampled_pts(
     if (center_pts is True) or (norm_pts is True):
         print("Scaling and centering meshes")
         if scale_all_meshes is True:
-            if any(item is None for item in new_pts):
+            if any(x is None for x in new_pts):
                 new_pts_ = [x for x in new_pts if x is not None]
                 pts_ = np.concatenate(new_pts_, axis=0)
             else:
@@ -597,7 +597,7 @@ def read_meshes_get_sampled_pts(
             if center_all_meshes is True:
                 # set specific points to center because scale/center are not on
                 # the same data
-                if any(item is None for item in new_pts):
+                if any(x is None for x in new_pts):
                     new_pts_ = [x for x in new_pts if x is not None]
                     pts_center = np.concatenate(new_pts_, axis=0)
                 else:
@@ -784,6 +784,13 @@ class SDFSamples(torch.utils.data.Dataset):
         center_pts (bool, optional): Whether to center the points. Defaults to True.
         norm_pts (bool, optional): Whether to normalize the points. Defaults to False.
         scale_method (str, optional): Method to scale the points. Defaults to 'max_rad'.
+        scale_jointly (bool, optional): Whether to scale all meshes together after sampling. Defaults to False.
+            CRITICAL: This affects sigma coordinate space interpretation!
+            - scale_jointly=False: Sigma sampling occurs AFTER individual mesh normalization (normalized coordinates)
+              Use small sigma values: sigma_near~0.01, sigma_far~0.1
+            - scale_jointly=True: Sigma sampling occurs BEFORE normalization (original mesh coordinates)
+              Use large sigma values: sigma_near~0.74, sigma_far~2.35 for real-world units (e.g., mm)
+        joint_scale_buffer (float, optional): Buffer for joint scaling. Defaults to 0.1.
         loc_save (str, optional): Location to save the cached files. Defaults to os.environ['LOC_SDF_CACHE'].
         include_seed_in_hash (bool, optional): Whether to include the random seed in the hash. Defaults to True.
         save_cache (bool, optional): Whether to save the cached files. Defaults to True.
@@ -800,8 +807,19 @@ class SDFSamples(torch.utils.data.Dataset):
             If equal_pos_neg is True, then the number of positive and negative SDFs will be equal.
             If fix_mesh is True, then the meshes will be fixed using meshfix.
             If print_filename is True, then the filename will be printed when loading.
+            
+            IMPORTANT - Sigma Value Coordinate Spaces:
+            The interpretation of sigma_near and sigma_far depends critically on the scale_jointly setting:
+            
+            1. scale_jointly=False (default): Individual mesh normalization first
+               - Each mesh is centered and scaled to unit sphere BEFORE sigma sampling
+               - Sigma values should be small (0.01-0.1 range) for normalized coordinates
+               
+            2. scale_jointly=True: Global dataset normalization after sampling  
+               - Sigma sampling occurs on original mesh coordinates (e.g., millimeters)
+               - Sigma values should be large (0.5-5.0 range) for real-world units
+               - Automatically forces center_pts=False, norm_pts=False during individual processing
     """
-
     def __init__(
         self,
         list_mesh_paths,
@@ -1103,7 +1121,44 @@ class SDFSamples(torch.utils.data.Dataset):
                 raise ValueError(
                     "Scale jointly assumes normalizing at end... so norm should be False"
                 )
-
+            
+            # Check for potentially too-small sigma values when scale_jointly=True
+            sigma_threshold = 0.2
+            small_sigma_detected = False
+            
+            # Handle both single values and lists of sigma values
+            sigma_near_values = getattr(self, 'sigma_near', None)
+            sigma_far_values = getattr(self, 'sigma_far', None)
+            
+            if sigma_near_values is not None:
+                if isinstance(sigma_near_values, (list, tuple)):
+                    small_sigma_detected = any(s is not None and s < sigma_threshold for s in sigma_near_values)
+                else:
+                    small_sigma_detected = sigma_near_values < sigma_threshold
+            
+            if not small_sigma_detected and sigma_far_values is not None:
+                if isinstance(sigma_far_values, (list, tuple)):
+                    small_sigma_detected = any(s is not None and s < sigma_threshold for s in sigma_far_values)
+                else:
+                    small_sigma_detected = sigma_far_values < sigma_threshold
+                    
+            if small_sigma_detected:
+                print("\n" + "="*80)
+                print("WARNING: Potentially incorrect sigma values for scale_jointly=True mode!")
+                print("="*80)
+                print(f"Current sigma values - sigma_near: {sigma_near_values}, sigma_far: {sigma_far_values}")
+                print(f"Values < {sigma_threshold} detected, but scale_jointly=True uses original coordinate space.")
+                print()
+                print("COORDINATE SPACE EXPLANATION:")
+                print("- scale_jointly=False (default): Sigma applied AFTER mesh normalization to [-1,1]")
+                print("  Default values: sigma_near=0.01, sigma_far=0.1 (normalized coordinates)")
+                print()
+                print("- scale_jointly=True: Sigma applied BEFORE normalization (original units, e.g., mm)")
+                print("  Suggested values: sigma_near=0.74, sigma_far=2.35 (real-world coordinates)")
+                print()
+                print("Your current small sigma values may result in severely under-sampled regions")
+                print("near the mesh surface, leading to poor SDF learning performance.")
+                print("="*80 + "\n")
     def get_dict_pts(self, data, pts_name):
         dict_pts = {}
         if isinstance(data[pts_name], list):
@@ -1681,8 +1736,7 @@ class MultiSurfaceSDFSamples(SDFSamples):
         )
 
     def preprocess_inputs(self):
-        super().preprocess_inputs()
-
+        # First expand lists for multi-surface handling
         if isinstance(self.list_mesh_paths[0], (list, tuple)):
             self.n_meshes = len(self.list_mesh_paths[0])
         elif isinstance(self.list_mesh_paths[0], (str, Mesh)):
@@ -1698,7 +1752,9 @@ class MultiSurfaceSDFSamples(SDFSamples):
             self.sigma_far = [self.sigma_far] * self.n_meshes
         if not isinstance(self.n_pts, (list, int)):
             self.n_pts = [self.n_pts] * self.n_meshes
-
+        
+        # Then call parent preprocessing (includes scale_jointly checks and sigma warnings)
+        super().preprocess_inputs()
     def run_before_loading_data(self):
         self.get_samples_per_sign()
 
@@ -2160,7 +2216,7 @@ class MultiSurfaceSDFSamples(SDFSamples):
                 data_["size"] = size
                 data_["mb_per_sec"] = size / time_
                 data_["whole_load_time"] = toc_whole_load - tic_whole_load
-
+        
         return data_, idx
 
 
