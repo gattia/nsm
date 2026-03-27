@@ -3,6 +3,7 @@ from NSM.utils import (
     adjust_learning_rate,
     save_latent_vectors,
     save_model,
+    save_model_params,
     get_optimizer,
     get_latent_vecs,
     get_checkpoints,
@@ -11,13 +12,12 @@ from NSM.reconstruct import get_mean_errors
 
 from NSM.train.utils import get_kld, cyclic_anneal_linear, calc_weight, add_plain_lr_to_config
 
+import wandb
 import os
+import torch
 import time
 import warnings
-
 import numpy as np
-import torch
-import wandb
 
 loss_l1 = torch.nn.L1Loss(reduction="none")
 
@@ -28,8 +28,7 @@ def train_deep_sdf(config, models: tuple, sdf_dataset, use_wandb=False):
 
     # Validate mesh_names if provided
     if config["mesh_names"] is not None:
-        opd = config.get("objects_per_decoder", 1)
-        total_objects = sum(opd) if isinstance(opd, (list, tuple)) else opd * len(models)
+        total_objects = config.get("objects_per_decoder", 1) * len(models)
         if len(config["mesh_names"]) != total_objects:
             raise ValueError(
                 f"mesh_names has {len(config['mesh_names'])} entries but "
@@ -97,6 +96,7 @@ def train_deep_sdf(config, models: tuple, sdf_dataset, use_wandb=False):
         )
 
         if epoch in config["checkpoints"]:
+            save_model_params(config=config, list_mesh_paths=sdf_dataset.list_mesh_paths)
             save_latent_vectors(
                 config=config,
                 epoch=epoch,

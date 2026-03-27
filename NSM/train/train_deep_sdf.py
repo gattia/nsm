@@ -68,7 +68,7 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
                 f"objects_per_decoder is {config['objects_per_decoder']}. "
                 f"These must match."
             )
-    else:
+    elif config["objects_per_decoder"] > 1:
         warnings.warn(
             "No 'mesh_names' provided in config. Downstream consumers will need to "
             "infer mesh identity from the decoder output count, which is fragile. "
