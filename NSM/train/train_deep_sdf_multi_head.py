@@ -11,16 +11,38 @@ from NSM.reconstruct import get_mean_errors
 
 from NSM.train.utils import get_kld, cyclic_anneal_linear, calc_weight, add_plain_lr_to_config
 
-import wandb
 import os
-import torch
 import time
+import warnings
+
 import numpy as np
+import torch
+import wandb
 
 loss_l1 = torch.nn.L1Loss(reduction="none")
 
 
 def train_deep_sdf(config, models: tuple, sdf_dataset, use_wandb=False):
+
+    config.setdefault("mesh_names", None)
+
+    # Validate mesh_names if provided
+    if config["mesh_names"] is not None:
+        opd = config.get("objects_per_decoder", 1)
+        total_objects = sum(opd) if isinstance(opd, (list, tuple)) else opd * len(models)
+        if len(config["mesh_names"]) != total_objects:
+            raise ValueError(
+                f"mesh_names has {len(config['mesh_names'])} entries but "
+                f"total decoder outputs is {total_objects}. These must match."
+            )
+    else:
+        warnings.warn(
+            "No 'mesh_names' provided in config. Downstream consumers will need to "
+            "infer mesh identity from the decoder output count, which is fragile. "
+            "Consider adding e.g. 'mesh_names': ['bone', 'cart'] to your config.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     config = add_plain_lr_to_config(config)
 
