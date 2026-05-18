@@ -1,0 +1,202 @@
+[
+  {
+    "id": 9291234,
+    "side": "LEFT",
+    "kl": 0,
+    "key": "9291234_LEFT",
+    "mesh_paths": {
+      "bone": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9291234/9291234_LEFT_femur.vtk",
+      "cart": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9291234/9291234_LEFT_femur_cart.vtk",
+      "med_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9291234/9291234_LEFT_med_men.vtk",
+      "lat_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9291234/9291234_LEFT_lat_men.vtk"
+    },
+    "osteophyte_scores": {
+      "osteophytes_fem_ant_lat_score": null,
+      "osteophytes_fem_ant_med_score": null,
+      "osteophytes_fem_cent_lat_score": null,
+      "osteophytes_fem_cent_med_score": null,
+      "osteophytes_fem_post_lat_score": null,
+      "osteophytes_fem_post_med_score": null
+    }
+  },
+  {
+    "id": 9524744,
+    "side": "RIGHT",
+    "kl": 0,
+    "key": "9524744_RIGHT",
+    "mesh_paths": {
+      "bone": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9524744/9524744_RIGHT_femur.vtk",
+      "cart": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9524744/9524744_RIGHT_femur_cart.vtk",
+      "med_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9524744/9524744_RIGHT_med_men.vtk",
+      "lat_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9524744/9524744_RIGHT_lat_men.vtk"
+    },
+    "osteophyte_scores": {
+      "osteophytes_fem_ant_lat_score": null,
+      "osteophytes_fem_ant_med_score": null,
+      "osteophytes_fem_cent_lat_score": null,
+      "osteophytes_fem_cent_med_score": null,
+      "osteophytes_fem_post_lat_score": null,
+      "osteophytes_fem_post_med_score": null
+    }
+  },
+  {
+    "id": 9629158,
+    "side": "LEFT",
+    "kl": 0,
+    "key": "9629158_LEFT",
+    "mesh_paths": {
+      "bone": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9629158/9629158_LEFT_femur.vtk",
+      "cart": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9629158/9629158_LEFT_femur_cart.vtk",
+      "med_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9629158/9629158_LEFT_med_men.vtk",
+      "lat_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9629158/9629158_LEFT_lat_men.vtk"
+    },
+    "osteophyte_scores": {
+      "osteophytes_fem_ant_lat_score": null,
+      "osteophytes_fem_ant_med_score": null,
+      "osteophytes_fem_cent_lat_score": null,
+      "osteophytes_fem_cent_med_score": null,
+      "osteophytes_fem_post_lat_score": null,
+      "osteophytes_fem_post_med_score": null
+    }
+  },
+  {
+    "id": 9844785,
+    "side": "LEFT",
+    "kl": 0,
+    "key": "9844785_LEFT",
+    "mesh_paths": {
+      "bone": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9844785/9844785_LEFT_femur.vtk",
+      "cart": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9844785/9844785_LEFT_femur_cart.vtk",
+      "med_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9844785/9844785_LEFT_med_men.vtk",
+      "lat_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9844785/9844785_LEFT_lat_men.vtk"
+    },
+    "osteophyte_scores": {
+      "osteophytes_fem_ant_lat_score": null,
+      "osteophytes_fem_ant_med_score": null,
+      "osteophytes_fem_cent_lat_score": null,
+      "osteophytes_fem_cent_med_score": null,
+      "osteophytes_fem_post_lat_score": null,
+      "osteophytes_fem_post_med_score": null
+    }
+  },
+  {
+    "id": 9014797,
+    "side": "RIGHT",
+    "kl": 1,
+    "key": "9014797_RIGHT",
+    "mesh_paths": {
+      "bone": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9014797/9014797_RIGHT_femur.vtk",
+      "cart": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9014797/9014797_RIGHT_femur_cart.vtk",
+      "med_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9014797/9014797_RIGHT_med_men.vtk",
+      "lat_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9014797/9014797_RIGHT_lat_men.vtk"
+    },
+    "osteophyte_scores": {
+      "osteophytes_fem_ant_lat_score": null,
+      "osteophytes_fem_ant_med_score": null,
+      "osteophytes_fem_cent_lat_score": null,
+      "osteophytes_fem_cent_med_score": null,
+      "osteophytes_fem_post_lat_score": null,
+      "osteophytes_fem_post_med_score": null
+    }
+  },
+  {
+    "id": 9203957,
+    "side": "LEFT",
+    "kl": 1,
+    "key": "9203957_LEFT",
+    "mesh_paths": {
+      "bone": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9203957/9203957_LEFT_femur.vtk",
+      "cart": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9203957/9203957_LEFT_femur_cart.vtk",
+      "med_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9203957/9203957_LEFT_med_men.vtk",
+      "lat_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9203957/9203957_LEFT_lat_men.vtk"
+    },
+    "osteophyte_scores": {
+      "osteophytes_fem_ant_lat_score": null,
+      "osteophytes_fem_ant_med_score": null,
+      "osteophytes_fem_cent_lat_score": null,
+      "osteophytes_fem_cent_med_score": null,
+      "osteophytes_fem_post_lat_score": null,
+      "osteophytes_fem_post_med_score": null
+    }
+  },
+  {
+    "id": 9797299,
+    "side": "LEFT",
+    "kl": 1,
+    "key": "9797299_LEFT",
+    "mesh_paths": {
+      "bone": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9797299/9797299_LEFT_femur.vtk",
+      "cart": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9797299/9797299_LEFT_femur_cart.vtk",
+      "med_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9797299/9797299_LEFT_med_men.vtk",
+      "lat_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9797299/9797299_LEFT_lat_men.vtk"
+    },
+    "osteophyte_scores": {
+      "osteophytes_fem_ant_lat_score": null,
+      "osteophytes_fem_ant_med_score": null,
+      "osteophytes_fem_cent_lat_score": null,
+      "osteophytes_fem_cent_med_score": null,
+      "osteophytes_fem_post_lat_score": null,
+      "osteophytes_fem_post_med_score": null
+    }
+  },
+  {
+    "id": 9523523,
+    "side": "LEFT",
+    "kl": 2,
+    "key": "9523523_LEFT",
+    "mesh_paths": {
+      "bone": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9523523/9523523_LEFT_femur.vtk",
+      "cart": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9523523/9523523_LEFT_femur_cart.vtk",
+      "med_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9523523/9523523_LEFT_med_men.vtk",
+      "lat_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9523523/9523523_LEFT_lat_men.vtk"
+    },
+    "osteophyte_scores": {
+      "osteophytes_fem_ant_lat_score": null,
+      "osteophytes_fem_ant_med_score": null,
+      "osteophytes_fem_cent_lat_score": null,
+      "osteophytes_fem_cent_med_score": null,
+      "osteophytes_fem_post_lat_score": null,
+      "osteophytes_fem_post_med_score": null
+    }
+  },
+  {
+    "id": 9612772,
+    "side": "LEFT",
+    "kl": 2,
+    "key": "9612772_LEFT",
+    "mesh_paths": {
+      "bone": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9612772/9612772_LEFT_femur.vtk",
+      "cart": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9612772/9612772_LEFT_femur_cart.vtk",
+      "med_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9612772/9612772_LEFT_med_men.vtk",
+      "lat_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9612772/9612772_LEFT_lat_men.vtk"
+    },
+    "osteophyte_scores": {
+      "osteophytes_fem_ant_lat_score": null,
+      "osteophytes_fem_ant_med_score": null,
+      "osteophytes_fem_cent_lat_score": null,
+      "osteophytes_fem_cent_med_score": null,
+      "osteophytes_fem_post_lat_score": null,
+      "osteophytes_fem_post_med_score": null
+    }
+  },
+  {
+    "id": 9968721,
+    "side": "RIGHT",
+    "kl": 2,
+    "key": "9968721_RIGHT",
+    "mesh_paths": {
+      "bone": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9968721/9968721_RIGHT_femur.vtk",
+      "cart": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9968721/9968721_RIGHT_femur_cart.vtk",
+      "med_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9968721/9968721_RIGHT_med_men.vtk",
+      "lat_men": "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m/9968721/9968721_RIGHT_lat_men.vtk"
+    },
+    "osteophyte_scores": {
+      "osteophytes_fem_ant_lat_score": null,
+      "osteophytes_fem_ant_med_score": null,
+      "osteophytes_fem_cent_lat_score": null,
+      "osteophytes_fem_cent_med_score": null,
+      "osteophytes_fem_post_lat_score": null,
+      "osteophytes_fem_post_med_score": null
+    }
+  }
+]

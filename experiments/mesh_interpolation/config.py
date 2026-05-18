@@ -1,0 +1,169 @@
+"""Shared configuration for the mesh-interpolation Phase 0 experiment.
+
+Paths, the model spec, the experiment matrix, and small shared helpers. See
+``README.md`` and the plan ``NSM_MESH_INTERPOLATION_IMPROVEMENTS.md``.
+"""
+
+import os
+
+import numpy as np
+import torch
+
+# ---------------------------------------------------------------------------
+# Data / model paths (see plan section 2.1)
+# ---------------------------------------------------------------------------
+
+DEMOGRAPHICS_CSV = (
+    "/dataNAS/people/aagatti/projects/OAI_DESS/aging_trajectories/data/"
+    "demographics/0_demographics_baseline.csv"
+)
+MESH_ROOT = "/dataNAS/people/aagatti/projects/OAI_DESS/meshes/00m"
+
+_MODEL_DIR = (
+    "/dataNAS/people/aagatti/projects/comak_gait_simulation/"
+    "COMAK_SIMULATION_REQUIREMENTS/nsm_models/568_nsm_femur_bone_cart_men_v0.0.1"
+)
+MODEL_STATE_PATH = os.path.join(_MODEL_DIR, "model", "2000.pth")
+MODEL_CONFIG_PATH = os.path.join(_MODEL_DIR, "model_params_config.json")
+
+# The femur model is a joint 4-surface decoder. surface_idx -> name.
+MESH_NAMES = ["bone", "cart", "med_men", "lat_men"]
+# Mesh-file suffixes per surface, under MESH_ROOT/{id}/{id}_{SIDE}_<suffix>.vtk
+MESH_SUFFIXES = {
+    "bone": "femur",
+    "cart": "femur_cart",
+    "med_men": "med_men",
+    "lat_men": "lat_men",
+}
+
+# Output cache / report locations (relative to this file).
+HERE = os.path.dirname(os.path.abspath(__file__))
+CACHE_DIR = os.path.join(HERE, "cache")
+MANIFEST_PATH = os.path.join(CACHE_DIR, "manifest.json")
+REPORT_DIR = os.path.join(HERE, "report")
+
+# ---------------------------------------------------------------------------
+# Subject selection (plan section 2.1): 10 knees, KL-stratified, KL3/4 excluded.
+# ---------------------------------------------------------------------------
+
+KL_QUOTA = {0: 4, 1: 3, 2: 3}  # KL grade -> number of knees
+SELECTION_SEED = 0
+
+# ---------------------------------------------------------------------------
+# Production NSM-fitting settings (plan section 2.1; verified against nsosim).
+# ---------------------------------------------------------------------------
+
+FIT_KWARGS = dict(
+    n_samples_latent_recon=20_000,
+    num_iter=None,  # -> model config's num_iterations_recon (2000)
+    convergence_patience=10,  # nsosim production override
+    use_hybrid_optimizer=False,
+    seed=0,
+)
+
+# Marching-cubes grid resolution for cached reconstructions.
+MARCHING_CUBES_N_PTS = 256
+
+# ---------------------------------------------------------------------------
+# Experiment matrix (plan section 3.7)
+# ---------------------------------------------------------------------------
+
+# Each config maps to keyword arguments for `interpolate_points`. The cumulative
+# ladder is baseline -> +Fix2 -> +Fix1 -> +Fix3 -> +Fix4 -> +Fix5 (= "all");
+# `fix1`, `fix2` and `fix6` are the standalone-meaningful configs.
+EXPERIMENT_CONFIGS = {
+    "baseline": {},
+    "fix1": {"n_corrector_iters": 5},
+    "fix2": {"step_magnitude": "newton"},
+    "fix1_fix2": {"n_corrector_iters": 5, "step_magnitude": "newton"},
+    "fix1_fix2_fix3": {
+        "n_corrector_iters": 5,
+        "step_magnitude": "newton",
+        "latent_predictor": True,
+    },
+    "fix1_fix2_fix3_fix4": {
+        "n_corrector_iters": 5,
+        "step_magnitude": "newton",
+        "latent_predictor": True,
+        "tangent_laplacian": True,
+    },
+    "all": {
+        "n_corrector_iters": 5,
+        "step_magnitude": "newton",
+        "latent_predictor": True,
+        "tangent_laplacian": True,
+        "adaptive_steps": True,
+    },
+    "fix6": {"n_corrector_iters": 5, "step_magnitude": "line_search"},
+}
+
+# NFE sensitivity grid (plan section 2.4).
+NFE_GRID = [10, 25, 50, 100, 200]
+
+# ---------------------------------------------------------------------------
+# Device
+# ---------------------------------------------------------------------------
+
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def load_nsm_model():
+    """Load the 4-surface femur NSM decoder onto the available device.
+
+    nsosim's ``load_model`` hard-codes ``.cuda()``; this loader mirrors it but
+    honours :data:`DEVICE` so the experiment can also be smoke-tested on CPU.
+
+    Returns:
+        torch.nn.Module: the loaded decoder in eval mode.
+    """
+    import json
+
+    from NSM.models import TriplanarDecoder
+
+    with open(MODEL_CONFIG_PATH, "r") as f:
+        cfg = json.load(f)
+    params = {
+        "latent_dim": cfg["latent_size"],
+        "n_objects": cfg["objects_per_decoder"],
+        "conv_hidden_dims": cfg["conv_hidden_dims"],
+        "conv_deep_image_size": cfg["conv_deep_image_size"],
+        "conv_norm": cfg["conv_norm"],
+        "conv_norm_type": cfg["conv_norm_type"],
+        "conv_start_with_mlp": cfg["conv_start_with_mlp"],
+        "sdf_latent_size": cfg["sdf_latent_size"],
+        "sdf_hidden_dims": cfg["sdf_hidden_dims"],
+        "sdf_weight_norm": cfg["weight_norm"],
+        "sdf_final_activation": cfg["final_activation"],
+        "sdf_activation": cfg["activation"],
+        "sdf_dropout_prob": cfg["dropout_prob"],
+        "sum_sdf_features": cfg["sum_conv_output_features"],
+        "conv_pred_sdf": cfg["conv_pred_sdf"],
+    }
+    model = TriplanarDecoder(**params)
+    state = torch.load(MODEL_STATE_PATH, map_location=DEVICE)
+    model.load_state_dict(state["model"])
+    model = model.to(DEVICE)
+    model.eval()
+    return model
+
+
+def evaluate_sdf(model, points, latent, surface_idx):
+    """Forward-only SDF evaluation of one surface at a set of points.
+
+    Args:
+        model: the NSM decoder.
+        points: (N, 3) array/tensor of query points.
+        latent: (D,) latent vector.
+        surface_idx: which decoder output to read.
+
+    Returns:
+        np.ndarray: (N,) signed-distance values.
+    """
+    device = next(model.parameters()).device
+    dtype = next(model.parameters()).dtype
+    pts = torch.as_tensor(np.asarray(points), device=device, dtype=dtype)
+    lat = torch.as_tensor(np.asarray(latent), device=device, dtype=dtype).reshape(1, -1)
+    lat = lat.expand(pts.shape[0], -1)
+    with torch.no_grad():
+        sdf = model(torch.cat([lat, pts], dim=1))
+    return sdf[:, surface_idx].detach().cpu().numpy()

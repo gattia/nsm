@@ -1,0 +1,5 @@
+# Cache holds fitted latents and reconstructed .vtk meshes (data artifacts).
+# Keep the subject-selection manifest; ignore everything else.
+cache/*
+!cache/manifest.json
+report/
