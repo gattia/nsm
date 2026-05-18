@@ -16,6 +16,7 @@ Usage:
     python -m experiments.mesh_interpolation.fit_cache
 """
 
+import argparse
 import json
 import os
 
@@ -84,6 +85,14 @@ def fit_one(record):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--key", default=None,
+        help="fit only this knee (e.g. 9291234_LEFT); default: all knees. "
+        "One key per job lets the fits be parallelised across SLURM nodes.",
+    )
+    args = parser.parse_args()
+
     if DEVICE != "cuda":
         print(
             "WARNING: no CUDA device found. nsosim.load_model moves the model "
@@ -92,6 +101,11 @@ def main():
     os.makedirs(CACHE_DIR, exist_ok=True)
     with open(MANIFEST_PATH) as f:
         records = json.load(f)
+
+    if args.key is not None:
+        records = [r for r in records if r["key"] == args.key]
+        if not records:
+            raise SystemExit(f"key {args.key!r} not found in manifest")
 
     for record in records:
         key = record["key"]

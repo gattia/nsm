@@ -175,6 +175,20 @@ def write_report(df, path):
         f.write("\n".join(lines))
 
 
+def merge_results():
+    """Concatenate every results_*.csv shard into results.csv + report.md."""
+    import glob
+
+    shards = sorted(glob.glob(os.path.join(REPORT_DIR, "results_*.csv")))
+    if not shards:
+        raise SystemExit(f"no results_*.csv shards found in {REPORT_DIR}")
+    df = pd.concat([pd.read_csv(s) for s in shards], ignore_index=True)
+    df.to_csv(os.path.join(REPORT_DIR, "results.csv"), index=False)
+    write_report(df, os.path.join(REPORT_DIR, "report.md"))
+    print(f"Merged {len(shards)} shards ({len(df)} cells) -> "
+          f"{REPORT_DIR}/results.csv + report.md")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--configs", default=None)
@@ -183,7 +197,21 @@ def main():
     parser.add_argument("--max-pairs", type=int, default=None)
     parser.add_argument("--no-roundtrip", action="store_true")
     parser.add_argument("--no-self-intersect", action="store_true")
+    parser.add_argument(
+        "--out-tag", default=None,
+        help="suffix for the per-shard output file (results_<tag>.csv). Lets "
+        "parallel SLURM jobs write without clobbering; merge with --merge.",
+    )
+    parser.add_argument(
+        "--merge", action="store_true",
+        help="do not run the matrix; concatenate every report/results_*.csv "
+        "shard into results.csv and write report.md.",
+    )
     args = parser.parse_args()
+
+    if args.merge:
+        merge_results()
+        return
 
     configs = list(EXPERIMENT_CONFIGS)
     if args.configs:
@@ -241,11 +269,16 @@ def main():
                   f"({elapsed:.0f}s elapsed)")
 
     df = pd.DataFrame(rows)
-    df.to_csv(os.path.join(REPORT_DIR, "results.csv"), index=False)
-    with open(os.path.join(REPORT_DIR, "results.json"), "w") as f:
+    suffix = f"_{args.out_tag}" if args.out_tag else ""
+    df.to_csv(os.path.join(REPORT_DIR, f"results{suffix}.csv"), index=False)
+    with open(os.path.join(REPORT_DIR, f"results{suffix}.json"), "w") as f:
         json.dump(rows, f, indent=2, default=str)
-    write_report(df, os.path.join(REPORT_DIR, "report.md"))
-    print(f"\nWrote results + report to {REPORT_DIR}")
+    if args.out_tag:
+        # A shard: leave the aggregated report to the --merge step.
+        print(f"\nWrote shard results{suffix}.csv to {REPORT_DIR}")
+    else:
+        write_report(df, os.path.join(REPORT_DIR, "report.md"))
+        print(f"\nWrote results + report to {REPORT_DIR}")
 
 
 if __name__ == "__main__":

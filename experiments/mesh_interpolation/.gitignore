@@ -3,3 +3,4 @@
 cache/*
 !cache/manifest.json
 report/
+slurm_outputs/
