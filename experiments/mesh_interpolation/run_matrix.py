@@ -195,6 +195,11 @@ def main():
     parser.add_argument("--nfe", default=None)
     parser.add_argument("--surfaces", default=None)
     parser.add_argument("--max-pairs", type=int, default=None)
+    parser.add_argument(
+        "--max-knees", type=int, default=None,
+        help="use only the first N manifest knees; ordered pairs are then "
+        "N*(N-1). The manifest is KL-ordered so a small N still spans grades.",
+    )
     parser.add_argument("--no-roundtrip", action="store_true")
     parser.add_argument("--no-self-intersect", action="store_true")
     parser.add_argument(
@@ -223,8 +228,20 @@ def main():
     if args.surfaces:
         surfaces = [int(s) for s in args.surfaces.split(",")]
 
+    # KL-interleave the manifest knees so a --max-knees prefix still spans
+    # grades (the manifest is grouped KL0, KL1, KL2).
     with open(MANIFEST_PATH) as f:
-        keys = [r["key"] for r in json.load(f)]
+        records = json.load(f)
+    by_kl = {}
+    for r in records:
+        by_kl.setdefault(r["kl"], []).append(r["key"])
+    keys = []
+    while any(by_kl.values()):
+        for kl in sorted(by_kl):
+            if by_kl[kl]:
+                keys.append(by_kl[kl].pop(0))
+    if args.max_knees is not None:
+        keys = keys[: args.max_knees]
     latents, meshes = load_cache(keys)
 
     # All ordered pairs A != B (both warp directions -- plan section 2.2).
@@ -235,19 +252,39 @@ def main():
     model = load_nsm_model()
     os.makedirs(REPORT_DIR, exist_ok=True)
 
+    suffix = f"_{args.out_tag}" if args.out_tag else ""
+    shard_path = os.path.join(REPORT_DIR, f"results{suffix}.csv")
+
+    # Resume support: reload an existing shard and skip cells already scored.
+    # Each matrix job checkpoints after every pair, so a SLURM timeout loses at
+    # most one pair's worth of work and a resubmit picks up where it left off.
+    rows = []
+    done_cells = set()
+    if os.path.isfile(shard_path):
+        prev = pd.read_csv(shard_path)
+        rows = prev.to_dict("records")
+        done_cells = {
+            (r["config"], int(r["nfe"]), r["pair"], int(r["surface"]))
+            for r in rows
+        }
+        print(f"Resuming -- {len(done_cells)} cells already in {shard_path}")
+
     total = len(configs) * len(nfe_grid) * len(pairs) * len(surfaces)
     print(f"Scoring {total} cells "
           f"({len(configs)} configs x {len(nfe_grid)} NFE x {len(pairs)} pairs "
           f"x {len(surfaces)} surfaces)")
 
-    rows = []
-    done = 0
+    n_new = 0
     t0 = time.time()
     for cfg_name in configs:
         cfg_kwargs = EXPERIMENT_CONFIGS[cfg_name]
         for nfe in nfe_grid:
             for (key_a, key_b) in pairs:
+                pair_str = f"{key_a}->{key_b}"
+                pair_had_new = False
                 for surf in surfaces:
+                    if (cfg_name, nfe, pair_str, surf) in done_cells:
+                        continue
                     try:
                         flat = run_cell(
                             model, latents, meshes, key_a, key_b, surf,
@@ -258,19 +295,21 @@ def main():
                     except Exception as exc:  # keep the sweep alive
                         flat = {"error": f"{type(exc).__name__}: {exc}"}
                     flat.update(
-                        config=cfg_name, nfe=nfe, pair=f"{key_a}->{key_b}",
+                        config=cfg_name, nfe=nfe, pair=pair_str,
                         source=key_a, target=key_b, surface=surf,
                         surface_name=MESH_NAMES[surf],
                     )
                     rows.append(flat)
-                    done += 1
+                    n_new += 1
+                    pair_had_new = True
+                if pair_had_new:  # checkpoint after every pair
+                    pd.DataFrame(rows).to_csv(shard_path, index=False)
             elapsed = time.time() - t0
-            print(f"  {cfg_name} NFE={nfe}: {done}/{total} cells "
+            print(f"  {cfg_name} NFE={nfe}: +{n_new} new cells "
                   f"({elapsed:.0f}s elapsed)")
 
     df = pd.DataFrame(rows)
-    suffix = f"_{args.out_tag}" if args.out_tag else ""
-    df.to_csv(os.path.join(REPORT_DIR, f"results{suffix}.csv"), index=False)
+    df.to_csv(shard_path, index=False)
     with open(os.path.join(REPORT_DIR, f"results{suffix}.json"), "w") as f:
         json.dump(rows, f, indent=2, default=str)
     if args.out_tag:
