@@ -240,6 +240,18 @@ class StepConfig:
     tangent_laplacian: bool = False
     tangent_laplacian_alpha: float = 0.5
     tangent_laplacian_iters: int = 1
+    # Boundary-aware Fix 4: pin vertices that lie on a mesh rim (an edge
+    # belonging to a single triangle) so umbrella smoothing cannot contract
+    # the boundary inward. Phase 0 showed plain Fix 4 collapses the cart /
+    # lat_men rims and inflates ASSD; pinning fixes this.
+    tangent_laplacian_pin_boundary: bool = True
+    # Fix 7 -- smoothed-normal projection. Replace the corrector's projection
+    # direction with a Laplacian-smoothed unit gradient field, then choose the
+    # magnitude that lands on the level set along that direction. Coherent
+    # neighbour directions reduce fold-over without smoothing positions, so
+    # there is no boundary collapse / ASSD penalty. Needs source faces.
+    smooth_normals: bool = False
+    smooth_normal_iters: int = 3
     # Fix 5 -- adaptive latent step-sizing.
     adaptive_steps: bool = False
     adaptive_tol: Optional[float] = None
@@ -471,16 +483,24 @@ def _project_once(model, latent, points, surface_idx, config, diag=None):
     return new_points, sdf
 
 
-def _corrector_loop(model, latent, points, surface_idx, config, diag=None):
+def _corrector_loop(model, latent, points, surface_idx, config, diag=None, laplacian=None):
     """Fix 1 -- iterate :func:`_project_once` until converged or capped.
 
     With ``n_corrector_iters == 1`` this is a single projection (baseline).
+    When ``config.smooth_normals`` is set (Fix 7), the smoothed-direction step
+    replaces the standard per-point projection and ``laplacian`` is required.
+
     Returns ``(points, residual_max)`` where ``residual_max`` is the largest
     ``|SDF|`` seen on the final evaluation.
     """
     residual_max = float("nan")
     for it in range(config.n_corrector_iters):
-        new_points, sdf = _project_once(model, latent, points, surface_idx, config, diag)
+        if config.smooth_normals:
+            new_points, sdf = _smooth_normals_step(
+                model, latent, points, surface_idx, laplacian, config, diag
+            )
+        else:
+            new_points, sdf = _project_once(model, latent, points, surface_idx, config, diag)
         residual_max = sdf.abs().max().item()
         points = new_points
         if residual_max < config.corrector_tol:
@@ -550,13 +570,50 @@ def build_mesh_laplacian(faces, n_points, device, dtype=torch.float32):
     return adjacency
 
 
-def _tangent_laplacian_step(model, latent, points, surface_idx, laplacian, config, diag=None):
-    """Fix 4b -- tangent-projected Laplacian smoothing.
+def compute_boundary_mask(faces, n_points):
+    """Boolean mask of mesh-boundary vertices.
+
+    A *boundary edge* is one shared by exactly one triangle; a *boundary
+    vertex* is a vertex on a boundary edge. Closed meshes (e.g. spheres,
+    marching-cubes femur bone) return an all-False mask. Used to pin rim
+    vertices during tangent Laplacian smoothing so the boundary cannot
+    contract.
+
+    Args:
+    - faces (np.ndarray): triangle connectivity, shape (M, 3).
+    - n_points (int): number of mesh vertices.
+
+    Returns:
+    - np.ndarray[bool]: shape (n_points,), True for boundary vertices.
+    """
+    faces = np.asarray(faces).reshape(-1, 3).astype(np.int64)
+    edges = np.concatenate(
+        [faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]], axis=0
+    )
+    edges = np.sort(edges, axis=1)  # canonicalise (i, j) with i < j
+    unique_edges, counts = np.unique(edges, axis=0, return_counts=True)
+    boundary_edges = unique_edges[counts == 1]
+    mask = np.zeros(n_points, dtype=bool)
+    if len(boundary_edges):
+        mask[boundary_edges.ravel()] = True
+    return mask
+
+
+def _tangent_laplacian_step(
+    model, latent, points, surface_idx, laplacian, boundary_mask, config, diag=None
+):
+    """Fix 4b -- tangent-projected Laplacian smoothing (optionally rim-pinned).
 
     Redistributes points *along the surface* without the off-surface pull that
     full-3D VTK smoothing causes: the Laplacian displacement is projected onto
     the local tangent plane (its normal component removed) before being applied,
     and the result is re-projected onto the level set afterwards.
+
+    When ``config.tangent_laplacian_pin_boundary`` is set (default), vertices
+    on the mesh rim (boundary edges) are pinned -- their tangent displacement
+    is zeroed -- so umbrella smoothing cannot contract the boundary inward.
+    On thin open sheets (cart) and shells with a rim (menisci) this avoids
+    the coverage collapse that plain Fix 4 produces.
     """
     for _ in range(config.tangent_laplacian_iters):
         grad_pos, _, _ = _sdf_step_eval(model, points, latent, surface_idx)
@@ -566,10 +623,63 @@ def _tangent_laplacian_step(model, latent, points, surface_idx, laplacian, confi
         lap = torch.sparse.mm(laplacian, points) - points  # umbrella displacement
         normal_comp = (lap * unit).sum(dim=1, keepdim=True) * unit
         lap_tan = lap - normal_comp  # tangent-only displacement
+        if config.tangent_laplacian_pin_boundary and boundary_mask is not None:
+            lap_tan[boundary_mask] = 0.0
         points = points + config.tangent_laplacian_alpha * lap_tan
         # Re-project onto the level set to undo any residual off-surface drift.
-        points, _ = _corrector_loop(model, latent, points, surface_idx, config, diag)
+        points, _ = _corrector_loop(
+            model, latent, points, surface_idx, config, diag, laplacian=laplacian
+        )
     return points
+
+
+def _smooth_normals_step(model, latent, points, surface_idx, laplacian, config, diag=None):
+    """Fix 7 -- smoothed-direction projection step.
+
+    Replaces the per-point Newton direction (unit gradient at the point) with
+    a Laplacian-smoothed unit-normal field across the mesh, then chooses the
+    magnitude that lands on the level set along that smoothed direction:
+
+        SDF(x + alpha*d) ~ SDF + alpha*(g . d) = 0
+        =>  alpha = -SDF / (g . d)
+        =>  x_new = x + alpha*d  =  x - (SDF/(g.d)) * d
+
+    Reduces to the standard Newton step when ``d = g/||g||``. Coherent
+    neighbour directions reduce fold-over without smoothing positions, so
+    there is no boundary collapse / coverage penalty (unlike Fix 4).
+
+    Returns ``(new_points, sdf_pre_step)``.
+    """
+    grad_pos, sdf, _ = _sdf_step_eval(model, points, latent, surface_idx)
+    if diag is not None:
+        diag.n_decoder_evals += 1
+    g_unit, grad_norm, flat_mask = _unit_gradient(grad_pos)
+
+    # Iterated Laplacian smoothing of the unit normal field, re-normalised
+    # to unit length at each pass.
+    n_smooth = g_unit
+    for _ in range(max(0, config.smooth_normal_iters)):
+        n_smooth = torch.sparse.mm(laplacian, n_smooth)
+        nn = n_smooth.norm(dim=1, keepdim=True).clamp_min(EPS)
+        n_smooth = n_smooth / nn
+
+    # Guard against sign flips: where smoothing crossed a gradient discontinuity
+    # and the smoothed direction points opposite the true gradient, flip it
+    # back so the step keeps moving toward the level set rather than away.
+    align = (g_unit * n_smooth).sum(dim=1, keepdim=True)
+    n_smooth = torch.where(align >= 0.0, n_smooth, -n_smooth)
+
+    # Magnitude: alpha = -SDF / (g . d). Step subtracted = (SDF/(g.d)) * d so
+    # x_new = x - step. The (g.d) denominator falls back to 1 (no step) when
+    # smoothed direction is near-orthogonal to the true gradient.
+    g_dot_d = (grad_pos * n_smooth).sum(dim=1)
+    safe = torch.where(g_dot_d.abs() > EPS, g_dot_d, torch.ones_like(g_dot_d))
+    scale = sdf / safe
+    step = n_smooth * scale.unsqueeze(1)
+    step[flat_mask] = 0.0
+    assert_finite(step, "Smoothed-normal step")
+    new_points = points - step
+    return new_points, sdf
 
 
 # ---------------------------------------------------------------------------
@@ -618,10 +728,10 @@ def _latent_at(latent1, latent2, t, spherical):
     return linear_interp_latent(latent1, latent2, t)
 
 
-def _advance(model, points, z_start, z_end, surface_idx, config, laplacian, diag):
+def _advance(model, points, z_start, z_end, surface_idx, config, laplacian, boundary_mask, diag):
     """Apply one latent increment ``z_start -> z_end`` to ``points``.
 
-    predictor (Fix 3) -> corrector loop (Fix 1, with Fix 2/6 magnitude) ->
+    predictor (Fix 3) -> corrector loop (Fix 1, with Fix 2/6/7 magnitude) ->
     tangent Laplacian (Fix 4b). Returns the advanced points (GPU tensor).
     """
     diag.n_advance_calls += 1
@@ -634,17 +744,20 @@ def _advance(model, points, z_start, z_end, surface_idx, config, laplacian, diag
             model, z_start_t, points, surface_idx, dz, config, diag
         )
 
-    points, _ = _corrector_loop(model, z_end_t, points, surface_idx, config, diag)
+    points, _ = _corrector_loop(
+        model, z_end_t, points, surface_idx, config, diag, laplacian=laplacian
+    )
 
     if config.tangent_laplacian:
         points = _tangent_laplacian_step(
-            model, z_end_t, points, surface_idx, laplacian, config, diag
+            model, z_end_t, points, surface_idx, laplacian, boundary_mask, config, diag
         )
     return points
 
 
 def _advance_adaptive(
-    model, points, latent1, latent2, t0, t1, surface_idx, config, laplacian, diag, spherical, depth
+    model, points, latent1, latent2, t0, t1, surface_idx, config, laplacian, boundary_mask,
+    diag, spherical, depth,
 ):
     """Fix 5 -- adaptively subdivide the latent interval ``[t0, t1]``.
 
@@ -658,7 +771,9 @@ def _advance_adaptive(
     z1 = _latent_at(latent1, latent2, t1, spherical)
 
     if config.adaptive_estimator == "residual":
-        advanced = _advance(model, points, z0, z1, surface_idx, config, laplacian, diag)
+        advanced = _advance(
+            model, points, z0, z1, surface_idx, config, laplacian, boundary_mask, diag
+        )
         z1_t = _to_model_tensor(z1, model)
         residual = _sdf_only(model, advanced, z1_t, surface_idx).abs().max().item()
         diag.n_decoder_evals += 1
@@ -667,11 +782,17 @@ def _advance_adaptive(
                 diag.struggled_intervals.append((float(t0), float(t1), float(residual)))
             return advanced
     else:  # "richardson": one full step vs two half steps
-        big = _advance(model, points, z0, z1, surface_idx, config, laplacian, diag)
+        big = _advance(
+            model, points, z0, z1, surface_idx, config, laplacian, boundary_mask, diag
+        )
         tm = 0.5 * (t0 + t1)
         zm = _latent_at(latent1, latent2, tm, spherical)
-        half1 = _advance(model, points, z0, zm, surface_idx, config, laplacian, diag)
-        small = _advance(model, half1, zm, z1, surface_idx, config, laplacian, diag)
+        half1 = _advance(
+            model, points, z0, zm, surface_idx, config, laplacian, boundary_mask, diag
+        )
+        small = _advance(
+            model, half1, zm, z1, surface_idx, config, laplacian, boundary_mask, diag
+        )
         error = (big - small).norm(dim=1).max().item()
         if error <= config.adaptive_tol or depth >= config.adaptive_max_depth:
             if error > config.adaptive_tol:
@@ -681,12 +802,12 @@ def _advance_adaptive(
     # Subdivide and recurse.
     tm = 0.5 * (t0 + t1)
     points = _advance_adaptive(
-        model, points, latent1, latent2, t0, tm, surface_idx, config, laplacian, diag,
-        spherical, depth + 1,
+        model, points, latent1, latent2, t0, tm, surface_idx, config, laplacian,
+        boundary_mask, diag, spherical, depth + 1,
     )
     points = _advance_adaptive(
-        model, points, latent1, latent2, tm, t1, surface_idx, config, laplacian, diag,
-        spherical, depth + 1,
+        model, points, latent1, latent2, tm, t1, surface_idx, config, laplacian,
+        boundary_mask, diag, spherical, depth + 1,
     )
     return points
 
@@ -797,16 +918,22 @@ def interpolate_common(
         else:
             raise Exception(f"Unknown data type: {type(data)}")
 
-        if config.tangent_laplacian and faces is None:
+        needs_mesh = config.tangent_laplacian or config.smooth_normals
+        if needs_mesh and faces is None:
             raise ValueError(
-                "tangent_laplacian=True (Fix 4b) requires the source-mesh "
-                "`faces` connectivity; pass `faces=` to interpolate_points."
+                "tangent_laplacian (Fix 4b) and smooth_normals (Fix 7) require "
+                "the source-mesh `faces` connectivity; pass `faces=` to "
+                "interpolate_points."
             )
 
         laplacian = None
-        if config.tangent_laplacian:
+        boundary_mask = None
+        if needs_mesh:
             laplacian = build_mesh_laplacian(
                 faces, points.shape[0], device=device, dtype=points.dtype
+            )
+            boundary_mask = torch.as_tensor(
+                compute_boundary_mask(faces, points.shape[0]), device=device
             )
 
         if config.adaptive_steps:
@@ -817,7 +944,7 @@ def interpolate_common(
                     print(f"adaptive interval ({t_prev:.4f}, {t:.4f}]")
                 points = _advance_adaptive(
                     model, points, latent1, latent2, t_prev, float(t), surface_idx,
-                    config, laplacian, diag, spherical, depth=0,
+                    config, laplacian, boundary_mask, diag, spherical, depth=0,
                 )
                 t_prev = float(t)
         else:
@@ -828,7 +955,8 @@ def interpolate_common(
                 z_start = _latent_at(latent1, latent2, t_prev, spherical)
                 z_end = _latent_at(latent1, latent2, float(t), spherical)
                 points = _advance(
-                    model, points, z_start, z_end, surface_idx, config, laplacian, diag
+                    model, points, z_start, z_end, surface_idx, config, laplacian,
+                    boundary_mask, diag,
                 )
                 t_prev = float(t)
 
@@ -863,6 +991,9 @@ def interpolate_points(
     tangent_laplacian=False,
     tangent_laplacian_alpha=0.5,
     tangent_laplacian_iters=1,
+    tangent_laplacian_pin_boundary=True,
+    smooth_normals=False,
+    smooth_normal_iters=3,
     adaptive_steps=False,
     adaptive_tol=None,
     adaptive_estimator="richardson",
@@ -897,6 +1028,12 @@ def interpolate_points(
     - tangent_laplacian (bool): Fix 4b -- enable tangent-projected smoothing.
     - tangent_laplacian_alpha (float): Fix 4b -- smoothing step size.
     - tangent_laplacian_iters (int): Fix 4b -- smoothing iterations per step.
+    - tangent_laplacian_pin_boundary (bool): Fix 4b -- pin rim vertices so the
+      mesh boundary cannot contract (default True; needed on open sheets).
+    - smooth_normals (bool): Fix 7 -- replace the projection direction with a
+      Laplacian-smoothed unit-normal field; reduces fold-over without smoothing
+      positions. Needs `faces`.
+    - smooth_normal_iters (int): Fix 7 -- number of normal-smoothing passes.
     - adaptive_steps (bool): Fix 5 -- adaptively subdivide latent steps.
     - adaptive_tol (float): Fix 5 -- error tolerance (auto, scale-relative, if None).
     - adaptive_estimator (str): Fix 5 -- ``"richardson"`` or ``"residual"``.
@@ -917,6 +1054,9 @@ def interpolate_points(
         tangent_laplacian=tangent_laplacian,
         tangent_laplacian_alpha=tangent_laplacian_alpha,
         tangent_laplacian_iters=tangent_laplacian_iters,
+        tangent_laplacian_pin_boundary=tangent_laplacian_pin_boundary,
+        smooth_normals=smooth_normals,
+        smooth_normal_iters=smooth_normal_iters,
         adaptive_steps=adaptive_steps,
         adaptive_tol=adaptive_tol,
         adaptive_estimator=adaptive_estimator,

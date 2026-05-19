@@ -83,9 +83,36 @@ EXPERIMENT_CONFIGS = {
     "fix1_fix2": {"n_corrector_iters": 5, "step_magnitude": "newton"},
     "fix6": {"n_corrector_iters": 5, "step_magnitude": "line_search"},
     "fix1_fix2_fix4": {
+        # Original Fix 4 -- no boundary pinning. Kept matching its already-
+        # cached shards (Phase 0 showed it costs ASSD via rim contraction).
         "n_corrector_iters": 5,
         "step_magnitude": "newton",
         "tangent_laplacian": True,
+        "tangent_laplacian_pin_boundary": False,
+    },
+    "fix1_fix2_fix4b": {
+        # Boundary-aware Fix 4: rim vertices pinned so Laplacian smoothing
+        # cannot contract the mesh boundary.
+        "n_corrector_iters": 5,
+        "step_magnitude": "newton",
+        "tangent_laplacian": True,
+        "tangent_laplacian_pin_boundary": True,
+    },
+    "fix1_fix2_fix7": {
+        # Fix 7 -- smoothed-normal projection (smooths the gradient field, not
+        # positions; no boundary collapse). Should reduce fold-over without
+        # the cart / lat_men ASSD penalty.
+        "n_corrector_iters": 5,
+        "step_magnitude": "newton",
+        "smooth_normals": True,
+    },
+    "fix1_fix2_fix4b_fix7": {
+        # Both smoothing strategies stacked.
+        "n_corrector_iters": 5,
+        "step_magnitude": "newton",
+        "tangent_laplacian": True,
+        "tangent_laplacian_pin_boundary": True,
+        "smooth_normals": True,
     },
     "fix1_fix2_fix5": {
         "n_corrector_iters": 5,

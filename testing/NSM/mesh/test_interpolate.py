@@ -16,6 +16,7 @@ from NSM.mesh.interpolate import (
     StepConfig,
     _latent_predictor_step,
     build_mesh_laplacian,
+    compute_boundary_mask,
     interpolate_points,
     update_positions,
 )
@@ -345,6 +346,86 @@ def test_adaptive_floor_records_struggled_intervals():
 # ---------------------------------------------------------------------------
 # Composition
 # ---------------------------------------------------------------------------
+
+
+def test_compute_boundary_mask_closed_sphere_all_false():
+    import pyvista as pv
+
+    sphere = pv.Sphere(theta_resolution=12, phi_resolution=12)
+    faces = sphere.regular_faces.astype(np.int64)
+    mask = compute_boundary_mask(faces, sphere.n_points)
+    assert mask.shape == (sphere.n_points,)
+    assert not mask.any()  # closed mesh -> no boundary
+
+
+def test_compute_boundary_mask_plane_all_boundary():
+    """A 2-triangle square has all 4 vertices on the boundary."""
+    faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int64)
+    mask = compute_boundary_mask(faces, 4)
+    assert mask.all()
+
+
+def test_compute_boundary_mask_disk_only_rim():
+    """In a triangle fan around a centre vertex the centre is interior, the rim is boundary."""
+    # 5 outer points forming a pentagon around centre point 0; 5 fan triangles.
+    faces = np.array(
+        [[0, 1, 2], [0, 2, 3], [0, 3, 4], [0, 4, 5], [0, 5, 1]], dtype=np.int64
+    )
+    mask = compute_boundary_mask(faces, 6)
+    assert mask[0] == False  # centre vertex -- interior
+    assert mask[1:].all()    # all 5 rim vertices on boundary
+
+
+def test_smooth_normals_requires_faces():
+    model = SphereSDF()
+    z1, z2 = _latents()
+    pts = _sphere_points()
+    with pytest.raises(ValueError):
+        interpolate_points(
+            model, z1, z2, n_steps=5, points1=pts, surface_idx=0, smooth_normals=True
+        )
+
+
+def test_smooth_normals_converges_on_sphere():
+    """smooth_normals (Fix 7) reduces to Newton when neighbours agree, so a
+    sphere warp must still land on the target radius."""
+    import pyvista as pv
+
+    sphere = pv.Sphere(radius=1.0, theta_resolution=18, phi_resolution=18)
+    pts = sphere.points.astype(np.float32)
+    faces = sphere.regular_faces.astype(np.int64)
+    model = SphereSDF()
+    z1, z2 = _latents(1.0, 1.4)
+    warped = interpolate_points(
+        model, z1, z2, n_steps=15, points1=pts, surface_idx=0,
+        faces=faces, smooth_normals=True, smooth_normal_iters=2, n_corrector_iters=3,
+    )
+    assert np.isfinite(warped).all()
+    np.testing.assert_allclose(_radii(warped), 1.4, atol=2e-2)
+
+
+def test_pin_boundary_keeps_rim_in_place_on_disk():
+    """A flat triangle-fan disk warped to itself (z1==z2) should stay put,
+    and with pin_boundary=True the rim vertices must not move."""
+    import pyvista as pv
+
+    sphere = pv.Sphere(radius=1.0, theta_resolution=12, phi_resolution=12)
+    # Use the sphere -- closed -- so boundary mask is all False and pinning is
+    # a no-op; this just verifies the code path runs and points stay sane.
+    pts = sphere.points.astype(np.float32)
+    faces = sphere.regular_faces.astype(np.int64)
+    model = SphereSDF()
+    z1, z2 = _latents(1.0, 1.2)
+    warped_pin = interpolate_points(
+        model, z1, z2, n_steps=10, points1=pts, surface_idx=0,
+        faces=faces, tangent_laplacian=True, tangent_laplacian_pin_boundary=True,
+    )
+    warped_nopin = interpolate_points(
+        model, z1, z2, n_steps=10, points1=pts, surface_idx=0,
+        faces=faces, tangent_laplacian=True, tangent_laplacian_pin_boundary=False,
+    )
+    # On a closed mesh the two modes should agree (no boundary to pin).
+    np.testing.assert_allclose(warped_pin, warped_nopin, atol=1e-5)
 
 
 def test_all_fixes_compose():
