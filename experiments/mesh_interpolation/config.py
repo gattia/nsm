@@ -68,14 +68,31 @@ MARCHING_CUBES_N_PTS = 256
 # Experiment matrix (plan section 3.7)
 # ---------------------------------------------------------------------------
 
-# Each config maps to keyword arguments for `interpolate_points`. The cumulative
-# ladder is baseline -> +Fix2 -> +Fix1 -> +Fix3 -> +Fix4 -> +Fix5 (= "all");
-# `fix1`, `fix2` and `fix6` are the standalone-meaningful configs.
+# Each config maps to keyword arguments for `interpolate_points`.
+#
+# `fix1_fix2` is the known-good base (corrector + Newton magnitude). Fix 4
+# (tangent Laplacian) and Fix 5 (adaptive steps) are each composed on that base
+# *in isolation* -- the plan's cumulative ladder routed them through Fix 3, but
+# the Phase 0 run showed Fix 3 (latent predictor) scrambles the mesh
+# (fold-over ~0.5), so it is dropped and the remaining fixes are tested cleanly.
+# The `*_fix3*` / `all` configs are retained for the record but not submitted.
 EXPERIMENT_CONFIGS = {
     "baseline": {},
     "fix1": {"n_corrector_iters": 5},
     "fix2": {"step_magnitude": "newton"},
     "fix1_fix2": {"n_corrector_iters": 5, "step_magnitude": "newton"},
+    "fix6": {"n_corrector_iters": 5, "step_magnitude": "line_search"},
+    "fix1_fix2_fix4": {
+        "n_corrector_iters": 5,
+        "step_magnitude": "newton",
+        "tangent_laplacian": True,
+    },
+    "fix1_fix2_fix5": {
+        "n_corrector_iters": 5,
+        "step_magnitude": "newton",
+        "adaptive_steps": True,
+    },
+    # --- retained for the record; Fix 3 rejected (see note above) ---
     "fix1_fix2_fix3": {
         "n_corrector_iters": 5,
         "step_magnitude": "newton",
@@ -94,7 +111,6 @@ EXPERIMENT_CONFIGS = {
         "tangent_laplacian": True,
         "adaptive_steps": True,
     },
-    "fix6": {"n_corrector_iters": 5, "step_magnitude": "line_search"},
 }
 
 # NFE sensitivity grid (plan section 2.4).
