@@ -232,6 +232,10 @@ class StepConfig:
     line_search_scales: Tuple[float, ...] = (0.0, 0.5, 1.0, 1.5, 2.0)
     # Fix 3 -- latent-advection predictor.
     latent_predictor: bool = False
+    # Cap on the per-point predictor displacement (normalised units). Where
+    # ||grad_x SDF|| is small the 1/||grad||^2 ODE factor explodes; without this
+    # cap a single predictor step can fling a point off-surface and diverge.
+    predictor_max_step: float = 0.1
     # Fix 4b -- tangent-projected Laplacian smoothing (needs source faces).
     tangent_laplacian: bool = False
     tangent_laplacian_alpha: float = 0.5
@@ -484,12 +488,18 @@ def _corrector_loop(model, latent, points, surface_idx, config, diag=None):
     return points, residual_max
 
 
-def _latent_predictor_step(model, latent, points, surface_idx, dz, diag=None):
+def _latent_predictor_step(model, latent, points, surface_idx, dz, config, diag=None):
     """Fix 3 -- implicit-function ODE predictor.
 
     Moves points along ``dx = -(dSDF/dz . dz) / ||grad_x SDF||^2 * grad_x SDF``,
     the least-norm motion that keeps a point on the moving level set as the
     latent advances by ``dz``. It is applied *before* the corrector.
+
+    The ``1/||grad_x SDF||^2`` factor is unbounded: where the (non-Eikonal)
+    decoder's spatial gradient is small it produces an enormous displacement
+    that flings the point off-surface and diverges. Since the predictor only
+    needs to be approximately right -- the corrector re-projects afterwards --
+    the per-point displacement is capped at ``config.predictor_max_step``.
     """
     grad_pos, _, latent_dir_deriv = _sdf_step_eval(model, points, latent, surface_idx, dz=dz)
     if diag is not None:
@@ -499,6 +509,10 @@ def _latent_predictor_step(model, latent, points, surface_idx, dz, diag=None):
     coeff = latent_dir_deriv / grad_norm_sq.clamp_min(EPS * EPS)  # (B,)
     dx = -coeff.unsqueeze(1) * grad_pos
     dx[flat_mask] = 0.0
+    # Cap the per-point displacement so a small-gradient point cannot diverge.
+    dx_norm = dx.norm(dim=1, keepdim=True)
+    clip = (config.predictor_max_step / dx_norm.clamp_min(EPS)).clamp_max(1.0)
+    dx = dx * clip
     assert_finite(dx, "Latent-advection predictor step")
     return points + dx
 
@@ -616,7 +630,9 @@ def _advance(model, points, z_start, z_end, surface_idx, config, laplacian, diag
     if config.latent_predictor:
         z_start_t = _to_model_tensor(z_start, model)
         dz = z_end_t - z_start_t
-        points = _latent_predictor_step(model, z_start_t, points, surface_idx, dz, diag)
+        points = _latent_predictor_step(
+            model, z_start_t, points, surface_idx, dz, config, diag
+        )
 
     points, _ = _corrector_loop(model, z_end_t, points, surface_idx, config, diag)
 
@@ -842,6 +858,7 @@ def interpolate_points(
     step_magnitude="normal",
     line_search_scales=(0.0, 0.5, 1.0, 1.5, 2.0),
     latent_predictor=False,
+    predictor_max_step=0.1,
     faces=None,
     tangent_laplacian=False,
     tangent_laplacian_alpha=0.5,
@@ -873,6 +890,8 @@ def interpolate_points(
       ``"line_search"`` (Fix 6).
     - line_search_scales (tuple): Fix 6 -- candidate step scalings.
     - latent_predictor (bool): Fix 3 -- enable the latent-advection predictor.
+    - predictor_max_step (float): Fix 3 -- cap on the per-point predictor
+      displacement (normalised units); guards against small-gradient blow-up.
     - faces (np.ndarray): source-mesh triangle connectivity (M, 3); required by
       Fix 4b and used to scale the Fix 5 Richardson tolerance.
     - tangent_laplacian (bool): Fix 4b -- enable tangent-projected smoothing.
@@ -894,6 +913,7 @@ def interpolate_points(
         step_magnitude=step_magnitude,
         line_search_scales=tuple(line_search_scales),
         latent_predictor=latent_predictor,
+        predictor_max_step=predictor_max_step,
         tangent_laplacian=tangent_laplacian,
         tangent_laplacian_alpha=tangent_laplacian_alpha,
         tangent_laplacian_iters=tangent_laplacian_iters,

@@ -20,6 +20,8 @@
 #   ./submit_phase0.sh                  # fit + matrix + merge
 #   ./submit_phase0.sh --matrix-only    # skip wave 1 (cache already built);
 #                                       # also resumes partial matrix shards
+#   ./submit_phase0.sh --matrix-only --configs=all,fix1_fix2_fix3
+#                                       # restrict wave 2 to a config subset
 #
 # Monitor:  squeue -u $USER
 # SLURM logs land in experiments/mesh_interpolation/slurm_outputs/
@@ -41,9 +43,11 @@ CONDA_ENV="comak"  # has nsosim + an editable install of this NSM repo
 
 DRY_RUN=0
 MATRIX_ONLY=0
+CONFIG_FILTER=""   # comma-separated config subset for wave 2 (default: all)
 for arg in "$@"; do
     [[ "$arg" == "--dry-run" ]] && DRY_RUN=1
     [[ "$arg" == "--matrix-only" ]] && MATRIX_ONLY=1
+    [[ "$arg" == --configs=* ]] && CONFIG_FILTER="${arg#--configs=}"
 done
 
 # Knee keys, config names and the NFE grid -- pulled live from config.py /
@@ -51,6 +55,9 @@ done
 KEYS=$(python -c "import json; print(' '.join(r['key'] for r in json.load(open('${SCRIPT_DIR}/cache/manifest.json'))))")
 CONFIGS=$(python -c "from experiments.mesh_interpolation.config import EXPERIMENT_CONFIGS as c; print(' '.join(c))")
 NFE_GRID=$(python -c "from experiments.mesh_interpolation.config import NFE_GRID as n; print(' '.join(map(str, n)))")
+if [[ -n "$CONFIG_FILTER" ]]; then
+    CONFIGS="${CONFIG_FILTER//,/ }"
+fi
 
 echo "=================================================="
 echo "Mesh-interpolation Phase 0"

@@ -14,6 +14,7 @@ import torch.nn as nn
 
 from NSM.mesh.interpolate import (
     StepConfig,
+    _latent_predictor_step,
     build_mesh_laplacian,
     interpolate_points,
     update_positions,
@@ -217,6 +218,42 @@ def test_latent_predictor_runs_and_converges():
     )
     assert np.isfinite(warped).all()
     np.testing.assert_allclose(_radii(warped), 1.5, atol=1e-2)
+
+
+def test_predictor_step_is_clamped_on_small_gradient_field():
+    """The 1/||grad||^2 predictor factor must not blow up on a non-Eikonal field.
+
+    With ||grad SDF|| = 0.02 the unclamped predictor displacement would be
+    ~0.5; the cap must hold it to predictor_max_step.
+    """
+    model = SphereSDF(sdf_scale=0.02)
+    z1, z2 = _latents(1.0, 1.5)
+    pts = torch.tensor(_sphere_points(radius=1.0))
+    dz = torch.tensor(z2 - z1, dtype=torch.float)
+    cfg = StepConfig(latent_predictor=True, predictor_max_step=0.1)
+    moved = _latent_predictor_step(
+        model, torch.tensor(z1, dtype=torch.float), pts, 0, dz, cfg
+    )
+    disp = (moved - pts).norm(dim=1)
+    assert torch.isfinite(disp).all()
+    assert disp.max().item() <= 0.1 + 1e-5
+
+
+def test_latent_predictor_stable_on_non_eikonal_field():
+    """interpolate_points with the predictor must not diverge on a scaled SDF.
+
+    Mirrors the cluster `fix1_fix2_fix3` config (corrector + Newton + predictor).
+    """
+    model = SphereSDF(sdf_scale=0.05)
+    z1, z2 = _latents(1.0, 1.3)
+    pts = _sphere_points()
+    warped = interpolate_points(
+        model, z1, z2, n_steps=20, points1=pts, surface_idx=0,
+        latent_predictor=True, n_corrector_iters=5, step_magnitude="newton",
+    )
+    assert np.isfinite(warped).all()
+    assert _radii(warped).max() < 5.0  # no blow-up
+    np.testing.assert_allclose(_radii(warped), 1.3, atol=1e-2)
 
 
 # ---------------------------------------------------------------------------
