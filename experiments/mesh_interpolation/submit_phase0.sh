@@ -145,7 +145,9 @@ if [[ $DRY_RUN -eq 1 ]]; then
     echo "[dry-run] wave3 ${JOB} (afterok: all wave2)"
     rm -f "$SH"
 else
-    MDEP="--dependency=afterok:$(IFS=:; echo "${MATRIX_JOBS[*]}")"
+    # afterany (not afterok): if a heavy matrix job times out it still has a
+    # checkpointed shard, so the merge should run on whatever completed.
+    MDEP="--dependency=afterany:$(IFS=:; echo "${MATRIX_JOBS[*]}")"
     JID=$(sbatch $MDEP "$SH" | awk '{print $NF}')
     echo "wave3 ${JOB}: ${JID} ${MDEP}"
     rm -f "$SH"
