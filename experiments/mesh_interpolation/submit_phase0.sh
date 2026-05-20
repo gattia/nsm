@@ -48,6 +48,7 @@ for arg in "$@"; do
     [[ "$arg" == "--dry-run" ]] && DRY_RUN=1
     [[ "$arg" == "--matrix-only" ]] && MATRIX_ONLY=1
     [[ "$arg" == --configs=* ]] && CONFIG_FILTER="${arg#--configs=}"
+    [[ "$arg" == --nfe=* ]] && NFE_OVERRIDE="${arg#--nfe=}"
 done
 
 # Knee keys, config names and the NFE grid -- pulled live from config.py /
@@ -57,6 +58,9 @@ CONFIGS=$(python -c "from experiments.mesh_interpolation.config import EXPERIMEN
 NFE_GRID=$(python -c "from experiments.mesh_interpolation.config import NFE_GRID as n; print(' '.join(map(str, n)))")
 if [[ -n "$CONFIG_FILTER" ]]; then
     CONFIGS="${CONFIG_FILTER//,/ }"
+fi
+if [[ -n "$NFE_OVERRIDE" ]]; then
+    NFE_GRID="${NFE_OVERRIDE//,/ }"
 fi
 
 echo "=================================================="

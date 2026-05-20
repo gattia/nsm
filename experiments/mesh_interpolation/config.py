@@ -145,6 +145,47 @@ EXPERIMENT_CONFIGS = {
         "smooth_normals_max_step": 0.05,
         "tangent_laplacian_feature_angle": 60.0,
     },
+}
+
+# ---------------------------------------------------------------------------
+# Tuning sweep: Fix 4c x (tangent_laplacian_alpha, feature_angle) x {Fix 7 on/off}
+#
+# Phase 0 found that fix1_fix2_fix4c crushes fold-over but pays a +16% cart
+# ASSD cost. The sweep is to find the cart Pareto: which (alpha, theta) gives
+# the best ASSD-vs-fold-over trade, and whether stacking Fix 7c on top moves
+# the front further.  alpha = umbrella step size; theta = dihedral threshold
+# in degrees for the seam-pin mask. Lower alpha = gentler smoothing; lower
+# theta = pin more vertices as features (more rim preserved).
+# ---------------------------------------------------------------------------
+
+
+def _sweep_configs():
+    out = {}
+    for alpha in (0.1, 0.2, 0.3, 0.5):
+        for theta in (30, 45, 60):
+            for use_fix7 in (False, True):
+                cfg = {
+                    "n_corrector_iters": 5,
+                    "step_magnitude": "newton",
+                    "tangent_laplacian": True,
+                    "tangent_laplacian_pin_boundary": True,
+                    "tangent_laplacian_alpha": alpha,
+                    "tangent_laplacian_feature_angle": float(theta),
+                }
+                name = f"sw_a{int(alpha*10):02d}_t{theta}"
+                if use_fix7:
+                    cfg["smooth_normals"] = True
+                    cfg["smooth_normals_max_step"] = 0.05
+                    name += "_n"
+                out[name] = cfg
+    return out
+
+
+EXPERIMENT_CONFIGS.update(_sweep_configs())
+SWEEP_CONFIG_NAMES = sorted(k for k in EXPERIMENT_CONFIGS if k.startswith("sw_"))
+
+# Adaptive (Fix 5) and the rejected Fix-3 variants, retained for the record.
+EXPERIMENT_CONFIGS.update({
     "fix1_fix2_fix5": {
         "n_corrector_iters": 5,
         "step_magnitude": "newton",
@@ -169,7 +210,7 @@ EXPERIMENT_CONFIGS = {
         "tangent_laplacian": True,
         "adaptive_steps": True,
     },
-}
+})
 
 # NFE sensitivity grid (plan section 2.4).
 NFE_GRID = [10, 25, 50, 100, 200]
