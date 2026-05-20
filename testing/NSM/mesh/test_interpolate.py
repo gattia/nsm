@@ -17,6 +17,7 @@ from NSM.mesh.interpolate import (
     _latent_predictor_step,
     build_mesh_laplacian,
     compute_boundary_mask,
+    compute_feature_mask,
     interpolate_points,
     update_positions,
 )
@@ -426,6 +427,48 @@ def test_pin_boundary_keeps_rim_in_place_on_disk():
     )
     # On a closed mesh the two modes should agree (no boundary to pin).
     np.testing.assert_allclose(warped_pin, warped_nopin, atol=1e-5)
+
+
+def test_compute_feature_mask_sphere_smooth_no_features():
+    """A finely tessellated sphere has only gently-varying dihedral angles."""
+    import pyvista as pv
+
+    sphere = pv.Sphere(theta_resolution=32, phi_resolution=32)
+    pts = np.asarray(sphere.points, dtype=np.float64)
+    faces = sphere.regular_faces.astype(np.int64)
+    mask = compute_feature_mask(faces, pts, dihedral_threshold_deg=60.0)
+    # No sharp features on a smooth sphere.
+    assert not mask.any()
+
+
+def test_compute_feature_mask_tent_detects_ridge():
+    """Two triangles sharing an edge but folded 90 degrees: every vertex on
+    the shared ridge is a feature vertex."""
+    points = np.array(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.5, 1.0, 0.0], [0.5, 0.5, 1.0]],
+        dtype=np.float64,
+    )
+    # Two triangles (0,1,2) flat, (0,1,3) tilted up -- shared edge 0-1.
+    faces = np.array([[0, 1, 2], [0, 1, 3]], dtype=np.int64)
+    mask = compute_feature_mask(faces, points, dihedral_threshold_deg=60.0)
+    # Ridge vertices (0, 1) flagged; isolated tips (2, 3) only via the
+    # boundary edges they sit on -- all four are on at least one feature/boundary edge.
+    assert mask.all()
+
+
+def test_compute_feature_mask_finds_seam_on_thin_disk():
+    """A thin closed disk (two-sided) has a high-dihedral seam at the rim."""
+    import pyvista as pv
+
+    # Make a thin disk by sampling a thick circle: two parallel triangulated
+    # circles connected by a band -- pv.Cylinder approximates this.
+    cyl = pv.Cylinder(radius=1.0, height=0.05, resolution=24).triangulate()
+    pts = np.asarray(cyl.points, dtype=np.float64)
+    faces = cyl.regular_faces.astype(np.int64)
+    mask = compute_feature_mask(faces, pts, dihedral_threshold_deg=60.0)
+    # The thin band where the top cap, side, and bottom cap meet has sharp
+    # dihedral angles -- some vertices must be flagged.
+    assert mask.any(), "thin disk should have a high-dihedral seam"
 
 
 def test_all_fixes_compose():

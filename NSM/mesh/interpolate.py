@@ -242,9 +242,15 @@ class StepConfig:
     tangent_laplacian_iters: int = 1
     # Boundary-aware Fix 4: pin vertices that lie on a mesh rim (an edge
     # belonging to a single triangle) so umbrella smoothing cannot contract
-    # the boundary inward. Phase 0 showed plain Fix 4 collapses the cart /
-    # lat_men rims and inflates ASSD; pinning fixes this.
+    # the boundary inward.
     tangent_laplacian_pin_boundary: bool = True
+    # Phase 0 finding: the OAI cart / menisci meshes are topologically closed
+    # (no boundary edges) -- the rim we actually need to pin is a *geometric*
+    # seam where the surface folds back sharply. Set this to a dihedral
+    # threshold in degrees (e.g. 60) and the pin mask is built from edges
+    # whose two incident face normals differ by more than that angle, plus
+    # any topological boundary edges. ``None`` = topological boundary only.
+    tangent_laplacian_feature_angle: Optional[float] = None
     # Fix 7 -- smoothed-normal projection. Replace the corrector's projection
     # direction with a Laplacian-smoothed unit gradient field, then choose the
     # magnitude that lands on the level set along that direction. Coherent
@@ -252,6 +258,12 @@ class StepConfig:
     # there is no boundary collapse / ASSD penalty. Needs source faces.
     smooth_normals: bool = False
     smooth_normal_iters: int = 3
+    # Per-point cap on the Fix 7 step magnitude. Where the Laplacian-smoothed
+    # direction crosses a sharp gradient discontinuity the (g . d) denominator
+    # in the magnitude formula shrinks toward zero; without this cap the step
+    # diverges (Phase 0 showed this on cart / menisci). Mirrors
+    # ``predictor_max_step`` for Fix 3.
+    smooth_normals_max_step: float = 0.05
     # Fix 5 -- adaptive latent step-sizing.
     adaptive_steps: bool = False
     adaptive_tol: Optional[float] = None
@@ -483,12 +495,18 @@ def _project_once(model, latent, points, surface_idx, config, diag=None):
     return new_points, sdf
 
 
-def _corrector_loop(model, latent, points, surface_idx, config, diag=None, laplacian=None):
+def _corrector_loop(
+    model, latent, points, surface_idx, config, diag=None,
+    laplacian=None, feature_mask=None,
+):
     """Fix 1 -- iterate :func:`_project_once` until converged or capped.
 
     With ``n_corrector_iters == 1`` this is a single projection (baseline).
     When ``config.smooth_normals`` is set (Fix 7), the smoothed-direction step
-    replaces the standard per-point projection and ``laplacian`` is required.
+    replaces the standard per-point projection and ``laplacian`` is required;
+    ``feature_mask`` (when provided) marks vertices on geometric features and
+    holds their normals fixed during smoothing so the smoothed field doesn't
+    blur across sharp seams.
 
     Returns ``(points, residual_max)`` where ``residual_max`` is the largest
     ``|SDF|`` seen on the final evaluation.
@@ -497,7 +515,7 @@ def _corrector_loop(model, latent, points, surface_idx, config, diag=None, lapla
     for it in range(config.n_corrector_iters):
         if config.smooth_normals:
             new_points, sdf = _smooth_normals_step(
-                model, latent, points, surface_idx, laplacian, config, diag
+                model, latent, points, surface_idx, laplacian, feature_mask, config, diag
             )
         else:
             new_points, sdf = _project_once(model, latent, points, surface_idx, config, diag)
@@ -599,6 +617,77 @@ def compute_boundary_mask(faces, n_points):
     return mask
 
 
+def compute_feature_mask(faces, points, dihedral_threshold_deg=60.0):
+    """Boolean mask of vertices on geometric features OR topological boundaries.
+
+    For each edge, computes the angle between its two incident face normals;
+    edges with dihedral angle above ``dihedral_threshold_deg`` are *feature
+    edges*. Topological boundary edges (incident to only one face) and
+    non-manifold edges (> 2 faces) are also flagged. Vertices on any such
+    edge are returned as True.
+
+    This is the right "boundary" for the marching-cubes femur surfaces:
+    bone / cart / menisci are topologically closed (no boundary edges) but
+    cart and menisci have a thin *geometric* seam where the surface folds
+    180 degrees between sides -- a high-dihedral region the plain boundary
+    detector misses. Use this mask to pin the seam during tangent Laplacian
+    smoothing or to keep it out of the normal-smoothing neighbourhood.
+
+    Args:
+    - faces (np.ndarray): triangle connectivity, shape (M, 3).
+    - points (np.ndarray): vertex positions, shape (N, 3); the face normals
+      are taken at these positions (source-mesh positions, computed once).
+    - dihedral_threshold_deg (float): edges where the angle between incident
+      face normals exceeds this value are feature edges.
+
+    Returns:
+    - np.ndarray[bool]: shape (n_points,), True for feature / boundary vertices.
+    """
+    faces = np.asarray(faces).reshape(-1, 3).astype(np.int64)
+    pts = np.asarray(points, dtype=np.float64)
+    n_points = max(int(faces.max()) + 1, len(pts))
+    n_tri = len(faces)
+
+    # Outward face normals (un-normalised, then to unit length).
+    e1 = pts[faces[:, 1]] - pts[faces[:, 0]]
+    e2 = pts[faces[:, 2]] - pts[faces[:, 0]]
+    fn = np.cross(e1, e2)
+    fn = fn / np.clip(np.linalg.norm(fn, axis=1, keepdims=True), 1e-20, None)
+
+    # Canonical (sorted) edges, each tagged with the triangle it came from.
+    edges = np.concatenate(
+        [faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]], axis=0
+    )
+    edges = np.sort(edges, axis=1)
+    face_idx = np.tile(np.arange(n_tri), 3)
+
+    # Group entries by unique edge.
+    unique_e, inverse = np.unique(edges, axis=0, return_inverse=True)
+    order = np.argsort(inverse, kind="stable")
+    inv_sorted = inverse[order]
+    face_sorted = face_idx[order]
+    # Group boundaries within the sorted array (start indices of each group).
+    starts = np.concatenate(
+        ([0], np.where(np.diff(inv_sorted) != 0)[0] + 1, [len(inv_sorted)])
+    )
+
+    cos_thr = float(np.cos(np.deg2rad(dihedral_threshold_deg)))
+    mask = np.zeros(n_points, dtype=bool)
+    for k in range(len(unique_e)):
+        s, e = starts[k], starts[k + 1]
+        n_inc = e - s
+        if n_inc != 2:
+            # Topological boundary (1 face) or non-manifold (> 2 faces).
+            mask[unique_e[k, 0]] = True
+            mask[unique_e[k, 1]] = True
+        else:
+            d = float(fn[face_sorted[s]] @ fn[face_sorted[s + 1]])
+            if d < cos_thr:  # angle > threshold
+                mask[unique_e[k, 0]] = True
+                mask[unique_e[k, 1]] = True
+    return mask
+
+
 def _tangent_laplacian_step(
     model, latent, points, surface_idx, laplacian, boundary_mask, config, diag=None
 ):
@@ -628,12 +717,15 @@ def _tangent_laplacian_step(
         points = points + config.tangent_laplacian_alpha * lap_tan
         # Re-project onto the level set to undo any residual off-surface drift.
         points, _ = _corrector_loop(
-            model, latent, points, surface_idx, config, diag, laplacian=laplacian
+            model, latent, points, surface_idx, config, diag,
+            laplacian=laplacian, feature_mask=boundary_mask,
         )
     return points
 
 
-def _smooth_normals_step(model, latent, points, surface_idx, laplacian, config, diag=None):
+def _smooth_normals_step(
+    model, latent, points, surface_idx, laplacian, feature_mask, config, diag=None
+):
     """Fix 7 -- smoothed-direction projection step.
 
     Replaces the per-point Newton direction (unit gradient at the point) with
@@ -648,6 +740,12 @@ def _smooth_normals_step(model, latent, points, surface_idx, laplacian, config, 
     neighbour directions reduce fold-over without smoothing positions, so
     there is no boundary collapse / coverage penalty (unlike Fix 4).
 
+    When ``feature_mask`` is provided, the unit normals of feature vertices
+    (geometric seams / sharp dihedrals) are held fixed across the smoothing
+    iterations -- preventing the seam's true normal from being averaged away
+    and preventing the (g.d) denominator from collapsing toward zero at the
+    seam. The hard ``smooth_normals_max_step`` cap is the final safety net.
+
     Returns ``(new_points, sdf_pre_step)``.
     """
     grad_pos, sdf, _ = _sdf_step_eval(model, points, latent, surface_idx)
@@ -656,12 +754,17 @@ def _smooth_normals_step(model, latent, points, surface_idx, laplacian, config, 
     g_unit, grad_norm, flat_mask = _unit_gradient(grad_pos)
 
     # Iterated Laplacian smoothing of the unit normal field, re-normalised
-    # to unit length at each pass.
+    # to unit length at each pass. Feature vertices' normals are restored to
+    # their raw value at the end of every pass so the seam's true direction
+    # is not blurred and its neighbours see the genuine normal each iteration.
     n_smooth = g_unit
+    use_feature_pin = feature_mask is not None and bool(feature_mask.any())
     for _ in range(max(0, config.smooth_normal_iters)):
         n_smooth = torch.sparse.mm(laplacian, n_smooth)
         nn = n_smooth.norm(dim=1, keepdim=True).clamp_min(EPS)
         n_smooth = n_smooth / nn
+        if use_feature_pin:
+            n_smooth = torch.where(feature_mask.unsqueeze(1), g_unit, n_smooth)
 
     # Guard against sign flips: where smoothing crossed a gradient discontinuity
     # and the smoothed direction points opposite the true gradient, flip it
@@ -677,6 +780,13 @@ def _smooth_normals_step(model, latent, points, surface_idx, laplacian, config, 
     scale = sdf / safe
     step = n_smooth * scale.unsqueeze(1)
     step[flat_mask] = 0.0
+    # Hard per-point magnitude clamp: where the smoothed direction crosses a
+    # sharp gradient discontinuity, (g . d) collapses toward zero and the
+    # naive step magnitude diverges. The clamp bounds this; the corrector
+    # picks up the residual on the next iteration.
+    step_norm = step.norm(dim=1, keepdim=True)
+    clip = (config.smooth_normals_max_step / step_norm.clamp_min(EPS)).clamp_max(1.0)
+    step = step * clip
     assert_finite(step, "Smoothed-normal step")
     new_points = points - step
     return new_points, sdf
@@ -745,7 +855,8 @@ def _advance(model, points, z_start, z_end, surface_idx, config, laplacian, boun
         )
 
     points, _ = _corrector_loop(
-        model, z_end_t, points, surface_idx, config, diag, laplacian=laplacian
+        model, z_end_t, points, surface_idx, config, diag,
+        laplacian=laplacian, feature_mask=boundary_mask,
     )
 
     if config.tangent_laplacian:
@@ -932,9 +1043,19 @@ def interpolate_common(
             laplacian = build_mesh_laplacian(
                 faces, points.shape[0], device=device, dtype=points.dtype
             )
-            boundary_mask = torch.as_tensor(
-                compute_boundary_mask(faces, points.shape[0]), device=device
-            )
+            # The "pin" mask for Fix 4: by default topological boundary only
+            # (no-op on closed marching-cubes meshes). When
+            # tangent_laplacian_feature_angle is set, use dihedral-aware
+            # feature detection -- this picks up the geometric seam on
+            # closed-but-sharp meshes like the menisci.
+            if config.tangent_laplacian_feature_angle is not None:
+                pin_np = compute_feature_mask(
+                    faces, points.detach().cpu().numpy(),
+                    dihedral_threshold_deg=config.tangent_laplacian_feature_angle,
+                )
+            else:
+                pin_np = compute_boundary_mask(faces, points.shape[0])
+            boundary_mask = torch.as_tensor(pin_np, device=device)
 
         if config.adaptive_steps:
             config.adaptive_tol = _resolve_adaptive_tol(config, points, faces)
@@ -992,8 +1113,10 @@ def interpolate_points(
     tangent_laplacian_alpha=0.5,
     tangent_laplacian_iters=1,
     tangent_laplacian_pin_boundary=True,
+    tangent_laplacian_feature_angle=None,
     smooth_normals=False,
     smooth_normal_iters=3,
+    smooth_normals_max_step=0.05,
     adaptive_steps=False,
     adaptive_tol=None,
     adaptive_estimator="richardson",
@@ -1030,10 +1153,15 @@ def interpolate_points(
     - tangent_laplacian_iters (int): Fix 4b -- smoothing iterations per step.
     - tangent_laplacian_pin_boundary (bool): Fix 4b -- pin rim vertices so the
       mesh boundary cannot contract (default True; needed on open sheets).
+    - tangent_laplacian_feature_angle (float|None): Fix 4c -- when set,
+      compute the pin mask from dihedral-angle features (degrees), catching
+      the geometric seam on closed-but-sharp meshes like the menisci.
     - smooth_normals (bool): Fix 7 -- replace the projection direction with a
       Laplacian-smoothed unit-normal field; reduces fold-over without smoothing
       positions. Needs `faces`.
     - smooth_normal_iters (int): Fix 7 -- number of normal-smoothing passes.
+    - smooth_normals_max_step (float): Fix 7 -- hard per-point step cap;
+      guards the (g.d)-denominator blow-up when smoothing crosses a feature.
     - adaptive_steps (bool): Fix 5 -- adaptively subdivide latent steps.
     - adaptive_tol (float): Fix 5 -- error tolerance (auto, scale-relative, if None).
     - adaptive_estimator (str): Fix 5 -- ``"richardson"`` or ``"residual"``.
@@ -1055,8 +1183,10 @@ def interpolate_points(
         tangent_laplacian_alpha=tangent_laplacian_alpha,
         tangent_laplacian_iters=tangent_laplacian_iters,
         tangent_laplacian_pin_boundary=tangent_laplacian_pin_boundary,
+        tangent_laplacian_feature_angle=tangent_laplacian_feature_angle,
         smooth_normals=smooth_normals,
         smooth_normal_iters=smooth_normal_iters,
+        smooth_normals_max_step=smooth_normals_max_step,
         adaptive_steps=adaptive_steps,
         adaptive_tol=adaptive_tol,
         adaptive_estimator=adaptive_estimator,

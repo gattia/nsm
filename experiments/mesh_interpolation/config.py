@@ -114,6 +114,37 @@ EXPERIMENT_CONFIGS = {
         "tangent_laplacian_pin_boundary": True,
         "smooth_normals": True,
     },
+    # ---- Fix 4c / 7c: dihedral-aware seam detection -----------------------
+    # Phase 0 showed the OAI cart/menisci meshes are topologically closed,
+    # so Fix 4b's topological-boundary pin was a no-op. These configs
+    # detect the *geometric* seam via dihedral-angle thresholding (any edge
+    # whose two incident face normals differ by > 60 deg) and pin those
+    # vertices. Fix 7c also gains a hard step-magnitude clamp to bound the
+    # (g.d)-denominator pathology, and holds feature vertices' normals
+    # fixed during the Laplacian smoothing of the normal field.
+    "fix1_fix2_fix4c": {
+        "n_corrector_iters": 5,
+        "step_magnitude": "newton",
+        "tangent_laplacian": True,
+        "tangent_laplacian_pin_boundary": True,
+        "tangent_laplacian_feature_angle": 60.0,
+    },
+    "fix1_fix2_fix7c": {
+        "n_corrector_iters": 5,
+        "step_magnitude": "newton",
+        "smooth_normals": True,
+        "smooth_normals_max_step": 0.05,
+        "tangent_laplacian_feature_angle": 60.0,
+    },
+    "fix1_fix2_fix4c_fix7c": {
+        "n_corrector_iters": 5,
+        "step_magnitude": "newton",
+        "tangent_laplacian": True,
+        "tangent_laplacian_pin_boundary": True,
+        "smooth_normals": True,
+        "smooth_normals_max_step": 0.05,
+        "tangent_laplacian_feature_angle": 60.0,
+    },
     "fix1_fix2_fix5": {
         "n_corrector_iters": 5,
         "step_magnitude": "newton",
