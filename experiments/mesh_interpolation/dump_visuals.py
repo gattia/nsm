@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 import pyvista as pv
 
+from NSM.mesh.correspondence_metrics import _point_to_surface_distances
 from NSM.mesh.interpolate import compute_feature_mask, interpolate_points
 
 from .config import EXPERIMENT_CONFIGS, MESH_NAMES, MANIFEST_PATH, load_nsm_model
@@ -59,45 +60,97 @@ def foldover_per_triangle(source, warped_pts):
 
 
 def render_panel(source, target, feature_mask, warped_meshes, surface_name, out_png):
-    """One row of subplots: source(+seam), target, then each warped config."""
-    pv.set_plot_theme("document")
-    n = len(warped_meshes) + 2
-    width = 360 * n
-    plotter = pv.Plotter(off_screen=True, shape=(1, n), window_size=(width, 500))
+    """3-row x (2 + N) grid: source / target / each warped config.
 
-    # Source with the dihedral seam highlighted.
+    Row 0: per-triangle fold-over flag (red where flipped).
+    Row 1: per-vertex distance from warped point to target *surface*
+           (point-to-triangle, shared viridis scale).
+    Row 2: per-vertex warp travel distance ||warped - source||
+           (shared plasma scale).
+    """
+    pv.set_plot_theme("document")
+    n_cols = len(warped_meshes) + 2
+    width = 360 * n_cols
+    plotter = pv.Plotter(off_screen=True, shape=(3, n_cols), window_size=(width, 1080))
+
+    # Shared colour scales for rows 1 and 2 (so comparisons are visually fair).
+    all_td = np.concatenate(
+        [w.point_data["target_distance"] for w in warped_meshes.values()]
+    )
+    all_tv = np.concatenate(
+        [w.point_data["warp_travel"] for w in warped_meshes.values()]
+    )
+    td_max = float(np.percentile(all_td, 99))  # clip outliers for the colourmap
+    tv_max = float(np.percentile(all_tv, 99))
+
+    # ----- Row 0: fold-over -------------------------------------------------
     plotter.subplot(0, 0)
     plotter.add_mesh(source, color="lightsteelblue", show_edges=False, lighting=True)
     if feature_mask.any():
-        seam = source.points[feature_mask]
         plotter.add_points(
-            seam, color="green", point_size=5, render_points_as_spheres=True
+            source.points[feature_mask], color="green", point_size=5,
+            render_points_as_spheres=True,
         )
     plotter.add_text(
         f"source\nseam {int(feature_mask.sum())} pts",
-        font_size=9,
-        position="upper_left",
+        font_size=9, position="upper_left",
     )
-
     plotter.subplot(0, 1)
     plotter.add_mesh(target, color="peachpuff", show_edges=False, lighting=True)
     plotter.add_text("target", font_size=9, position="upper_left")
-
     for col, (label, warped) in enumerate(warped_meshes.items()):
         plotter.subplot(0, col + 2)
         flipped = warped.cell_data["flipped"]
         frac = 100.0 * float(flipped.sum()) / max(warped.n_cells, 1)
         plotter.add_mesh(
-            warped,
-            scalars="flipped",
-            cmap=["lightgray", "red"],
-            clim=[0, 1],
-            show_scalar_bar=False,
-            show_edges=False,
-            lighting=True,
+            warped, scalars="flipped", cmap=["lightgray", "red"], clim=[0, 1],
+            show_scalar_bar=False, show_edges=False, lighting=True,
         )
         plotter.add_text(
-            f"{label}\nfold {frac:.2f}%", font_size=9, position="upper_left"
+            f"{label}\nfold {frac:.2f}%", font_size=9, position="upper_left",
+        )
+
+    # ----- Row 1: distance to target surface --------------------------------
+    plotter.subplot(1, 0)
+    plotter.add_mesh(target, color="peachpuff", show_edges=False, opacity=0.4,
+                     lighting=True)
+    plotter.add_text("dist to target -->", font_size=9, position="upper_left")
+    plotter.subplot(1, 1)
+    plotter.add_mesh(target, color="peachpuff", show_edges=False, lighting=True)
+    for col, (label, warped) in enumerate(warped_meshes.items()):
+        plotter.subplot(1, col + 2)
+        td = warped.point_data["target_distance"]
+        plotter.add_mesh(
+            warped, scalars="target_distance", cmap="viridis",
+            clim=[0, td_max], show_edges=False, lighting=True,
+            show_scalar_bar=(col == 0),
+            scalar_bar_args=dict(title="dist to target", n_labels=3),
+        )
+        plotter.add_text(
+            f"p95 {np.percentile(td, 95):.5f}\nmax {td.max():.5f}",
+            font_size=9, position="upper_left",
+        )
+
+    # ----- Row 2: warp travel distance --------------------------------------
+    plotter.subplot(2, 0)
+    plotter.add_mesh(source, color="lightsteelblue", show_edges=False, opacity=0.4,
+                     lighting=True)
+    plotter.add_text("warp travel -->", font_size=9, position="upper_left")
+    plotter.subplot(2, 1)
+    plotter.add_mesh(target, color="peachpuff", show_edges=False, opacity=0.4,
+                     lighting=True)
+    for col, (label, warped) in enumerate(warped_meshes.items()):
+        plotter.subplot(2, col + 2)
+        tv = warped.point_data["warp_travel"]
+        plotter.add_mesh(
+            warped, scalars="warp_travel", cmap="plasma",
+            clim=[0, tv_max], show_edges=False, lighting=True,
+            show_scalar_bar=(col == 0),
+            scalar_bar_args=dict(title="warp travel", n_labels=3),
+        )
+        plotter.add_text(
+            f"mean {tv.mean():.4f}\nmax {tv.max():.4f}",
+            font_size=9, position="upper_left",
         )
 
     plotter.link_views()
@@ -161,6 +214,12 @@ def main():
             )
             warped = pv.PolyData(warped_pts, source.faces)
             warped.cell_data["flipped"] = foldover_per_triangle(source, warped_pts)
+            warped.point_data["target_distance"] = _point_to_surface_distances(
+                warped_pts, target
+            )
+            warped.point_data["warp_travel"] = np.linalg.norm(
+                warped_pts - np.asarray(source.points), axis=1
+            )
             vtk_path = os.path.join(
                 OUT_DIR, f"{sname}_{key_a}_to_{key_b}_{cfg_name}.vtk"
             )
