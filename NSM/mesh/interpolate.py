@@ -1337,6 +1337,19 @@ def _refined_one_ring_correspondence(
     return out
 
 
+def _expand_vertex_mask_by_hops(mask, faces, hops):
+    """Expand a boolean vertex mask outward by ``hops`` mesh edges."""
+    if hops <= 0:
+        return mask.copy()
+    cur = mask.copy()
+    faces = np.asarray(faces).reshape(-1, 3)
+    for _ in range(hops):
+        tri_hits = cur[faces[:, 0]] | cur[faces[:, 1]] | cur[faces[:, 2]]
+        cur = cur.copy()
+        cur[faces[tri_hits].ravel()] = True
+    return cur
+
+
 def interpolate_points_refined(
     model,
     latent1,
@@ -1348,6 +1361,8 @@ def interpolate_points_refined(
     max_refine_passes=3,
     area_growth_threshold=2.0,
     refine_flipped=True,
+    pre_split_seam_hops=0,
+    pre_split_seam_angle_deg=60.0,
     correspondence_mode="vertex",
     correspondence_alpha=0.5,
     correspondence_reproject=True,
@@ -1394,6 +1409,12 @@ def interpolate_points_refined(
       is greater than ``area_growth_threshold * source_area``.
     - refine_flipped (bool): also subdivide triangles whose orientation
       flipped during the warp.
+    - pre_split_seam_hops (int): if > 0, *before* pass 0 split any triangle
+      incident to a dihedral seam vertex (computed at
+      ``pre_split_seam_angle_deg``), optionally expanded outward by this
+      many mesh hops. Makes the seam dense from step 1.
+    - pre_split_seam_angle_deg (float): dihedral threshold for the
+      pre-split seam mask.
     - correspondence_mode (str): how to map refined mesh -> N originals.
     - correspondence_alpha (float): blend weight for ``"smoothed"`` mode.
     - correspondence_reproject (bool): project the final smoothed
@@ -1423,6 +1444,43 @@ def interpolate_points_refined(
     n_original = source_mesh.n_points
     refined = source_mesh.copy()
     refined_warped = None
+    # Track which refine pass introduced each vertex (0 = original; k = pass k).
+    # We append to this whenever the refined mesh grows, so the lookup is
+    # stable through subdivision.
+    origin_pass = np.zeros(n_original, dtype=np.int32)
+
+    # Optional pre-split: subdivide every triangle incident to a dihedral
+    # seam vertex (expanded by `pre_split_seam_hops` mesh hops) before pass 0.
+    if pre_split_seam_hops > 0:
+        seam_mask = compute_feature_mask(
+            np.asarray(refined.regular_faces, dtype=np.int64),
+            np.asarray(refined.points, dtype=np.float64),
+            dihedral_threshold_deg=pre_split_seam_angle_deg,
+        )
+        expanded = _expand_vertex_mask_by_hops(
+            seam_mask, refined.regular_faces, pre_split_seam_hops
+        )
+        if expanded.any():
+            faces_np = np.asarray(refined.regular_faces).reshape(-1, 3)
+            tri_hits = (
+                expanded[faces_np[:, 0]]
+                | expanded[faces_np[:, 1]]
+                | expanded[faces_np[:, 2]]
+            )
+            cells_to_split = np.where(tri_hits)[0]
+            if verbose:
+                print(
+                    f"  pre-split: {expanded.sum()} seam-region verts -> "
+                    f"splitting {len(cells_to_split)} triangles "
+                    f"(hops={pre_split_seam_hops}, theta={pre_split_seam_angle_deg})"
+                )
+            from NSM.mesh.refine_mesh import subdivide_triangles as _subdiv  # lazy
+            n_before = refined.n_points
+            refined = _subdiv(refined, cells_to_split)
+            origin_pass = np.concatenate(
+                [origin_pass, np.full(refined.n_points - n_before, -1, dtype=np.int32)]
+            )
+
     for pass_idx in range(max_refine_passes + 1):
         pts_np = np.asarray(refined.points, dtype=np.float64)
         faces_np = np.asarray(refined.regular_faces, dtype=np.int64)
@@ -1461,7 +1519,14 @@ def interpolate_points_refined(
         if n_bad == 0:
             break
 
+        n_before = refined.n_points
         refined = subdivide_triangles(refined, np.where(bad)[0])
+        origin_pass = np.concatenate(
+            [
+                origin_pass,
+                np.full(refined.n_points - n_before, pass_idx + 1, dtype=np.int32),
+            ]
+        )
 
     correspondence = _refined_one_ring_correspondence(
         np.asarray(refined_warped.points),
@@ -1476,5 +1541,11 @@ def interpolate_points_refined(
         )
 
     if return_refined:
+        # Tag each refined vertex with the pass index that introduced it
+        # (0 = original, -1 = added in the pre-split, 1.. = added in pass k).
+        # Attach to both the refined source and the refined warped mesh so the
+        # provenance survives to the caller.
+        refined.point_data["origin_pass"] = origin_pass
+        refined_warped.point_data["origin_pass"] = origin_pass
         return correspondence, refined, refined_warped
     return correspondence

@@ -37,12 +37,62 @@ OUT_DIR = os.path.join(os.path.dirname(__file__), "report", "visuals_refined")
 COLUMN_LABELS = {
     "baseline": "baseline",
     "fix4c": "fix1_fix2_fix4c\n(current best)",
-    "refined_vertex": "fix4c + refine\nvertex mode",
-    "refined_smoothed": "fix4c + refine\nsmoothed (alpha=0.5)",
+    "refined_vertex": "fix4c + refine\n(no pre-split)",
+    "refined_preseam_vertex": "fix4c + refine\n+ pre-split seam (1 hop)",
 }
 
 # Fix 4c kwargs (the current best non-refined config).
 FIX4C_KWARGS = dict(EXPERIMENT_CONFIGS["fix1_fix2_fix4c"])
+
+
+def _make_position_rgb(points, percentile_clip=2):
+    """Map (N, 3) positions to (N, 3) RGB in [0, 1] via per-axis percentile
+    clipping. Percentile clip avoids outlier vertices flattening the gradient."""
+    p = np.asarray(points, dtype=np.float64)
+    lo = np.percentile(p, percentile_clip, axis=0)
+    hi = np.percentile(p, 100 - percentile_clip, axis=0)
+    rng = np.clip(hi - lo, 1e-12, None)
+    rgb = np.clip((p - lo) / rng, 0.0, 1.0)
+    return rgb.astype(np.float32)
+
+
+def render_matched_rgb_panel(source, warped_meshes, surface_name, out_png):
+    """Side-by-side: source + each warped mesh, all colour-coded by the same
+    per-vertex RGB derived from the source-mesh position. Coherent colour
+    bands across the warps = correspondence preserved; scrambled = bad."""
+    pv.set_plot_theme("document")
+    n_cols = len(warped_meshes) + 1
+    plotter = pv.Plotter(
+        off_screen=True, shape=(1, n_cols), window_size=(360 * n_cols, 500)
+    )
+
+    rgb = _make_position_rgb(source.points)
+    src_col = source.copy()
+    src_col.point_data["rgb"] = rgb
+    plotter.subplot(0, 0)
+    plotter.add_mesh(src_col, scalars="rgb", rgb=True, show_edges=False, lighting=True)
+    plotter.add_text(
+        "source\ncolour = source position",
+        font_size=9, position="upper_left",
+    )
+
+    for col, (label, mesh) in enumerate(warped_meshes.items()):
+        plotter.subplot(0, col + 1)
+        # mesh has source's face connectivity and the warped positions; the
+        # per-vertex RGB transfers by vertex index directly.
+        m2 = mesh.copy()
+        m2.point_data["rgb"] = rgb
+        plotter.add_mesh(m2, scalars="rgb", rgb=True, show_edges=False, lighting=True)
+        plotter.add_text(label, font_size=9, position="upper_left")
+
+    plotter.link_views()
+    if surface_name in ("cart", "med_men", "lat_men"):
+        plotter.view_xy()
+        plotter.camera.zoom(1.2)
+    else:
+        plotter.view_isometric()
+    plotter.screenshot(out_png)
+    plotter.close()
 
 
 def warp_baseline(model, latents, source, target, sidx):
@@ -66,12 +116,17 @@ def warp_fix4c(model, latents, source, target, sidx):
     return np.asarray(w)
 
 
-def warp_refined(model, latents, source, target, sidx, mode):
-    """Fix 4c with iterative source-mesh refinement."""
+def warp_refined(model, latents, source, target, sidx, mode, pre_split_hops=0):
+    """Fix 4c with iterative source-mesh refinement.
+
+    ``pre_split_hops``: 0 = no pre-split (reactive only); >0 = subdivide
+    triangles around the dihedral seam first, then iterate.
+    """
     corr, refined_src, refined_warped = interpolate_points_refined(
         model, latents[0], latents[1], source_mesh=source,
         surface_idx=sidx, n_steps=100,
         max_refine_passes=3, area_growth_threshold=2.0, refine_flipped=True,
+        pre_split_seam_hops=pre_split_hops, pre_split_seam_angle_deg=60.0,
         correspondence_mode=mode, correspondence_alpha=0.5,
         correspondence_reproject=True,
         return_refined=True, verbose=True,
@@ -140,25 +195,30 @@ def main():
         w_4c = warp_fix4c(model, lats, source, target, sidx)
         warped_panels[COLUMN_LABELS["fix4c"]] = build_corr_mesh(source, w_4c, target)
 
-        for mode in ("vertex", "smoothed"):
-            print(f"  fix4c + refine (correspondence_mode={mode}) ...")
+        # Two refined variants: reactive only (no pre-split) vs. pre-split seam.
+        refined_variants = [
+            ("refined_vertex", "vertex", 0),
+            ("refined_preseam_vertex", "vertex", 1),
+        ]
+        for col_key, mode, pre_hops in refined_variants:
+            tag = f"pre{pre_hops}_{mode}"
+            print(f"  fix4c + refine ({tag}) ...")
             w_ref, refined_src, refined_warped = warp_refined(
-                model, lats, source, target, sidx, mode
+                model, lats, source, target, sidx, mode, pre_split_hops=pre_hops,
             )
-            warped_panels[COLUMN_LABELS[f"refined_{mode}"]] = build_corr_mesh(
+            warped_panels[COLUMN_LABELS[col_key]] = build_corr_mesh(
                 source, w_ref, target
             )
-            # Also save the refined source / over-resolved warp for inspection.
             refined_src.save(
                 os.path.join(
                     OUT_DIR,
-                    f"{sname}_{key_a}_to_{key_b}_refined_source_{mode}.vtk",
+                    f"{sname}_{key_a}_to_{key_b}_refined_source_{tag}.vtk",
                 )
             )
             refined_warped.save(
                 os.path.join(
                     OUT_DIR,
-                    f"{sname}_{key_a}_to_{key_b}_refined_warped_{mode}.vtk",
+                    f"{sname}_{key_a}_to_{key_b}_refined_warped_{tag}.vtk",
                 )
             )
 
@@ -170,6 +230,10 @@ def main():
         png_path = os.path.join(OUT_DIR, f"{sname}_{key_a}_to_{key_b}_refined.png")
         render_panel(source, target, feature_mask, warped_panels, sname, png_path)
         print(f"  -> {png_path}")
+
+        rgb_path = os.path.join(OUT_DIR, f"{sname}_{key_a}_to_{key_b}_rgb.png")
+        render_matched_rgb_panel(source, warped_panels, sname, rgb_path)
+        print(f"  -> {rgb_path}")
 
     print(f"\nDone. Visuals + .vtks under {OUT_DIR}")
 
