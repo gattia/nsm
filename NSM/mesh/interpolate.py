@@ -1261,3 +1261,220 @@ def interpolate_mesh(
         config=config,
         return_diagnostics=return_diagnostics,
     )
+
+
+# ---------------------------------------------------------------------------
+# Adaptive source-mesh refinement (Fix 8)
+# ---------------------------------------------------------------------------
+
+
+def _project_to_level_set(model, points_np, latent, surface_idx):
+    """One Newton projection of `points_np` (numpy (N,3)) onto SDF=0 of
+    ``surface_idx`` at ``latent``. Used to re-project a smoothed
+    correspondence back onto the target surface."""
+    device = next(model.parameters()).device
+    dtype = next(model.parameters()).dtype
+    pts = torch.as_tensor(points_np, device=device, dtype=dtype)
+    lat = torch.as_tensor(np.asarray(latent), device=device, dtype=dtype).reshape(1, -1)
+    lat = lat.expand(pts.shape[0], -1)
+    pos = pts.detach().requires_grad_(True)
+    was_training = model.training
+    model.eval()
+    try:
+        sdf_full = model(torch.cat([lat, pos], dim=1))
+        y = sdf_full[:, surface_idx]
+        (grad_pos,) = torch.autograd.grad(y.sum(), pos)
+        grad_norm_sq = (grad_pos * grad_pos).sum(dim=1, keepdim=True).clamp_min(EPS * EPS)
+        step = (y.detach().unsqueeze(1) / grad_norm_sq) * grad_pos.detach()
+        out = (pts - step).detach().cpu().numpy()
+    finally:
+        model.train(was_training)
+    return out
+
+
+def _refined_one_ring_correspondence(
+    refined_warped_pts, refined_faces, n_original, mode, alpha
+):
+    """Map refined warped vertices back to N correspondences for the originals.
+
+    ``"vertex"``  -> direct lookup (warped position of vertex i).
+    ``"smoothed"`` -> blend (1-alpha)*W_i + alpha*centroid(W over i U 1-ring).
+    ``"centroid"`` -> centroid(W over i U 1-ring) (same as smoothed with alpha=1).
+    """
+    if mode == "vertex":
+        return refined_warped_pts[:n_original].copy()
+
+    # Build a 1-ring adjacency list, but only the rows we need (i < n_original).
+    n_total = refined_warped_pts.shape[0]
+    faces = np.asarray(refined_faces).reshape(-1, 3).astype(np.int64)
+    edges = np.concatenate(
+        [faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]], axis=0
+    )
+    edges = np.concatenate([edges, edges[:, ::-1]], axis=0)
+    edges = np.unique(edges, axis=0)
+    mask = edges[:, 0] < n_original
+    src_idx = edges[mask, 0]
+    nbr_idx = edges[mask, 1]
+    order = np.argsort(src_idx, kind="stable")
+    src_sorted = src_idx[order]
+    nbr_sorted = nbr_idx[order]
+    starts = np.searchsorted(src_sorted, np.arange(n_original), side="left")
+    ends = np.searchsorted(src_sorted, np.arange(n_original), side="right")
+
+    out = np.empty((n_original, 3), dtype=refined_warped_pts.dtype)
+    for i in range(n_original):
+        s, e = starts[i], ends[i]
+        if s == e:
+            centroid = refined_warped_pts[i]
+        else:
+            nbrs = nbr_sorted[s:e]
+            idx_with_self = np.concatenate(([i], nbrs))
+            centroid = refined_warped_pts[idx_with_self].mean(axis=0)
+        if mode == "smoothed":
+            out[i] = (1.0 - alpha) * refined_warped_pts[i] + alpha * centroid
+        else:  # "centroid"
+            out[i] = centroid
+    return out
+
+
+def interpolate_points_refined(
+    model,
+    latent1,
+    latent2,
+    source_mesh,
+    surface_idx=0,
+    n_steps=100,
+    *,
+    max_refine_passes=3,
+    area_growth_threshold=2.0,
+    refine_flipped=True,
+    correspondence_mode="vertex",
+    correspondence_alpha=0.5,
+    correspondence_reproject=True,
+    return_refined=False,
+    verbose=False,
+    **interpolate_kwargs,
+):
+    """Iteratively refine the source mesh between warp passes (Fix 8).
+
+    Each pass:
+
+      1. Warp the (possibly refined) source via :func:`interpolate_points`.
+      2. Identify "bad" triangles -- area expanded above
+         ``area_growth_threshold`` times, or (if ``refine_flipped``) flipped.
+      3. Subdivide those triangles in the source via
+         ``NSM.mesh.refine_mesh.subdivide_triangles``, which appends new
+         midpoint vertices to the end of the point array -- so original
+         vertex indices ``0..N-1`` are preserved.
+      4. Stop when no bad triangles remain or ``max_refine_passes`` is hit.
+
+    Then map the over-resolved warped mesh back to N correspondences via
+    ``correspondence_mode``:
+
+      - ``"vertex"``    -- use each original vertex's own warped position.
+      - ``"smoothed"``  -- blend ``(1-alpha)*W_i + alpha * mean(W over i U
+        refined 1-ring)``; optionally re-project onto the target surface
+        with one Newton step (``correspondence_reproject=True``).
+      - ``"centroid"``  -- mean of i and its refined 1-ring, ditto.
+
+    Extra "ghost" vertices act as local strain relief: with finer triangles
+    near a seam, each smoothing/projection step has less per-vertex
+    distortion, so the original vertices end up in better positions. The
+    correspondence-mode controls whether we also let the refinement context
+    smooth the *reported* correspondence point for each original vertex.
+
+    Args:
+    - model, latent1, latent2: as :func:`interpolate_points`.
+    - source_mesh (pv.PolyData): triangulated source. ``regular_faces`` is
+      used; ``points`` defines initial positions.
+    - surface_idx, n_steps: as :func:`interpolate_points`.
+    - max_refine_passes (int): max number of refine iterations (after the
+      initial pass). 0 = no refinement (single warp).
+    - area_growth_threshold (float): a triangle is "bad" if its warped area
+      is greater than ``area_growth_threshold * source_area``.
+    - refine_flipped (bool): also subdivide triangles whose orientation
+      flipped during the warp.
+    - correspondence_mode (str): how to map refined mesh -> N originals.
+    - correspondence_alpha (float): blend weight for ``"smoothed"`` mode.
+    - correspondence_reproject (bool): project the final smoothed
+      correspondence onto the target level set (one Newton step).
+    - return_refined (bool): also return the final refined source mesh and
+      the over-resolved warped mesh.
+    - verbose (bool): print per-pass diagnostics.
+    - **interpolate_kwargs: forwarded to :func:`interpolate_points`
+      (n_corrector_iters, step_magnitude, tangent_laplacian, etc).
+
+    Returns:
+    - correspondence (np.ndarray): shape (N_original, 3) -- the warped
+      positions of the N original source vertices under the chosen mode.
+    - If ``return_refined`` is True, also ``(refined_source_pv, refined_warped_pv)``.
+    """
+    if correspondence_mode not in ("vertex", "smoothed", "centroid"):
+        raise ValueError(
+            f"correspondence_mode must be 'vertex', 'smoothed' or 'centroid', "
+            f"got {correspondence_mode!r}"
+        )
+    # Lazy imports so the module loads without pyvista when only the core
+    # interpolate_points API is used.
+    import pyvista as pv
+
+    from NSM.mesh.refine_mesh import subdivide_triangles
+
+    n_original = source_mesh.n_points
+    refined = source_mesh.copy()
+    refined_warped = None
+    for pass_idx in range(max_refine_passes + 1):
+        pts_np = np.asarray(refined.points, dtype=np.float64)
+        faces_np = np.asarray(refined.regular_faces, dtype=np.int64)
+        warped_pts = np.asarray(
+            interpolate_points(
+                model, latent1, latent2, n_steps=n_steps, points1=pts_np,
+                surface_idx=surface_idx, faces=faces_np, verbose=verbose,
+                **interpolate_kwargs,
+            )
+        )
+        refined_warped = pv.PolyData(warped_pts, refined.faces)
+        if pass_idx == max_refine_passes:
+            if verbose:
+                print(f"refined-warp: hit max_refine_passes={max_refine_passes}")
+            break
+
+        v0, v1, v2 = pts_np[faces_np[:, 0]], pts_np[faces_np[:, 1]], pts_np[faces_np[:, 2]]
+        w0, w1, w2 = (
+            warped_pts[faces_np[:, 0]],
+            warped_pts[faces_np[:, 1]],
+            warped_pts[faces_np[:, 2]],
+        )
+        n_src = np.cross(v1 - v0, v2 - v0)
+        n_wrp = np.cross(w1 - w0, w2 - w0)
+        a_src = 0.5 * np.linalg.norm(n_src, axis=1).clip(min=1e-20)
+        a_wrp = 0.5 * np.linalg.norm(n_wrp, axis=1)
+        bad = (a_wrp / a_src) > area_growth_threshold
+        if refine_flipped:
+            bad |= (n_src * n_wrp).sum(axis=1) < 0
+        n_bad = int(bad.sum())
+        if verbose:
+            print(
+                f"  pass {pass_idx}: n_pts={refined.n_points}  "
+                f"n_tri={refined.n_cells}  n_bad={n_bad}"
+            )
+        if n_bad == 0:
+            break
+
+        refined = subdivide_triangles(refined, np.where(bad)[0])
+
+    correspondence = _refined_one_ring_correspondence(
+        np.asarray(refined_warped.points),
+        np.asarray(refined.regular_faces, dtype=np.int64),
+        n_original,
+        correspondence_mode,
+        correspondence_alpha,
+    )
+    if correspondence_mode != "vertex" and correspondence_reproject:
+        correspondence = _project_to_level_set(
+            model, correspondence, latent2, surface_idx
+        )
+
+    if return_refined:
+        return correspondence, refined, refined_warped
+    return correspondence

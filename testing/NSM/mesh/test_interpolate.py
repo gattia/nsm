@@ -19,6 +19,7 @@ from NSM.mesh.interpolate import (
     compute_boundary_mask,
     compute_feature_mask,
     interpolate_points,
+    interpolate_points_refined,
     update_positions,
 )
 
@@ -469,6 +470,83 @@ def test_compute_feature_mask_finds_seam_on_thin_disk():
     # The thin band where the top cap, side, and bottom cap meet has sharp
     # dihedral angles -- some vertices must be flagged.
     assert mask.any(), "thin disk should have a high-dihedral seam"
+
+
+def test_refined_warp_preserves_original_correspondence_count():
+    """The refined wrapper must return exactly N_original warped positions."""
+    import pyvista as pv
+
+    sphere = pv.Sphere(radius=1.0, theta_resolution=12, phi_resolution=12)
+    model = SphereSDF()
+    z1, z2 = _latents(1.0, 1.3)
+    n_orig = sphere.n_points
+    out = interpolate_points_refined(
+        model, z1, z2, source_mesh=sphere, surface_idx=0,
+        n_steps=10, max_refine_passes=0,
+        step_magnitude="newton", n_corrector_iters=3,
+    )
+    assert out.shape == (n_orig, 3)
+    np.testing.assert_allclose(_radii(out), 1.3, atol=2e-2)
+
+
+def test_refined_warp_subdivides_when_thresholded():
+    """A low area-growth threshold should trigger subdivision and grow the
+    refined source mesh."""
+    import pyvista as pv
+
+    sphere = pv.Sphere(radius=1.0, theta_resolution=12, phi_resolution=12)
+    model = SphereSDF()
+    z1, z2 = _latents(1.0, 1.8)  # big radius change -> triangles expand a lot
+    n_orig = sphere.n_points
+    out, refined_src, _ = interpolate_points_refined(
+        model, z1, z2, source_mesh=sphere, surface_idx=0,
+        n_steps=10, max_refine_passes=2,
+        area_growth_threshold=1.5,  # any > 1.5x growth triggers a split
+        step_magnitude="newton", n_corrector_iters=3,
+        return_refined=True,
+    )
+    assert refined_src.n_points >= n_orig
+    # Correspondence shape must still match the ORIGINAL vertex count.
+    assert out.shape == (n_orig, 3)
+    # Original vertex positions in the refined source are unchanged.
+    np.testing.assert_allclose(
+        np.asarray(refined_src.points[:n_orig]),
+        np.asarray(sphere.points),
+        atol=1e-10,
+    )
+
+
+def test_refined_warp_correspondence_modes():
+    """All three correspondence modes return N_original points on/near the target."""
+    import pyvista as pv
+
+    sphere = pv.Sphere(radius=1.0, theta_resolution=12, phi_resolution=12)
+    model = SphereSDF()
+    z1, z2 = _latents(1.0, 1.3)
+    n_orig = sphere.n_points
+    for mode in ("vertex", "smoothed", "centroid"):
+        out = interpolate_points_refined(
+            model, z1, z2, source_mesh=sphere, surface_idx=0,
+            n_steps=10, max_refine_passes=1, area_growth_threshold=1.5,
+            correspondence_mode=mode, correspondence_alpha=0.5,
+            step_magnitude="newton", n_corrector_iters=3,
+        )
+        assert out.shape == (n_orig, 3)
+        # Re-projection should keep all modes on the target sphere.
+        np.testing.assert_allclose(_radii(out), 1.3, atol=2e-2)
+
+
+def test_refined_warp_invalid_mode():
+    import pyvista as pv
+
+    sphere = pv.Sphere(radius=1.0, theta_resolution=12, phi_resolution=12)
+    model = SphereSDF()
+    z1, z2 = _latents()
+    with pytest.raises(ValueError):
+        interpolate_points_refined(
+            model, z1, z2, source_mesh=sphere, surface_idx=0,
+            n_steps=5, max_refine_passes=0, correspondence_mode="bogus",
+        )
 
 
 def test_all_fixes_compose():
