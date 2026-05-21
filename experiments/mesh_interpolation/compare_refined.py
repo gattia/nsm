@@ -125,7 +125,7 @@ def warp_refined(model, latents, source, target, sidx, mode, pre_split_hops=0):
     corr, refined_src, refined_warped = interpolate_points_refined(
         model, latents[0], latents[1], source_mesh=source,
         surface_idx=sidx, n_steps=100,
-        max_refine_passes=3, area_growth_threshold=2.0, refine_flipped=True,
+        max_refine_passes=2, area_growth_threshold=2.0, refine_flipped=True,
         pre_split_seam_hops=pre_split_hops, pre_split_seam_angle_deg=60.0,
         correspondence_mode=mode, correspondence_alpha=0.5,
         correspondence_reproject=True,
@@ -165,8 +165,12 @@ def main():
         os.path.join(os.path.dirname(__file__), "report", "results_baseline__100.csv")
     )
 
+    # Skip bone (no seam; refinement not needed) and skip cart (the sweep
+    # already showed cart's ASSD penalty disappears at theta=30 without
+    # needing refinement). Focus the experiment on the menisci, where
+    # fold-over is still 40-50% even with the best non-refined config.
     for sidx, sname in enumerate(MESH_NAMES):
-        if sname == "bone":
+        if sname in ("bone", "cart"):
             continue
         sub = base[base.surface_name == sname]
         worst = sub.sort_values("foldover_fraction", ascending=False).iloc[0]
