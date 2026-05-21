@@ -37,12 +37,31 @@ OUT_DIR = os.path.join(os.path.dirname(__file__), "report", "visuals_refined")
 COLUMN_LABELS = {
     "baseline": "baseline",
     "fix4c": "fix1_fix2_fix4c\n(current best)",
-    "refined_vertex": "fix4c + refine\n(no pre-split)",
-    "refined_preseam_vertex": "fix4c + refine\n+ pre-split seam (1 hop)",
+    "refined_smoothed": "fix4c + refine\nsmoothed corr",
+    "refined_fix7_vertex": "fix4c + refine\n+ fix7 (smooth normals)",
+    "refined_fix7_smoothed": "fix4c + refine\n+ fix7 + smoothed",
+}
+# Stable slug per column (avoids previous filename collision).
+COLUMN_SLUGS = {
+    "baseline": "baseline",
+    "fix4c": "fix4c",
+    "refined_smoothed": "refined_smoothed",
+    "refined_fix7_vertex": "refined_fix7_vertex",
+    "refined_fix7_smoothed": "refined_fix7_smoothed",
 }
 
 # Fix 4c kwargs (the current best non-refined config).
 FIX4C_KWARGS = dict(EXPERIMENT_CONFIGS["fix1_fix2_fix4c"])
+
+# Aggressive refinement settings.
+REFINE_KWARGS = dict(
+    max_refine_passes=4,
+    area_growth_threshold=1.5,
+    refine_flipped=True,
+    pre_split_seam_hops=2,
+    pre_split_seam_angle_deg=60.0,
+    correspondence_reproject=True,
+)
 
 
 def _make_position_rgb(points, percentile_clip=2):
@@ -116,21 +135,21 @@ def warp_fix4c(model, latents, source, target, sidx):
     return np.asarray(w)
 
 
-def warp_refined(model, latents, source, target, sidx, mode, pre_split_hops=0):
-    """Fix 4c with iterative source-mesh refinement.
+def warp_refined(model, latents, source, target, sidx, mode, extra_kwargs=None):
+    """Fix 4c (+ optional extra fixes) with iterative source-mesh refinement.
 
-    ``pre_split_hops``: 0 = no pre-split (reactive only); >0 = subdivide
-    triangles around the dihedral seam first, then iterate.
+    ``mode``         -- correspondence_mode passed to interpolate_points_refined.
+    ``extra_kwargs`` -- merged into FIX4C_KWARGS (e.g. enable smooth_normals).
     """
+    kw = dict(FIX4C_KWARGS)
+    if extra_kwargs:
+        kw.update(extra_kwargs)
     corr, refined_src, refined_warped = interpolate_points_refined(
         model, latents[0], latents[1], source_mesh=source,
         surface_idx=sidx, n_steps=100,
-        max_refine_passes=2, area_growth_threshold=2.0, refine_flipped=True,
-        pre_split_seam_hops=pre_split_hops, pre_split_seam_angle_deg=60.0,
         correspondence_mode=mode, correspondence_alpha=0.5,
-        correspondence_reproject=True,
         return_refined=True, verbose=True,
-        **FIX4C_KWARGS,
+        **REFINE_KWARGS, **kw,
     )
     return np.asarray(corr), refined_src, refined_warped
 
@@ -199,36 +218,55 @@ def main():
         w_4c = warp_fix4c(model, lats, source, target, sidx)
         warped_panels[COLUMN_LABELS["fix4c"]] = build_corr_mesh(source, w_4c, target)
 
-        # Two refined variants: reactive only (no pre-split) vs. pre-split seam.
+        # Three refined variants with aggressive splitting (REFINE_KWARGS):
+        # smoothed correspondence vs Fix 7 on top vs both stacked.
         refined_variants = [
-            ("refined_vertex", "vertex", 0),
-            ("refined_preseam_vertex", "vertex", 1),
+            ("refined_smoothed",       "smoothed", {}),
+            ("refined_fix7_vertex",    "vertex",   {"smooth_normals": True,
+                                                    "smooth_normals_max_step": 0.05}),
+            ("refined_fix7_smoothed",  "smoothed", {"smooth_normals": True,
+                                                    "smooth_normals_max_step": 0.05}),
         ]
-        for col_key, mode, pre_hops in refined_variants:
-            tag = f"pre{pre_hops}_{mode}"
-            print(f"  fix4c + refine ({tag}) ...")
+        for col_key, mode, extra in refined_variants:
+            slug = COLUMN_SLUGS[col_key]
+            print(f"  {col_key} ...")
             w_ref, refined_src, refined_warped = warp_refined(
-                model, lats, source, target, sidx, mode, pre_split_hops=pre_hops,
+                model, lats, source, target, sidx, mode, extra_kwargs=extra,
             )
             warped_panels[COLUMN_LABELS[col_key]] = build_corr_mesh(
                 source, w_ref, target
             )
+            # Tag the refined warped mesh with its OWN scalars so we can also
+            # score "refinement-aware" fold-over and target-distance.
+            refined_warped_pts = np.asarray(refined_warped.points)
+            ref_faces = np.asarray(refined_src.regular_faces)
+            ref_src_pts = np.asarray(refined_src.points)
+            f = ref_faces
+            n_src = np.cross(
+                ref_src_pts[f[:, 1]] - ref_src_pts[f[:, 0]],
+                ref_src_pts[f[:, 2]] - ref_src_pts[f[:, 0]],
+            )
+            n_wrp = np.cross(
+                refined_warped_pts[f[:, 1]] - refined_warped_pts[f[:, 0]],
+                refined_warped_pts[f[:, 2]] - refined_warped_pts[f[:, 0]],
+            )
+            refined_warped.cell_data["flipped"] = (
+                (n_src * n_wrp).sum(axis=1) < 0
+            ).astype(np.uint8)
+            refined_warped.point_data["target_distance"] = (
+                _point_to_surface_distances(refined_warped_pts, target)
+            )
             refined_src.save(
-                os.path.join(
-                    OUT_DIR,
-                    f"{sname}_{key_a}_to_{key_b}_refined_source_{tag}.vtk",
-                )
+                os.path.join(OUT_DIR, f"{sname}_{key_a}_to_{key_b}_refined_source_{slug}.vtk")
             )
             refined_warped.save(
-                os.path.join(
-                    OUT_DIR,
-                    f"{sname}_{key_a}_to_{key_b}_refined_warped_{tag}.vtk",
-                )
+                os.path.join(OUT_DIR, f"{sname}_{key_a}_to_{key_b}_refined_warped_{slug}.vtk")
             )
 
-        # Save the N-original correspondence .vtks too.
+        # Save the N-original correspondence .vtks with explicit unique slugs.
+        slug_by_label = {COLUMN_LABELS[k]: COLUMN_SLUGS[k] for k in COLUMN_SLUGS}
         for label, mesh in warped_panels.items():
-            slug = label.split("\n")[0].replace(" ", "_").replace("+", "_")
+            slug = slug_by_label[label]
             mesh.save(os.path.join(OUT_DIR, f"{sname}_{key_a}_to_{key_b}_{slug}.vtk"))
 
         png_path = os.path.join(OUT_DIR, f"{sname}_{key_a}_to_{key_b}_refined.png")
