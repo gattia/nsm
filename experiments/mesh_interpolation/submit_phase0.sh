@@ -73,10 +73,12 @@ echo "  + 1 merge job (wave 3, CPU)"
 echo "=================================================="
 
 emit_job() {  # $1=path  $2=jobname  $3=sbatch-extra-lines  $4=command
+    # stelvio's conda env has a broken pyvista install -- exclude it.
     cat > "$1" <<SLURM
 #!/bin/bash
 #SBATCH -c 4
 #SBATCH --mem=24gb
+#SBATCH --exclude=stelvio
 $3
 #SBATCH --output=${SLURM_OUT}/${2}-%j.out
 #SBATCH --job-name=${2}
