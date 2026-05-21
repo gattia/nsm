@@ -53,12 +53,14 @@ COLUMN_SLUGS = {
 # Fix 4c kwargs (the current best non-refined config).
 FIX4C_KWARGS = dict(EXPERIMENT_CONFIGS["fix1_fix2_fix4c"])
 
-# Refinement settings. With area_growth_threshold=1.5 the mesh exploded
-# (3x growth per pass on the menisci), so we target only the triangles that
-# *actually* went bad: flipped (refine_flipped) + area > 3x source. The
-# pre-split seam pass still puts vertices where they're most likely needed.
+# Refinement settings. Bound growth structurally with max_refine_passes=1:
+# the menisci seam stretches so much during a warp that even 3x-area
+# triangles get re-flagged after each subdivision pass, so the mesh blows
+# up geometrically. A single targeted pass (pre-split seam + one round
+# of refine-the-actually-bad) gives ~3x growth max while still putting
+# more vertices where they're most needed.
 REFINE_KWARGS = dict(
-    max_refine_passes=3,
+    max_refine_passes=1,
     area_growth_threshold=3.0,
     refine_flipped=True,
     pre_split_seam_hops=1,
