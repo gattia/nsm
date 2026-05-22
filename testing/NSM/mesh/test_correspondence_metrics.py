@@ -218,31 +218,17 @@ class TestTriangleHealth:
             assert key in result, f"Missing key: {key}"
 
     def test_degenerate_triangle_detected(self):
-        """Mesh with a collapsed triangle should report at least one degenerate."""
-        # Create a mesh where one triangle has two vertices at the same point
+        """Mesh with a collapsed triangle should report at least one degenerate.
+
+        Two vertices coincident within the same triangle: v0 and v1 both at
+        the origin, so triangle (0, 1, 2) has a zero-length edge.
+        """
         points = np.array(
-            [
-                [0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                [0.5, 1.0, 0.0],
-                [0.0, 0.0, 0.0],  # duplicate of vertex 0 → collapsed edge
-                [1.0, 0.0, 0.0],  # duplicate of vertex 1
-                [0.5, 1.0, 0.0],  # same as vertex 2 (zero-length edge w/ vertex 3)
-            ],
-            dtype=float,
-        )
-        # Actually use a simpler approach: two vertices coincident within the same triangle
-        points2 = np.array(
-            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.5, 1.0, 0.0], [2.0, 0.0, 0.0]],
-            dtype=float,
-        )
-        # Collapsed triangle: v0, v0 (same), v2 — zero edge length
-        points2_col = np.array(
             [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.5, 1.0, 0.0], [2.0, 0.0, 0.0]],
             dtype=float,
         )
         faces = np.array([3, 0, 1, 2, 3, 0, 2, 3])
-        mesh_collapsed = pv.PolyData(points2_col, faces)
+        mesh_collapsed = pv.PolyData(points, faces)
         result = triangle_health(mesh_collapsed)
         assert result["degenerate_count"] >= 1
 
