@@ -1,10 +1,10 @@
-"""Tests for the kwarg-gated numerical fixes in ``NSM/mesh/interpolate.py``.
+"""Tests for ``NSM/mesh/interpolate.py``.
 
-Uses a synthetic analytic SDF decoder (a sphere whose radius is read out of the
-latent) so the fixes can be exercised without a trained NSM model. The sphere
-SDF is exact, so the *target* of every interpolation is known in closed form:
-points warped from a radius-``r1`` sphere onto a radius-``r2`` sphere should end
-up at radius ``r2``.
+Uses a synthetic analytic SDF decoder (a sphere whose radius is read out of
+the latent) so the interpolation can be exercised without a trained NSM model.
+The sphere SDF is exact, so the *target* of every interpolation is known in
+closed form: points warped from a radius-``r1`` sphere onto a radius-``r2``
+sphere should end up at radius ``r2``.
 """
 
 import numpy as np
@@ -13,13 +13,9 @@ import torch
 import torch.nn as nn
 
 from NSM.mesh.interpolate import (
-    StepConfig,
-    _latent_predictor_step,
     build_mesh_laplacian,
-    compute_boundary_mask,
     compute_feature_mask,
     interpolate_points,
-    interpolate_points_refined,
     update_positions,
 )
 
@@ -29,8 +25,8 @@ class SphereSDF(nn.Module):
 
     The latent's first component is the sphere radius; components 1:4 are the
     centre. ``sdf_scale != 1`` makes the field non-Eikonal (``||grad|| = scale``),
-    which is what discriminates the Newton / line-search magnitude fixes from the
-    baseline normal step.
+    which is what distinguishes the Newton magnitude from a plain unit-normal
+    step.
     """
 
     def __init__(self, d_lat=8, n_surfaces=1, sdf_scale=1.0):
@@ -38,7 +34,7 @@ class SphereSDF(nn.Module):
         self.d_lat = d_lat
         self.n_surfaces = n_surfaces
         self.sdf_scale = sdf_scale
-        self._param = nn.Parameter(torch.zeros(1))  # gives device/dtype
+        self._param = nn.Parameter(torch.zeros(1))
 
     def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
         if x is not None:
@@ -60,13 +56,7 @@ def _sphere_points(n=400, radius=1.0, seed=0):
 
 
 def _latents(r1=1.0, r2=1.5, d_lat=8):
-    """Two non-colinear latents (slerp needs distinct directions).
-
-    The radius lives in dim 0 and the centre in dims 1:4; the direction-
-    disambiguating components go in unused dims 4/5 so they do not perturb the
-    decoded sphere.
-    """
-    # float64: geometric_slerp requires inputs to lie exactly on the unit sphere.
+    """Two non-colinear latents (slerp needs distinct directions)."""
     z1 = np.zeros(d_lat, dtype=np.float64)
     z2 = np.zeros(d_lat, dtype=np.float64)
     z1[0], z1[4] = r1, 1.0
@@ -79,11 +69,12 @@ def _radii(points, center=(0, 0, 0)):
 
 
 # ---------------------------------------------------------------------------
-# Baseline behaviour
+# Baseline behaviour (Newton magnitude is unconditional)
 # ---------------------------------------------------------------------------
 
 
 def test_baseline_lands_on_target_sphere():
+    """Default config lands on the target sphere within Newton's convergence."""
     model = SphereSDF()
     z1, z2 = _latents(1.0, 1.5)
     pts = _sphere_points(radius=1.0)
@@ -92,24 +83,13 @@ def test_baseline_lands_on_target_sphere():
     np.testing.assert_allclose(_radii(warped), 1.5, atol=1e-3)
 
 
-def test_default_config_is_single_normal_projection():
-    """An all-default config must do exactly one normal projection per step."""
-    cfg = StepConfig()
-    assert cfg.n_corrector_iters == 1
-    assert cfg.step_magnitude == "normal"
-    assert not cfg.latent_predictor
-    assert not cfg.tangent_laplacian
-    assert not cfg.adaptive_steps
-
-    model = SphereSDF()
-    z1, z2 = _latents()
+def test_baseline_lands_on_target_non_eikonal_field():
+    """Newton magnitude is exact even when the SDF is not unit-gradient."""
+    model = SphereSDF(sdf_scale=1.6)
+    z1, z2 = _latents(1.0, 1.5)
     pts = _sphere_points()
-    _, diag = interpolate_points(
-        model, z1, z2, n_steps=20, points1=pts, surface_idx=0, return_diagnostics=True
-    )
-    assert diag.n_advance_calls == 20
-    # 20 steps * 1 projection eval + 1 final residual eval.
-    assert diag.n_decoder_evals == 21
+    warped = interpolate_points(model, z1, z2, n_steps=20, points1=pts, surface_idx=0)
+    np.testing.assert_allclose(_radii(warped), 1.5, atol=1e-3)
 
 
 def test_update_positions_backward_compatible():
@@ -122,145 +102,8 @@ def test_update_positions_backward_compatible():
     assert out.shape == pts.shape
 
 
-def test_invalid_config_rejected():
-    with pytest.raises(ValueError):
-        StepConfig(step_magnitude="bogus")
-    with pytest.raises(ValueError):
-        StepConfig(adaptive_estimator="bogus")
-    with pytest.raises(ValueError):
-        StepConfig(n_corrector_iters=0)
-
-
 # ---------------------------------------------------------------------------
-# Fix 1 -- corrector loop
-# ---------------------------------------------------------------------------
-
-
-def test_corrector_loop_reduces_residual():
-    """More corrector iterations -> smaller terminal off-surface residual."""
-    model = SphereSDF(sdf_scale=0.5)  # non-Eikonal: one projection under-converges
-    z1, z2 = _latents()
-    pts = _sphere_points()
-    _, diag1 = interpolate_points(
-        model, z1, z2, n_steps=15, points1=pts, surface_idx=0,
-        n_corrector_iters=1, return_diagnostics=True,
-    )
-    _, diag5 = interpolate_points(
-        model, z1, z2, n_steps=15, points1=pts, surface_idx=0,
-        n_corrector_iters=8, return_diagnostics=True,
-    )
-    assert diag5.final_residual_max < diag1.final_residual_max
-
-
-# ---------------------------------------------------------------------------
-# Fix 2 -- Newton magnitude
-# ---------------------------------------------------------------------------
-
-
-def test_newton_beats_normal_on_non_eikonal_field():
-    """On a non-Eikonal field the normal step mis-scales; Newton is exact."""
-    model = SphereSDF(sdf_scale=1.6)
-    z1, z2 = _latents(1.0, 1.5)
-    pts = _sphere_points()
-    _, diag_normal = interpolate_points(
-        model, z1, z2, n_steps=20, points1=pts, surface_idx=0,
-        step_magnitude="normal", return_diagnostics=True,
-    )
-    warped_newton, diag_newton = interpolate_points(
-        model, z1, z2, n_steps=20, points1=pts, surface_idx=0,
-        step_magnitude="newton", return_diagnostics=True,
-    )
-    assert diag_newton.final_residual_max < diag_normal.final_residual_max
-    np.testing.assert_allclose(_radii(warped_newton), 1.5, atol=1e-3)
-
-
-def test_newton_is_noop_on_eikonal_field():
-    """With ||grad|| == 1 the Newton step equals the normal step."""
-    model = SphereSDF(sdf_scale=1.0)
-    z1, z2 = _latents()
-    pts = _sphere_points()
-    w_normal = interpolate_points(
-        model, z1, z2, n_steps=30, points1=pts, surface_idx=0, step_magnitude="normal"
-    )
-    w_newton = interpolate_points(
-        model, z1, z2, n_steps=30, points1=pts, surface_idx=0, step_magnitude="newton"
-    )
-    np.testing.assert_allclose(w_normal, w_newton, atol=1e-5)
-
-
-# ---------------------------------------------------------------------------
-# Fix 6 -- line-search magnitude
-# ---------------------------------------------------------------------------
-
-
-def test_line_search_lands_on_target():
-    model = SphereSDF(sdf_scale=1.6)
-    z1, z2 = _latents(1.0, 1.5)
-    pts = _sphere_points()
-    warped, diag = interpolate_points(
-        model, z1, z2, n_steps=20, points1=pts, surface_idx=0,
-        step_magnitude="line_search", return_diagnostics=True,
-    )
-    np.testing.assert_allclose(_radii(warped), 1.5, atol=5e-3)
-    # Line search costs extra forward evals relative to the baseline.
-    assert diag.n_decoder_evals > 20
-
-
-# ---------------------------------------------------------------------------
-# Fix 3 -- latent-advection predictor
-# ---------------------------------------------------------------------------
-
-
-def test_latent_predictor_runs_and_converges():
-    model = SphereSDF()
-    z1, z2 = _latents(1.0, 1.5)
-    pts = _sphere_points()
-    warped = interpolate_points(
-        model, z1, z2, n_steps=10, points1=pts, surface_idx=0,
-        latent_predictor=True, n_corrector_iters=3,
-    )
-    assert np.isfinite(warped).all()
-    np.testing.assert_allclose(_radii(warped), 1.5, atol=1e-2)
-
-
-def test_predictor_step_is_clamped_on_small_gradient_field():
-    """The 1/||grad||^2 predictor factor must not blow up on a non-Eikonal field.
-
-    With ||grad SDF|| = 0.02 the unclamped predictor displacement would be
-    ~0.5; the cap must hold it to predictor_max_step.
-    """
-    model = SphereSDF(sdf_scale=0.02)
-    z1, z2 = _latents(1.0, 1.5)
-    pts = torch.tensor(_sphere_points(radius=1.0))
-    dz = torch.tensor(z2 - z1, dtype=torch.float)
-    cfg = StepConfig(latent_predictor=True, predictor_max_step=0.1)
-    moved = _latent_predictor_step(
-        model, torch.tensor(z1, dtype=torch.float), pts, 0, dz, cfg
-    )
-    disp = (moved - pts).norm(dim=1)
-    assert torch.isfinite(disp).all()
-    assert disp.max().item() <= 0.1 + 1e-5
-
-
-def test_latent_predictor_stable_on_non_eikonal_field():
-    """interpolate_points with the predictor must not diverge on a scaled SDF.
-
-    Mirrors the cluster `fix1_fix2_fix3` config (corrector + Newton + predictor).
-    """
-    model = SphereSDF(sdf_scale=0.05)
-    z1, z2 = _latents(1.0, 1.3)
-    pts = _sphere_points()
-    warped = interpolate_points(
-        model, z1, z2, n_steps=20, points1=pts, surface_idx=0,
-        latent_predictor=True, n_corrector_iters=5, step_magnitude="newton",
-    )
-    assert np.isfinite(warped).all()
-    assert _radii(warped).max() < 5.0  # no blow-up
-    np.testing.assert_allclose(_radii(warped), 1.3, atol=1e-2)
-
-
-# ---------------------------------------------------------------------------
-# Fix 4b -- tangent-projected Laplacian
+# Tangent Laplacian smoothing (opt-in via tangent_laplacian=True)
 # ---------------------------------------------------------------------------
 
 
@@ -294,140 +137,13 @@ def test_build_mesh_laplacian():
     faces = np.array([[0, 1, 2], [1, 2, 3]], dtype=np.int64)
     lap = build_mesh_laplacian(faces, n_points=4, device=torch.device("cpu"))
     assert lap.shape == (4, 4)
-    # Row-normalised: each row of the dense adjacency sums to 1.
     dense = lap.to_dense()
     np.testing.assert_allclose(dense.sum(dim=1).numpy(), np.ones(4), atol=1e-6)
 
 
 # ---------------------------------------------------------------------------
-# Fix 5 -- adaptive step-sizing
+# Feature-mask detection (the pin used by tangent Laplacian)
 # ---------------------------------------------------------------------------
-
-
-def test_adaptive_steps_subdivide_and_converge():
-    model = SphereSDF()
-    z1, z2 = _latents(1.0, 1.5)
-    pts = _sphere_points()
-    warped, diag = interpolate_points(
-        model, z1, z2, n_steps=10, points1=pts, surface_idx=0,
-        adaptive_steps=True, return_diagnostics=True,
-    )
-    np.testing.assert_allclose(_radii(warped), 1.5, atol=1e-2)
-    # Richardson uses >= 3 advance calls per base interval (big + 2 halves).
-    assert diag.n_advance_calls >= 10
-
-
-def test_adaptive_residual_estimator():
-    model = SphereSDF(sdf_scale=0.5)
-    z1, z2 = _latents()
-    pts = _sphere_points()
-    warped, diag = interpolate_points(
-        model, z1, z2, n_steps=8, points1=pts, surface_idx=0,
-        adaptive_steps=True, adaptive_estimator="residual",
-        n_corrector_iters=3, return_diagnostics=True,
-    )
-    assert np.isfinite(warped).all()
-    assert diag.n_advance_calls >= 8
-
-
-def test_adaptive_floor_records_struggled_intervals():
-    """A tiny tolerance forces subdivision to the depth floor and logs it."""
-    model = SphereSDF()
-    z1, z2 = _latents(1.0, 2.0)
-    pts = _sphere_points()
-    _, diag = interpolate_points(
-        model, z1, z2, n_steps=5, points1=pts, surface_idx=0,
-        adaptive_steps=True, adaptive_tol=1e-12, adaptive_max_depth=2,
-        return_diagnostics=True,
-    )
-    assert len(diag.struggled_intervals) > 0
-    for t0, t1, err in diag.struggled_intervals:
-        assert 0.0 <= t0 < t1 <= 1.0
-
-
-# ---------------------------------------------------------------------------
-# Composition
-# ---------------------------------------------------------------------------
-
-
-def test_compute_boundary_mask_closed_sphere_all_false():
-    import pyvista as pv
-
-    sphere = pv.Sphere(theta_resolution=12, phi_resolution=12)
-    faces = sphere.regular_faces.astype(np.int64)
-    mask = compute_boundary_mask(faces, sphere.n_points)
-    assert mask.shape == (sphere.n_points,)
-    assert not mask.any()  # closed mesh -> no boundary
-
-
-def test_compute_boundary_mask_plane_all_boundary():
-    """A 2-triangle square has all 4 vertices on the boundary."""
-    faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int64)
-    mask = compute_boundary_mask(faces, 4)
-    assert mask.all()
-
-
-def test_compute_boundary_mask_disk_only_rim():
-    """In a triangle fan around a centre vertex the centre is interior, the rim is boundary."""
-    # 5 outer points forming a pentagon around centre point 0; 5 fan triangles.
-    faces = np.array(
-        [[0, 1, 2], [0, 2, 3], [0, 3, 4], [0, 4, 5], [0, 5, 1]], dtype=np.int64
-    )
-    mask = compute_boundary_mask(faces, 6)
-    assert mask[0] == False  # centre vertex -- interior
-    assert mask[1:].all()    # all 5 rim vertices on boundary
-
-
-def test_smooth_normals_requires_faces():
-    model = SphereSDF()
-    z1, z2 = _latents()
-    pts = _sphere_points()
-    with pytest.raises(ValueError):
-        interpolate_points(
-            model, z1, z2, n_steps=5, points1=pts, surface_idx=0, smooth_normals=True
-        )
-
-
-def test_smooth_normals_converges_on_sphere():
-    """smooth_normals (Fix 7) reduces to Newton when neighbours agree, so a
-    sphere warp must still land on the target radius."""
-    import pyvista as pv
-
-    sphere = pv.Sphere(radius=1.0, theta_resolution=18, phi_resolution=18)
-    pts = sphere.points.astype(np.float32)
-    faces = sphere.regular_faces.astype(np.int64)
-    model = SphereSDF()
-    z1, z2 = _latents(1.0, 1.4)
-    warped = interpolate_points(
-        model, z1, z2, n_steps=15, points1=pts, surface_idx=0,
-        faces=faces, smooth_normals=True, smooth_normal_iters=2, n_corrector_iters=3,
-    )
-    assert np.isfinite(warped).all()
-    np.testing.assert_allclose(_radii(warped), 1.4, atol=2e-2)
-
-
-def test_pin_boundary_keeps_rim_in_place_on_disk():
-    """A flat triangle-fan disk warped to itself (z1==z2) should stay put,
-    and with pin_boundary=True the rim vertices must not move."""
-    import pyvista as pv
-
-    sphere = pv.Sphere(radius=1.0, theta_resolution=12, phi_resolution=12)
-    # Use the sphere -- closed -- so boundary mask is all False and pinning is
-    # a no-op; this just verifies the code path runs and points stay sane.
-    pts = sphere.points.astype(np.float32)
-    faces = sphere.regular_faces.astype(np.int64)
-    model = SphereSDF()
-    z1, z2 = _latents(1.0, 1.2)
-    warped_pin = interpolate_points(
-        model, z1, z2, n_steps=10, points1=pts, surface_idx=0,
-        faces=faces, tangent_laplacian=True, tangent_laplacian_pin_boundary=True,
-    )
-    warped_nopin = interpolate_points(
-        model, z1, z2, n_steps=10, points1=pts, surface_idx=0,
-        faces=faces, tangent_laplacian=True, tangent_laplacian_pin_boundary=False,
-    )
-    # On a closed mesh the two modes should agree (no boundary to pin).
-    np.testing.assert_allclose(warped_pin, warped_nopin, atol=1e-5)
 
 
 def test_compute_feature_mask_sphere_smooth_no_features():
@@ -438,7 +154,6 @@ def test_compute_feature_mask_sphere_smooth_no_features():
     pts = np.asarray(sphere.points, dtype=np.float64)
     faces = sphere.regular_faces.astype(np.int64)
     mask = compute_feature_mask(faces, pts, dihedral_threshold_deg=60.0)
-    # No sharp features on a smooth sphere.
     assert not mask.any()
 
 
@@ -449,11 +164,11 @@ def test_compute_feature_mask_tent_detects_ridge():
         [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.5, 1.0, 0.0], [0.5, 0.5, 1.0]],
         dtype=np.float64,
     )
-    # Two triangles (0,1,2) flat, (0,1,3) tilted up -- shared edge 0-1.
     faces = np.array([[0, 1, 2], [0, 1, 3]], dtype=np.int64)
     mask = compute_feature_mask(faces, points, dihedral_threshold_deg=60.0)
-    # Ridge vertices (0, 1) flagged; isolated tips (2, 3) only via the
-    # boundary edges they sit on -- all four are on at least one feature/boundary edge.
+    # Ridge vertices (0, 1) flagged; isolated tips (2, 3) flagged via the
+    # boundary edges they sit on -- all four end up on at least one feature/
+    # boundary edge.
     assert mask.all()
 
 
@@ -461,108 +176,8 @@ def test_compute_feature_mask_finds_seam_on_thin_disk():
     """A thin closed disk (two-sided) has a high-dihedral seam at the rim."""
     import pyvista as pv
 
-    # Make a thin disk by sampling a thick circle: two parallel triangulated
-    # circles connected by a band -- pv.Cylinder approximates this.
     cyl = pv.Cylinder(radius=1.0, height=0.05, resolution=24).triangulate()
     pts = np.asarray(cyl.points, dtype=np.float64)
     faces = cyl.regular_faces.astype(np.int64)
     mask = compute_feature_mask(faces, pts, dihedral_threshold_deg=60.0)
-    # The thin band where the top cap, side, and bottom cap meet has sharp
-    # dihedral angles -- some vertices must be flagged.
     assert mask.any(), "thin disk should have a high-dihedral seam"
-
-
-def test_refined_warp_preserves_original_correspondence_count():
-    """The refined wrapper must return exactly N_original warped positions."""
-    import pyvista as pv
-
-    sphere = pv.Sphere(radius=1.0, theta_resolution=12, phi_resolution=12)
-    model = SphereSDF()
-    z1, z2 = _latents(1.0, 1.3)
-    n_orig = sphere.n_points
-    out = interpolate_points_refined(
-        model, z1, z2, source_mesh=sphere, surface_idx=0,
-        n_steps=10, max_refine_passes=0,
-        step_magnitude="newton", n_corrector_iters=3,
-    )
-    assert out.shape == (n_orig, 3)
-    np.testing.assert_allclose(_radii(out), 1.3, atol=2e-2)
-
-
-def test_refined_warp_subdivides_when_thresholded():
-    """A low area-growth threshold should trigger subdivision and grow the
-    refined source mesh."""
-    import pyvista as pv
-
-    sphere = pv.Sphere(radius=1.0, theta_resolution=12, phi_resolution=12)
-    model = SphereSDF()
-    z1, z2 = _latents(1.0, 1.8)  # big radius change -> triangles expand a lot
-    n_orig = sphere.n_points
-    out, refined_src, _ = interpolate_points_refined(
-        model, z1, z2, source_mesh=sphere, surface_idx=0,
-        n_steps=10, max_refine_passes=2,
-        area_growth_threshold=1.5,  # any > 1.5x growth triggers a split
-        step_magnitude="newton", n_corrector_iters=3,
-        return_refined=True,
-    )
-    assert refined_src.n_points >= n_orig
-    # Correspondence shape must still match the ORIGINAL vertex count.
-    assert out.shape == (n_orig, 3)
-    # Original vertex positions in the refined source are unchanged.
-    np.testing.assert_allclose(
-        np.asarray(refined_src.points[:n_orig]),
-        np.asarray(sphere.points),
-        atol=1e-10,
-    )
-
-
-def test_refined_warp_correspondence_modes():
-    """All three correspondence modes return N_original points on/near the target."""
-    import pyvista as pv
-
-    sphere = pv.Sphere(radius=1.0, theta_resolution=12, phi_resolution=12)
-    model = SphereSDF()
-    z1, z2 = _latents(1.0, 1.3)
-    n_orig = sphere.n_points
-    for mode in ("vertex", "smoothed", "centroid"):
-        out = interpolate_points_refined(
-            model, z1, z2, source_mesh=sphere, surface_idx=0,
-            n_steps=10, max_refine_passes=1, area_growth_threshold=1.5,
-            correspondence_mode=mode, correspondence_alpha=0.5,
-            step_magnitude="newton", n_corrector_iters=3,
-        )
-        assert out.shape == (n_orig, 3)
-        # Re-projection should keep all modes on the target sphere.
-        np.testing.assert_allclose(_radii(out), 1.3, atol=2e-2)
-
-
-def test_refined_warp_invalid_mode():
-    import pyvista as pv
-
-    sphere = pv.Sphere(radius=1.0, theta_resolution=12, phi_resolution=12)
-    model = SphereSDF()
-    z1, z2 = _latents()
-    with pytest.raises(ValueError):
-        interpolate_points_refined(
-            model, z1, z2, source_mesh=sphere, surface_idx=0,
-            n_steps=5, max_refine_passes=0, correspondence_mode="bogus",
-        )
-
-
-def test_all_fixes_compose():
-    import pyvista as pv
-
-    sphere = pv.Sphere(radius=1.0, theta_resolution=16, phi_resolution=16)
-    pts = sphere.points.astype(np.float32)
-    faces = sphere.regular_faces.astype(np.int64)
-    model = SphereSDF(sdf_scale=1.3)
-    z1, z2 = _latents(1.0, 1.4)
-    warped, diag = interpolate_points(
-        model, z1, z2, n_steps=12, points1=pts, surface_idx=0,
-        n_corrector_iters=4, step_magnitude="newton", latent_predictor=True,
-        faces=faces, tangent_laplacian=True, adaptive_steps=True,
-        return_diagnostics=True,
-    )
-    assert np.isfinite(warped).all()
-    np.testing.assert_allclose(_radii(warped), 1.4, atol=2e-2)
-    assert diag.n_decoder_evals > 0
