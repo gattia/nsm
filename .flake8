@@ -2,22 +2,22 @@
 # Match the project's Black config (CLAUDE.md: "Black formatting with 100
 # character line length"). Black-compatible ignores per the canonical
 # https://black.readthedocs.io/en/stable/guides/using_black_with_other_tools.html
+#
+# Code ignores (flake8 INI parser does NOT accept inline # comments
+# inside extend-ignore, so the rationale is documented up here):
+#   E203 -- whitespace before ':' (conflicts with Black's slice formatting)
+#   W503 -- line break before binary operator (Black puts it after)
+#   E402 -- module-level import not at top (existing in several test files)
+#   E721 -- do not compare types with == (one existing case)
+#   F401 -- unused imports (several scratch / timing scripts)
 max-line-length = 100
-extend-ignore =
-    E203,  # whitespace before ':' (conflicts with Black's slice formatting)
-    W503,  # line break before binary operator (Black puts it after)
-    E402,  # module-level import not at top (existing in several test files)
-    E721,  # do not compare types with == (one existing case)
-    F401   # unused imports (several scratch/timing scripts)
+extend-ignore = E203, W503, E402, E721, F401
 exclude =
     .git,
     __pycache__,
     build,
     dist,
     .venv,
-    # Scratch / timing / experiment scripts -- not production code.
-    # Contains Python-2-syntax files, unused imports, 163-char lines.
     testing/testing_h5_vs_np_loading,
     testing/testing_sdf_calculation_times,
-    # Experiment runner (data-side; not part of the package proper).
     experiments
