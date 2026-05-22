@@ -1,6 +1,11 @@
 # Plan: A learned rectified-flow correspondence operator for NSM
 
-**Status:** Proposed — not started. **Do after** `NSM_MESH_INTERPOLATION_IMPROVEMENTS.md`.
+**Status:** Proposed — not started. Prerequisite
+`NSM_MESH_INTERPOLATION_IMPROVEMENTS.md` **completed 2026-05-22** (archived to
+`completed/NSM_MESH_INTERPOLATION_IMPROVEMENTS_COMPLETED.md`). Track-A
+delivered ~50% menisci fold-over reduction and shipped the
+`correspondence_metrics.py` module this plan depends on; the remaining seam
+fold-over is what this plan would address.
 **Created:** 2026-05-18 (split out of the original combined plan).
 **Repo:** `/dataNAS/people/aagatti/programming/NSM/` (NSM). Sole production
 consumer: `nsosim` → the comak gait pipeline.
