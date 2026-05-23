@@ -59,6 +59,19 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          # CPU-only torch: the GitHub-hosted runner has no GPU, so the
+          # default torch wheel pulls in ~5 GB of nvidia-cuda-* packages
+          # and fills the runner's disk before pymskt / pyvista / vtk get
+          # a chance to install. Install the CPU wheel first; make
+          # install-dev's `pip install -r requirements.txt` then sees the
+          # torch requirement already satisfied and skips re-pulling.
+          pip install torch torchvision torchaudio \
+              --index-url https://download.pytorch.org/whl/cpu
+          # pymskt.image.t2 has a hard import of nibabel but does not list
+          # it in install_requires (upstream packaging bug). Workaround:
+          # install nibabel explicitly so `import pymskt.mesh` doesn't
+          # transitively fail.
+          pip install nibabel
           make install-dev
       - name: Test with pytest
         run: |
