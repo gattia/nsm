@@ -54,10 +54,28 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
     # add default params for backwards compatibility between
     # train_deep_sdf and train_deep_sdf_multi_surface.
     config.setdefault("objects_per_decoder", 1)
+    config.setdefault("mesh_names", None)
     config.setdefault("resume_epoch", 0)
     config.setdefault("scale_jointly", False)
     config.setdefault("fix_mesh_recon", False)
     config.setdefault("log_latent", None)
+
+    # Validate mesh_names length matches objects_per_decoder if provided
+    if config["mesh_names"] is not None:
+        if len(config["mesh_names"]) != config["objects_per_decoder"]:
+            raise ValueError(
+                f"mesh_names has {len(config['mesh_names'])} entries but "
+                f"objects_per_decoder is {config['objects_per_decoder']}. "
+                f"These must match."
+            )
+    elif config["objects_per_decoder"] > 1:
+        warnings.warn(
+            "No 'mesh_names' provided in config. Downstream consumers will need to "
+            "infer mesh identity from the decoder output count, which is fragile. "
+            "Consider adding e.g. 'mesh_names': ['bone', 'cart'] to your config.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     config = add_plain_lr_to_config(config)
     config["checkpoints"] = get_checkpoints(config)

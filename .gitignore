@@ -4,6 +4,12 @@ wheelhouse
 .vscode/targets.log
 .vscode/
 
+# Experiment scaffolding (kept locally, not tracked). See
+# .claude/plans/completed/ for the experiments' conclusions; the runners
+# themselves live on the mesh-interpolation-improvements branch
+# (tagged archive/mesh-interp-full-exploration) for reproducibility.
+experiments/
+
 
 # https://github.com/github/gitignore/blob/e5323759e387ba347a9d50f8b0ddd16502eb71d4/Python.gitignore
 # Byte-compiled / optimized / DLL files

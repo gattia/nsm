@@ -3,6 +3,7 @@ from NSM.utils import (
     adjust_learning_rate,
     save_latent_vectors,
     save_model,
+    save_model_params,
     get_optimizer,
     get_latent_vecs,
     get_checkpoints,
@@ -15,12 +16,32 @@ import wandb
 import os
 import torch
 import time
+import warnings
 import numpy as np
 
 loss_l1 = torch.nn.L1Loss(reduction="none")
 
 
 def train_deep_sdf(config, models: tuple, sdf_dataset, use_wandb=False):
+
+    config.setdefault("mesh_names", None)
+
+    # Validate mesh_names if provided
+    if config["mesh_names"] is not None:
+        total_objects = config.get("objects_per_decoder", 1) * len(models)
+        if len(config["mesh_names"]) != total_objects:
+            raise ValueError(
+                f"mesh_names has {len(config['mesh_names'])} entries but "
+                f"total decoder outputs is {total_objects}. These must match."
+            )
+    else:
+        warnings.warn(
+            "No 'mesh_names' provided in config. Downstream consumers will need to "
+            "infer mesh identity from the decoder output count, which is fragile. "
+            "Consider adding e.g. 'mesh_names': ['bone', 'cart'] to your config.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     config = add_plain_lr_to_config(config)
 
@@ -75,6 +96,7 @@ def train_deep_sdf(config, models: tuple, sdf_dataset, use_wandb=False):
         )
 
         if epoch in config["checkpoints"]:
+            save_model_params(config=config, list_mesh_paths=sdf_dataset.list_mesh_paths)
             save_latent_vectors(
                 config=config,
                 epoch=epoch,

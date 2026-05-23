@@ -6,10 +6,25 @@ import torch
 from NSM.reconstruct import reconstruct_latent
 
 
-# Mock decoder class
+# Mock decoder class. Accept either the legacy concatenated-positional
+# interface (forward(x)) or the named-kwarg form (forward(latent=, xyz=))
+# that the production decoders (TriplanarDecoder etc.) now support for
+# fast inference paths. reconstruct_latent calls the latter.
+#
+# The output must depend on ``latent`` so the autograd graph remains intact
+# when reconstruct_latent backprops through this mock (xyz has no grad).
 class MockDecoder(torch.nn.Module):
-    def forward(self, x):
-        return x[:, :1]  # Return the first column as a mock prediction
+    def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+        if x is not None:
+            return x[:, :1]
+        # Kwargs path: ensure the output depends on ``latent`` so grad flows
+        # back through it. ``latent.sum()`` is shape-agnostic (works for 1-D
+        # (D,) or 2-D (N, D)) and broadcasts cleanly into xyz[:, :1].
+        if latent is not None and xyz is not None:
+            return xyz[:, :1] + latent.sum()
+        if xyz is not None:
+            return xyz[:, :1]
+        return latent.sum().expand(1, 1)
 
 
 @pytest.fixture
