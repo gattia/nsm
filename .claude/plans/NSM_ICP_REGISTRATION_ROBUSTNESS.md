@@ -1,6 +1,7 @@
 # Plan: ICP registration robustness (inference-only)
 
-**Status:** Open — Phase 0 (diagnostics) complete, Phases 1–3 not started.
+**Status:** Open — Phase 0 (diagnostics) and the Phase 2 tradeoff study (§7) complete;
+Phases 1, 3 and the sampler decision not started. §7.4 was retracted after adversarial review.
 **Created:** 2026-08-11.
 **Repo:** `/home/gattia/programming/kneepipeline/DEPENDENCIES/nsm` (NSM).
 **Branch:** `icp-registration-robustness` off `main` @ `bb2c6a3`.
@@ -40,12 +41,17 @@ optimiser-init noise.
 
 Transform spread across 5 vertex orderings of one unchanged mesh, registered to the real NSM mean:
 
-| n_landmarks | scale CV | max rotation spread | max translation spread | s / registration |
+| n_landmarks | scale spread | max rotation spread | max translation spread | s / registration |
 |---|---|---|---|---|
-| **1000 (current)** | 1.71e-3 | **0.72°** | **0.41 mm** | 4.0 |
-| 5000 | 3.10e-4 | 0.46° | 0.35 mm | ~20 |
-| 20000 | 1.41e-4 | 0.18° | 0.12 mm | 79.4 |
-| ALL (113k) | 4.6e-13 | **0.0000°** | **0.0000 mm** | 392.2 |
+| **1000 (current)** | CV 1.71e-3 | **0.72°** | **0.41 mm** | 4.0 |
+| 5000 | CV 3.10e-4 | 0.46° | 0.35 mm | ~20 |
+| 20000 | CV 1.41e-4 | 0.18° | 0.12 mm | 79.4 |
+| ALL (113k) † | max−min 4.6e-13 | **0.0000°** | **0.0000 mm** | 392.2 |
+
+† The first three rows are CVs over **5** vertex orderings (`icp_landmarks.py`); the ALL row is an
+absolute max−min over a separate **4**-ordering run (`reg_compare2.py`) and is therefore not a CV.
+It is included because it pins the mechanism — with every vertex used, the order-dependence is
+float noise — not because it is commensurable with the rows above.
 
 Two facts that shape the whole plan:
 
@@ -77,7 +83,7 @@ Proposed parameters (names to be bikeshedded, semantics not):
 | parameter | default | note |
 |---|---|---|
 | `icp_n_landmarks` | `1000` | unchanged default |
-| `icp_max_n_iter` | `100` | currently hardcoded; **may itself be part of the problem** — tested in Phase 2 |
+| `icp_max_n_iter` | `100` | currently hardcoded. **Measured (§7.3): 30 is as good or better at 1/3 the cost.** Expose now, change the default only as part of a recipe re-baseline |
 | `icp_reg_mode` | `"similarity"` | unchanged |
 | `icp_sampling` | `"vtk_stride"` | `vtk_stride` \| `canonical_stride` \| `bluenoise` |
 | `icp_n_repeats` | `1` | ensemble size (§3) |
@@ -98,7 +104,9 @@ Deliverable: parameters plumbed, defaults unchanged, regression test green.
 
 `vtk_stride` picks *vertices by index*. Two scans of the same knee produce two different vertex
 arrays, so they get different landmark sets even after canonicalising the order. Sampling the
-**surface** (Poisson-disk / blue noise) instead makes the landmark set a property of the geometry.
+**surface** (Poisson-disk / blue noise) instead should make the landmark set a property of the
+geometry. **This is an argument, not yet a measured result** — the grid in §7 was unable to test it
+fairly (§7.4), so it remains open.
 
 > **Bug to avoid — verified.** `pcu.sample_mesh_poisson_disk` documents `random_seed=0` as *"use
 > the current time"*. `pymskt.mesh.meshTools.rand_sample_pts_mesh` (line 1440) does **not** pass a
@@ -123,8 +131,8 @@ def register_similarity_robust(source, target, n_landmarks, n_repeats, sampling,
 - **Check the spread before averaging.** If members converged to genuinely different minima the mean
   can be worse than any of them — that is a case to flag, not to average away.
 
-Measured, on two real pipeline meshes of the same knee whose segmentations differ by 2 voxels
-(geometry agrees to 84 µm) — this A-vs-B disagreement is the *rescan-relevant* metric:
+Measured on the A/B re-processing pair (two pipeline jobs over the **same** MRI volume, 2 voxels
+different — see the box in §7, and §7.4 for why this metric flatters the stride sampler):
 
 | method | A-vs-B rotation | A-vs-B scale | s / mesh |
 |---|---|---|---|
@@ -133,9 +141,10 @@ Measured, on two real pipeline meshes of the same knee whose segmentations diffe
 | **bagged 10 × 1000, canonical order** | **0.0024°** | **0.0000%** | **34.1** |
 
 Bagging is 30× more stable than a single 1000-landmark ICP and 3× more stable than a single
-20000-landmark ICP, at half the latter's runtime.
+20000-landmark ICP, at half the latter's runtime. The *ensembling* conclusion survives §7.4's
+retraction — it is a within-sampler comparison, so the pairing asymmetry does not affect it.
 
-### 3.3 The tradeoff study (running)
+### 3.3 The tradeoff study (complete — results in §7)
 
 Free parameters trade against each other: **landmark count × ensemble size × max_n_iter × sampling
 rule**, all against wall-clock. Iso-budget design — for each landmark count, run enough independent
@@ -149,7 +158,8 @@ every cell gets an error bar.
   all-points reference, measured wall-clock
 
 Harness: `scripts/icp_grid_run.py` + `scripts/icp_grid_analyze.py` in the kneepipeline analysis
-folder. **Results: see §7.**
+folder. **Results: see §7.** Note the analyzer reports both *paired* and *unpaired* A-vs-B
+disagreement — §7.4 explains why reporting only the paired number produced a wrong conclusion.
 
 ---
 
@@ -179,10 +189,21 @@ longitudinal B-score change is therefore contaminated by independent per-timepoi
 
 **Design cautions.**
 
-- **Use an unbiased group reference.** Picking "timepoint 1" makes the answer depend on scan order.
-  Prefer generalized Procrustes: iterate rigid alignment to the running group mean until stable.
-- **Real shape change breaks rigid correspondence** (osteophyte growth, post-surgical change). Use a
-  trimmed / robust rigid ICP for step 1 and report the residual so bad cases surface.
+- **Use an unbiased group reference — but not textbook generalized Procrustes.** GPA is defined on
+  *corresponded* landmark sets. Our group members are independently segmented marching-cubes
+  surfaces with different vertex counts and **no correspondence**, so "the running group mean" is
+  not a well-defined object — you cannot average vertex positions, and ICP needs a concrete target
+  surface. Two workable substitutes: (a) register every member to every other member pairwise, then
+  solve for the set of rigid transforms that best satisfies all pairwise constraints
+  (rotation averaging / pose-graph optimisation) — unbiased and correspondence-free; or (b) pick a
+  member as reference but *symmetrise*, and report sensitivity to that choice. Note that for the
+  dominant case of **exactly 2 timepoints** any unbiased scheme degenerates to splitting the single
+  pairwise transform in half, so the "group" machinery only earns its keep at T ≥ 3.
+- **Real shape change breaks rigid correspondence** (osteophyte growth, post-surgical change). This
+  wants a trimmed / robust rigid ICP — **which does not exist in the current stack**:
+  `pymskt.mesh.meshRegistration.get_icp_transform` wraps `vtkIterativeClosestPointTransform` with
+  no outlier rejection at all. Implementing trimmed ICP is therefore a real work item here, not a
+  configuration change. Report the residual either way so bad cases surface.
 - **Bilateral is a judgement call, not an obvious extension.** Left and right femurs of one subject
   are similar but genuinely not the same size; do not force shared scale across sides without
   evidence.
@@ -211,8 +232,12 @@ that alone explains that**, so the method has not actually been given a fair tes
   500 and dominates the SDF loss.
 - `init_center` is computed but never used to initialise `translation` (which starts at ~0 while
   `xyz` are raw mm coordinates); it is used only inside the translation constraint.
-- Stale decoder API: calls `decoder(torch.cat([latent, xyz], dim=1))`; current `TriplanarDecoder`
-  inference uses `decoder(latent=..., xyz=...)`.
+- Uses the **legacy concatenated-`x` decoder interface** (`TriplanarDecoder.forward(x=...)`,
+  `NSM/models/triplanar.py:330`). Checked against the real bone-only checkpoint: it still works and
+  agrees with the fast path to float32 epsilon (max abs diff 1.2e-7). It is only *slower* — it goes
+  through `unique_consecutive` on an N×512 expanded latent instead of `FastUnique`. Worth switching
+  to `decoder(latent=..., xyz=...)` during the rewrite; **not** a blocker, and not a reason the
+  original attempt failed.
 - Returns `latent_` from the best step but `R`, `s`, `t` from the last step — mismatched iterates.
 
 **When resumed** (after Phases 1–3): rewrite the parameterisation — continuous 6D rotation
@@ -252,8 +277,15 @@ paying that per change.
 
 ## 7. Results — Phase 2 tradeoff study (2026-08-11)
 
-1,046 registrations across 14 jobs. Two meshes of the same knee whose segmentations differ by 2
-voxels (A, B), plus a vertex-permutation of A. Raw data `/mnt/data/knee_pipeline_data/icp_grid/`.
+1,046 registrations across 14 jobs. Raw data `/mnt/data/knee_pipeline_data/icp_grid/`.
+
+> **What A and B actually are — read this before trusting any number below.** They are **two
+> pipeline jobs over the same MRI volume** (`f370ce7d`, Apr 3 and `c4bb8d73`, Apr 6): identical
+> array size, spacing, origin and direction; the label maps differ at **exactly 2 voxels**; the job
+> configs differ only in `perform_bone_and_cart_nsm`. There is **no repositioning, no FOV
+> difference, no independent re-tessellation** — none of the things that make a rescan a rescan.
+> After canonical sorting, 98.8% of vertices agree to <1e-4 mm. This is a *re-processing* pair, not
+> a scan–rescan pair, and §7.4–§7.5 show that distinction is load-bearing.
 
 ### 7.0 Two regimes — do not conflate them
 
@@ -265,15 +297,16 @@ voxels (A, B), plus a vertex-permutation of A. Raw data `/mnt/data/knee_pipeline
 
 ### 7.1 Order-invariance is solved — by either sampler
 
-Mesh A vs a vertex-permutation of A, matched rule:
+Mesh A vs a vertex-permutation of A, matched rule. The transforms are **bit-for-bit identical** —
+max element difference **exactly 0.0** across all 157 matched cells, for *both* samplers. (The
+"5e-7°" that the analyzer prints is `arccos` round-off on identical matrices, not a measurement.)
 
-| sampler | rotation disagreement | scale disagreement |
-|---|---|---|
-| canonical stride | **5e-7 °** (all n_pts, all k) | 0.000000% |
-| seeded blue noise | **5e-7 °** (all n_pts, all k) | 0.000000% |
+Against **0.72°** for the current `vtk_stride` on the raw array. The Finding-1 bug is closed by
+canonicalising the landmark rule; ensembling is not needed for this part.
 
-Against **0.72°** for the current `vtk_stride` on the raw array. Float noise. The Finding-1 bug is
-closed by canonicalising the landmark rule; ensembling is not needed for this part.
+**Corollary — this arm carries no discriminative signal.** Both candidate samplers are
+order-invariant *by construction*, so order-stability cannot rank them. Everything that
+distinguishes the two options rests on the A-vs-B number, which §7.4–§7.5 show is compromised.
 
 ### 7.2 More repeats of fewer points wins — clearly
 
@@ -303,63 +336,83 @@ n_pts=1000, canonical stride, matched rescan:
 *slightly worse* — plausibly because ICP commits harder to its particular landmark set, which
 increases the variance across landmark draws. **The hardcoded 100 should be exposed and lowered.**
 
-### 7.4 Blue noise vs canonical stride — split decision, and it hinges on the regime
+### 7.4 Blue noise vs canonical stride — RETRACTED, the two arms do not measure the same thing
 
-| n_pts × k | stride MATCHED | bluenoise MATCHED | stride UNMATCHED | bluenoise UNMATCHED |
-|---|---|---|---|---|
-| 1000 × 1 | **0.0508°** | 0.2327° | 0.426° | **0.249°** |
-| 1000 × 5 | **0.0080°** | 0.1214° | 0.165° | **0.107°** |
-| 1000 × 10 | **0.0042°** | 0.0842° | 0.099° | **0.070°** |
+An earlier draft of this section claimed canonical stride beats blue noise 6–15×. **That claim is
+withdrawn.** Adversarial review established that the comparison is an artifact of the pairing, not
+a difference in sampling quality:
 
-**Canonical stride wins the matched regime by 6–15×; blue noise wins the unmatched regime.**
+| n_pts × k | stride paired | stride **unpaired** | stride within-A | bluenoise paired | bluenoise **unpaired** | bluenoise within-A |
+|---|---|---|---|---|---|---|
+| 250 × 1 | 0.0731° | 0.877° (12.0×) | 0.883° | 0.601° | 0.585° (0.97×) | 0.575° |
+| 1000 × 1 | 0.0508° | 0.433° (8.5×) | 0.427° | 0.233° | 0.258° (1.11×) | 0.249° |
+| 1000 × 5 | 0.0080° | 0.167° (20.9×) | 0.164° | 0.121° | 0.084° | 0.102° |
+| 4000 × 1 | 0.0360° | 0.191° (5.3×) | 0.209° | 0.108° | 0.105° (0.97×) | 0.079° |
 
-Mechanism: A and B share 96.2% of their vertices at the *same array index*, so canonical sort plus
-the same offset lands on almost literally the same points on both meshes, and the ICP errors
-cancel. Blue noise's Poisson-disk accept/reject sequence diverges between two slightly different
-meshes even at a fixed seed, so its point sets do not correspond and nothing cancels.
+Read the *within-A* columns. For **stride**, unpaired A-vs-B (0.877°) ≈ within-A spread (0.883°):
+pairing by rep index removes essentially **all** of the landmark-sampling variance, because the rep
+index *is* the canonical-sort offset and A and B are 98.8% rank-identical — the same offset selects
+literally the same physical points on both meshes. Measured landmark displacement between A and B
+at the same offset: n=250 mean 0.208 mm with **median exactly 0.0 mm**. For **blue noise**, paired
+≈ unpaired ≈ within-A (ratios 0.97–1.11×): its Poisson-disk accept/reject sequence diverges between
+the two meshes even at a fixed seed (345 vs 364 points; mean nearest-neighbour 2.76 mm = 44% of the
+inter-landmark spacing), so nothing cancels and its number carries the full sampling variance.
 
-### 7.5 The caveat that decides which of §7.4 to believe
+**So stride was scored on a metric with its dominant error term cancelled, and blue noise was not.**
+The two arms ran different experiments. Nothing here ranks the samplers.
 
-**Our A/B pair is easy.** Two runs of the same input, geometry agreeing to 84 µm, vertex arrays
-96.2% index-aligned. A genuine rescan — repositioned limb, different FOV, a differently-shaped
-segmentation — produces marching-cubes arrays with **no** index correspondence, which is much
-closer to the UNMATCHED column, where blue noise is ahead.
+### 7.5 What would settle it
 
-So §7.4 does not settle the sampler choice. **This must be re-run on real scan–rescan pairs before
-committing**, and that experiment is now the top open item. Both samplers are order-invariant
-(§7.1) and both benefit from ensembling (§7.2), so the choice is a refinement, not a blocker.
+The honest comparison needs a pair whose vertex arrays have no index correspondence — i.e. real
+scan–rescan meshes: repositioned limb, different FOV, independent segmentation and tessellation.
+In that regime both samplers land nearer their *unpaired* columns, where they are within ~1.3× of
+each other and blue noise is marginally ahead at larger k.
+
+**Top open item: re-run this grid on genuine scan–rescan pairs.** Until then, §7.2 (ensembling
+wins), §7.3 (`max_iter=30`) and §7.1 (canonicalising kills order-dependence) stand — they do not
+depend on the sampler choice — and Phase 1 can proceed with either sampler behind the flag.
 
 ### 7.6 Recommended configurations (clean single-threaded timings, no worker contention)
 
-| config | order-invariant | matched rescan rot | cost |
+| config | order-invariant | A-vs-B rot (paired) | cost |
 |---|---|---|---|
 | **CURRENT** — `vtk_stride`, 1000, `max_iter=100` | ✗ (0.72° across orderings) | — | 4.55 s |
-| canonical stride, 1000 × 1, `max_iter=30` | ✓ 5e-7° | 0.0492° | **2.33 s** |
+| canonical stride, 1000 × 1, `max_iter=30` | ✓ bit-identical | 0.0492° | **2.33 s** |
 | canonical stride, 500 × 10, `max_iter=30` | ✓ | ~0.0083° | 11.7 s |
 | canonical stride, 1000 × 10, `max_iter=30` | ✓ | 0.0020° | 23.0 s |
-| canonical stride, 2000 × 10, `max_iter=30` | ✓ | ~0.0011° | 45.7 s |
+| canonical stride, 2000 × 10, `max_iter=30` | ✓ | 0.0011° † | 45.7 s |
+
+† **Winner's curse — do not treat this as the best cell.** It is a single realisation (`ngroups=1`).
+Jackknife on its own 10 runs gives k=9 → **0.0043 ± 0.0015**, and the two disjoint k=5 halves are
+0.0093 and 0.0090. The reported 0.0011 sits below the 5th percentile of its own leave-one-out
+family — a fortuitous cancellation. Honest expected level ~0.004–0.008, which puts
+**1000 × 20 (0.0025) ahead of it**. The same caution applies to every `ngroups=1` cell in §7.2–§7.4,
+and the analyzer's `+/- 0.00000` for those cells means *undefined*, not *measured zero*.
 
 **The minimum-viable fix is cheaper than what runs today**: canonical ordering with `max_iter=30`
 and no ensembling costs **2.33 s vs 4.55 s** and removes the order-dependence entirely.
-`500 × 10` at 11.7 s is the recommended default — ~6× the current cost, ~25× more rescan-stable
-than a single registration, and it yields the ensemble-spread QC metric for free.
+`500 × 10` at 11.7 s is the recommended default — ~2.5× the current cost, materially more stable,
+and it yields the ensemble-spread QC metric for free.
 
 ### 7.7 Caveats
 
-- Grid timings were collected with 3 concurrent workers on 4 cores, so absolute costs there are
-  inflated; §7.6 re-times the recommended configurations single-threaded. Relative comparisons
-  within the grid are sound because all wave-1 jobs shared the same contention and every cost is
-  taken from the mesh-A side.
-- Cells where `k` equals the pool size have a single disjoint group, so their matched estimate has
-  no error bar and their bootstrap "unmatched" value degenerates to the matched one. The lowest
-  numbers in the tables (e.g. 2000 × 10 → 0.0011°) are single-sample and should not be read as
-  precise.
-- One knee, one pair. Everything here needs replication across knees and, critically, on real
-  scan–rescan pairs (§7.5).
-- Stability only. No accuracy anchor was included in this grid; §7.2's conclusion is about
-  reproducibility, and a configuration could in principle be reproducibly wrong. The earlier
-  finding that ICP-1000's mean sits within 0.021% of the all-points answer (§1) is the evidence
-  that this is not happening, but it was measured at `max_iter=100` and should be re-checked at 30.
+- **The A/B pair is a re-processing pair, not a rescan pair** (see the box at the top of §7). This
+  is the single biggest limitation and it is what invalidated §7.4.
+- **Winner's curse on the Pareto front.** The running minimum is taken over 54 cells whose median
+  relative SD is ~0.5, so the lowest values are biased low. Read the front as a *shape* (ensembling
+  beats one big ICP) rather than as a ranking of individual cells.
+- Grid timings used 3 concurrent workers on 4 cores, so absolute costs there are inflated; §7.6
+  re-times the recommended configurations single-threaded. Relative comparisons within the grid
+  hold because all wave-1 jobs shared the same contention and every cost is taken from the A side.
+- One knee, one pair. Needs replication across knees.
+- **Stability only — no accuracy anchor in this grid.** A configuration could be reproducibly wrong
+  and still win. The §1 result that ICP-1000's mean sits within 0.021% of the all-points answer is
+  the evidence against that, but it was measured at `max_iter=100` and must be re-checked at 30
+  before `max_iter=30` is adopted.
+- Across all 1,022 recorded transforms every `det(R) = 1.000000` and the max rotation deviation from
+  the global mean is 1.996°, with no run beyond 5° — so no local-minimum events occurred anywhere in
+  this grid. Rotation averaging was never asked to average across distinct basins here; that
+  safeguard remains untested and still belongs in the implementation (§3.2).
 
 ---
 
