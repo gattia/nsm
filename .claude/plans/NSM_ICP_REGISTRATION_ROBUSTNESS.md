@@ -368,9 +368,57 @@ scan–rescan meshes: repositioned limb, different FOV, independent segmentation
 In that regime both samplers land nearer their *unpaired* columns, where they are within ~1.3× of
 each other and blue noise is marginally ahead at larger k.
 
-**Top open item: re-run this grid on genuine scan–rescan pairs.** Until then, §7.2 (ensembling
-wins), §7.3 (`max_iter=30`) and §7.1 (canonicalising kills order-dependence) stand — they do not
-depend on the sampler choice — and Phase 1 can proceed with either sampler behind the flag.
+**Resolved in §7.5b** by adding an accuracy anchor rather than new data: blue noise wins on
+accuracy at every ensemble size. Replication on genuine scan–rescan pairs is still wanted, but the
+sampler question is no longer blocked on it.
+
+### 7.5b RESOLVED — blue noise is the better sampler, once an accuracy anchor is added
+
+§7.4 said the sampler question was open. It is now answered, by adding the accuracy anchor that
+§7.7 flagged as missing: ICP using **every** vertex (113,142) on both meshes, 494 s each.
+
+**The anchor changes the whole reading of this study:**
+
+```
+ALL-POINTS reference, A vs B:  rotation 0.00004 deg,  scale 0.00003 %
+```
+
+The two surfaces are, for registration purposes, **identical**. So the true A-vs-B disagreement is
+zero, and *every* nonzero A-vs-B number in §7.2–§7.4 is pure landmark-sampling artifact — not a
+rescan signal. On this pair the only meaningful quality metric is **distance from the all-points
+answer**.
+
+Measured at ~1000 landmarks per draw, ensembles of k (accuracy = rotation from the all-points
+transform):
+
+| k | bn_trim accuracy | bn_notrim accuracy | **stride accuracy** | stride A-vs-B |
+|---|---|---|---|---|
+| 1 | 0.0801° | 0.1944° | 0.4659° | 0.0730° |
+| 5 | 0.1303° | 0.1334° | 0.1876° | 0.0034° |
+| 10 | 0.0922° | 0.0959° | 0.1410° | 0.0024° |
+| 20 | **0.0656°** | 0.0860° | 0.1039° | 0.0025° |
+
+**Blue noise is closer to the truth than canonical stride at every ensemble size** — 1.6× closer at
+k=20, at equal coverage (20 × 1000 = 20k samples either way).
+
+**Stride is reproducibly wrong, which is exactly the failure mode §7.7 warned about.** Its A-vs-B
+disagreement collapses to 0.0025° while it sits 0.104° from the correct transform. The reason is
+that the two meshes share 98.8% of their vertices, so a vertex-index rule picks the *same* points on
+both and therefore incurs the *same* bias, which cancels in the difference and is invisible in any
+reproducibility-only metric.
+
+**Why stride is biased at all:** it samples *vertices*, and marching-cubes vertex density is not
+uniform per unit area — it concentrates where the surface is curved. A vertex-strided subset
+therefore over-weights high-curvature regions and pulls the ICP fit. Blue noise samples the
+**surface** uniformly by area, so it is unbiased by construction. This is precisely the argument in
+§3.1, and it is now measured rather than asserted.
+
+**The trim was not the problem.** `bn_trim` (linspace-trim to exactly 1000) is as good as or better
+than `bn_notrim` (use pcu's natural ~988 output) at every k, so the harness's trim hack can stay.
+
+**Consequence for §7.4:** the retraction stands, but the resolution is the opposite of the original
+draft. Ensembled blue noise is the recommended sampler; canonical stride's apparent advantage was an
+artifact of a shared bias on a near-duplicate pair.
 
 ### 7.6 Recommended configurations (clean single-threaded timings, no worker contention)
 
@@ -378,7 +426,7 @@ depend on the sampler choice — and Phase 1 can proceed with either sampler beh
 |---|---|---|---|
 | **CURRENT** — `vtk_stride`, 1000, `max_iter=100` | ✗ (0.72° across orderings) | — | 4.55 s |
 | canonical stride, 1000 × 1, `max_iter=30` | ✓ bit-identical | 0.0492° | **2.33 s** |
-| canonical stride, 500 × 10, `max_iter=30` | ✓ | ~0.0083° | 11.7 s |
+| canonical stride, 500 × 10, `max_iter=30` | ✓ | ~0.0083° (but see §7.5b — reproducibly biased) | 11.7 s |
 | canonical stride, 1000 × 10, `max_iter=30` | ✓ | 0.0020° | 23.0 s |
 | canonical stride, 2000 × 10, `max_iter=30` | ✓ | 0.0011° † | 45.7 s |
 
@@ -391,8 +439,12 @@ and the analyzer's `+/- 0.00000` for those cells means *undefined*, not *measure
 
 **The minimum-viable fix is cheaper than what runs today**: canonical ordering with `max_iter=30`
 and no ensembling costs **2.33 s vs 4.55 s** and removes the order-dependence entirely.
-`500 × 10` at 11.7 s is the recommended default — ~2.5× the current cost, materially more stable,
-and it yields the ensemble-spread QC metric for free.
+
+**Recommended default, revised after §7.5b: seeded blue noise, ~1000 points × 10–20 repeats,
+`max_iter=30`.** Blue noise is 1.6× closer to the all-points transform than stride at k=20 and is
+unbiased by construction; stride's lower A-vs-B number is a shared bias that will not survive a real
+rescan. Cost is comparable — blue-noise sampling adds ~0.15 s per draw on top of the same ICP — so
+expect ~12–25 s for k=10–20 at 1000 points. Ship the ensemble-spread QC metric with it.
 
 ### 7.7 Caveats
 
@@ -405,10 +457,10 @@ and it yields the ensemble-spread QC metric for free.
   re-times the recommended configurations single-threaded. Relative comparisons within the grid
   hold because all wave-1 jobs shared the same contention and every cost is taken from the A side.
 - One knee, one pair. Needs replication across knees.
-- **Stability only — no accuracy anchor in this grid.** A configuration could be reproducibly wrong
-  and still win. The §1 result that ICP-1000's mean sits within 0.021% of the all-points answer is
-  the evidence against that, but it was measured at `max_iter=100` and must be re-checked at 30
-  before `max_iter=30` is adopted.
+- **Accuracy anchor added in §7.5b** — and it mattered: canonical stride turned out to be exactly
+  the "reproducibly wrong" case this caveat anticipated. Note the anchor was measured at
+  `max_iter=100`; the `max_iter=30` recommendation (§7.3) is still stability-only and should be
+  re-checked against the anchor before adoption.
 - Across all 1,022 recorded transforms every `det(R) = 1.000000` and the max rotation deviation from
   the global mean is 1.996°, with no run beyond 5° — so no local-minimum events occurred anywhere in
   this grid. Rotation averaging was never asked to average across distinct basins here; that
