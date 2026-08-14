@@ -39,8 +39,12 @@ for i, param_group in enumerate(optimizer.param_groups):
 Group 0 is the latents, so the latents received `lr_schedules[0]` — the entry intended for
 the model — and the model received `lr_schedules[1]`.
 
-**Net effect:** epoch 0 used the intended mapping; every epoch from 1 onward used the
-swapped one. In practice the entire run is swapped.
+**Net effect: 100% of every affected run used the swapped mapping.** Not "most of" it.
+`get_optimizer()` does set the intended learning rates at construction, but the epoch loop
+is `range(resume_epoch + 1, n_epochs + 1)` — it starts at 1, never 0 — and
+`adjust_learning_rate()` is called at the *top* of `train_epoch`. So the intended values
+are overwritten before the first `optimizer.step()` and never influence a single weight
+update.
 
 The mismatch dates to a 2023 refactor that made the optimizer able to loop over multiple
 models, which moved the latent codes to the front of the param-group list without updating
@@ -92,6 +96,24 @@ A pre-fix config run on fixed code would otherwise train with a different mappin
 did historically, with no error. So an `Adam`/`AdamW` config that does not declare
 `lr_schedule_convention` now **raises** with a message explaining both options.
 `schedule_free_*` configs default to `v2` silently, having never been ambiguous.
+
+### What this did to the shipped defaults
+
+The default config was inherited from DeepSDF's reference `specs.json`, which lists the
+network LR first and the latent LR second:
+
+| | Entry 0 | Entry 1 |
+|---|---|---|
+| Intended | model `0.0005` | latent `0.001` |
+| **Actually applied** | **latent `0.0005`** | **model `0.001`** |
+
+So the reference convention — latents learn *faster* than the decoder — was inverted. Every
+affected run trained its decoder at 2× the intended rate and its latents at half.
+
+This fix swaps the two entries in the shipped default configs, which **preserves the
+historical effective behaviour** (model `0.001`, latent `0.0005`) rather than restoring
+DeepSDF's intent. That is a deliberate choice for continuity with the tuned production
+models — see the open action below. It is not an endorsement of those values.
 
 ### Scientific consequence
 
