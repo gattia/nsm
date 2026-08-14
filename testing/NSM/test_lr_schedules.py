@@ -25,9 +25,7 @@ from NSM.utils import (
     adjust_learning_rate,
     get_learning_rate_schedules,
     get_optimizer,
-    rename_optimizer_param_groups,
     resolve_schedule_targets,
-    restore_optimizer_param_group_names,
     save_model,
 )
 
@@ -388,9 +386,9 @@ class TestCheckpointResume:
 
     def test_names_are_lost_loading_a_pre_fix_checkpoint(self):
         """
-        The behaviour that makes restoration necessary: load_state_dict adopts the
-        CHECKPOINT's param-group metadata, so a pre-fix checkpoint (no names) strips the
-        names off a freshly built, correctly named optimizer.
+        Why resuming a pre-fix checkpoint is refused: load_state_dict adopts the
+        CHECKPOINT's param-group metadata, so a checkpoint with no names strips them off a
+        freshly built, correctly named optimizer. Group identity is unrecoverable.
         """
         _, optimizer = build(make_config())
         old_state = copy.deepcopy(optimizer.state_dict())
@@ -402,65 +400,49 @@ class TestCheckpointResume:
 
         assert all(g.get("name") is None for g in fresh.param_groups)
 
-    def test_restore_from_saved_names(self):
-        _, optimizer = build(make_config())
-        checkpoint = {"optimizer_group_names": ["latent", "model_0"]}
-
-        _, fresh = build(make_config())
-        fresh.load_state_dict(optimizer.state_dict())
-        restore_optimizer_param_group_names(fresh, checkpoint, n_model_groups=1)
-
-        assert [g["name"] for g in fresh.param_groups] == ["latent", "model_0"]
-
-    def test_restore_falls_back_and_warns_for_old_checkpoints(self):
-        _, optimizer = build(make_config())
-        optimizer.load_state_dict(optimizer.state_dict())
-
-        with pytest.warns(UserWarning, match="saved before Aug 2026"):
-            restore_optimizer_param_group_names(optimizer, {}, n_model_groups=1)
-
-        assert [g["name"] for g in optimizer.param_groups] == ["latent", "model_0"]
-
-    def test_restore_rejects_length_mismatch(self):
-        _, optimizer = build(make_config())
-
-        with pytest.raises(ValueError, match="length mismatch"):
-            restore_optimizer_param_group_names(
-                optimizer, {"optimizer_group_names": ["latent"]}, n_model_groups=1
-            )
-
-    def test_rename_rejects_wrong_group_count(self):
-        _, optimizer = build(make_config())
-
-        with pytest.raises(ValueError, match="Expected 3 optimizer param groups"):
-            rename_optimizer_param_groups(optimizer, n_model_groups=2)
-
-    def test_resume_applies_correct_lrs_after_restore(self):
-        """End-to-end: resume must not resurrect the swap."""
+    def test_resume_from_post_fix_checkpoint_applies_correct_lrs(self):
+        """End-to-end: a resume that IS supported must not resurrect the swap."""
         schedules, optimizer = build(make_config())
 
         _, fresh = build(make_config())
         fresh.load_state_dict(optimizer.state_dict())
-        restore_optimizer_param_group_names(
-            fresh, {"optimizer_group_names": ["latent", "model_0"]}, n_model_groups=1
-        )
         adjust_learning_rate(schedules, fresh, epoch=1)
 
         lrs = lrs_by_name(fresh)
         assert lrs["model_0"] == pytest.approx(MODEL_LR)
         assert lrs["latent"] == pytest.approx(LATENT_LR)
 
+    def test_unnamed_groups_are_rejected_before_training(self):
+        """
+        The train loop refuses a pre-fix checkpoint at load time. adjust_learning_rate is
+        only the backstop -- it is skipped for schedule_free_*, which would otherwise run
+        to the first checkpoint save before failing.
+        """
+        schedules, optimizer = build(make_config())
+        for group in optimizer.param_groups:
+            group.pop("name")
+
+        with pytest.raises(KeyError, match="no recognized 'name'"):
+            adjust_learning_rate(schedules, optimizer, epoch=1)
+
 
 class TestSaveModel:
-    def test_save_model_persists_group_names(self, tmp_path):
+    def test_saved_optimizer_state_carries_group_names(self, tmp_path):
+        """
+        No separate names key is stored: state_dict() retains 'name' itself, which is what
+        makes the round-trip work.
+        """
         _, optimizer = build(make_config())
-        model = make_model()
         config = {"experiment_directory": str(tmp_path)}
 
-        save_model(config, epoch=1, decoder=model, optimizer=optimizer)
+        save_model(config, epoch=1, decoder=make_model(), optimizer=optimizer)
 
         checkpoint = torch.load(tmp_path / "model" / "1.pth", weights_only=False)
-        assert checkpoint["optimizer_group_names"] == ["latent", "model_0"]
+        assert "optimizer_group_names" not in checkpoint
+        assert [g["name"] for g in checkpoint["optimizer"]["param_groups"]] == [
+            "latent",
+            "model_0",
+        ]
 
     def test_save_model_rejects_unnamed_groups(self, tmp_path):
         _, optimizer = build(make_config())
@@ -475,7 +457,7 @@ class TestSaveModel:
         save_model(config, epoch=1, decoder=make_model(), optimizer=None)
 
         checkpoint = torch.load(tmp_path / "model" / "1.pth", weights_only=False)
-        assert checkpoint["optimizer_group_names"] is None
+        assert checkpoint["optimizer"] == "None"
 
 
 class TestPlainLrLogging:

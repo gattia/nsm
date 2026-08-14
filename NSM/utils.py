@@ -78,6 +78,12 @@ LR_TARGET_LATENT = "latent"
 
 LR_TARGETS = (LR_TARGET_MODEL, LR_TARGET_LATENT)
 
+# --- MIGRATION SCAFFOLDING (added Aug 2026) ---------------------------------------
+# Everything down to the END MIGRATION SCAFFOLDING marker exists only to explain the
+# Aug 2026 Target change to someone holding a config written before it. None of it is
+# permanent API. Delete the whole block once no config still in use predates the Target
+# key; resolve_schedule_targets() then just raises a one-line error.
+#
 # Which entry drove which group before Aug 2026, keyed by optimizer family. Adam/AdamW
 # went through adjust_learning_rate(), which mapped positionally against get_optimizer()'s
 # [latent, model...] group order -- so entry 0 drove the latents. schedule_free_* skipped
@@ -149,6 +155,9 @@ def _annotated_entries_json(schedule_specs, targets):
         annotated.append(entry)
     body = json.dumps({"LearningRateSchedule": annotated}, indent=4)
     return "\n".join("    " + line for line in body.splitlines())
+
+
+# --- END MIGRATION SCAFFOLDING ------------------------------------------------------
 
 
 def resolve_schedule_targets(schedule_specs, optimizer="Adam"):
@@ -308,10 +317,9 @@ def adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False):
     Raises
     ------
     KeyError
-        If a param group has no recognized name. ``optimizer.load_state_dict()`` adopts
-        the checkpoint's param-group metadata, so resuming from a checkpoint saved before
-        Aug 2026 (which has no names) strips them -- see
-        :func:`restore_optimizer_param_group_names`.
+        If a param group has no recognized name, which in practice means the optimizer
+        state came from a checkpoint saved before Aug 2026 (the train loop rejects those
+        at load time, so this is a backstop).
     """
     if verbose is True:
         print("optimizer param groups: ", optimizer.param_groups)
@@ -335,10 +343,9 @@ def adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False):
             raise KeyError(
                 f"optimizer param_group has no recognized 'name' (got {name!r}; expected "
                 f"'{LATENT_GROUP_NAME}', '{MODEL_GROUP_PREFIX}*', or "
-                f"'{CLASSIFICATION_HEADS_GROUP_NAME}'). If the optimizer state was loaded "
-                f"from a checkpoint saved before Aug 2026, that checkpoint carries no group "
-                f"names and load_state_dict() adopts its metadata -- re-inject names with "
-                f"restore_optimizer_param_group_names()."
+                f"'{CLASSIFICATION_HEADS_GROUP_NAME}'). Build the optimizer with "
+                f"get_optimizer(); if its state came from a checkpoint saved before "
+                f"Aug 2026, that checkpoint cannot be resumed."
             )
 
 
@@ -360,10 +367,10 @@ def save_model(config, epoch, decoder, model_subdir="model", optimizer=None):
     """
     Save a decoder checkpoint.
 
-    Also persists ``optimizer_group_names`` alongside the optimizer state. The optimizer's
-    own ``state_dict()`` does retain the ``name`` key, but storing the names explicitly
-    keeps group identity readable without unpacking optimizer state, and lets resume
-    detect a pre-fix checkpoint (no names) and fall back deliberately.
+    Param-group names need no special handling: ``optimizer.state_dict()`` retains the
+    ``name`` key, and ``load_state_dict()`` restores it. The names are still validated
+    here, so a checkpoint can never be written from an optimizer whose groups have lost
+    their identity.
     """
     if type(decoder) not in (list, tuple):
         decoder = [decoder]
@@ -371,14 +378,12 @@ def save_model(config, epoch, decoder, model_subdir="model", optimizer=None):
     filename = f"{epoch}.pth"
 
     optimizer_state = "None"
-    optimizer_group_names = None
     if optimizer is not None:
-        optimizer_group_names = [group.get("name") for group in optimizer.param_groups]
-        if any(name is None for name in optimizer_group_names):
+        if any(group.get("name") is None for group in optimizer.param_groups):
             raise ValueError(
-                "All optimizer param groups must have a 'name' before saving. "
-                "Build the optimizer with get_optimizer(), or re-inject names with "
-                "rename_optimizer_param_groups() after load_state_dict()."
+                "All optimizer param groups must have a 'name' before saving. Build the "
+                "optimizer with get_optimizer(); if its state came from a checkpoint "
+                "saved before Aug 2026, that checkpoint cannot be resumed."
             )
         optimizer_state = optimizer.state_dict()
 
@@ -396,7 +401,6 @@ def save_model(config, epoch, decoder, model_subdir="model", optimizer=None):
             "epoch": epoch,
             "model": decoder_.state_dict(),
             "optimizer": optimizer_state,
-            "optimizer_group_names": optimizer_group_names,
         }
 
         torch.save(
@@ -512,69 +516,6 @@ def get_optimizer(model, latent_vecs, lr_schedules, optimizer="Adam", weight_dec
         raise ValueError(f"Unknown optimizer: {optimizer}")
 
     return optimizer
-
-
-def rename_optimizer_param_groups(optimizer, n_model_groups, has_classification_heads=False):
-    """
-    Re-apply semantic names to optimizer param groups after ``load_state_dict()``.
-
-    ``load_state_dict()`` adopts the checkpoint's param-group metadata, so loading a
-    checkpoint saved before Aug 2026 -- which has no ``name`` keys -- leaves the groups
-    unnamed even though the freshly built optimizer had names.
-
-    This is the FALLBACK path for exactly that case. It assumes :func:`get_optimizer`'s
-    group order ``[latent, model_0, ...]`` with an optional trailing
-    ``classification_heads`` group, which is the only assumption available once the names
-    are gone. Prefer the checkpoint's saved names when present.
-    """
-    expected_groups = 1 + n_model_groups + int(has_classification_heads)
-    if len(optimizer.param_groups) != expected_groups:
-        raise ValueError(
-            f"Expected {expected_groups} optimizer param groups "
-            f"(1 latent, {n_model_groups} model, "
-            f"{int(has_classification_heads)} classification_heads), "
-            f"got {len(optimizer.param_groups)}."
-        )
-
-    optimizer.param_groups[0]["name"] = LATENT_GROUP_NAME
-
-    for idx in range(n_model_groups):
-        optimizer.param_groups[1 + idx]["name"] = f"{MODEL_GROUP_PREFIX}{idx}"
-
-    if has_classification_heads:
-        optimizer.param_groups[-1]["name"] = CLASSIFICATION_HEADS_GROUP_NAME
-
-
-def restore_optimizer_param_group_names(optimizer, checkpoint, n_model_groups):
-    """
-    Restore optimizer param-group names after resuming from ``checkpoint``.
-
-    Uses the checkpoint's saved ``optimizer_group_names`` when available, otherwise falls
-    back to :func:`rename_optimizer_param_groups`, which infers names from group order.
-    The fallback fires only for checkpoints saved before Aug 2026.
-    """
-    group_names = checkpoint.get("optimizer_group_names")
-
-    if group_names is not None:
-        if len(group_names) != len(optimizer.param_groups):
-            raise ValueError(
-                f"optimizer_group_names length mismatch: checkpoint has "
-                f"{len(group_names)}, optimizer has {len(optimizer.param_groups)}."
-            )
-        for param_group, name in zip(optimizer.param_groups, group_names):
-            param_group["name"] = name
-        return
-
-    warnings.warn(
-        "Checkpoint has no 'optimizer_group_names' (saved before Aug 2026). Falling back "
-        "to positional naming, which assumes the [latent, model_0, ...] group order.",
-        UserWarning,
-    )
-    rename_optimizer_param_groups(
-        optimizer,
-        n_model_groups=n_model_groups,
-        has_classification_heads=len(optimizer.param_groups) > (1 + n_model_groups),
-    )
 
 
 def symmetric_chammfer(p1, p2, n_pts):
