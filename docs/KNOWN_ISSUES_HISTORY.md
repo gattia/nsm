@@ -50,7 +50,7 @@ The mismatch dates to a 2023 refactor that made the optimizer able to loop over 
 models, which moved the latent codes to the front of the param-group list without updating
 the positional assignment in `adjust_learning_rate`.
 
-### Why schedule-free runs are unaffected
+### schedule-free runs: not hit by the bug, but arguably hurt worse
 
 The training loop skips the LR adjustment entirely for those optimizers:
 
@@ -59,14 +59,41 @@ if not ("schedule_free" in config["optimizer"]):
     adjust_learning_rate(config["lr_schedules"], optimizer, epoch)
 ```
 
-They therefore kept `get_optimizer()`'s correct initial assignment for the whole run.
-**Do not swap the schedule entries in a `schedule_free_*` config.**
+So they kept `get_optimizer()`'s assignment — entry 0 to the model, entry 1 to the latents
+— for the whole run. In the narrow sense they were never mis-mapped.
+
+**In practice this made them worse, not better.** Every config in this project was written
+and tuned against the Adam/AdamW path, where entry 0 was in effect the latent LR. Running
+that same file with a `schedule_free_*` optimizer applied the values the other way round.
+The same config meant opposite things depending on which optimizer you chose, and only the
+Adam reading matched how the numbers were picked.
+
+Nothing decayed either, since `adjust_learning_rate` is where decay is applied, so whatever
+the epoch-0 values were, they held for the entire run.
+
+Worked through with the ShapeMedKnee_2024 values (entry 0 `0.005`, entry 1 `0.0001`):
+
+| | latent LR | model LR |
+|---|---|---|
+| `AdamW` (as tuned) | `5e-3` → `1.5e-5` | `1e-4` → `1e-6` |
+| `schedule_free_AdamW` | **`1e-4`, constant** | **`5e-3`, constant** |
+
+The decoder trains at 50× the rate it was tuned for, flat, for the whole run. **If a
+`schedule_free_*` run appeared not to work, this is a candidate explanation, and it is not
+a property of schedule-free optimizers.** Re-run it with the values annotated the way they
+were tuned before concluding anything about the method.
+
+Consequence for migration: for a `schedule_free_*` config, the annotation that reproduces
+the historical run is entry 0 → `model`, entry 1 → `latent` — the opposite of the Adam
+case — but reproducing that run faithfully is often *not* what you want. The migration
+error prints this caution when it sees a schedule-free optimizer.
 
 ### How to tell whether one of your runs is affected
 
 1. Check `model_params_config.json` in the experiment directory.
 2. If `"optimizer"` is `"Adam"` or `"AdamW"`, and the run predates the fix → **affected**.
-3. If `"optimizer"` starts with `"schedule_free"` → **not affected**.
+3. If `"optimizer"` starts with `"schedule_free"` → not hit by the runtime bug, but read
+   the schedule-free section above before assuming the run was fine.
 4. If the `LearningRateSchedule` entries carry `"Target"`, the run was configured after
    the fix and its mapping is explicit.
 

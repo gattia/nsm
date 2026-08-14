@@ -106,7 +106,7 @@ entry 0 -> {hist_0}, entry 1 -> {hist_1}. Annotating the entries that way reprod
 original run exactly:
 
 {annotated}
-
+{caution}
 TO CONFIGURE A NEW RUN
 
 Set '{key}' on each entry to the group you intend it to drive. Order is ignored, so list
@@ -114,6 +114,23 @@ them in whichever order reads best.
 
 See docs/KNOWN_ISSUES_HISTORY.md section 1.
 """.strip()
+
+
+_SCHEDULE_FREE_CAUTION = """
+CAUTION -- READ BEFORE REPRODUCING THIS ONE
+
+'schedule_free_*' never called adjust_learning_rate(), so it kept get_optimizer()'s
+assignment: the OPPOSITE of what an Adam/AdamW run of the same file did. The same config
+therefore meant two different things depending on which optimizer you picked.
+
+If these values were copied or tuned from an Adam/AdamW config -- which is how most of
+them were written -- then this run applied the latent's rate to the model and the model's
+rate to the latent, held CONSTANT for the whole run, since nothing ever decayed them. That
+is a plausible reason for a schedule_free run to have trained badly.
+
+So reproducing this run faithfully may not be what you want. Compare these values against
+an Adam/AdamW config for the same experiment before you choose the annotation.
+"""
 
 
 def _historical_targets(optimizer):
@@ -180,6 +197,7 @@ def resolve_schedule_targets(schedule_specs, optimizer="Adam"):
                 hist_0=hist_0,
                 hist_1=hist_1,
                 annotated=_annotated_entries_json(schedule_specs, (hist_0, hist_1)),
+                caution=(_SCHEDULE_FREE_CAUTION if "schedule_free" in str(optimizer) else ""),
             )
         )
 

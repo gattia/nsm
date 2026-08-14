@@ -265,6 +265,27 @@ class TestMigrationGuard:
         message = str(exc.value)
         assert "entry 0 -> model, entry 1 -> latent" in message
 
+    def test_schedule_free_error_warns_that_reproducing_may_be_wrong(self):
+        """
+        A schedule_free config's values were almost always tuned under Adam, where the
+        mapping was the opposite -- so faithfully reproducing the run reproduces the
+        mismatch. The message has to say so.
+        """
+        with pytest.raises(ValueError) as exc:
+            get_learning_rate_schedules(
+                make_config(targets=(None, None), optimizer="schedule_free_AdamW")
+            )
+
+        message = str(exc.value)
+        assert "CAUTION" in message
+        assert "may not be what you want" in message
+
+    def test_adam_error_has_no_schedule_free_caution(self):
+        with pytest.raises(ValueError) as exc:
+            get_learning_rate_schedules(make_config(targets=(None, None)))
+
+        assert "CAUTION" not in str(exc.value)
+
     def test_error_includes_paste_ready_json(self):
         with pytest.raises(ValueError) as exc:
             get_learning_rate_schedules(make_config(targets=(None, None)))

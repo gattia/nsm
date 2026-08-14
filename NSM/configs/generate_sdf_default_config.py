@@ -1,4 +1,5 @@
 import json
+import os
 
 config = {
     "project_name": "deep-sdf-femur",
@@ -90,5 +91,22 @@ config = {
     "code_cyclic_anneal": False,  # https://github.com/haofuml/cyclical_annealing - cyclic anneal the latent weight(s)
 }
 
-with open("./default_config.json", "w") as f:
-    json.dump(config, f, indent=4)
+DEFAULT_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "default_config.json"
+)
+
+
+def write_default_config(path=DEFAULT_CONFIG_PATH):
+    """Write ``config`` to ``path``. Regenerates the shipped ``default_config.json``."""
+    with open(path, "w") as f:
+        json.dump(config, f, indent=4)
+    return path
+
+
+if __name__ == "__main__":
+    # Guarded, and writing next to this module rather than to the caller's cwd. Both used
+    # to be otherwise: the write ran at IMPORT time and targeted "./", so merely importing
+    # this module dropped a default_config.json into whatever directory you were in, while
+    # the shipped copy it was meant to regenerate went untouched unless you happened to be
+    # cd'd into NSM/configs.
+    print(f"wrote {write_default_config()}")
