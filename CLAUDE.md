@@ -102,6 +102,25 @@ Example config snippet:
 }
 ```
 
+### Learning Rate Schedules: `lr_schedule_convention`
+
+`LearningRateSchedule` is a **positional** two-entry list. Which entry drives which
+parameter group is declared by the required `lr_schedule_convention` config key:
+
+- `"v2"` — index 0 = model/decoder, index 1 = latent codes. **Use this for all new runs.**
+- `"legacy_swapped"` — index 0 = latent codes, index 1 = model. Only for reproducing an
+  Adam/AdamW run configured before Aug 2026.
+
+An `Adam`/`AdamW` config that omits the key **raises**. This is deliberate: a pre-fix
+config would otherwise train with a different mapping than it did historically, silently.
+`schedule_free_*` configs were never affected and default to `v2`.
+
+Optimizer param groups are **named** (`latent`, `model_0`, …) and `adjust_learning_rate()`
+maps schedules by name, never by position. Never assume group order is meaningful.
+
+Background: `docs/KNOWN_ISSUES_HISTORY.md` §1 — a positional-mapping bug swapped these two
+schedules on every Adam/AdamW run from May 2023 to Aug 2026.
+
 ### Dependencies
 
 Key libraries: PyTorch (core ML), mskt (pip name for pymskt - musculoskeletal toolkit), pymeshfix, pykeops (Sinkhorn/optimal transport), einops, wandb (experiment tracking)
