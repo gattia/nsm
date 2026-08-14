@@ -78,104 +78,6 @@ LR_TARGET_LATENT = "latent"
 
 LR_TARGETS = (LR_TARGET_MODEL, LR_TARGET_LATENT)
 
-# --- MIGRATION SCAFFOLDING (added Aug 2026) ---------------------------------------
-# Everything down to the END MIGRATION SCAFFOLDING marker exists only to explain the
-# Aug 2026 Target change to someone holding a config written before it. None of it is
-# permanent API. Delete the whole block once no config still in use predates the Target
-# key; resolve_schedule_targets() then just raises a one-line error.
-#
-# Which entry drove which group before Aug 2026, keyed by optimizer family. Adam/AdamW
-# went through adjust_learning_rate(), which mapped positionally against get_optimizer()'s
-# [latent, model...] group order -- so entry 0 drove the latents. schedule_free_* skipped
-# adjust_learning_rate() entirely and kept get_optimizer()'s own assignment, where entry 0
-# drove the model. The two families therefore migrate to OPPOSITE annotations.
-_HISTORICAL_TARGETS_ADAM = (LR_TARGET_LATENT, LR_TARGET_MODEL)
-_HISTORICAL_TARGETS_SCHEDULE_FREE = (LR_TARGET_MODEL, LR_TARGET_LATENT)
-
-_LR_TARGET_MIGRATION_MESSAGE = """
-Every 'LearningRateSchedule' entry must declare '{key}' ("{model}" or "{latent}").
-
-{problem}
-
-WHY THIS IS REQUIRED
-
-Entry order used to decide which schedule drove which parameter group, and from May 2023
-to Aug 2026 a mapping bug applied the two entries swapped on every Adam/AdamW run: the
-latent codes trained under entry 0 and the model under entry 1. A config written before
-the fix and one written after are byte-identical while meaning opposite things, so the
-intent cannot be recovered from the file. It has to be stated.
-
-TO REPRODUCE THIS RUN AS IT ORIGINALLY TRAINED
-
-This config's optimizer is '{optimizer}', for which the historical mapping was
-entry 0 -> {hist_0}, entry 1 -> {hist_1}. Annotating the entries that way reproduces the
-original run exactly:
-
-{annotated}
-{caution}
-TO CONFIGURE A NEW RUN
-
-Set '{key}' on each entry to the group you intend it to drive. Order is ignored, so list
-them in whichever order reads best.
-
-See docs/KNOWN_ISSUES_HISTORY.md section 1.
-""".strip()
-
-
-_SCHEDULE_FREE_CAUTION = """
-CAUTION -- READ BEFORE REPRODUCING THIS ONE
-
-'schedule_free_*' never called adjust_learning_rate(), so it kept get_optimizer()'s
-assignment: the OPPOSITE of what an Adam/AdamW run of the same file did. The same config
-therefore meant two different things depending on which optimizer you picked.
-
-If these values were copied or tuned from an Adam/AdamW config -- which is how most of
-them were written -- then this run applied the latent's rate to the model and the model's
-rate to the latent, held CONSTANT for the whole run, since nothing ever decayed them. That
-is a plausible reason for a schedule_free run to have trained badly.
-
-So reproducing this run faithfully may not be what you want. Compare these values against
-an Adam/AdamW config for the same experiment before you choose the annotation.
-"""
-
-
-def _migration_error(schedule_specs, optimizer, problem):
-    """
-    Build the error shown when a config predates the ``Target`` key.
-
-    Includes a paste-ready copy of the caller's own entries, annotated with the targets
-    that reproduce their historical run -- which differ by optimizer family.
-    """
-    schedule_free = "schedule_free" in str(optimizer)
-    hist_0, hist_1 = (
-        _HISTORICAL_TARGETS_SCHEDULE_FREE if schedule_free else _HISTORICAL_TARGETS_ADAM
-    )
-
-    annotated = [
-        {LR_TARGET_KEY: target, **{k: v for k, v in spec.items() if k != LR_TARGET_KEY}}
-        for spec, target in zip(schedule_specs, (hist_0, hist_1))
-    ]
-    body = json.dumps({"LearningRateSchedule": annotated}, indent=4)
-
-    return ValueError(
-        _LR_TARGET_MIGRATION_MESSAGE.format(
-            key=LR_TARGET_KEY,
-            model=LR_TARGET_MODEL,
-            latent=LR_TARGET_LATENT,
-            problem=problem,
-            optimizer=optimizer,
-            hist_0=hist_0,
-            hist_1=hist_1,
-            annotated="\n".join("    " + line for line in body.splitlines()),
-            caution=_SCHEDULE_FREE_CAUTION if schedule_free else "",
-        )
-    )
-
-
-# --- END MIGRATION SCAFFOLDING ------------------------------------------------------
-# Deleting the block above leaves resolve_schedule_targets() needing a plain one-line
-# ValueError in place of its _migration_error() call.
-
 
 def resolve_schedule_targets(schedule_specs, optimizer="Adam"):
     """
@@ -203,7 +105,12 @@ def resolve_schedule_targets(schedule_specs, optimizer="Adam"):
     targets = [spec.get(LR_TARGET_KEY) for spec in schedule_specs]
 
     if None in targets:
-        raise _migration_error(
+        # One-time migration help, in its own module so it can be deleted wholesale.
+        # Imported here rather than at module scope to keep that a one-line removal
+        # (and because _lr_migration imports the LR_TARGET_* constants from here).
+        from NSM._lr_migration import migration_error
+
+        raise migration_error(
             schedule_specs,
             optimizer,
             problem=(

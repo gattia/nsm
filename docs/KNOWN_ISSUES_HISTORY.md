@@ -186,6 +186,8 @@ current production models before assuming either is better. Not yet done.
 ### Related
 
 - `NSM/utils.py` — `get_optimizer`, `adjust_learning_rate`, `resolve_schedule_targets`
+- `NSM/_lr_migration.py` — the migration error text. Not permanent API; delete the file
+  once no config still in use predates the `Target` key.
 - `testing/NSM/test_lr_schedules.py` — regression and equivalence tests
 - `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §4 — this fix as the migration template
 
