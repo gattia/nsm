@@ -360,7 +360,9 @@ def save_model(config, epoch, decoder, model_subdir="model", optimizer=None):
 
     filename = f"{epoch}.pth"
 
-    optimizer_state = "None"
+    # None, not the string "None" this used to write. The string is truthy, so the natural
+    # `if checkpoint["optimizer"]:` reads as "state present" and hands load_state_dict a str.
+    optimizer_state = None
     if optimizer is not None:
         if any(group.get("name") is None for group in optimizer.param_groups):
             raise ValueError(

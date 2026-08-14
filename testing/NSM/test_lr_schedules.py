@@ -455,12 +455,17 @@ class TestSaveModel:
         with pytest.raises(ValueError, match="must have a 'name'"):
             save_model(config, epoch=1, decoder=make_model(), optimizer=optimizer)
 
-    def test_save_model_without_optimizer_still_works(self, tmp_path):
+    def test_save_model_without_optimizer_writes_real_none(self, tmp_path):
+        """
+        None, not the string "None". The string is truthy, so the natural presence check
+        `if checkpoint["optimizer"]:` would pass and then feed a str to load_state_dict.
+        """
         config = {"experiment_directory": str(tmp_path)}
         save_model(config, epoch=1, decoder=make_model(), optimizer=None)
 
         checkpoint = torch.load(tmp_path / "model" / "1.pth", weights_only=False)
-        assert checkpoint["optimizer"] == "None"
+        assert checkpoint["optimizer"] is None
+        assert not checkpoint["optimizer"]
 
 
 class TestPlainLrLogging:

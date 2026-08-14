@@ -132,7 +132,14 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
 
         model.load_state_dict(model_checkpoint["model"])
 
-        # load the optimizer states
+        # load the optimizer states. Checkpoints saved without an optimizer hold None (or
+        # the string "None", written before Sep 2026); load_state_dict would raise an
+        # opaque TypeError on either.
+        if model_checkpoint["optimizer"] in (None, "None"):
+            raise ValueError(
+                f"Checkpoint at epoch {config['resume_epoch']} was saved without optimizer "
+                f"state, so training cannot resume from it."
+            )
         optimizer.load_state_dict(model_checkpoint["optimizer"])
         # state_dict() retains param-group names and load_state_dict() restores them, but
         # it adopts the checkpoint's metadata wholesale -- so a checkpoint saved before
