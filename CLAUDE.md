@@ -41,6 +41,63 @@ make quick-test
 - Tests live in `testing/` directory (not `tests/`)
 - Pytest is configured in pyproject.toml
 
+## Making Changes
+
+This is a research library with one maintainer. Every line added is a line someone
+maintains alone, and dead code here is worse than a gap — it looks load-bearing.
+
+The rules below were paid for by the Aug 2026 LR-schedule fix, which took four rounds of
+review to get from **+341 lines to +173** in `NSM/utils.py` with no loss of function.
+Each one names the specific mistake it prevents.
+
+**Run the claim before you write it.** Assertions about what a change does were wrong more
+often than right until executed: "`state_dict()` drops custom group keys" (false),
+"schedule_free runs were unaffected" (true in the narrow sense, backwards in practice),
+"regenerating the default config changes it" (behaviourally inert), "the `"None"` sentinel
+is cosmetic" (it is truthy, so it is a trap). Every one of these was settled by a
+five-line script. Write the script first; the claim is the output, not the input.
+
+**Do a deletion pass before presenting.** For each symbol you added, ask what actually
+breaks if it is removed, and answer by deleting it and running the tests. Roughly 100
+lines survived the first draft of that fix purely because nobody asked. `/simplify` does
+this if you would rather not do it by hand.
+
+**Never inherit a rationale along with the code.** If you port something and its stated
+justification turns out to be false, the code goes too unless you can independently
+justify it. Disproving the premise and keeping the conclusion — with a freshly invented
+reason — is how the 40 lines of `optimizer_group_names` plumbing survived a full review.
+
+**Separate permanent from transitional at write time, not later.** Migration helpers,
+deprecation shims and one-time explainers go in their own module with a delete-when
+condition in the header (see `NSM/_lr_migration.py`). Inline, unmarked, they become
+indistinguishable from permanent API within a year.
+
+**Fix the class of defect, not the reported instance.** The LR bug was positional
+coupling. Fixing only the reported site left two more instances of the same coupling in
+the same code path, each found in a later round. When a bug has a shape, enumerate every
+place that shape occurs before proposing a fix.
+
+**Size docs to the reader's need, not your uncertainty.** Long docstrings on functions you
+found hard to reason about are self-soothing. Error text that restates a document it
+already links to is padding. Keep what the reader cannot look up.
+
+### Plans
+
+A plan for a non-trivial change should state, before any code:
+
+- which parts are **permanent API** and which are **transitional**, with the condition
+  under which the transitional parts get deleted
+- roughly how much code the permanent part justifies, so growth past it is visible
+- the **verification** for each behavioural claim the plan rests on — the script or test
+  that settles it, not the reasoning that suggests it
+
+### Numerical-behaviour changes
+
+Any fix that silently changes training or reconstruction output for inputs that
+previously ran without error needs an entry in `docs/KNOWN_ISSUES_HISTORY.md`. The test is
+whether a reader can determine, years later, if a run they have on disk is affected and
+what to do about it. Bugs that always crashed need no entry — nobody has results from them.
+
 ## Architecture
 
 ### Core Modules
