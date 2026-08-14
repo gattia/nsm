@@ -71,9 +71,7 @@ def add_plain_lr_to_config(config, idx_model=None, idx_latent=None):
     """
     if idx_model is None or idx_latent is None:
         convention = resolve_lr_schedule_convention(config)
-        resolved_model, resolved_latent = (
-            (1, 0) if convention == LR_CONVENTION_LEGACY else (0, 1)
-        )
+        resolved_model, resolved_latent = (1, 0) if convention == LR_CONVENTION_LEGACY else (0, 1)
         idx_model = resolved_model if idx_model is None else idx_model
         idx_latent = resolved_latent if idx_latent is None else idx_latent
 

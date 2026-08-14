@@ -375,9 +375,7 @@ class TestPlainLrLogging:
     def test_legacy_labels_are_reversed(self):
         # legacy config: entry 0 held the latent LR, entry 1 held the model LR
         config = add_plain_lr_to_config(
-            make_config(
-                model_lr=LATENT_LR, latent_lr=MODEL_LR, convention=LR_CONVENTION_LEGACY
-            )
+            make_config(model_lr=LATENT_LR, latent_lr=MODEL_LR, convention=LR_CONVENTION_LEGACY)
         )
 
         assert config["model_lr_initial"] == pytest.approx(MODEL_LR)

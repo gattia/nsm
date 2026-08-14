@@ -156,14 +156,16 @@ same shape as issue 1's.
 
 ```python
 for model in models:
-    model = model.to(config["device"])   # no-op: rebinds the loop variable
+    model = model.to(config["device"])   # rebinding is pointless, but .to() is in-place
 
 optimizer = get_optimizer(model, ...)     # `model` is the LAST model only
 ```
 
-Two defects. The `.to(device)` loop discards its result, and the optimizer is then built
-from the leaked loop variable rather than from `models`, so **only the last decoder in
-`models` ever receives gradient updates**. The others stay at initialization.
+The device move itself is fine — `nn.Module.to()` mutates in place and returns `self`, so
+every model does reach the device despite the pointless rebinding. The defect is the line
+below it: the optimizer is built from the leaked loop variable rather than from `models`,
+so **only the last decoder in `models` ever receives gradient updates**. The others stay
+at initialization.
 
 The module now emits a `DeprecationWarning`. Use `NSM.train.train_deep_sdf` with
 `objects_per_decoder > 1` instead. Whether to repair or delete this file is a Phase 0
