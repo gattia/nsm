@@ -63,10 +63,17 @@ config = {
     # optimizer
     "optimizer": "Adam",  #  "AdamW"
     "weight_decay": 0.0001,
+    # Which LearningRateSchedule ordering this config is written against.
+    # "v2"             -> index 0 = model, index 1 = latent codes (intended semantics)
+    # "legacy_swapped" -> index 0 = latent codes, index 1 = model (pre-Aug-2026 runtime
+    #                     behaviour; use only to reproduce a historical Adam/AdamW run)
+    "lr_schedule_convention": "v2",
     # Learning Rate:
+    # Entry order is POSITIONAL and is declared by "lr_schedule_convention" above:
+    # under "v2", index 0 drives the model/decoder and index 1 drives the latent codes.
     "LearningRateSchedule": [
-        {"Type": "Step", "Initial": 0.0005, "Interval": 500, "Factor": 0.5},
-        {"Type": "Step", "Initial": 0.001, "Interval": 500, "Factor": 0.5},
+        {"Type": "Step", "Initial": 0.001, "Interval": 500, "Factor": 0.5},  # index 0 = model
+        {"Type": "Step", "Initial": 0.0005, "Interval": 500, "Factor": 0.5},  # index 1 = latent
     ],
     # regularize learning:
     "grad_clip": None,

@@ -8,6 +8,7 @@ from NSM.utils import (
     get_latent_vecs,
     get_checkpoints,
     clear_gpu_cache,
+    restore_optimizer_param_group_names,
 )
 from NSM.losses import eikonal_loss
 from NSM.reconstruct import (
@@ -120,32 +121,31 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
 
     if config["resume_epoch"] > 1:
         print("Loading model, optimizer, and latent states from epoch", config["resume_epoch"])
-        # load the model states
-        model.load_state_dict(
-            torch.load(
-                os.path.join(
-                    config["experiment_directory"], "model", f'{config["resume_epoch"]}.pth'
-                )
-            )["model"]
+        # load each checkpoint once rather than re-reading it per state
+        model_checkpoint = torch.load(
+            os.path.join(config["experiment_directory"], "model", f'{config["resume_epoch"]}.pth')
+        )
+        latent_checkpoint = torch.load(
+            os.path.join(
+                config["experiment_directory"], "latent_codes", f'{config["resume_epoch"]}.pth'
+            )
         )
 
+        model.load_state_dict(model_checkpoint["model"])
+
         # load the optimizer states
-        optimizer.load_state_dict(
-            torch.load(
-                os.path.join(
-                    config["experiment_directory"], "model", f'{config["resume_epoch"]}.pth'
-                )
-            )["optimizer"]
+        optimizer.load_state_dict(model_checkpoint["optimizer"])
+        # load_state_dict adopts the checkpoint's param-group metadata, so a pre-Aug-2026
+        # checkpoint leaves the groups unnamed -- restore names before
+        # adjust_learning_rate() maps schedules by name
+        restore_optimizer_param_group_names(
+            optimizer,
+            model_checkpoint,
+            n_model_groups=len(model) if isinstance(model, (list, tuple)) else 1,
         )
 
         # load the latent vectors
-        latent_vecs.load_state_dict(
-            torch.load(
-                os.path.join(
-                    config["experiment_directory"], "latent_codes", f'{config["resume_epoch"]}.pth'
-                )
-            )["latent_codes"]
-        )
+        latent_vecs.load_state_dict(latent_checkpoint["latent_codes"])
 
     # profiler that runs if config['profiler'] is True, else a dummy profiler is used and should have no effect
     with get_profiler(config) as profiler:

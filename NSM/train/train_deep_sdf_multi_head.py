@@ -24,6 +24,14 @@ loss_l1 = torch.nn.L1Loss(reduction="none")
 
 def train_deep_sdf(config, models: tuple, sdf_dataset, use_wandb=False):
 
+    warnings.warn(
+        "train_deep_sdf_multi_head is DEPRECATED and known to be broken: the optimizer is "
+        "built from a leaked loop variable, so only the LAST model in `models` is ever "
+        "optimized. Use NSM.train.train_deep_sdf with 'objects_per_decoder' > 1 instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
     config.setdefault("mesh_names", None)
 
     # Validate mesh_names if provided
