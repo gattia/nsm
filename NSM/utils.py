@@ -64,116 +64,173 @@ class LogAnnealLearningRateSchedule(LearningRateSchedule):
         return self.initial * math.exp(math.log(self.final / self.initial) * epoch / self.n_epochs)
 
 
-# Config key that declares which LR-schedule ordering convention a config was written
-# against. See resolve_lr_schedule_convention() for why this must be explicit.
-LR_SCHEDULE_CONVENTION_KEY = "lr_schedule_convention"
+# Per-entry key naming the parameter group a LearningRateSchedule entry drives.
+# Entry ORDER carries no meaning. See resolve_schedule_targets() for why this is
+# mandatory rather than inferred from position.
+LR_TARGET_KEY = "Target"
 
-#: Intended semantics: index 0 -> model/decoder, index 1 -> latent codes.
-LR_CONVENTION_V2 = "v2"
+#: Drives the model/decoder param groups (``model_0``, ``model_1``, ...) and, when
+#: present, ``classification_heads``.
+LR_TARGET_MODEL = "model"
 
-#: Pre-fix runtime semantics: index 0 -> latent codes, index 1 -> model/decoder.
-#: Selecting this swaps the two schedules at load time so a historical Adam/AdamW run
-#: reproduces exactly under fixed code.
-LR_CONVENTION_LEGACY = "legacy_swapped"
+#: Drives the latent-code param group.
+LR_TARGET_LATENT = "latent"
 
-_LR_CONVENTION_MIGRATION_MESSAGE = """
-Config does not declare '{key}'.
+LR_TARGETS = (LR_TARGET_MODEL, LR_TARGET_LATENT)
 
-A learning-rate mapping bug (fixed 2026-08) meant that from May 2023 to Jul 2026 all
-Adam/AdamW runs applied the two 'LearningRateSchedule' entries SWAPPED at runtime:
-latent codes trained under entry 0 and the model under entry 1, even though entry 0 was
-intended for the model. Running an old config on fixed code would silently train with a
-different mapping than it did historically, with no error, so you must now say which
-convention the config was written against.
+# Which entry drove which group before Aug 2026, keyed by optimizer family. Adam/AdamW
+# went through adjust_learning_rate(), which mapped positionally against get_optimizer()'s
+# [latent, model...] group order -- so entry 0 drove the latents. schedule_free_* skipped
+# adjust_learning_rate() entirely and kept get_optimizer()'s own assignment, where entry 0
+# drove the model. The two families therefore migrate to OPPOSITE annotations.
+_HISTORICAL_TARGETS_ADAM = (LR_TARGET_LATENT, LR_TARGET_MODEL)
+_HISTORICAL_TARGETS_SCHEDULE_FREE = (LR_TARGET_MODEL, LR_TARGET_LATENT)
 
-Add ONE of the following to your config:
+_LR_TARGET_MIGRATION_MESSAGE = """
+Every 'LearningRateSchedule' entry must declare '{key}' ("{model}" or "{latent}").
 
-  "{key}": "{legacy}"
-      Entry 0 = latent codes, entry 1 = model.
-      Use this to REPRODUCE an existing Adam/AdamW run written before the fix.
-      Schedules are swapped internally so behaviour matches the historical run.
+{problem}
 
-  "{key}": "{v2}"
-      Entry 0 = model/decoder, entry 1 = latent codes.
-      The intended semantics. Use this for NEW runs, or for an old config whose two
-      entries you have already swapped by hand.
+WHY THIS IS REQUIRED
 
-Optimizer for this config: '{optimizer}'.
-Note: 'schedule_free_*' runs were never affected (they skip adjust_learning_rate) and
-default to '{v2}' without needing this key.
+Entry order used to decide which schedule drove which parameter group, and from May 2023
+to Aug 2026 a mapping bug applied the two entries swapped on every Adam/AdamW run: the
+latent codes trained under entry 0 and the model under entry 1. A config written before
+the fix and one written after are byte-identical while meaning opposite things, so the
+intent cannot be recovered from the file. It has to be stated.
+
+TO REPRODUCE THIS RUN AS IT ORIGINALLY TRAINED
+
+This config's optimizer is '{optimizer}', for which the historical mapping was
+entry 0 -> {hist_0}, entry 1 -> {hist_1}. Annotating the entries that way reproduces the
+original run exactly:
+
+{annotated}
+
+TO CONFIGURE A NEW RUN
+
+Set '{key}' on each entry to the group you intend it to drive. Order is ignored, so list
+them in whichever order reads best.
+
+See docs/KNOWN_ISSUES_HISTORY.md section 1.
 """.strip()
 
 
-def resolve_lr_schedule_convention(config):
-    """
-    Determine the LR-schedule ordering convention declared by ``config``.
+def _historical_targets(optimizer):
+    """Return the (entry 0, entry 1) targets a pre-Aug-2026 run of ``optimizer`` used."""
+    if "schedule_free" in str(optimizer):
+        return _HISTORICAL_TARGETS_SCHEDULE_FREE
+    return _HISTORICAL_TARGETS_ADAM
 
-    The two ``LearningRateSchedule`` entries are positional, so an old and a new config
-    are byte-identical while meaning opposite things. The convention therefore cannot be
-    inferred and must be declared explicitly.
+
+def _annotated_entries_json(schedule_specs, targets):
+    """Render ``schedule_specs`` with ``targets`` injected, as a paste-ready JSON block."""
+    annotated = []
+    for spec, target in zip(schedule_specs, targets):
+        entry = {LR_TARGET_KEY: target}
+        entry.update({k: v for k, v in spec.items() if k != LR_TARGET_KEY})
+        annotated.append(entry)
+    body = json.dumps({"LearningRateSchedule": annotated}, indent=4)
+    return "\n".join("    " + line for line in body.splitlines())
+
+
+def resolve_schedule_targets(schedule_specs, optimizer="Adam"):
+    """
+    Return the target of each ``LearningRateSchedule`` entry, in entry order.
+
+    Each entry must carry a ``Target`` of ``"model"`` or ``"latent"``, and the two
+    together must cover both exactly once. Position is never consulted: this function is
+    the only thing that decides which schedule drives which parameter group, and it reads
+    only the declared target.
+
+    ``optimizer`` is used solely to tailor the migration message, since Adam/AdamW and
+    ``schedule_free_*`` runs migrate to opposite annotations.
 
     Returns
     -------
-    str
-        Either :data:`LR_CONVENTION_V2` or :data:`LR_CONVENTION_LEGACY`.
+    list of str
+        One of :data:`LR_TARGET_MODEL` / :data:`LR_TARGET_LATENT` per entry.
 
     Raises
     ------
     ValueError
-        If the key is absent for an affected (Adam/AdamW) optimizer, or if its value is
-        not one of the two recognized conventions.
+        If there are not exactly two entries, if any entry omits ``Target``, if a target
+        is unrecognized, or if the two targets are not one model and one latent.
     """
-    optimizer = config.get("optimizer", "Adam")
-    convention = config.get(LR_SCHEDULE_CONVENTION_KEY)
-
-    if convention is None:
-        # schedule_free_* never called adjust_learning_rate, so it always used the
-        # intended mapping from get_optimizer(). There is no ambiguity to resolve.
-        if "schedule_free" in str(optimizer):
-            return LR_CONVENTION_V2
+    if len(schedule_specs) != 2:
         raise ValueError(
-            _LR_CONVENTION_MIGRATION_MESSAGE.format(
-                key=LR_SCHEDULE_CONVENTION_KEY,
-                legacy=LR_CONVENTION_LEGACY,
-                v2=LR_CONVENTION_V2,
+            f"Expected exactly 2 LearningRateSchedule entries, one targeting "
+            f"'{LR_TARGET_MODEL}' and one targeting '{LR_TARGET_LATENT}'; got "
+            f"{len(schedule_specs)}. (Entries beyond the first two were silently ignored "
+            f"before Aug 2026, so a config with more than two was never doing what it "
+            f"looked like it was doing.)"
+        )
+
+    targets = [spec.get(LR_TARGET_KEY) for spec in schedule_specs]
+    hist_0, hist_1 = _historical_targets(optimizer)
+
+    def _migration_error(problem):
+        return ValueError(
+            _LR_TARGET_MIGRATION_MESSAGE.format(
+                key=LR_TARGET_KEY,
+                model=LR_TARGET_MODEL,
+                latent=LR_TARGET_LATENT,
+                problem=problem,
                 optimizer=optimizer,
+                hist_0=hist_0,
+                hist_1=hist_1,
+                annotated=_annotated_entries_json(schedule_specs, (hist_0, hist_1)),
             )
         )
 
-    if convention not in (LR_CONVENTION_V2, LR_CONVENTION_LEGACY):
+    missing = [idx for idx, target in enumerate(targets) if target is None]
+    if missing:
+        if len(missing) == len(targets):
+            problem = f"No entry declares '{LR_TARGET_KEY}'."
+        else:
+            # The dangerous case: a half-annotated config looks migrated at a glance.
+            problem = (
+                f"Entry {missing[0]} is missing '{LR_TARGET_KEY}' while another entry "
+                f"declares it. A partially annotated config is not migrated."
+            )
+        raise _migration_error(problem)
+
+    unknown = [(idx, target) for idx, target in enumerate(targets) if target not in LR_TARGETS]
+    if unknown:
+        idx, target = unknown[0]
         raise ValueError(
-            f"Unknown {LR_SCHEDULE_CONVENTION_KEY} '{convention}'. "
-            f"Expected '{LR_CONVENTION_V2}' or '{LR_CONVENTION_LEGACY}'."
+            f"LearningRateSchedule entry {idx} has unknown {LR_TARGET_KEY} {target!r}. "
+            f"Expected '{LR_TARGET_MODEL}' or '{LR_TARGET_LATENT}'."
         )
 
-    return convention
+    if sorted(targets) != sorted(LR_TARGETS):
+        raise ValueError(
+            f"LearningRateSchedule must target '{LR_TARGET_MODEL}' and "
+            f"'{LR_TARGET_LATENT}' exactly once each; got {targets!r}. Both entries "
+            f"targeting the same group would leave the other group's learning rate "
+            f"frozen at its construction value."
+        )
+
+    return targets
 
 
 def get_learning_rate_schedules(config):
     """
     Build learning-rate schedule objects from ``config``, in canonical order.
 
-    Canonical order is always ``[model, latent]`` -- index 0 drives the model/decoder
-    parameter groups, index 1 drives the latent codes. If the config declares the
-    ``legacy_swapped`` convention the two entries are swapped here, so every downstream
-    consumer (:func:`get_optimizer`, :func:`adjust_learning_rate`) can assume canonical
-    order unconditionally.
+    Entries are matched to groups by their declared ``Target``, never by position. The
+    returned list is in canonical order ``[model, latent]`` so every downstream consumer
+    (:func:`get_optimizer`, :func:`adjust_learning_rate`) can index it unconditionally --
+    that ordering is an internal calling convention, not something the config controls.
 
     Raises
     ------
     ValueError
-        If the config does not declare its convention (see
-        :func:`resolve_lr_schedule_convention`), or declares fewer than two schedules.
+        If the entries do not each declare a valid ``Target`` covering both the model and
+        the latent codes exactly once (see :func:`resolve_schedule_targets`).
     """
     schedule_specs = config["LearningRateSchedule"]
-
-    if len(schedule_specs) < 2:
-        raise ValueError(
-            f"Expected at least 2 LearningRateSchedule entries "
-            f"(index 0 = model, index 1 = latent codes); got {len(schedule_specs)}."
-        )
-
-    convention = resolve_lr_schedule_convention(config)
+    targets = resolve_schedule_targets(schedule_specs, optimizer=config.get("optimizer", "Adam"))
 
     schedules = []
 
@@ -212,12 +269,9 @@ def get_learning_rate_schedules(config):
                 'no known learning rate schedule of type "{}"'.format(schedule_spec["Type"])
             )
 
-    if convention == LR_CONVENTION_LEGACY:
-        # Historical configs list [latent, model]; swap into canonical [model, latent].
-        # Only the first two are positional -- any extras keep their order.
-        schedules[0], schedules[1] = schedules[1], schedules[0]
+    by_target = dict(zip(targets, schedules))
 
-    return schedules
+    return [by_target[LR_TARGET_MODEL], by_target[LR_TARGET_LATENT]]
 
 
 def adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False):
@@ -225,13 +279,13 @@ def adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False):
     Set each optimizer param group's learning rate for ``epoch``, mapping by group NAME.
 
     ``lr_schedules`` is in canonical order: index 0 = model/decoder, index 1 = latent
-    codes (:func:`get_learning_rate_schedules` guarantees this regardless of the
-    convention the config was written in).
+    codes. :func:`get_learning_rate_schedules` guarantees this by reading each entry's
+    declared ``Target``, so the config's own entry order is irrelevant here.
 
-    Mapping is by name rather than position. The previous implementation assigned
-    ``lr_schedules[i]`` to ``param_groups[i]``, but ``get_optimizer`` orders the groups
-    ``[latent, model...]`` -- so the two schedules were applied swapped from epoch 1
-    onward. See ``docs/KNOWN_ISSUES_HISTORY.md``.
+    Mapping onto groups is by name rather than position. The previous implementation
+    assigned ``lr_schedules[i]`` to ``param_groups[i]``, but ``get_optimizer`` orders the
+    groups ``[latent, model...]`` -- so the two schedules were applied swapped for the
+    whole of every affected run. See ``docs/KNOWN_ISSUES_HISTORY.md``.
 
     Raises
     ------

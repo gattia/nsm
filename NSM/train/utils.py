@@ -4,7 +4,7 @@ import torch
 import torch
 from torch.profiler import profile, tensorboard_trace_handler
 
-from NSM.utils import LR_CONVENTION_LEGACY, resolve_lr_schedule_convention
+from NSM.utils import LR_TARGET_LATENT, LR_TARGET_MODEL, resolve_schedule_targets
 
 
 def calc_weight(epoch, n_epochs, schedule, cooldown=None):
@@ -64,16 +64,18 @@ def add_plain_lr_to_config(config, idx_model=None, idx_latent=None):
     """
     Flatten the two LearningRateSchedule entries into scalar config keys for logging.
 
-    Which entry is the model and which is the latent depends on the config's declared
-    ``lr_schedule_convention`` -- under ``legacy_swapped`` the two are reversed. The
-    indices are resolved from that convention unless explicitly overridden, so logged
-    ``model_lr_*`` / ``latent_lr_*`` values always carry the correct labels.
+    Which entry is the model and which is the latent comes from each entry's declared
+    ``Target``, not from its position, so logged ``model_lr_*`` / ``latent_lr_*`` values
+    always carry the correct labels. Explicit indices override the lookup.
     """
     if idx_model is None or idx_latent is None:
-        convention = resolve_lr_schedule_convention(config)
-        resolved_model, resolved_latent = (1, 0) if convention == LR_CONVENTION_LEGACY else (0, 1)
-        idx_model = resolved_model if idx_model is None else idx_model
-        idx_latent = resolved_latent if idx_latent is None else idx_latent
+        targets = resolve_schedule_targets(
+            config["LearningRateSchedule"], optimizer=config.get("optimizer", "Adam")
+        )
+        if idx_model is None:
+            idx_model = targets.index(LR_TARGET_MODEL)
+        if idx_latent is None:
+            idx_latent = targets.index(LR_TARGET_LATENT)
 
     schedules = {
         "model": idx_model,

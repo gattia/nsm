@@ -102,21 +102,34 @@ Example config snippet:
 }
 ```
 
-### Learning Rate Schedules: `lr_schedule_convention`
+### Learning Rate Schedules: the `Target` key
 
-`LearningRateSchedule` is a **positional** two-entry list. Which entry drives which
-parameter group is declared by the required `lr_schedule_convention` config key:
+Every `LearningRateSchedule` entry **must** declare `"Target"`, either `"model"` or
+`"latent"`. Exactly two entries, one per target. **Entry order is ignored.**
 
-- `"v2"` — index 0 = model/decoder, index 1 = latent codes. **Use this for all new runs.**
-- `"legacy_swapped"` — index 0 = latent codes, index 1 = model. Only for reproducing an
-  Adam/AdamW run configured before Aug 2026.
+```json
+"LearningRateSchedule": [
+    {"Target": "model",  "Type": "Step", "Initial": 0.001,  "Interval": 500, "Factor": 0.5},
+    {"Target": "latent", "Type": "Step", "Initial": 0.0005, "Interval": 500, "Factor": 0.5}
+]
+```
 
-An `Adam`/`AdamW` config that omits the key **raises**. This is deliberate: a pre-fix
-config would otherwise train with a different mapping than it did historically, silently.
-`schedule_free_*` configs were never affected and default to `v2`.
+A config missing `Target` on any entry — including only one of the two — **raises**, with
+a message that prints the paste-ready annotation reproducing that run's historical
+behaviour. This applies to every optimizer, `schedule_free_*` included.
 
-Optimizer param groups are **named** (`latent`, `model_0`, …) and `adjust_learning_rate()`
-maps schedules by name, never by position. Never assume group order is meaningful.
+Note the two optimizer families migrate to **opposite** annotations. Adam/AdamW ran
+through `adjust_learning_rate()` (entry 0 drove the latents); `schedule_free_*` skipped it
+and kept `get_optimizer()`'s own assignment (entry 0 drove the model). The error message
+picks the right one from `config["optimizer"]`.
+
+Neither of the two orderings this code once depended on is positional any more:
+
+- **Param groups** carry `name` (`latent`, `model_0`, …); `adjust_learning_rate()` maps by
+  name. Group order is never meaningful.
+- **Schedule entries** carry `Target`; `get_learning_rate_schedules()` maps by target and
+  returns canonical `[model, latent]`. That return order is an internal calling
+  convention, not something the config controls.
 
 Background: `docs/KNOWN_ISSUES_HISTORY.md` §1 — a positional-mapping bug swapped these two
 schedules on every Adam/AdamW run from May 2023 to Aug 2026.
