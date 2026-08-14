@@ -139,103 +139,86 @@ an Adam/AdamW config for the same experiment before you choose the annotation.
 """
 
 
-def _historical_targets(optimizer):
-    """Return the (entry 0, entry 1) targets a pre-Aug-2026 run of ``optimizer`` used."""
-    if "schedule_free" in str(optimizer):
-        return _HISTORICAL_TARGETS_SCHEDULE_FREE
-    return _HISTORICAL_TARGETS_ADAM
+def _migration_error(schedule_specs, optimizer, problem):
+    """
+    Build the error shown when a config predates the ``Target`` key.
 
+    Includes a paste-ready copy of the caller's own entries, annotated with the targets
+    that reproduce their historical run -- which differ by optimizer family.
+    """
+    schedule_free = "schedule_free" in str(optimizer)
+    hist_0, hist_1 = (
+        _HISTORICAL_TARGETS_SCHEDULE_FREE if schedule_free else _HISTORICAL_TARGETS_ADAM
+    )
 
-def _annotated_entries_json(schedule_specs, targets):
-    """Render ``schedule_specs`` with ``targets`` injected, as a paste-ready JSON block."""
-    annotated = []
-    for spec, target in zip(schedule_specs, targets):
-        entry = {LR_TARGET_KEY: target}
-        entry.update({k: v for k, v in spec.items() if k != LR_TARGET_KEY})
-        annotated.append(entry)
+    annotated = [
+        {LR_TARGET_KEY: target, **{k: v for k, v in spec.items() if k != LR_TARGET_KEY}}
+        for spec, target in zip(schedule_specs, (hist_0, hist_1))
+    ]
     body = json.dumps({"LearningRateSchedule": annotated}, indent=4)
-    return "\n".join("    " + line for line in body.splitlines())
+
+    return ValueError(
+        _LR_TARGET_MIGRATION_MESSAGE.format(
+            key=LR_TARGET_KEY,
+            model=LR_TARGET_MODEL,
+            latent=LR_TARGET_LATENT,
+            problem=problem,
+            optimizer=optimizer,
+            hist_0=hist_0,
+            hist_1=hist_1,
+            annotated="\n".join("    " + line for line in body.splitlines()),
+            caution=_SCHEDULE_FREE_CAUTION if schedule_free else "",
+        )
+    )
 
 
 # --- END MIGRATION SCAFFOLDING ------------------------------------------------------
+# Deleting the block above leaves resolve_schedule_targets() needing a plain one-line
+# ValueError in place of its _migration_error() call.
 
 
 def resolve_schedule_targets(schedule_specs, optimizer="Adam"):
     """
     Return the target of each ``LearningRateSchedule`` entry, in entry order.
 
-    Each entry must carry a ``Target`` of ``"model"`` or ``"latent"``, and the two
-    together must cover both exactly once. Position is never consulted: this function is
-    the only thing that decides which schedule drives which parameter group, and it reads
-    only the declared target.
+    Exactly two entries, one targeting ``"model"`` and one ``"latent"``. Position is never
+    consulted -- this is the only thing that decides which schedule drives which parameter
+    group, and it reads only the declared target.
 
-    ``optimizer`` is used solely to tailor the migration message, since Adam/AdamW and
-    ``schedule_free_*`` runs migrate to opposite annotations.
-
-    Returns
-    -------
-    list of str
-        One of :data:`LR_TARGET_MODEL` / :data:`LR_TARGET_LATENT` per entry.
+    ``optimizer`` only tailors the migration message: Adam/AdamW and ``schedule_free_*``
+    runs migrate to opposite annotations.
 
     Raises
     ------
     ValueError
-        If there are not exactly two entries, if any entry omits ``Target``, if a target
-        is unrecognized, or if the two targets are not one model and one latent.
+        If there are not exactly two entries, if either omits ``Target``, or if the two do
+        not cover ``model`` and ``latent`` exactly once.
     """
     if len(schedule_specs) != 2:
         raise ValueError(
-            f"Expected exactly 2 LearningRateSchedule entries, one targeting "
-            f"'{LR_TARGET_MODEL}' and one targeting '{LR_TARGET_LATENT}'; got "
-            f"{len(schedule_specs)}. (Entries beyond the first two were silently ignored "
-            f"before Aug 2026, so a config with more than two was never doing what it "
-            f"looked like it was doing.)"
+            f"Expected exactly 2 LearningRateSchedule entries, one per target; got "
+            f"{len(schedule_specs)}. (Extras were silently ignored before Aug 2026.)"
         )
 
     targets = [spec.get(LR_TARGET_KEY) for spec in schedule_specs]
-    hist_0, hist_1 = _historical_targets(optimizer)
 
-    def _migration_error(problem):
-        return ValueError(
-            _LR_TARGET_MIGRATION_MESSAGE.format(
-                key=LR_TARGET_KEY,
-                model=LR_TARGET_MODEL,
-                latent=LR_TARGET_LATENT,
-                problem=problem,
-                optimizer=optimizer,
-                hist_0=hist_0,
-                hist_1=hist_1,
-                annotated=_annotated_entries_json(schedule_specs, (hist_0, hist_1)),
-                caution=(_SCHEDULE_FREE_CAUTION if "schedule_free" in str(optimizer) else ""),
-            )
-        )
-
-    missing = [idx for idx, target in enumerate(targets) if target is None]
-    if missing:
-        if len(missing) == len(targets):
-            problem = f"No entry declares '{LR_TARGET_KEY}'."
-        else:
-            # The dangerous case: a half-annotated config looks migrated at a glance.
-            problem = (
-                f"Entry {missing[0]} is missing '{LR_TARGET_KEY}' while another entry "
-                f"declares it. A partially annotated config is not migrated."
-            )
-        raise _migration_error(problem)
-
-    unknown = [(idx, target) for idx, target in enumerate(targets) if target not in LR_TARGETS]
-    if unknown:
-        idx, target = unknown[0]
-        raise ValueError(
-            f"LearningRateSchedule entry {idx} has unknown {LR_TARGET_KEY} {target!r}. "
-            f"Expected '{LR_TARGET_MODEL}' or '{LR_TARGET_LATENT}'."
+    if None in targets:
+        raise _migration_error(
+            schedule_specs,
+            optimizer,
+            problem=(
+                f"No entry declares '{LR_TARGET_KEY}'."
+                if all(target is None for target in targets)
+                # The dangerous case: half-annotated looks migrated at a glance.
+                else f"Entry {targets.index(None)} is missing '{LR_TARGET_KEY}' while the "
+                f"other declares it. A partially annotated config is not migrated."
+            ),
         )
 
     if sorted(targets) != sorted(LR_TARGETS):
         raise ValueError(
             f"LearningRateSchedule must target '{LR_TARGET_MODEL}' and "
-            f"'{LR_TARGET_LATENT}' exactly once each; got {targets!r}. Both entries "
-            f"targeting the same group would leave the other group's learning rate "
-            f"frozen at its construction value."
+            f"'{LR_TARGET_LATENT}' exactly once each; got {targets!r}."
         )
 
     return targets

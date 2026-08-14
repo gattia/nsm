@@ -231,8 +231,11 @@ class TestMigrationGuard:
             )
 
     def test_unknown_target_raises(self):
-        with pytest.raises(ValueError, match="unknown Target"):
+        """A typo and a duplicate share one check; the message shows what was given."""
+        with pytest.raises(ValueError, match="exactly once each") as exc:
             get_learning_rate_schedules(make_config(targets=("model", "decoder")))
+
+        assert "'decoder'" in str(exc.value)
 
     def test_duplicate_targets_raise(self):
         with pytest.raises(ValueError, match="exactly once each"):
