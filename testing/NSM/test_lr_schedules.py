@@ -95,6 +95,15 @@ class TestNamedParamGroups:
         _, optimizer = build(make_config())
         assert lrs_by_name(optimizer) == {"latent": LATENT_LR, "model_0": MODEL_LR}
 
+    def test_groups_declare_their_target(self):
+        _, optimizer = build(make_config(), models=[make_model(), make_model()])
+
+        assert [g["target"] for g in optimizer.param_groups] == [
+            LR_TARGET_LATENT,
+            LR_TARGET_MODEL,
+            LR_TARGET_MODEL,
+        ]
+
 
 class TestScheduleMapping:
     """The core regression: mapping must be by name, never by position."""
@@ -137,25 +146,34 @@ class TestScheduleMapping:
     def test_classification_heads_group_uses_model_schedule(self):
         schedules, optimizer = build(make_config())
         optimizer.add_param_group(
-            {"name": "classification_heads", "params": make_model().parameters(), "lr": 0.0}
+            {
+                "name": "classification_heads",
+                "target": LR_TARGET_MODEL,
+                "params": make_model().parameters(),
+                "lr": 0.0,
+            }
         )
         adjust_learning_rate(schedules, optimizer, epoch=1)
 
         assert lrs_by_name(optimizer)["classification_heads"] == pytest.approx(MODEL_LR)
 
-    def test_unnamed_group_raises(self):
+    def test_group_without_a_target_raises(self):
         schedules, optimizer = build(make_config())
-        del optimizer.param_groups[0]["name"]
+        del optimizer.param_groups[0]["target"]
 
-        with pytest.raises(KeyError, match="no recognized 'name'"):
+        with pytest.raises(KeyError, match="no known 'target'"):
             adjust_learning_rate(schedules, optimizer, epoch=1)
 
-    def test_too_few_schedules_raises(self):
-        _, optimizer = build(make_config())
-        schedules = get_learning_rate_schedules(make_config())
+    def test_name_is_a_label_and_not_load_bearing(self):
+        """Renaming a group must not change which schedule drives it."""
+        schedules, optimizer = build(make_config())
+        for group in optimizer.param_groups:
+            group["name"] = "something_else"
+        adjust_learning_rate(schedules, optimizer, epoch=1)
 
-        with pytest.raises(ValueError, match="at least 2 lr_schedules"):
-            adjust_learning_rate(schedules[:1], optimizer, epoch=1)
+        by_target = {g["target"]: g["lr"] for g in optimizer.param_groups}
+        assert by_target[LR_TARGET_MODEL] == pytest.approx(MODEL_LR)
+        assert by_target[LR_TARGET_LATENT] == pytest.approx(LATENT_LR)
 
 
 class TestTargetResolution:
@@ -171,8 +189,14 @@ class TestTargetResolution:
         reversed_ = get_learning_rate_schedules(make_config(targets=("latent", "model")))
 
         for schedules in (forward, reversed_):
-            assert schedules[0].get_learning_rate(0) == pytest.approx(MODEL_LR)
-            assert schedules[1].get_learning_rate(0) == pytest.approx(LATENT_LR)
+            assert schedules[LR_TARGET_MODEL].get_learning_rate(0) == pytest.approx(MODEL_LR)
+            assert schedules[LR_TARGET_LATENT].get_learning_rate(0) == pytest.approx(LATENT_LR)
+
+    def test_schedules_are_returned_keyed_by_target(self):
+        """A mapping, not a list -- there is no index for a caller to get wrong."""
+        schedules = get_learning_rate_schedules(make_config())
+
+        assert set(schedules) == {LR_TARGET_MODEL, LR_TARGET_LATENT}
 
     def test_reordered_entries_reach_the_right_groups(self):
         config = make_config(targets=("latent", "model"))
@@ -204,11 +228,13 @@ class TestTargetResolution:
                 },
             ],
         }
-        model_sched, latent_sched = get_learning_rate_schedules(config)
+        schedules = get_learning_rate_schedules(config)
 
         # At epoch 1000 the model has taken one x0.1 step; the latent has decayed smoothly.
-        assert model_sched.get_learning_rate(1000) == pytest.approx(0.0001 * 0.1)
-        assert latent_sched.get_learning_rate(1000) == pytest.approx(0.005 * 0.95 ** (1000 // 16.7))
+        assert schedules[LR_TARGET_MODEL].get_learning_rate(1000) == pytest.approx(0.0001 * 0.1)
+        assert schedules[LR_TARGET_LATENT].get_learning_rate(1000) == pytest.approx(
+            0.005 * 0.95 ** (1000 // 16.7)
+        )
 
 
 class TestMigrationGuard:
@@ -371,8 +397,8 @@ class TestHistoricalEquivalence:
         )
 
         # 50x apart at epoch 0 -- this is an inversion, not a perturbation.
-        assert historical[0].get_learning_rate(0) == pytest.approx(0.0001)
-        assert inverted[0].get_learning_rate(0) == pytest.approx(0.005)
+        assert historical[LR_TARGET_MODEL].get_learning_rate(0) == pytest.approx(0.0001)
+        assert inverted[LR_TARGET_MODEL].get_learning_rate(0) == pytest.approx(0.005)
 
 
 class TestCheckpointResume:
@@ -415,7 +441,7 @@ class TestCheckpointResume:
         assert lrs["model_0"] == pytest.approx(MODEL_LR)
         assert lrs["latent"] == pytest.approx(LATENT_LR)
 
-    def test_unnamed_groups_are_rejected_before_training(self):
+    def test_untargeted_groups_are_rejected(self):
         """
         The train loop refuses a pre-fix checkpoint at load time. adjust_learning_rate is
         only the backstop -- it is skipped for schedule_free_*, which would otherwise run
@@ -423,9 +449,9 @@ class TestCheckpointResume:
         """
         schedules, optimizer = build(make_config())
         for group in optimizer.param_groups:
-            group.pop("name")
+            group.pop("target")
 
-        with pytest.raises(KeyError, match="no recognized 'name'"):
+        with pytest.raises(KeyError, match="no known 'target'"):
             adjust_learning_rate(schedules, optimizer, epoch=1)
 
 
@@ -447,12 +473,12 @@ class TestSaveModel:
             "model_0",
         ]
 
-    def test_save_model_rejects_unnamed_groups(self, tmp_path):
+    def test_save_model_rejects_untargeted_groups(self, tmp_path):
         _, optimizer = build(make_config())
-        del optimizer.param_groups[0]["name"]
+        del optimizer.param_groups[0]["target"]
         config = {"experiment_directory": str(tmp_path)}
 
-        with pytest.raises(ValueError, match="must have a 'name'"):
+        with pytest.raises(ValueError, match="must declare a 'target'"):
             save_model(config, epoch=1, decoder=make_model(), optimizer=optimizer)
 
     def test_save_model_without_optimizer_writes_real_none(self, tmp_path):
@@ -535,7 +561,9 @@ class TestShippedConfigs:
             schedules = get_learning_rate_schedules(config)
 
         # index 0 = model, and the shipped model LR is the larger of the two
-        assert schedules[0].get_learning_rate(0) > schedules[1].get_learning_rate(0)
+        model_lr = schedules[LR_TARGET_MODEL].get_learning_rate(0)
+        latent_lr = schedules[LR_TARGET_LATENT].get_learning_rate(0)
+        assert model_lr > latent_lr
 
     def test_generated_default_config_annotates_targets(self, tmp_path, monkeypatch):
         # NB: importing this module writes ./default_config.json as a side effect, so run

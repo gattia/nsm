@@ -123,13 +123,19 @@ through `adjust_learning_rate()` (entry 0 drove the latents); `schedule_free_*` 
 and kept `get_optimizer()`'s own assignment (entry 0 drove the model). The error message
 picks the right one from `config["optimizer"]`.
 
-Neither of the two orderings this code once depended on is positional any more:
+**There is no positional indexing anywhere in the LR path**, and `target` is the single
+vocabulary spanning config and optimizer:
 
-- **Param groups** carry `name` (`latent`, `model_0`, …); `adjust_learning_rate()` maps by
-  name. Group order is never meaningful.
-- **Schedule entries** carry `Target`; `get_learning_rate_schedules()` maps by target and
-  returns canonical `[model, latent]`. That return order is an internal calling
-  convention, not something the config controls.
+- **Schedule entries** carry `Target`. `get_learning_rate_schedules()` returns a
+  `{target: schedule}` **dict**, not a list — there is no index to get wrong.
+- **Param groups** carry `target` too, so `adjust_learning_rate()` is one lookup:
+  `group["lr"] = lr_schedules[group["target"]].get_learning_rate(epoch)`.
+- Param groups also carry `name` (`latent`, `model_0`, …), but that is a **human label
+  only** — nothing dispatches on it. Renaming a group changes nothing.
+
+Several groups may share a target: every decoder and the classification heads all take
+the `model` schedule. That many-to-one relation is why group `name` and schedule `Target`
+are separate fields rather than one.
 
 Background: `docs/KNOWN_ISSUES_HISTORY.md` §1 — a positional-mapping bug swapped these two
 schedules on every Adam/AdamW run from May 2023 to Aug 2026.

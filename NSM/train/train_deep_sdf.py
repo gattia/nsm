@@ -141,16 +141,16 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
                 f"state, so training cannot resume from it."
             )
         optimizer.load_state_dict(model_checkpoint["optimizer"])
-        # state_dict() retains param-group names and load_state_dict() restores them, but
-        # it adopts the checkpoint's metadata wholesale -- so a checkpoint saved before
-        # Aug 2026 leaves the groups unnamed and schedules cannot be mapped. Fail here
-        # rather than downstream: adjust_learning_rate() would catch it at epoch 1, but it
-        # is skipped for schedule_free_*, which would then run to the first checkpoint
-        # save before failing.
-        if any(group.get("name") is None for group in optimizer.param_groups):
+        # state_dict() retains custom param-group keys and load_state_dict() restores
+        # them, but it adopts the checkpoint's metadata wholesale -- so a checkpoint saved
+        # before Aug 2026 leaves the groups with no 'target' and schedules cannot be
+        # mapped. Fail here rather than downstream: adjust_learning_rate() would catch it
+        # at epoch 1, but it is skipped for schedule_free_*, which would then run to the
+        # first checkpoint save before failing.
+        if any(group.get("target") is None for group in optimizer.param_groups):
             raise ValueError(
                 f"Checkpoint at epoch {config['resume_epoch']} carries no optimizer "
-                f"param-group names, so it predates Aug 2026 and its learning-rate "
+                f"param-group targets, so it predates Aug 2026 and its learning-rate "
                 f"schedules cannot be mapped. Resuming it is not supported; start a "
                 f"fresh run. See docs/KNOWN_ISSUES_HISTORY.md section 1."
             )

@@ -11,11 +11,16 @@ except ImportError:
 import warnings
 
 
-# Semantic names for optimizer param groups. adjust_learning_rate() maps schedules to
-# groups by these names, so group ORDER is never load-bearing.
+# Human-readable labels for optimizer param groups. These are for logs and debugging
+# only -- nothing dispatches on them. Scheduling is driven by the group's "target"
+# (see LR_TARGET_KEY below), which is what makes group ORDER irrelevant.
 LATENT_GROUP_NAME = "latent"
 MODEL_GROUP_PREFIX = "model_"
 CLASSIFICATION_HEADS_GROUP_NAME = "classification_heads"
+
+# Key under which a param group records which schedule drives it. Same vocabulary as a
+# config entry's "Target", so there is one set of names spanning config and optimizer.
+PARAM_GROUP_TARGET_KEY = "target"
 
 
 class LearningRateSchedule:
@@ -133,12 +138,17 @@ def resolve_schedule_targets(schedule_specs, optimizer="Adam"):
 
 def get_learning_rate_schedules(config):
     """
-    Build learning-rate schedule objects from ``config``, in canonical order.
+    Build learning-rate schedule objects from ``config``, keyed by target.
 
-    Entries are matched to groups by their declared ``Target``, never by position. The
-    returned list is in canonical order ``[model, latent]`` so every downstream consumer
-    (:func:`get_optimizer`, :func:`adjust_learning_rate`) can index it unconditionally --
-    that ordering is an internal calling convention, not something the config controls.
+    Returns a ``{target: schedule}`` mapping, not a list: entries are matched to groups by
+    their declared ``Target``, and there is deliberately no ordering anywhere in the LR
+    path for a caller to get wrong.
+
+    Returns
+    -------
+    dict
+        Keys are :data:`LR_TARGET_MODEL` and :data:`LR_TARGET_LATENT`; values are
+        :class:`LearningRateSchedule` instances.
 
     Raises
     ------
@@ -186,28 +196,27 @@ def get_learning_rate_schedules(config):
                 'no known learning rate schedule of type "{}"'.format(schedule_spec["Type"])
             )
 
-    by_target = dict(zip(targets, schedules))
-
-    return [by_target[LR_TARGET_MODEL], by_target[LR_TARGET_LATENT]]
+    return dict(zip(targets, schedules))
 
 
 def adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False):
     """
-    Set each optimizer param group's learning rate for ``epoch``, mapping by group NAME.
+    Set each optimizer param group's learning rate for ``epoch``.
 
-    ``lr_schedules`` is in canonical order: index 0 = model/decoder, index 1 = latent
-    codes. :func:`get_learning_rate_schedules` guarantees this by reading each entry's
-    declared ``Target``, so the config's own entry order is irrelevant here.
+    ``lr_schedules`` is the ``{target: schedule}`` mapping from
+    :func:`get_learning_rate_schedules`; each group names its own target. Nothing here
+    depends on the order of either, which is the point: the previous implementation
+    assigned ``lr_schedules[i]`` to ``param_groups[i]``, and because ``get_optimizer``
+    orders the groups ``[latent, model...]`` the two schedules were applied swapped for
+    the whole of every affected run. See ``docs/KNOWN_ISSUES_HISTORY.md``.
 
-    Mapping onto groups is by name rather than position. The previous implementation
-    assigned ``lr_schedules[i]`` to ``param_groups[i]``, but ``get_optimizer`` orders the
-    groups ``[latent, model...]`` -- so the two schedules were applied swapped for the
-    whole of every affected run. See ``docs/KNOWN_ISSUES_HISTORY.md``.
+    Several groups may share a target -- every decoder and the classification heads all
+    take the model schedule.
 
     Raises
     ------
     KeyError
-        If a param group has no recognized name, which in practice means the optimizer
+        If a param group declares no known target, which in practice means the optimizer
         state came from a checkpoint saved before Aug 2026 (the train loop rejects those
         at load time, so this is a backstop).
     """
@@ -215,28 +224,17 @@ def adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False):
         print("optimizer param groups: ", optimizer.param_groups)
         print("lr_schedules: ", lr_schedules)
 
-    if len(lr_schedules) < 2:
-        raise ValueError(
-            f"Expected at least 2 lr_schedules (index 0 = model, index 1 = latent codes); "
-            f"got {len(lr_schedules)}."
-        )
-
     for param_group in optimizer.param_groups:
-        name = param_group.get("name")
-        if name == LATENT_GROUP_NAME:
-            param_group["lr"] = lr_schedules[1].get_learning_rate(epoch)
-        elif name == CLASSIFICATION_HEADS_GROUP_NAME or (
-            name is not None and name.startswith(MODEL_GROUP_PREFIX)
-        ):
-            param_group["lr"] = lr_schedules[0].get_learning_rate(epoch)
-        else:
+        target = param_group.get(PARAM_GROUP_TARGET_KEY)
+        if target not in lr_schedules:
             raise KeyError(
-                f"optimizer param_group has no recognized 'name' (got {name!r}; expected "
-                f"'{LATENT_GROUP_NAME}', '{MODEL_GROUP_PREFIX}*', or "
-                f"'{CLASSIFICATION_HEADS_GROUP_NAME}'). Build the optimizer with "
-                f"get_optimizer(); if its state came from a checkpoint saved before "
-                f"Aug 2026, that checkpoint cannot be resumed."
+                f"optimizer param_group {param_group.get('name')!r} declares no known "
+                f"'{PARAM_GROUP_TARGET_KEY}' (got {target!r}; expected one of "
+                f"{sorted(lr_schedules)}). Build the optimizer with get_optimizer(); if "
+                f"its state came from a checkpoint saved before Aug 2026, that checkpoint "
+                f"cannot be resumed."
             )
+        param_group["lr"] = lr_schedules[target].get_learning_rate(epoch)
 
 
 def save_latent_vectors(config, epoch, latent_vec, latent_codes_subdir="latent_codes"):
@@ -257,10 +255,10 @@ def save_model(config, epoch, decoder, model_subdir="model", optimizer=None):
     """
     Save a decoder checkpoint.
 
-    Param-group names need no special handling: ``optimizer.state_dict()`` retains the
-    ``name`` key, and ``load_state_dict()`` restores it. The names are still validated
+    Param-group targets need no special handling: ``optimizer.state_dict()`` retains
+    custom group keys and ``load_state_dict()`` restores them. They are still validated
     here, so a checkpoint can never be written from an optimizer whose groups have lost
-    their identity.
+    the target that schedules them.
     """
     if type(decoder) not in (list, tuple):
         decoder = [decoder]
@@ -271,11 +269,14 @@ def save_model(config, epoch, decoder, model_subdir="model", optimizer=None):
     # `if checkpoint["optimizer"]:` reads as "state present" and hands load_state_dict a str.
     optimizer_state = None
     if optimizer is not None:
-        if any(group.get("name") is None for group in optimizer.param_groups):
+        if any(
+            group.get(PARAM_GROUP_TARGET_KEY) not in LR_TARGETS for group in optimizer.param_groups
+        ):
             raise ValueError(
-                "All optimizer param groups must have a 'name' before saving. Build the "
-                "optimizer with get_optimizer(); if its state came from a checkpoint "
-                "saved before Aug 2026, that checkpoint cannot be resumed."
+                f"Every optimizer param group must declare a '{PARAM_GROUP_TARGET_KEY}' "
+                f"of {list(LR_TARGETS)} before saving. Build the optimizer with "
+                f"get_optimizer(); if its state came from a checkpoint saved before "
+                f"Aug 2026, that checkpoint cannot be resumed."
             )
         optimizer_state = optimizer.state_dict()
 
@@ -360,37 +361,33 @@ def get_latent_vecs(num_objects, config):
 
 def get_optimizer(model, latent_vecs, lr_schedules, optimizer="Adam", weight_decay=0.0001):
     """
-    Build the optimizer with NAMED parameter groups.
+    Build the optimizer with TARGETED parameter groups.
 
-    ``lr_schedules`` is in canonical order: index 0 = model/decoder, index 1 = latent
-    codes.
+    ``lr_schedules`` is the ``{target: schedule}`` mapping from
+    :func:`get_learning_rate_schedules`.
 
-    Groups are emitted in the order ``[latent, model_0, model_1, ...]`` for checkpoint
-    compatibility with existing runs, but each carries a ``name`` so
-    :func:`adjust_learning_rate` can map schedules by name rather than by position.
+    Each group carries a ``target`` naming the schedule that drives it, plus a ``name``
+    that is a human label only. Groups are still emitted ``[latent, model_0, ...]`` for
+    checkpoint compatibility with existing runs, but nothing reads that order.
     """
     if type(model) not in (list, tuple):
         model = [model]
 
-    if len(lr_schedules) < 2:
-        raise ValueError(
-            f"Expected at least 2 lr_schedules (index 0 = model, index 1 = latent codes); "
-            f"got {len(lr_schedules)}."
-        )
-
     list_params = [
         {
             "name": LATENT_GROUP_NAME,
+            PARAM_GROUP_TARGET_KEY: LR_TARGET_LATENT,
             "params": latent_vecs.parameters(),
-            "lr": lr_schedules[1].get_learning_rate(0),
+            "lr": lr_schedules[LR_TARGET_LATENT].get_learning_rate(0),
         }
     ]
     for idx, model_ in enumerate(model):
         list_params.append(
             {
                 "name": f"{MODEL_GROUP_PREFIX}{idx}",
+                PARAM_GROUP_TARGET_KEY: LR_TARGET_MODEL,
                 "params": model_.parameters(),
-                "lr": lr_schedules[0].get_learning_rate(0),
+                "lr": lr_schedules[LR_TARGET_MODEL].get_learning_rate(0),
             }
         )
 
