@@ -4,7 +4,7 @@
 Phases 0–4 not started. This plan is *not* complete: Phase A was the motivating example
 and the migration template, not the body of work.
 **Created:** 2026-08-14. **Last updated:** 2026-08-15.
-**Repo:** `/home/gattia/programming/kneepipeline/DEPENDENCIES/nsm` (NSM).
+**Repo:** `gattia/nsm` (NSM).
 **Motivation:** The LR-schedule bug (see §1) was a silent numerical error that ran
 undetected for ~3 years and was found by an external collaborator, not by us. It is a
 symptom, not an incident. This plan makes that class of bug findable and preventable.
@@ -29,13 +29,18 @@ for i, param_group in enumerate(optimizer.param_groups):
     param_group["lr"] = lr_schedules[i].get_learning_rate(epoch)
 ```
 
-From epoch 1 onward the two schedules were swapped. **Every Adam/AdamW training run from
-May 2023 to July 2026 trained latents under the model schedule and vice versa.**
-`schedule_free_*` runs were unaffected — the train loop skips `adjust_learning_rate` for
-them, so they kept `get_optimizer`'s correct initial assignment.
+**Every Adam/AdamW training run from May 2023 to Aug 2026 trained latents under the model
+schedule and vice versa — for 100% of the run.** `get_optimizer` does set the intended
+rates at construction, but the epoch loop starts at 1 and `adjust_learning_rate` runs at
+the top of `train_epoch`, so the correct values are overwritten before the first
+`optimizer.step()`.
 
-Found by Dr. Katherine Wolcott (Florida Museum of Natural History / BioVision Lab),
-reported 2026-07-10.
+`schedule_free_*` runs skipped `adjust_learning_rate` and so were never mis-mapped — but
+they were arguably hurt worse, since every config was *tuned* against the Adam path and
+running one schedule-free applies the values inverted and undecayed. See
+`docs/KNOWN_ISSUES_HISTORY.md` §1.
+
+Reported 2026-07-10 by an external collaborator, credited in the ledger.
 
 ### 1.2 Why our tooling could not have caught it
 
@@ -69,21 +74,38 @@ core is barely tested at all:
 | `mesh/correspondence_metrics.py` | 699 | 100% | 94% | recent work — the target state |
 | `models/loader.py` | 387 | 100% | 84% | recent work |
 
-### 1.4 The production surface is small
+### 1.4 The production surface is not yet known
 
-Everything downstream in `kneepipeline` imports exactly two names from `NSM` — one class
-and one function:
+An earlier version of this plan claimed the entire production contract was two names:
 
 ```python
-from NSM.models import TriplanarDecoder
-from NSM.reconstruct import reconstruct_mesh
+from NSM.models import TriplanarDecoder      # in kneepipeline
+from NSM.reconstruct import reconstruct_mesh # in kneepipeline
 ```
 
-`nsosim` additionally consumes the mesh-interpolation path. **That is the entire
-production contract.** Everything else in `NSM/` is internal, so it can be restructured
-freely as long as those two keep working. The blast radius of an aggressive refactor is
-far smaller than 11.5k lines implies — this is the single most important fact for
-prioritizing the work.
+**That was wrong, and wrong in a way that would have made this plan dangerous.** It came
+from grepping one downstream repo's *inference* path and generalising. It omits the
+library's primary purpose. NSM is a training library; `NSM/train/`,
+`NSM/datasets/sdf_dataset.py`, `NSM/losses.py` and the mesh path are the product, not
+implementation detail behind those two names.
+
+Known consumer classes, none of them yet enumerated properly:
+
+| consumer | surface used |
+|---|---|
+| **Training** (first-party) | `train/`, `datasets/`, `models/`, `losses`, `mesh/` — the bulk of the library |
+| `kneepipeline` inference | `TriplanarDecoder`, `reconstruct_mesh` |
+| `nsosim` | mesh interpolation, extent unverified |
+| Published models / shared configs | `model_params_config.json` schema, checkpoint format |
+| Downstream forks | unknown; they carry their own trainers |
+
+The checkpoint and config **formats** are also part of the contract even though they are
+not imports — the LR fix had to add a migration path precisely because a config file is a
+public interface.
+
+**Establishing the real surface is Phase 0 work, not an input to it.** Until then, assume
+the blast radius of a refactor is large. The 11.5k lines are not mostly-internal until
+someone demonstrates that they are.
 
 ### 1.5 Open issues are all symptoms of the same disease
 
@@ -104,7 +126,7 @@ as `planning/BREAKING_CHANGE_PROPOSAL.md` and stalled mid-Phase-1.
 
 1. **The map precedes the documentation.** Never write a docstring for code that is a
    deletion candidate.
-2. **Quarantine, don't delete.** Katie's fork and `nsosim` may reach into anything. Moving
+2. **Quarantine, don't delete.** Downstream forks and `nsosim` may reach into anything. Moving
    to `NSM/deprecated/` with a `DeprecationWarning` is reversible; `git rm` is a support
    burden when someone's pipeline breaks silently.
 3. **Behavioural tests before structural tests.** A golden-output regression harness that
@@ -124,16 +146,23 @@ Blocking all later phases.
 
 - [ ] Write a one-page scope statement: what NSM is, what it supports, what it does not.
 - [ ] Rule on each ambiguous module — **supported**, **deprecated**, or **dead**:
-  - `train/train_deep_sdf_multi_head.py` (420 lines) — Katie flags it as known-broken;
-    `train_deep_sdf` with `objects_per_decoder > 1` supersedes it
+  - `train/train_deep_sdf_multi_head.py` (420 lines) — verified broken: the optimizer is
+    built from a leaked loop variable, so only the last decoder receives gradients.
+    Deprecated Aug 2026; `train_deep_sdf` with `objects_per_decoder > 1` supersedes it
   - `train/deprecated/` (880 lines, 2 files, zero importers)
   - `mesh/refine_mesh.py` (480 lines, zero importers, 0% coverage, fully docstringed)
   - `reconstruct/reconstruct_latent_S3.py` (350 lines, 4% coverage)
   - `reconstruct/cartilage_func.py`, `reconstruct/predictive_validation_class.py`
-  - `configs/generate_sdf_default_config.py` (zero importers)
-- [ ] Confirm the public API contract from §1.4 and write it into `NSM/__init__.py`
-      as `__all__`. Everything else is internal and refactorable at will.
-- [ ] Ask Katie which modules her fork depends on before quarantining anything.
+  - `configs/generate_sdf_default_config.py` — it generates the shipped
+    `default_config.json`, now pinned by `testing/NSM/configs/test_default_config_sync.py`;
+    supported, not dead
+- [ ] **Establish** the public API contract (§1.4 records why this is unknown, not known).
+      Enumerate what each consumer class actually uses — training first, since it is the
+      largest surface and was missed entirely by the first attempt. Write the result into
+      `NSM/__init__.py` as `__all__`; only then is everything else refactorable at will.
+- [ ] Include the checkpoint and `model_params_config.json` formats in that contract. They
+      are public interfaces even though nothing imports them.
+- [ ] Survey downstream consumers for module usage before quarantining anything.
 
 **Deliverable:** `docs/SCOPE.md` + an `__all__` in `NSM/__init__.py`.
 
@@ -309,13 +338,14 @@ Each entry: what was wrong, exact date range affected, which configs/optimizers/
 observable consequence, how to detect it in an existing run, how to reproduce old behaviour.
 
 - [ ] Seed with the LR-schedule bug (May 2023 → Jul 2026, Adam/AdamW only, `schedule_free_*`
-      unaffected). This currently exists only as a docstring in Katie's fork — it must live
-      somewhere durable and citable.
+      unaffected). Prior to this it existed only as a docstring in a downstream fork — it
+      must live somewhere durable and citable.
 - [ ] Add the sigma coordinate-space ambiguity (issue #3).
 - [ ] Add every subsequent finding from Phases 1–4.
-- [ ] Assess whether the LR bug materially affected published/downstream results — Anthony's
-      initial read is that the hyperparameter search was run under the buggy mapping, so the
-      chosen values were optimal *for that mapping*; retuning after the fix may be warranted.
+- [ ] Assess whether the LR bug materially affected published/downstream results. Initial
+      read: the hyperparameter search ran under the buggy mapping, so the chosen values were
+      optimal *for that mapping*. The models are self-consistent; retuning under the fixed
+      mapping is a separate exercise and is not a prerequisite for anything here.
 
 ---
 
@@ -332,10 +362,10 @@ Phase 0 (scope)  ──►  Phase 1 (map)  ──►  Phase 2 (docs)
 **Before starting Phase 1:** tag a release (`v2.x`) and have `kneepipeline` and `nsosim`
 pin it. Gives an unambiguous rollback point and decouples their release cadence from this work.
 
-**Coordinate with Katie throughout.** She maintains an active fork with real divergence
-(`train_deep_sdf_contrastive.py`, `train_deep_sdf_hierarchy.py` are hers, not ours). Every
-week of unmerged refactor makes her merge worse. Phases 0 and 1 in particular should be
-shared with her before execution — her fork's module usage is an input to the dead-code call.
+**Coordinate with downstream forks throughout.** At least one active fork carries modules
+that do not exist upstream, so every week of unmerged refactor makes its merge worse.
+Phases 0 and 1 in particular should be shared before execution — fork module usage is an
+input to the dead-code call.
 
 **Biggest risk:** Phase 3 stalls again. Mitigation — §7.1 is a single bounded artifact with
 a clear done condition, delivered before any broad coverage push. If only §7.1 and §7.2 ever
