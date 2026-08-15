@@ -9,7 +9,7 @@ from NSM.utils import (
     get_checkpoints,
     clear_gpu_cache,
 )
-from NSM.losses import eikonal_loss
+from NSM.losses import EIKONAL_UNSUPPORTED, eikonal_loss
 from NSM.reconstruct import (
     get_mean_errors,
     compare_cart_thickness,
@@ -59,6 +59,9 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
     config.setdefault("scale_jointly", False)
     config.setdefault("fix_mesh_recon", False)
     config.setdefault("log_latent", None)
+
+    if config.get("eikonal_weight", 0) > 0:
+        raise NotImplementedError(EIKONAL_UNSUPPORTED)
 
     # Validate mesh_names length matches objects_per_decoder if provided
     if config["mesh_names"] is not None:

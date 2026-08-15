@@ -10,7 +10,7 @@ from .predictive_validation_class import Regress
 from NSM.datasets import read_mesh_get_sampled_pts, read_meshes_get_sampled_pts
 from NSM.datasets.sdf_dataset import combine_meshes
 from NSM.mesh import create_mesh_adaptive
-from NSM.losses import eikonal_loss
+from NSM.losses import EIKONAL_UNSUPPORTED, eikonal_loss
 
 
 import numpy as np
@@ -385,6 +385,9 @@ def reconstruct_latent(
         print("Warning: max_batch_size is deprecated and will be removed in future versions. "
               "Batch processing has been simplified and now processes all data at once for better performance.")
     
+    if eikonal_weight > 0:
+        raise NotImplementedError(EIKONAL_UNSUPPORTED)
+
     sdf_gt = reconstruct_latent_sdf_gt_type_check(sdf_gt, verbose=verbose)
     pts_surface = reconstruct_latent_pts_surface_type_check(
         pts_surface, verbose=verbose, device=device
