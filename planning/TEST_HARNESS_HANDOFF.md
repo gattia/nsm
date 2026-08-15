@@ -96,21 +96,47 @@ The layer with the worst findings, and the one an in-memory harness never touche
 
 ---
 
-## 4. What not to do
+## 4. Scope: tests only
 
+**Add files under `testing/`. Change nothing else.** Not `NSM/`, not `pyproject.toml`,
+not the docs. Your entire diff should be new test files plus, if you need them, fixtures
+and a `conftest.py`.
+
+This is not bureaucracy, it is what makes the harness work:
+
+- **A regression baseline has to record what the code does *today*.** If you fix things
+  while writing it, the baseline records a mix of old and new behaviour and cannot tell
+  anyone whether a later refactor changed anything.
+- **It makes the PR reviewable in minutes.** A diff confined to `testing/` cannot break
+  production, so it does not need the scrutiny a change to `reconstruct/main.py` does.
+
+So:
+
+- **Do not fix bugs you find.** Pin the current behaviour — bugs included — in a
+  characterization test, and write the bug down (§4.1). A silent fix during test-writing
+  defeats the whole exercise.
+- **Do not "improve while you are in there."** You will find obvious small things:
+  `pyproject.toml` points `testpaths` at a directory that does not exist; `black --check`
+  fails on 9 files; `make lint` reports 445 violations. All real, all out of scope, each
+  its own PR. Note them and move on.
 - **Do not work through the findings register.** There is deliberately no separate
   verification pass. Findings get confirmed or killed as a by-product of building these
   tests, so the effort leaves permanent tests behind instead of throwaway scripts.
 - **Do not chase coverage.** The plan's "32% → ≥70%" is a lagging indicator, not a gate.
   The gate is: this harness exists, it is green, and it runs in CI.
-- **Do not fix bugs you find.** Write the characterization test that pins the *current*
-  behaviour, bugs included, and open an issue. A silent fix during test-writing defeats
-  the purpose — you would be changing the baseline you are trying to establish. If a
-  behaviour is genuinely wrong and worth fixing, it needs a
-  `docs/KNOWN_ISSUES_HISTORY.md` entry and its own commit.
-- **Do not reformat.** `black --check` fails on 9 pre-existing files and `make lint`
-  reports 445 flake8 violations. That cleanup is its own PR; mixing it in makes your diff
-  unreviewable.
+
+### 4.1 How to hand back what you find
+
+Keep one file — `planning/TEST_HARNESS_NOTES.md`, new, yours — with an entry per finding:
+what you expected, what happened, the `file:line`, and the test that demonstrates it.
+
+Do not edit `docs/AUDIT_FINDINGS.md`; the maintainer merges your notes into it. That keeps
+the register's provenance clean — it currently distinguishes executed checks from
+inference, and that distinction is the most useful thing about it.
+
+**If a test cannot be written without changing `NSM/`, stop and write it up.** That is a
+result, not a blocker for you to solve — "this behaviour is untestable as written" is
+exactly the kind of finding Phase 4 needs before it decomposes the module.
 
 ---
 
@@ -130,8 +156,8 @@ pytest testing/ --cov=NSM --cov-report=term-missing
 
 Tests live in `testing/`, **not** `tests/`. Note `pyproject.toml` sets
 `testpaths = ["tests"]`, a directory that does not exist — a bare `pytest` works only
-because pytest 8 warns and falls back to scanning from the root. Worth fixing while you
-are in there; it is a one-line change.
+because pytest 8 warns and falls back to scanning from the root. **Leave it**; it is a
+one-line fix but it is outside your scope (§4). Always pass the path explicitly.
 
 Real production configs to test against, 131 keys each:
 
@@ -180,9 +206,9 @@ Each of these was found during the audit and will cost you an hour if you meet i
       vertex — and confirm the harness goes red. **A regression harness nobody has seen
       fail is not evidence of anything.**
 - [ ] Baselines are stored as versioned artifacts with a documented regeneration command
-- [ ] Any finding you confirmed or killed along the way is annotated in
-      `docs/AUDIT_FINDINGS.md` the way the two existing corrections are — in place, with
-      the original claim left visible
+- [ ] Every finding you confirmed or killed is written up in
+      `planning/TEST_HARNESS_NOTES.md` (§4.1), not merged into the audit register
+- [ ] Your diff touches nothing outside `testing/` and that one notes file
 
 Once §7.1 is green, §7.2 (contract tests on `TriplanarDecoder`, `reconstruct_mesh`, and
 historical-checkpoint compatibility) is the next bounded piece, and Phase 4 becomes safe
