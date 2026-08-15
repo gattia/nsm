@@ -1,8 +1,9 @@
 # Plan: NSM code-health audit and refactor
 
-**Status:** Open — Phase 0 not started. Phase A (LR fix) delivered 2026-08-14 as the
-motivating example and migration template.
-**Created:** 2026-08-14.
+**Status:** **Open.** Phase A (LR fix) delivered 2026-08-14/15 — PRs #9, #10, #11 merged.
+Phases 0–4 not started. This plan is *not* complete: Phase A was the motivating example
+and the migration template, not the body of work.
+**Created:** 2026-08-14. **Last updated:** 2026-08-15.
 **Repo:** `/home/gattia/programming/kneepipeline/DEPENDENCIES/nsm` (NSM).
 **Motivation:** The LR-schedule bug (see §1) was a silent numerical error that ran
 undetected for ~3 years and was found by an external collaborator, not by us. It is a
@@ -137,22 +138,57 @@ Blocking all later phases.
 
 ## 4. Phase A (done) — LR fix as the migration template
 
-Delivered 2026-08-14. Recorded here because it is the **pattern** every subsequent
-behaviour-changing fix should follow.
+Delivered 2026-08-14/15 across PRs **#9**, **#10** and **#11**, all merged. Recorded here
+because it is the **pattern** every subsequent behaviour-changing fix should follow.
 
-- Named optimizer param groups (`latent`, `model_0`, …); `adjust_learning_rate` maps by
-  name, never by position. Ported from Katie's fork.
-- `save_model()` persists `optimizer_group_names`; resume restores them, falling back to
-  `rename_optimizer_param_groups()` for pre-fix checkpoints.
-- **`lr_schedule_convention` config key** — the silent-swap guard. A pre-fix config run on
-  fixed code would otherwise train with swapped LRs and *no error*. Now an Adam/AdamW
-  config lacking the key raises with a migration message offering `"legacy_swapped"`
-  (reproduce historical runs) or `"v2"` (intended semantics). `schedule_free_*` defaults
-  silently to `v2` — it was never affected.
+### What shipped
 
-**The generalizable lesson:** the name-based `KeyError` protects the *internal* invariant
-but is invisible to a user with an old config. Internal correctness guards and user
-migration guards are different mechanisms, and behaviour-changing fixes need both.
+- **`Target` on every `LearningRateSchedule` entry** (`"model"` / `"latent"`). Entry order
+  is ignored. A config missing it — including a half-annotated one — raises, printing a
+  paste-ready annotated copy of the caller's own entries.
+- **No positional indexing anywhere in the LR path.** `get_learning_rate_schedules`
+  returns a `{target: schedule}` dict; param groups carry a matching `target`;
+  `adjust_learning_rate` is one lookup. `name` survives as a human label only.
+- **Pre-Aug-2026 checkpoints are refused at load time**, not left to a downstream
+  `KeyError` — which is skipped for `schedule_free_*` and would have failed hours in.
+- **Migration code isolated** in `NSM/_lr_migration.py`, with a delete-when condition in
+  its header.
+- `docs/KNOWN_ISSUES_HISTORY.md` seeded, with ShapeMedKnee_2024 as a worked example.
+
+### Corrections to this plan's original Phase A
+
+Recorded because the first version of this section described things that are no longer
+true, and the corrections are the actual lesson:
+
+- **`lr_schedule_convention` was removed within a day of shipping.** It declared how to
+  read positions 0 and 1, which made the ambiguity *explicit* rather than removing it.
+  Replaced by `Target`. A config-level flag describing an ordering is a smell; the
+  ordering itself was the defect.
+- **`optimizer_group_names` was removed as redundant.** `state_dict()` retains custom
+  group keys and `load_state_dict()` restores them, so it never did anything. The fork's
+  docstring claimed otherwise, that claim was disproved, and the code it justified was
+  kept anyway with a freshly invented rationale.
+- **`rename_` / `restore_optimizer_param_group_names` were removed** — both existed only
+  to guess names positionally, the assumption the fix was removing.
+- **`schedule_free_*` is not "unaffected."** It skipped the buggy code path, but every
+  config was *tuned* against the Adam path, so running the same file schedule-free applied
+  the values inverted and undecayed. On production values that is a decoder at 50× its
+  tuned rate, flat. The two families migrate to **opposite** annotations.
+
+`NSM/utils.py` finished at **+173** lines against pre-fix `main`, down from +341 at first
+draft, with no loss of function. Everything removed came out because the maintainer asked
+a question, not because a check caught it — which is what the `Making Changes` section of
+`CLAUDE.md` now exists to fix.
+
+**The generalizable lessons:**
+
+1. Internal correctness guards and user migration guards are different mechanisms, and a
+   behaviour-changing fix needs both. A name-based `KeyError` protects the invariant but
+   is invisible to someone holding an old config.
+2. Fix the *class* of defect, not the reported instance. This bug was positional coupling;
+   the first fix removed one of three instances in the same code path.
+3. Migration scaffolding needs a lifespan declared at write time, or it becomes permanent
+   API by default.
 
 ---
 
