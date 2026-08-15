@@ -41,6 +41,63 @@ make quick-test
 - Tests live in `testing/` directory (not `tests/`)
 - Pytest is configured in pyproject.toml
 
+## Making Changes
+
+This is a research library with one maintainer. Every line added is a line someone
+maintains alone, and dead code here is worse than a gap — it looks load-bearing.
+
+The rules below were paid for by the Aug 2026 LR-schedule fix, which took four rounds of
+review to get from **+341 lines to +173** in `NSM/utils.py` with no loss of function.
+Each one names the specific mistake it prevents.
+
+**Run the claim before you write it.** Assertions about what a change does were wrong more
+often than right until executed: "`state_dict()` drops custom group keys" (false),
+"schedule_free runs were unaffected" (true in the narrow sense, backwards in practice),
+"regenerating the default config changes it" (behaviourally inert), "the `"None"` sentinel
+is cosmetic" (it is truthy, so it is a trap). Every one of these was settled by a
+five-line script. Write the script first; the claim is the output, not the input.
+
+**Do a deletion pass before presenting.** For each symbol you added, ask what actually
+breaks if it is removed, and answer by deleting it and running the tests. Roughly 100
+lines survived the first draft of that fix purely because nobody asked. `/simplify` does
+this if you would rather not do it by hand.
+
+**Never inherit a rationale along with the code.** If you port something and its stated
+justification turns out to be false, the code goes too unless you can independently
+justify it. Disproving the premise and keeping the conclusion — with a freshly invented
+reason — is how the 40 lines of `optimizer_group_names` plumbing survived a full review.
+
+**Separate permanent from transitional at write time, not later.** Migration helpers,
+deprecation shims and one-time explainers go in their own module with a delete-when
+condition in the header (see `NSM/_lr_migration.py`). Inline, unmarked, they become
+indistinguishable from permanent API within a year.
+
+**Fix the class of defect, not the reported instance.** The LR bug was positional
+coupling. Fixing only the reported site left two more instances of the same coupling in
+the same code path, each found in a later round. When a bug has a shape, enumerate every
+place that shape occurs before proposing a fix.
+
+**Size docs to the reader's need, not your uncertainty.** Long docstrings on functions you
+found hard to reason about are self-soothing. Error text that restates a document it
+already links to is padding. Keep what the reader cannot look up.
+
+### Plans
+
+A plan for a non-trivial change should state, before any code:
+
+- which parts are **permanent API** and which are **transitional**, with the condition
+  under which the transitional parts get deleted
+- roughly how much code the permanent part justifies, so growth past it is visible
+- the **verification** for each behavioural claim the plan rests on — the script or test
+  that settles it, not the reasoning that suggests it
+
+### Numerical-behaviour changes
+
+Any fix that silently changes training or reconstruction output for inputs that
+previously ran without error needs an entry in `docs/KNOWN_ISSUES_HISTORY.md`. The test is
+whether a reader can determine, years later, if a run they have on disk is affected and
+what to do about it. Bugs that always crashed need no entry — nobody has results from them.
+
 ## Architecture
 
 ### Core Modules
@@ -102,21 +159,40 @@ Example config snippet:
 }
 ```
 
-### Learning Rate Schedules: `lr_schedule_convention`
+### Learning Rate Schedules: the `Target` key
 
-`LearningRateSchedule` is a **positional** two-entry list. Which entry drives which
-parameter group is declared by the required `lr_schedule_convention` config key:
+Every `LearningRateSchedule` entry **must** declare `"Target"`, either `"model"` or
+`"latent"`. Exactly two entries, one per target. **Entry order is ignored.**
 
-- `"v2"` — index 0 = model/decoder, index 1 = latent codes. **Use this for all new runs.**
-- `"legacy_swapped"` — index 0 = latent codes, index 1 = model. Only for reproducing an
-  Adam/AdamW run configured before Aug 2026.
+```json
+"LearningRateSchedule": [
+    {"Target": "model",  "Type": "Step", "Initial": 0.001,  "Interval": 500, "Factor": 0.5},
+    {"Target": "latent", "Type": "Step", "Initial": 0.0005, "Interval": 500, "Factor": 0.5}
+]
+```
 
-An `Adam`/`AdamW` config that omits the key **raises**. This is deliberate: a pre-fix
-config would otherwise train with a different mapping than it did historically, silently.
-`schedule_free_*` configs were never affected and default to `v2`.
+A config missing `Target` on any entry — including only one of the two — **raises**, with
+a message that prints the paste-ready annotation reproducing that run's historical
+behaviour. This applies to every optimizer, `schedule_free_*` included.
 
-Optimizer param groups are **named** (`latent`, `model_0`, …) and `adjust_learning_rate()`
-maps schedules by name, never by position. Never assume group order is meaningful.
+Note the two optimizer families migrate to **opposite** annotations. Adam/AdamW ran
+through `adjust_learning_rate()` (entry 0 drove the latents); `schedule_free_*` skipped it
+and kept `get_optimizer()`'s own assignment (entry 0 drove the model). The error message
+picks the right one from `config["optimizer"]`.
+
+**There is no positional indexing anywhere in the LR path**, and `target` is the single
+vocabulary spanning config and optimizer:
+
+- **Schedule entries** carry `Target`. `get_learning_rate_schedules()` returns a
+  `{target: schedule}` **dict**, not a list — there is no index to get wrong.
+- **Param groups** carry `target` too, so `adjust_learning_rate()` is one lookup:
+  `group["lr"] = lr_schedules[group["target"]].get_learning_rate(epoch)`.
+- Param groups also carry `name` (`latent`, `model_0`, …), but that is a **human label
+  only** — nothing dispatches on it. Renaming a group changes nothing.
+
+Several groups may share a target: every decoder and the classification heads all take
+the `model` schedule. That many-to-one relation is why group `name` and schedule `Target`
+are separate fields rather than one.
 
 Background: `docs/KNOWN_ISSUES_HISTORY.md` §1 — a positional-mapping bug swapped these two
 schedules on every Adam/AdamW run from May 2023 to Aug 2026.

@@ -50,7 +50,7 @@ The mismatch dates to a 2023 refactor that made the optimizer able to loop over 
 models, which moved the latent codes to the front of the param-group list without updating
 the positional assignment in `adjust_learning_rate`.
 
-### Why schedule-free runs are unaffected
+### schedule-free runs: not hit by the bug, but arguably hurt worse
 
 The training loop skips the LR adjustment entirely for those optimizers:
 
@@ -59,16 +59,43 @@ if not ("schedule_free" in config["optimizer"]):
     adjust_learning_rate(config["lr_schedules"], optimizer, epoch)
 ```
 
-They therefore kept `get_optimizer()`'s correct initial assignment for the whole run.
-**Do not swap the schedule entries in a `schedule_free_*` config.**
+So they kept `get_optimizer()`'s assignment — entry 0 to the model, entry 1 to the latents
+— for the whole run. In the narrow sense they were never mis-mapped.
+
+**In practice this made them worse, not better.** Every config in this project was written
+and tuned against the Adam/AdamW path, where entry 0 was in effect the latent LR. Running
+that same file with a `schedule_free_*` optimizer applied the values the other way round.
+The same config meant opposite things depending on which optimizer you chose, and only the
+Adam reading matched how the numbers were picked.
+
+Nothing decayed either, since `adjust_learning_rate` is where decay is applied, so whatever
+the epoch-0 values were, they held for the entire run.
+
+Worked through with the ShapeMedKnee_2024 values (entry 0 `0.005`, entry 1 `0.0001`):
+
+| | latent LR | model LR |
+|---|---|---|
+| `AdamW` (as tuned) | `5e-3` → `1.5e-5` | `1e-4` → `1e-6` |
+| `schedule_free_AdamW` | **`1e-4`, constant** | **`5e-3`, constant** |
+
+The decoder trains at 50× the rate it was tuned for, flat, for the whole run. **If a
+`schedule_free_*` run appeared not to work, this is a candidate explanation, and it is not
+a property of schedule-free optimizers.** Re-run it with the values annotated the way they
+were tuned before concluding anything about the method.
+
+Consequence for migration: for a `schedule_free_*` config, the annotation that reproduces
+the historical run is entry 0 → `model`, entry 1 → `latent` — the opposite of the Adam
+case — but reproducing that run faithfully is often *not* what you want. The migration
+error prints this caution when it sees a schedule-free optimizer.
 
 ### How to tell whether one of your runs is affected
 
 1. Check `model_params_config.json` in the experiment directory.
 2. If `"optimizer"` is `"Adam"` or `"AdamW"`, and the run predates the fix → **affected**.
-3. If `"optimizer"` starts with `"schedule_free"` → **not affected**.
-4. If `"lr_schedule_convention"` is present, the run was configured after the fix and its
-   mapping is explicit.
+3. If `"optimizer"` starts with `"schedule_free"` → not hit by the runtime bug, but read
+   the schedule-free section above before assuming the run was fine.
+4. If the `LearningRateSchedule` entries carry `"Target"`, the run was configured after
+   the fix and its mapping is explicit.
 
 For an affected run, the learning rates actually used were:
 
@@ -77,43 +104,71 @@ For an affected run, the learning rates actually used were:
 
 ### How to reproduce an affected run under fixed code
 
-Add one key to the run's config, leaving `LearningRateSchedule` untouched:
+Annotate each entry with the group it historically drove. Change nothing else — no
+reordering, no edits to any value:
 
 ```json
-"lr_schedule_convention": "legacy_swapped"
+"LearningRateSchedule": [
+    {"Target": "latent", ...entry 0 unchanged... },
+    {"Target": "model",  ...entry 1 unchanged... }
+]
 ```
 
-This swaps the two entries internally so the effective learning rates match the historical
-run exactly. Verified by `TestHistoricalEquivalence` in
-`testing/NSM/test_lr_schedules.py`, which asserts equality against a reimplementation of
-the pre-fix mapping across a range of epochs.
+That is the correct annotation for `Adam`/`AdamW`. **`schedule_free_*` is the opposite** —
+`"model"` on entry 0, `"latent"` on entry 1 — because those runs skipped
+`adjust_learning_rate()` and kept `get_optimizer()`'s own assignment. Getting this
+backwards inverts the run.
 
-For new runs, use `"lr_schedule_convention": "v2"` — index 0 = model, index 1 = latent codes.
+You do not have to work it out. Run the config; the error prints the paste-ready block for
+your optimizer.
+
+Verified by `TestHistoricalEquivalence` in `testing/NSM/test_lr_schedules.py`, which
+asserts equality against a reimplementation of the pre-fix mapping across a range of
+epochs, using the real ShapeMedKnee_2024 schedules.
+
+For new runs, set `Target` to whatever each entry is meant to drive. Order is ignored.
 
 ### Migration guard
 
 A pre-fix config run on fixed code would otherwise train with a different mapping than it
-did historically, with no error. So an `Adam`/`AdamW` config that does not declare
-`lr_schedule_convention` now **raises** with a message explaining both options.
-`schedule_free_*` configs default to `v2` silently, having never been ambiguous.
+did historically, with no error. So **any** config with an entry missing `Target` now
+raises — including a half-annotated one, which is the case most likely to slip through a
+glance. This applies to every optimizer; `schedule_free_*` was never affected by the
+runtime bug, but its construction-time mapping was positional too, so it gets the same
+rule rather than an exemption.
+
+### Worked example: ShapeMedKnee_2024
+
+The production knee model. Its two entries differ in every field, not just `Initial`:
+
+| | `Initial` | `Interval` | `Factor` |
+|---|---|---|---|
+| Entry 0 | `0.005` | `16.67` | `0.952` |
+| Entry 1 | `0.0001` | `1000` | `0.1` |
+
+Optimizer is `AdamW`, so the run actually trained with **latents on entry 0** — starting at
+`5e-3` and decaying smoothly to `1.5e-5` — and the **decoder on entry 1**, flat at `1e-4`
+for the first 1000 epochs with `×0.1` steps at 1000 and 2000.
+
+The two curves are 50× apart at epoch 0 and have completely different shapes. Annotating
+this config the wrong way round does not perturb the run, it inverts it. This is the
+canonical example of why the guard raises instead of warning.
 
 ### What this did to the shipped defaults
 
-The default config was inherited from DeepSDF's reference `specs.json`, which lists the
-network LR first and the latent LR second:
+Before the fix, the shipped default resolved to latent `0.0005` / model `0.001` at
+runtime, while the config read as the reverse.
 
-| | Entry 0 | Entry 1 |
-|---|---|---|
-| Intended | model `0.0005` | latent `0.001` |
-| **Actually applied** | **latent `0.0005`** | **model `0.001`** |
+This fix swaps the two entries in the shipped default configs, which **preserves that
+historical effective behaviour** (model `0.001`, latent `0.0005`) rather than making the
+config mean what it previously appeared to say. That is a deliberate choice for continuity
+with the tuned production models — see the open action below. It is not an endorsement of
+those values.
 
-So the reference convention — latents learn *faster* than the decoder — was inverted. Every
-affected run trained its decoder at 2× the intended rate and its latents at half.
-
-This fix swaps the two entries in the shipped default configs, which **preserves the
-historical effective behaviour** (model `0.001`, latent `0.0005`) rather than restoring
-DeepSDF's intent. That is a deliberate choice for continuity with the tuned production
-models — see the open action below. It is not an endorsement of those values.
+Note this is only about the shipped defaults, whose two entries were identical apart from
+`Initial`. For a real training config the swap carries the whole schedule — `Type`,
+`Interval` and `Factor` as well — so reasoning about `Initial` alone will mislead you. See
+the ShapeMedKnee_2024 example above.
 
 ### Scientific consequence
 
@@ -130,7 +185,9 @@ current production models before assuming either is better. Not yet done.
 
 ### Related
 
-- `NSM/utils.py` — `get_optimizer`, `adjust_learning_rate`, `resolve_lr_schedule_convention`
+- `NSM/utils.py` — `get_optimizer`, `adjust_learning_rate`, `resolve_schedule_targets`
+- `NSM/_lr_migration.py` — the migration error text. Not permanent API; delete the file
+  once no config still in use predates the `Target` key.
 - `testing/NSM/test_lr_schedules.py` — regression and equivalence tests
 - `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §4 — this fix as the migration template
 

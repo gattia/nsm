@@ -1,4 +1,5 @@
 import json
+import os
 
 config = {
     "project_name": "deep-sdf-femur",
@@ -63,17 +64,12 @@ config = {
     # optimizer
     "optimizer": "Adam",  #  "AdamW"
     "weight_decay": 0.0001,
-    # Which LearningRateSchedule ordering this config is written against.
-    # "v2"             -> index 0 = model, index 1 = latent codes (intended semantics)
-    # "legacy_swapped" -> index 0 = latent codes, index 1 = model (pre-Aug-2026 runtime
-    #                     behaviour; use only to reproduce a historical Adam/AdamW run)
-    "lr_schedule_convention": "v2",
     # Learning Rate:
-    # Entry order is POSITIONAL and is declared by "lr_schedule_convention" above:
-    # under "v2", index 0 drives the model/decoder and index 1 drives the latent codes.
+    # Each entry MUST declare "Target": "model" or "latent". Entry order is ignored --
+    # the target is the only thing that decides which parameter group a schedule drives.
     "LearningRateSchedule": [
-        {"Type": "Step", "Initial": 0.001, "Interval": 500, "Factor": 0.5},  # index 0 = model
-        {"Type": "Step", "Initial": 0.0005, "Interval": 500, "Factor": 0.5},  # index 1 = latent
+        {"Target": "model", "Type": "Step", "Initial": 0.001, "Interval": 500, "Factor": 0.5},
+        {"Target": "latent", "Type": "Step", "Initial": 0.0005, "Interval": 500, "Factor": 0.5},
     ],
     # regularize learning:
     "grad_clip": None,
@@ -95,5 +91,22 @@ config = {
     "code_cyclic_anneal": False,  # https://github.com/haofuml/cyclical_annealing - cyclic anneal the latent weight(s)
 }
 
-with open("./default_config.json", "w") as f:
-    json.dump(config, f, indent=4)
+DEFAULT_CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "default_config.json"
+)
+
+
+def write_default_config(path=DEFAULT_CONFIG_PATH):
+    """Write ``config`` to ``path``. Regenerates the shipped ``default_config.json``."""
+    with open(path, "w") as f:
+        json.dump(config, f, indent=4)
+    return path
+
+
+if __name__ == "__main__":
+    # Guarded, and writing next to this module rather than to the caller's cwd. Both used
+    # to be otherwise: the write ran at IMPORT time and targeted "./", so merely importing
+    # this module dropped a default_config.json into whatever directory you were in, while
+    # the shipped copy it was meant to regenerate went untouched unless you happened to be
+    # cd'd into NSM/configs.
+    print(f"wrote {write_default_config()}")

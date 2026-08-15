@@ -80,17 +80,16 @@
     "sample_difficulty_lx_epsilon": 0.0001,
     "optimizer": "Adam",
     "weight_decay": 0.0001,
-    "lr_schedule_convention": "v2",
     "LearningRateSchedule": [
         {
-            "_comment": "index 0 = model/decoder LR",
+            "Target": "model",
             "Type": "Step",
             "Initial": 0.001,
             "Interval": 500,
             "Factor": 0.5
         },
         {
-            "_comment": "index 1 = latent-code LR",
+            "Target": "latent",
             "Type": "Step",
             "Initial": 0.0005,
             "Interval": 500,
