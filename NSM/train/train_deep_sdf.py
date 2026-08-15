@@ -120,32 +120,43 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
 
     if config["resume_epoch"] > 1:
         print("Loading model, optimizer, and latent states from epoch", config["resume_epoch"])
-        # load the model states
-        model.load_state_dict(
-            torch.load(
-                os.path.join(
-                    config["experiment_directory"], "model", f'{config["resume_epoch"]}.pth'
-                )
-            )["model"]
+        # load each checkpoint once rather than re-reading it per state
+        model_checkpoint = torch.load(
+            os.path.join(config["experiment_directory"], "model", f'{config["resume_epoch"]}.pth')
+        )
+        latent_checkpoint = torch.load(
+            os.path.join(
+                config["experiment_directory"], "latent_codes", f'{config["resume_epoch"]}.pth'
+            )
         )
 
-        # load the optimizer states
-        optimizer.load_state_dict(
-            torch.load(
-                os.path.join(
-                    config["experiment_directory"], "model", f'{config["resume_epoch"]}.pth'
-                )
-            )["optimizer"]
-        )
+        model.load_state_dict(model_checkpoint["model"])
+
+        # load the optimizer states. Checkpoints saved without an optimizer hold None (or
+        # the string "None", written before Sep 2026); load_state_dict would raise an
+        # opaque TypeError on either.
+        if model_checkpoint["optimizer"] in (None, "None"):
+            raise ValueError(
+                f"Checkpoint at epoch {config['resume_epoch']} was saved without optimizer "
+                f"state, so training cannot resume from it."
+            )
+        optimizer.load_state_dict(model_checkpoint["optimizer"])
+        # state_dict() retains custom param-group keys and load_state_dict() restores
+        # them, but it adopts the checkpoint's metadata wholesale -- so a checkpoint saved
+        # before Aug 2026 leaves the groups with no 'target' and schedules cannot be
+        # mapped. Fail here rather than downstream: adjust_learning_rate() would catch it
+        # at epoch 1, but it is skipped for schedule_free_*, which would then run to the
+        # first checkpoint save before failing.
+        if any(group.get("target") is None for group in optimizer.param_groups):
+            raise ValueError(
+                f"Checkpoint at epoch {config['resume_epoch']} carries no optimizer "
+                f"param-group targets, so it predates Aug 2026 and its learning-rate "
+                f"schedules cannot be mapped. Resuming it is not supported; start a "
+                f"fresh run. See docs/KNOWN_ISSUES_HISTORY.md section 1."
+            )
 
         # load the latent vectors
-        latent_vecs.load_state_dict(
-            torch.load(
-                os.path.join(
-                    config["experiment_directory"], "latent_codes", f'{config["resume_epoch"]}.pth'
-                )
-            )["latent_codes"]
-        )
+        latent_vecs.load_state_dict(latent_checkpoint["latent_codes"])
 
     # profiler that runs if config['profiler'] is True, else a dummy profiler is used and should have no effect
     with get_profiler(config) as profiler:

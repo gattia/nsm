@@ -54,7 +54,6 @@
     "sigma_far": 0.1,
     "random_function": "normal",
     "center_pts": true,
-    "axis_align": false,
     "normalize_pts": true,
     "scale_method": "max_rad",
     "objects_per_batch": 64,
@@ -68,6 +67,7 @@
     "val_paths": null,
     "enforce_minmax": true,
     "clamp_dist": 0.1,
+    "eikonal_weight": 0.0,
     "sample_difficulty_weight": null,
     "sample_difficulty_cooldown": null,
     "sample_difficulty_weight_schedule": "linear",
@@ -82,14 +82,16 @@
     "weight_decay": 0.0001,
     "LearningRateSchedule": [
         {
+            "Target": "model",
             "Type": "Step",
-            "Initial": 0.0005,
+            "Initial": 0.001,
             "Interval": 500,
             "Factor": 0.5
         },
         {
+            "Target": "latent",
             "Type": "Step",
-            "Initial": 0.001,
+            "Initial": 0.0005,
             "Interval": 500,
             "Factor": 0.5
         }
