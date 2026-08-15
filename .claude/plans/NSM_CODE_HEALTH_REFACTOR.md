@@ -71,7 +71,8 @@ core is barely tested at all:
 
 ### 1.4 The production surface is small
 
-Everything downstream in `kneepipeline` imports exactly two symbols:
+Everything downstream in `kneepipeline` imports exactly two names from `NSM` — one class
+and one function:
 
 ```python
 from NSM.models import TriplanarDecoder
@@ -79,8 +80,10 @@ from NSM.reconstruct import reconstruct_mesh
 ```
 
 `nsosim` additionally consumes the mesh-interpolation path. **That is the entire
-production contract.** The blast radius of an aggressive refactor is far smaller than
-11.5k lines implies — this is the single most important fact for prioritizing the work.
+production contract.** Everything else in `NSM/` is internal, so it can be restructured
+freely as long as those two keep working. The blast radius of an aggressive refactor is
+far smaller than 11.5k lines implies — this is the single most important fact for
+prioritizing the work.
 
 ### 1.5 Open issues are all symptoms of the same disease
 
