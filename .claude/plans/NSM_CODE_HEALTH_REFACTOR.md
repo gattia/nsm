@@ -61,8 +61,8 @@ observable numerical state across an epoch boundary would. That shapes Phase 2.
 | Docstring coverage | 48% (122/247 functions, 8/26 classes) |
 | Test coverage | 32% (100 tests + 1 skip, 13s runtime) |
 
-Coverage is inverted relative to risk — the newest code is best tested, the load-bearing
-core is barely tested at all:
+Coverage is inverted relative to risk — the newest code is best tested, the core that
+everything depends on is barely tested at all:
 
 | Module | Lines | Docstrings | Coverage | Note |
 |---|---|---|---|---|
@@ -74,38 +74,28 @@ core is barely tested at all:
 | `mesh/correspondence_metrics.py` | 699 | 100% | 94% | recent work — the target state |
 | `models/loader.py` | 387 | 100% | 84% | recent work |
 
-### 1.4 The production surface is not yet known
+### 1.4 The production surface is not yet established
 
-An earlier version of this plan claimed the entire production contract was two names:
+NSM is a training library first. `NSM/train/`, `NSM/datasets/sdf_dataset.py`,
+`NSM/losses.py` and the mesh path are the product, not internals — so most of the 11.5k
+lines are in active use, not incidental.
 
-```python
-from NSM.models import TriplanarDecoder      # in kneepipeline
-from NSM.reconstruct import reconstruct_mesh # in kneepipeline
-```
+Known consumers:
 
-**That was wrong, and wrong in a way that would have made this plan dangerous.** It came
-from grepping one downstream repo's *inference* path and generalising. It omits the
-library's primary purpose. NSM is a training library; `NSM/train/`,
-`NSM/datasets/sdf_dataset.py`, `NSM/losses.py` and the mesh path are the product, not
-implementation detail behind those two names.
-
-Known consumer classes, none of them yet enumerated properly:
-
-| consumer | surface used |
+| Consumer | Surface used |
 |---|---|
-| **Training** (first-party) | `train/`, `datasets/`, `models/`, `losses`, `mesh/` — the bulk of the library |
+| Training (first-party) | `train/`, `datasets/`, `models/`, `losses`, `mesh/` |
 | `kneepipeline` inference | `TriplanarDecoder`, `reconstruct_mesh` |
-| `nsosim` | mesh interpolation, extent unverified |
-| Published models / shared configs | `model_params_config.json` schema, checkpoint format |
+| `nsosim` | mesh interpolation; extent unverified |
+| Published models, shared configs | `model_params_config.json` schema, checkpoint format |
 | Downstream forks | unknown; they carry their own trainers |
 
-The checkpoint and config **formats** are also part of the contract even though they are
-not imports — the LR fix had to add a migration path precisely because a config file is a
-public interface.
+Checkpoint and config **formats** are part of the contract even though nothing imports
+them. The LR fix needed a migration path precisely because a config file is a public
+interface.
 
-**Establishing the real surface is Phase 0 work, not an input to it.** Until then, assume
-the blast radius of a refactor is large. The 11.5k lines are not mostly-internal until
-someone demonstrates that they are.
+None of the above is enumerated. Until it is, assume any refactor can break something
+outside this repo. Enumerating it is the first Phase 0 task (§3), not an input to this plan.
 
 ### 1.5 Open issues are all symptoms of the same disease
 
@@ -156,10 +146,11 @@ Blocking all later phases.
   - `configs/generate_sdf_default_config.py` — it generates the shipped
     `default_config.json`, now pinned by `testing/NSM/configs/test_default_config_sync.py`;
     supported, not dead
-- [ ] **Establish** the public API contract (§1.4 records why this is unknown, not known).
-      Enumerate what each consumer class actually uses — training first, since it is the
-      largest surface and was missed entirely by the first attempt. Write the result into
-      `NSM/__init__.py` as `__all__`; only then is everything else refactorable at will.
+- [ ] Establish the public API contract. Work through each consumer in §1.4 and record
+      what it actually uses, starting with training — it is the largest surface and the
+      easiest to overlook, since it is first-party and does not show up as an import in
+      any other repo. Write the result into `NSM/__init__.py` as `__all__`; only then is
+      everything outside it refactorable at will.
 - [ ] Include the checkpoint and `model_params_config.json` formats in that contract. They
       are public interfaces even though nothing imports them.
 - [ ] Survey downstream consumers for module usage before quarantining anything.
@@ -187,30 +178,28 @@ because it is the **pattern** every subsequent behaviour-changing fix should fol
   its header.
 - `docs/KNOWN_ISSUES_HISTORY.md` seeded, with ShapeMedKnee_2024 as a worked example.
 
-### Corrections to this plan's original Phase A
+### Approaches tried and rejected
 
-Recorded because the first version of this section described things that are no longer
-true, and the corrections are the actual lesson:
+Each of these shipped in a first draft and was removed before the work finished. They are
+listed because the next behaviour-changing fix will be tempted by the same three.
 
-- **`lr_schedule_convention` was removed within a day of shipping.** It declared how to
-  read positions 0 and 1, which made the ambiguity *explicit* rather than removing it.
-  Replaced by `Target`. A config-level flag describing an ordering is a smell; the
-  ordering itself was the defect.
-- **`optimizer_group_names` was removed as redundant.** `state_dict()` retains custom
-  group keys and `load_state_dict()` restores them, so it never did anything. The fork's
-  docstring claimed otherwise, that claim was disproved, and the code it justified was
-  kept anyway with a freshly invented rationale.
-- **`rename_` / `restore_optimizer_param_group_names` were removed** — both existed only
-  to guess names positionally, the assumption the fix was removing.
-- **`schedule_free_*` is not "unaffected."** It skipped the buggy code path, but every
-  config was *tuned* against the Adam path, so running the same file schedule-free applied
-  the values inverted and undecayed. On production values that is a decoder at 50× its
-  tuned rate, flat. The two families migrate to **opposite** annotations.
+- **A config flag declaring the entry order** (`lr_schedule_convention: v2 |
+  legacy_swapped`). It made the ambiguity explicit rather than removing it, and left the
+  ordering itself in place. Replaced by a per-entry `Target`. A flag that describes how to
+  read positions is a sign the positions should not carry meaning.
+- **Storing param-group names in the checkpoint** (`optimizer_group_names`).
+  `state_dict()` already retains custom group keys and `load_state_dict()` restores them,
+  so it never did anything. It was carried over from a downstream fork along with a
+  docstring justifying it; the justification was tested and proved false, and the code
+  survived anyway on a replacement rationale.
+- **Restoring names positionally for old checkpoints** (`rename_` /
+  `restore_optimizer_param_group_names`). Both guessed identity from group order, which is
+  the assumption the fix existed to remove. Pre-Aug-2026 checkpoints are now refused
+  outright.
 
-`NSM/utils.py` finished at **+173** lines against pre-fix `main`, down from +341 at first
-draft, with no loss of function. Everything removed came out because the maintainer asked
-a question, not because a check caught it — which is what the `Making Changes` section of
-`CLAUDE.md` now exists to fix.
+Final size: `NSM/utils.py` grew by 173 lines, down from 341 in the first draft, with no
+loss of function. Everything removed came out in review rather than from any automated
+check — which is what the `Making Changes` section of `CLAUDE.md` exists to change.
 
 **The generalizable lessons:**
 
@@ -309,7 +298,7 @@ Priority order (by lines × inverse coverage × production-reachability):
 
 ## 8. Phase 4 — Decompose the monoliths
 
-Standard extract-under-test, exactly as originally sketched: pull a coherent piece out,
+Standard extract-under-test: pull a coherent piece out,
 have the monolith call the extracted function, keep §7.1 green, then unit-test the
 extracted piece properly.
 
