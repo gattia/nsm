@@ -249,3 +249,95 @@ at initialization.
 The module now emits a `DeprecationWarning`. Use `NSM.train.train_deep_sdf` with
 `objects_per_decoder > 1` instead. Whether to repair or delete this file is a Phase 0
 decision in `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md`.
+
+---
+
+## 4. Sampling was never seeded — no run before Aug 2026 is reproducible
+
+| | |
+|---|---|
+| **Affects** | Every training run up to Aug 2026, including the shipped ShapeMedKnee models |
+| **Severity** | Silent — no error, and a warm cache makes it look like it works |
+| **Fixed in** | Aug 2026, this branch. Requires `mskt>=0.1.21` |
+
+### What was wrong
+
+`SDFSamples(random_seed=...)` was documented as "Random seed". It seeded nothing. The value
+was stored on the instance and appended to the cache key, and that was all it did — NSM
+called no seeding function anywhere.
+
+Two of the three sampling paths were unreachable even by a caller willing to seed `numpy`
+globally, because `pymskt.Mesh.rand_pts_around_surface` had two independent draws that
+bypassed the legacy global stream:
+
+- the base surface points, via `pcu.sample_mesh_random(v, f, n, random_seed=0)` — and pcu
+  documents `random_seed=0` as *"use the current time"*, not "seed 0";
+- the perturbation offsets, via `np.random.default_rng()` with no argument, which seeds
+  itself from OS entropy.
+
+So `sigma_near`/`sigma_far` sampling — the path every production config uses — drew fresh
+points on every call regardless of what the caller did. Only the uniform path
+(`sigma` of `None`) responded to `np.random.seed`, and nothing in NSM called that either.
+
+### Why nobody noticed
+
+**A warm cache hides it perfectly.** The seed *did* change the cache key, so two runs with
+the same `random_seed` resolved to the same `.npz` and the second reused the first's data.
+That is a cache hit behaving correctly. Point the two runs at different cache directories —
+or run the second on a machine that has never seen the first — and they diverge.
+
+### A second consequence: subjects were correlated, not merely random
+
+`multiprocessing=True, n_processes=2` is the constructor default, and `Pool` forks, so every
+worker inherited one copy of the legacy global `numpy` state. On the uniform path this made
+identical subjects come out **bit-identical**, with a correlation pattern that depended on
+`n_processes`. Measured on the pre-fix tree: three subjects sampled under
+`multiprocessing=True` versus `False` matched on none of them; after the fix, all three.
+
+### How to tell whether one of your runs is affected
+
+Every run trained before Aug 2026 is affected. There is no configuration that escapes it —
+`random_seed` was inert whether you set it or not.
+
+What that means in practice is narrower than it sounds:
+
+- **Your model weights are fine.** The data was drawn from the right distribution; it just
+  cannot be drawn again.
+- **The `.npz` cache is the only record of what a run actually trained on.** If you still
+  have the cache directory, the run is reproducible from it — the key is unchanged by this
+  fix, so an existing cache still hits.
+- **If the cache is gone, the exact training data cannot be regenerated.** Not from the
+  config, not from the seed, not from anything. This is the part worth knowing before you
+  delete a cache directory to save disk.
+
+### What changed numerically
+
+- **`random_seed=None` (the default): nothing.** Verified bit-for-bit, on both the sampled
+  arrays and the cache keys. An unseeded call still draws from the legacy global stream
+  precisely so this stays true — `np.random.default_rng(s)` and
+  `np.random.seed(s); np.random.uniform(...)` produce different numbers, and switching the
+  unseeded path to a `Generator` would have silently moved every existing result.
+- **`random_seed` set, warm cache: nothing.** The key is unchanged, so the cached file
+  still hits.
+- **`random_seed` set, cold cache: the data is now deterministic** instead of freshly
+  random. It will not match whatever that config produced before, because nothing did.
+
+### Running fixed code against an older pymskt
+
+It raises. `rand_pts_around_surface` gained `seed` in `mskt` 0.1.21 and takes no `**kwargs`,
+so an older install fails with `TypeError` on the first sampling call rather than silently
+reverting to unseeded draws. `requirements.txt` pins `mskt>=0.1.21`; the `TypeError` is the
+backstop if something bypasses the pin.
+
+### Related
+
+The seed is derived per (subject, sampling pass, surface) rather than used directly — one
+shared seed would hand the near- and far-surface passes the same base surface points, and
+give bone and cartilage the same offset vectors. The subject component is keyed on **mesh
+content**, not on the mesh path or its position in `list_mesh_paths`, so neither moving the
+files nor reordering the list changes what a subject samples. See `derive_seed` in
+`NSM/datasets/sdf_dataset.py` and `TestSeedDerivation` in
+`testing/NSM/regression/test_dataset_cache.py`.
+
+Upstream half: [gattia/pymskt#54](https://github.com/gattia/pymskt/issues/54), fixed in
+[#55](https://github.com/gattia/pymskt/pull/55), released as 0.1.21.

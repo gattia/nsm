@@ -1,8 +1,7 @@
 # Test harness notes — findings
 
-**Companion to `planning/TEST_HARNESS_HANDOFF.md` §4.1.** Written 2026-08-15 while building
-the Phase 3 §7.1 regression harness (`testing/NSM/regression/`), against tag `v0.1.0` on
-branch `plan-code-health-refactor`.
+Written 2026-08-15 while building the Phase 3 §7.1 regression harness
+(`testing/NSM/regression/`), against tag `v0.1.0` on branch `plan-code-health-refactor`.
 
 Everything below was **executed**, not read. Each entry gives what was expected, what
 happened, the `file:line`, and the test that demonstrates it. Nothing here was fixed — the

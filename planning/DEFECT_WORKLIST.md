@@ -31,7 +31,7 @@ Status: `[ ]` open · `[~]` in progress · `[x]` fixed (and its pinning test upd
 |---|---|---|---|
 | [1](#1-datasetssdf_datasetpy) | Cache key omits parameters that change cached content | **High** — silently wrong training data | Small fix, wide blast radius |
 | [2](#1-datasetssdf_datasetpy) | `reference_mesh` hashed by object identity | Medium — cache never hits | Small |
-| [3](#1-datasetssdf_datasetpy) | Sampling not reproducible; `random_seed` is a decoy | **High** — no run is reproducible cold | Upstream half DONE (pymskt 0.1.21); **NSM half open** |
+| ~~[3](#1-datasetssdf_datasetpy)~~ | ~~Sampling not reproducible; `random_seed` is a decoy~~ | ~~**High**~~ | **DONE**, Aug 2026 |
 | [4](#1-datasetssdf_datasetpy) | `store_data_in_memory=True` raises | Medium — advertised option, unusable | Trivial |
 | [5](#1-datasetssdf_datasetpy) | `p_near_surface=0` crashes | Low | Trivial |
 | [6](#1-datasetssdf_datasetpy) | `get_pts_center_and_scale` ignores args, mutates input | Medium | Small |
@@ -41,6 +41,8 @@ Status: `[ ]` open · `[~]` in progress · `[x]` fixed (and its pinning test upd
 | [10](#3-traintrain_deep_sdfpy) | `enforce_minmax` clamps predictions, killing gradients | Medium — config semantics | Docs, or a decision |
 | [11](#3-traintrain_deep_sdfpy) | `train_deep_sdf` returns nothing | Low — blocks observability | Trivial |
 | [12](#4-reconstructmainpy) | Early return drops requested keys | Medium | Small |
+| [13](#1-datasetssdf_datasetpy) | Mesh **content** is not in the cache key | Medium — edit a mesh in place, get the old data | Small |
+| [14](#1-datasetssdf_datasetpy) | `Pool` deadlocks on a second dataset in one process | Low — hangs, does not corrupt | Needs a decision |
 
 ---
 
@@ -74,28 +76,57 @@ Status: `[ ]` open · `[~]` in progress · `[x]` fixed (and its pinning test upd
   the number of *meshes*, never against the subsample the arrays were sized for. It is the
   check that should have caught #1's `subsample` case and cannot.
 
+- [ ] **13. Put the mesh content in the cache key, or say out loud that it is not there.**
+  The key is `md5(params + mesh paths)`. Edit a mesh in place and the key does not move, so
+  the stale `.npz` is served and you silently train on the old geometry. Found while fixing
+  #3, and the same class as #1 and #2 — something that changes the cached content is not in
+  the key.
+
+  Not obviously worth a full content hash on every load for a large dataset; file size and
+  mtime would catch the realistic case. The decision is which, not whether.
+
+  *Not currently pinned by a test.*
+
+- [ ] **14. `Pool` deadlocks if a dataset was already built in this process.** Constructing a
+  second `SDFSamples`/`MultiSurfaceSDFSamples` with the default
+  `multiprocessing=True` hangs indefinitely with idle workers (`:954-957`). Fork-after-VTK.
+  Reproduces on pre-#3 code, so it is long-standing rather than new.
+
+  Cheapest honest fix is a `spawn` context; the cheapest fix of all is documenting it on
+  `multiprocessing=`. Either beats a hang with no message.
+
+  *Worked around in:* `test_dataset_cache.TestSeedDerivation`, which builds its two
+  datasets in separate subprocesses.
+
 ### `read_meshes_get_sampled_pts` / the sampling path (`:404`)
 
-- [~] **3. Make sampling reproducible.** `random_seed` is stored and appended to the cache
-  key and seeds *nothing*; NSM calls no seeding function anywhere.
+- [x] **3. Make sampling reproducible.** *Fixed Aug 2026. History:
+  `docs/KNOWN_ISSUES_HISTORY.md` §4.*
 
-  **Upstream half: DONE.** `pymskt.Mesh.rand_pts_around_surface` had two draws that bypassed
-  `np.random.seed()`; both are now driven by one optional `seed`
-  ([pymskt#54](https://github.com/gattia/pymskt/issues/54), merged, released as **0.1.21**).
+  Both halves are in. Upstream, `pymskt.Mesh.rand_pts_around_surface` gained a `seed`
+  ([pymskt#54](https://github.com/gattia/pymskt/issues/54) →
+  [#55](https://github.com/gattia/pymskt/pull/55), released as **0.1.21**, now pinned in
+  `requirements.txt`). In NSM, `read_mesh_get_sampled_pts` and
+  `read_meshes_get_sampled_pts` take a `seed`, `SDFSamples.random_seed` reaches them, and
+  `derive_seed` splits it per (subject, sampling pass, surface) — one shared seed would
+  have handed the near- and far-surface passes the same base points and given bone and
+  cartilage the same offsets.
 
-  **NSM half: OPEN, and this is the next piece of work.** `read_meshes_get_sampled_pts` and
-  `read_mesh_get_sampled_pts` must accept a seed and pass it to `rand_pts_around_surface`,
-  and `SDFSamples.random_seed` must reach them instead of only the cache key. Then pin
-  `mskt>=0.1.21` in `requirements.txt`, or the behaviour depends on which pymskt is
-  installed — which is the nondeterminism the harness exists to remove.
+  The subject component is keyed on **mesh content**. Not the path (moving your data would
+  change your samples) and not the list position (reordering `list_mesh_paths` would change
+  every subject's data while every cache filename stayed the same).
 
-  *Note the compounding trap:* two runs with the same `random_seed` get the same cache key,
-  so the second reuses the first's `.npz` and looks reproducible. Different cache
-  directories, and it is not. Any test of this must use separate cache dirs.
-  *Pinned by:* `test_dataset_cache.TestSeeding` — two strict xfails, one for the unseedable
-  sampler and one for `random_seed` itself. Both XPASS (and so turn the suite red) the day
-  pymskt#54 lands and NSM threads a seed through; at that point the harness can also drop its
-  uniform-path restriction and use the near-surface path the shipped configs actually use.
+  Two things fell out of it worth remembering:
+
+  - `include_seed_in_hash` was deleted. Harmless while the seed changed nothing; a
+    cache-poisoning switch the moment it changed data, and nothing set it.
+  - The `multiprocessing=True` correlation below was closed as a side effect, but only
+    because the seed is derived per subject.
+
+  *Now pinned by:* `test_dataset_cache.TestSeeding` (both former xfails, now real tests) and
+  `TestSeedDerivation` (5) — different seeds differ, the two sampling passes decorrelate,
+  list order does not matter, mesh location does not matter, and `multiprocessing` does not
+  change the data.
 
 ### `MultiSurfaceSDFSamples.__getitem__` (`:2038`)
 
