@@ -301,30 +301,47 @@ of these is small and independent of the decomposition work:
 
 ## 7. Phase 3 — Test to a known-good baseline
 
+> **STATUS 2026-08-16: §7.1 is DONE and merged** (PRs #13, #14 into
+> `plan-code-health-refactor`). `testing/NSM/regression/`, 117 tests, ~20s, green in CI via
+> `make test`. Every checkbox in §7.1 below is ticked. Findings are in
+> `planning/TEST_HARNESS_NOTES.md`, the resulting work queue in
+> `planning/DEFECT_WORKLIST.md`, and the current state plus what to do next in
+> `planning/HANDOFF_2026-08-16.md` — **start there.**
+>
+> Two things §7.1 assumed that turned out to be false, both now recorded:
+> - **"fixed seed" does not work.** NSM seeds nothing, and the near-surface sampler could
+>   not be seeded at all. Fixed upstream in pymskt 0.1.21 (gattia/pymskt#54); the NSM half
+>   is still open as worklist #3.
+> - **Green does not mean correct.** 20 assertions describe known-broken behaviour and are
+>   `xfail(strict=True)`, so fixing one turns the suite red until its mark is removed.
+>
+> §7.2 has NOT started. Phase 4 is now unblocked.
+
+
 **The step that stalled before.** It stalls because "test everything" against ~3,000
 uncovered statements has no end condition. Bound it by *risk*, not by coverage percentage.
 
-### 7.1 First and most important: end-to-end numerical regression harness
+### 7.1 First and most important: end-to-end numerical regression harness  ✅ DONE
 
 Before any unit tests. A tiny synthetic dataset (2–3 analytic meshes, 8 epochs, CPU,
 fixed seed), then assert against stored baselines:
 
-- [ ] Training: loss trajectory, final latent norms, **per-param-group LR at each epoch**
-- [ ] Reconstruction: fitted latent, output mesh vertex positions, surface metrics
-- [ ] Tolerances tight enough to catch a real change, loose enough to survive
+- [x] Training: loss trajectory, final latent norms, **per-param-group LR at each epoch**
+- [x] Reconstruction: fitted latent, output mesh vertex positions, surface metrics
+- [x] Tolerances tight enough to catch a real change, loose enough to survive
       platform float noise. Store baselines as versioned artifacts.
-- [ ] Must run in CI in <2 minutes.
+- [x] Must run in CI in <2 minutes. (~20s; whole suite 33s)
 
 **Scope widened 2026-08-15** after Phase 1. The four items above leave the layer with the
 worst findings untouched, so add:
 
-- [ ] **The dataset cache round-trip.** `sdf_dataset.py` is 2,195 lines at 7% coverage and
+- [x] **The dataset cache round-trip.** `sdf_dataset.py` is 2,195 lines at 7% coverage and
       its worst findings are *silent wrong data*: `mesh_to_scale`, `uniform_pts_buffer` and
       `subsample` all change cached content and none is in `get_hash_params`, so a second
       run silently reuses the first's alignment. A harness that builds its data in memory
       never touches that path. Assert: build cache → reload → samples identical; and
       changing a hashed parameter changes the key.
-- [ ] **The consumer's actual entry point, not just `reconstruct_latent`.** `kneepipeline`
+- [x] **The consumer's actual entry point, not just `reconstruct_latent`.** `kneepipeline`
       calls `reconstruct_mesh` with a *list* of paths (multi-object). That function has
       exactly one executed line in the current suite — its `def`. Assert the returned
       `mesh` list **order** too: index 0 = bone, 1 = cartilage is a load-bearing contract

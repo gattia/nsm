@@ -31,7 +31,7 @@ Status: `[ ]` open · `[~]` in progress · `[x]` fixed (and its pinning test upd
 |---|---|---|---|
 | [1](#1-datasetssdf_datasetpy) | Cache key omits parameters that change cached content | **High** — silently wrong training data | Small fix, wide blast radius |
 | [2](#1-datasetssdf_datasetpy) | `reference_mesh` hashed by object identity | Medium — cache never hits | Small |
-| [3](#1-datasetssdf_datasetpy) | Sampling not reproducible; `random_seed` is a decoy | **High** — no run is reproducible cold | Upstream ([pymskt#54](https://github.com/gattia/pymskt/issues/54)) |
+| [3](#1-datasetssdf_datasetpy) | Sampling not reproducible; `random_seed` is a decoy | **High** — no run is reproducible cold | Upstream half DONE (pymskt 0.1.21); **NSM half open** |
 | [4](#1-datasetssdf_datasetpy) | `store_data_in_memory=True` raises | Medium — advertised option, unusable | Trivial |
 | [5](#1-datasetssdf_datasetpy) | `p_near_surface=0` crashes | Low | Trivial |
 | [6](#1-datasetssdf_datasetpy) | `get_pts_center_and_scale` ignores args, mutates input | Medium | Small |
@@ -76,14 +76,18 @@ Status: `[ ]` open · `[~]` in progress · `[x]` fixed (and its pinning test upd
 
 ### `read_meshes_get_sampled_pts` / the sampling path (`:404`)
 
-- [ ] **3. Make sampling reproducible.** `random_seed` is stored and appended to the cache
-  key and seeds *nothing*; NSM calls no seeding function anywhere. The near-surface path
-  cannot be seeded from NSM at all — both of `pymskt.Mesh.rand_pts_around_surface`'s draws
-  bypass `np.random.seed()`. **Filed upstream: [gattia/pymskt#54](https://github.com/gattia/pymskt/issues/54).**
+- [~] **3. Make sampling reproducible.** `random_seed` is stored and appended to the cache
+  key and seeds *nothing*; NSM calls no seeding function anywhere.
 
-  NSM-side, once that lands: thread a seed through to `rand_pts_around_surface` and make
-  `random_seed` mean what its name says. Until then the docstring must say what it actually
-  does — see the docstring PR.
+  **Upstream half: DONE.** `pymskt.Mesh.rand_pts_around_surface` had two draws that bypassed
+  `np.random.seed()`; both are now driven by one optional `seed`
+  ([pymskt#54](https://github.com/gattia/pymskt/issues/54), merged, released as **0.1.21**).
+
+  **NSM half: OPEN, and this is the next piece of work.** `read_meshes_get_sampled_pts` and
+  `read_mesh_get_sampled_pts` must accept a seed and pass it to `rand_pts_around_surface`,
+  and `SDFSamples.random_seed` must reach them instead of only the cache key. Then pin
+  `mskt>=0.1.21` in `requirements.txt`, or the behaviour depends on which pymskt is
+  installed — which is the nondeterminism the harness exists to remove.
 
   *Note the compounding trap:* two runs with the same `random_seed` get the same cache key,
   so the second reuses the first's `.npz` and looks reproducible. Different cache
