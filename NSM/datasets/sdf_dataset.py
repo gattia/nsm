@@ -78,6 +78,12 @@ def get_pts_center_and_scale(
         and use all of the points in pts to scale. This is used for
         the bone only, and then scaling based on bone + cartilage
 
+        KNOWN DEFECTS, worklist #6:
+        - `center` and `scale` are both rebound before they are read (below), so they are
+          accepted and ignored: centering and scaling happen unconditionally.
+        - `pts` is modified IN PLACE. Every in-repo caller passes np.copy() defensively,
+          so the convention exists only as a habit at the call sites.
+
     Tests:
         - Ensure returns tuple length 2
         - Ensure center is np array of shape (3,)
@@ -784,11 +790,22 @@ class SDFSamples(torch.utils.data.Dataset):
         center_pts (bool, optional): Whether to center the points. Defaults to True.
         norm_pts (bool, optional): Whether to normalize the points. Defaults to False.
         scale_method (str, optional): Method to scale the points. Defaults to 'max_rad'.
-        loc_save (str, optional): Location to save the cached files. Defaults to os.environ['LOC_SDF_CACHE'].
+        loc_save (str, optional): Location to save the cached files. Defaults to
+            os.environ['LOC_SDF_CACHE'].
+
+            KNOWN DEFECT, worklist: this default is evaluated when the module is IMPORTED,
+            so setting LOC_SDF_CACHE afterwards has no effect and the caller silently
+            writes to ~/.cache/nsm_sdf_cache. Pass loc_save explicitly.
         include_seed_in_hash (bool, optional): Whether to include the random seed in the hash. Defaults to True.
         save_cache (bool, optional): Whether to save the cached files. Defaults to True.
         load_cache (bool, optional): Whether to load the cached files. Defaults to True.
-        random_seed (int, optional): Random seed. Defaults to None.
+        random_seed (int, optional): Cache-key ingredient ONLY. Defaults to None.
+
+            KNOWN DEFECT, worklist #3: this does not seed anything. Sampling is not
+            reproducible, and the near-surface path cannot be seeded from here at all --
+            see gattia/pymskt#54. Because the seed DOES change the cache key, two runs
+            with the same seed reuse one cached file and look reproducible; point them at
+            different caches and they are not.
         reference_mesh (vtkPolyData or mskt.mesh.Mesh, optional): Reference mesh to register to. Defaults to None.
         verbose (bool, optional): Whether to print verbose output. Defaults to False.
         equal_pos_neg (bool, optional): Whether to have equal positive and negative SDFs. Defaults to True.
@@ -1389,6 +1406,12 @@ class SDFSamples(torch.utils.data.Dataset):
         """
         Get the parameters to hash for saving/loading the cache.
 
+        KNOWN DEFECTS, worklist #1 and #2: this list is incomplete, and two runs differing
+        only in an omitted parameter share a cache key -- so with load_cache=True the
+        second silently trains on the first's data. Missing here: `subsample` and
+        `uniform_pts_buffer`. Also, a `reference_mesh` passed as a Mesh object is hashed
+        via str(), which contains its memory address, so that key is per-object.
+
         Returns:
             list: List of parameters to hash
         """
@@ -1817,6 +1840,9 @@ class MultiSurfaceSDFSamples(SDFSamples):
                 print("type of reference mesh:", type(reference_mesh))
                 print("ref mesh path:", self.reference_mesh_path)
 
+            # KNOWN DEFECT, worklist #5: a combo with n_pts_ == 0 is passed to the
+            # sampler regardless, so p_near_surface=0 (or p_further_from_surface=0) raises
+            # inside point_cloud_utils rather than sampling nothing.
             for idx_, (n_pts_, sigma_) in enumerate(self.pt_sample_combos):
                 tic = time.time()
                 result_ = read_meshes_get_sampled_pts(
@@ -1971,6 +1997,12 @@ class MultiSurfaceSDFSamples(SDFSamples):
         return pt_sample_combos
 
     def get_hash_params(self):
+        # KNOWN DEFECTS, worklist #1 and #2: incomplete. `mesh_to_scale`,
+        # `uniform_pts_buffer` and `subsample` all change what is written to the cache and
+        # none are here, so runs differing only in one of them collide on the same key.
+        # `mesh_to_scale` is the worst -- it decides which surface drives centering and
+        # normalization, so the two runs are in different coordinate frames entirely.
+        # A `reference_mesh` given as a Mesh object also hashes by memory address.
         list_hash_params = [
             self.center_pts,
             self.norm_pts,
@@ -2155,6 +2187,10 @@ class MultiSurfaceSDFSamples(SDFSamples):
 
             toc_whole_load = time.time()
 
+            # KNOWN DEFECT, worklist #4: `time_` and `size` are only bound in the
+            # store_data_in_memory=False branch above, so store_data_in_memory=True raises
+            # UnboundLocalError here. SDFSamples.__getitem__ guards the same block with
+            # `and (self.store_data_in_memory is False)`; these two classes disagree.
             if self.test_load_times is True:
                 data_["time"] = time_
                 data_["size"] = size

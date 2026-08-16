@@ -269,6 +269,10 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
 
             clear_gpu_cache(config["device"])
 
+    # KNOWN DEFECT, worklist #11: train_epoch builds a full per-epoch log_dict and it goes
+    # only to wandb, so a caller without a wandb key can observe nothing about a run except
+    # by reading checkpoints back off disk. Returning the history would let
+    # testing/NSM/regression drop its train_epoch wrapper.
     return
 
 
@@ -397,6 +401,13 @@ def train_epoch(
                 else:
                     pred_sdf = pred_sdf.unsqueeze(1)  # Add surface dimension if needed
 
+            # KNOWN DEFECT, worklist #10: this clamps the PREDICTION, not just the
+            # target, and torch.clamp passes no gradient outside its bounds -- so every
+            # sample predicted beyond +/-clamp_dist contributes exactly zero gradient
+            # however wrong it is. 44.6% of a freshly built triplanar decoder's
+            # predictions are already outside +/-0.1, and the shipped default_config.json
+            # uses clamp_dist 0.1 while both ShapeMedKnee configs use 1.0. clamp_dist is
+            # a training-dynamics knob, not the target transform its name suggests.
             if config["enforce_minmax"] is True:
                 pred_sdf = torch.clamp(pred_sdf, -config["clamp_dist"], config["clamp_dist"])
             # elif config['hard_sample_difficulty_weight'] is not None:

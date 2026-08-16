@@ -96,6 +96,12 @@ class VAEDecoder(nn.Module):
         )
         self.layers.append(final_layer)
 
+        # KNOWN DEFECT, worklist #9: every layer is now registered TWICE -- once in
+        # self.layers and again here -- so state_dict() emits each tensor under two
+        # aliased names. Shipped checkpoints are 1.92x larger than their parameter count,
+        # and editing a checkpoint by key loses the edit unless both names are written.
+        # Removing one is a checkpoint-format break in both directions (old checkpoints
+        # get "Unexpected key(s)", new ones "Missing key(s)") and needs a migration shim.
         self.decoder = nn.Sequential(*self.layers)
 
     def forward(self, x):
@@ -210,6 +216,12 @@ class TriplanarDecoder(nn.Module):
         self.sdf_activation = sdf_activation
         self.sdf_dropout_prob = sdf_dropout_prob
         self.sum_sdf_features = sum_sdf_features
+        # KNOWN DEFECT, worklist #7: `padding` scales query coordinates before they index
+        # the feature planes, and it is NOT a learned parameter -- so a checkpoint trained
+        # at one value loads cleanly under strict load_state_dict at another and then
+        # samples at the wrong scale, silently. Measured: 0.35 vs the 0.1 that load_model
+        # defaults to moves the SDF by up to 0.063 on a tanh-bounded output. The
+        # downstream consumer never passes it at all.
         self.padding = padding
         self.conv_pred_sdf = conv_pred_sdf
 
@@ -310,6 +322,8 @@ class TriplanarDecoder(nn.Module):
         return sampled_feats.T
 
     def normalize_coordinates(self, query, plane, padding=0.1):
+        # KNOWN DEFECT, worklist #8: `padding` is accepted and ignored -- the body reads
+        # self.padding. Same defect class as worklist #6 and #7.
         if plane == "xy":
             xy = query[:, [0, 1]]
         elif plane == "xz":

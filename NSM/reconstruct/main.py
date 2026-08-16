@@ -946,6 +946,13 @@ def reconstruct_mesh(
         if mean_mesh is None:
             # Mean mesh is None if the zero latent vector is not well defined/learned
             # yet. In this case, the results will be very poor, might as well skip.
+            #
+            # KNOWN DEFECT, worklist #12: this early return ignores
+            # return_registration_params, return_timing and orig_mesh, so its result has a
+            # different SHAPE from the successful one -- and the downstream consumer reads
+            # result["center"] unconditionally. It also returns the untouched zero
+            # mean_latent under the "latent" key, so a caller checking "did I get a latent"
+            # gets a correctly shaped tensor that was never fitted.
             result = {
                 "mesh": [
                     None,
