@@ -16,6 +16,8 @@ identity when it is a ``Mesh``, so the cache never hits at all
 
 import inspect
 import os
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -69,13 +71,18 @@ class TestCacheRoundTrip:
 
     def test_reload_returns_identical_samples(self, meshes, tmp_path_factory):
         """
-        Build once, then build again against the same cache with ``load_cache=True`` and a
-        different sampling seed. The second build must reuse the first's file byte for
-        byte -- if it re-sampled, every number here would move.
+        Build once, then build again against the same cache with ``load_cache=True``. The
+        second build must reuse the first's file byte for byte.
+
+        Both runs pass ``random_seed=None`` on purpose. That keeps the cache key identical
+        -- the seed is part of it -- while leaving sampling unseeded, so a re-sample would
+        move every number here rather than reproducing them.
         """
         cache = tmp_path_factory.mktemp("roundtrip")
-        first = build_dataset(meshes, cache, seed=0, **SMALL)
-        reloaded = build_dataset(meshes, cache, seed=999, load_cache=True, **SMALL)
+        first = build_dataset(meshes, cache, seed=0, random_seed=None, **SMALL)
+        reloaded = build_dataset(
+            meshes, cache, seed=999, random_seed=None, load_cache=True, **SMALL
+        )
 
         assert reloaded.data[0] == first.data[0], "cache was not hit"
         original, again = cached_arrays(first), cached_arrays(reloaded)
@@ -140,8 +147,8 @@ class TestHashedParametersChangeTheKey:
 
     def test_random_seed_is_part_of_the_key(self, dataset, meshes):
         """
-        Included for completeness and because it is misleading: the seed reaches the cache
-        key and nothing else. See ``TestSeeding``.
+        The seed changes the samples, so it has to change the key -- otherwise two seeds
+        would share one cached file. See ``TestSeeding``.
         """
         assert rehash(dataset, meshes[0], random_seed=7) != dataset.create_hash(meshes[0])
 
@@ -206,9 +213,14 @@ class TestUnhashedParametersCollide:
         Milder but still real: ``subsample`` sets ``samples_per_sign_``, which decides how
         many times ``sdf_pos_neg_idx`` repeats the index arrays -- and those arrays are
         cached. The points themselves are unaffected.
+
+        The repeat count is ``samples_per_sign // available + 1``, so the two subsamples
+        have to straddle a multiple of the number of samples of that sign for the arrays to
+        differ at all. Near-surface sampling leaves ~240 negatives per surface here, so 64
+        vs 512 both round to a repeat of 1 and the premise assertion below would go off.
         """
         key_a, key_b, differing = self._content_differs(
-            meshes, tmp_path_factory, "sub", subsample=512
+            meshes, tmp_path_factory, "sub", subsample=2048
         )
         assert any(
             key.startswith(("pos_idx", "neg_idx")) for key in differing
@@ -239,7 +251,14 @@ class TestUnhashedParametersCollide:
         batch up with uniformly random points (``sdf_dataset.py:2122-2127``). The
         ``equal_pos_neg=True`` guarantee quietly stops holding, and the surface with the
         fewest interior samples -- the small one, i.e. cartilage in a real dataset -- loses
-        the most. Measured at ~4.4x under-representation.
+        the most.
+
+        Measured at 1.6x under-representation (interior fraction 0.20 against a fresh
+        0.32), and the gap only opens once the reloaded ``subsample`` exceeds the cached
+        point count. On the uniform sampling path this harness used to run on it was 4.4x
+        at a far smaller subsample, because uniform points rarely land inside a small
+        ellipsoid; near-surface sampling puts ~20% of them inside, which is both more
+        realistic and a much softer landing for this bug.
 
         The reload check that would have caught this compares ``len(data["pos_idx"])``
         against the number of *meshes* (``sdf_dataset.py:1764-1771``), never against the
@@ -250,9 +269,9 @@ class TestUnhashedParametersCollide:
         base = {k: v for k, v in SMALL.items() if k != "subsample"}
         cache = tmp_path_factory.mktemp("subsample_collision")
         build_dataset(meshes, cache, subsample=64, **base)
-        reused = build_dataset(meshes, cache, load_cache=True, subsample=512, **base)
+        reused = build_dataset(meshes, cache, load_cache=True, subsample=4096, **base)
         fresh = build_dataset(
-            meshes, tmp_path_factory.mktemp("subsample_fresh"), subsample=512, **base
+            meshes, tmp_path_factory.mktemp("subsample_fresh"), subsample=4096, **base
         )
 
         def interior_fraction(dataset, surface):
@@ -298,68 +317,205 @@ class TestReferenceMeshHashing:
 
 class TestSeeding:
     """
-    ``SDFSamples(random_seed=...)`` is documented as "Random seed". It is never used to
-    seed anything: ``grep -n random_seed NSM/datasets/sdf_dataset.py`` finds it stored on
-    the instance and appended to the cache key, and nowhere else. NSM calls no seeding
-    function at all.
+    What ``SDFSamples(random_seed=...)`` reproduces, and what it deliberately does not.
 
-    That leaves two sampling paths with very different reproducibility, and the difference
-    is invisible from the constructor. This is the reason the whole harness runs on the
-    uniform path.
+    A seed makes both sampling paths reproducible from cold, which is what the rest of this
+    harness is built on -- every baselined number comes from a seeded near-surface dataset.
+    ``random_seed=None`` is the other half of the contract: it leaves sampling on the legacy
+    global numpy stream, so old callers keep getting old numbers.
     """
 
     def test_the_uniform_path_is_reproducible_under_a_numpy_seed(self, meshes, tmp_path_factory):
-        """``sigma=None`` routes through ``get_rand_uniform_pts``, i.e. ``np.random``."""
-        a = build_dataset(meshes, tmp_path_factory.mktemp("seed_u_a"), seed=7, **SMALL)
-        b = build_dataset(meshes, tmp_path_factory.mktemp("seed_u_b"), seed=7, **SMALL)
+        """
+        The compatibility contract, not a leftover: with ``random_seed=None`` the uniform
+        path still draws through ``np.random.uniform``, i.e. the legacy global stream, so a
+        caller who seeds numpy and passes no ``random_seed`` gets exactly the numbers they
+        always did. Routing the unseeded path through ``default_rng`` instead would be a
+        different stream and would silently change every such caller's data.
+        """
+        uniform = dict(SMALL, sigma_near=[None, None], sigma_far=[None, None], random_seed=None)
+        a = build_dataset(meshes, tmp_path_factory.mktemp("seed_u_a"), seed=7, **uniform)
+        b = build_dataset(meshes, tmp_path_factory.mktemp("seed_u_b"), seed=7, **uniform)
         assert np.array_equal(cached_arrays(a)["pts"], cached_arrays(b)["pts"])
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="worklist #3 / gattia/pymskt#54: the near-surface sampler cannot be seeded",
-    )
     def test_the_near_surface_path_must_be_reproducible(self, meshes, tmp_path_factory):
         """
-        With ``sigma`` set, sampling goes through ``pymskt.Mesh.rand_pts_around_surface``,
-        which has *two* independent draws a caller cannot reach:
-
-        * the base surface points, via ``pcu.sample_mesh_random(v, f, n, random_seed=0)`` --
-          and ``random_seed=0`` means "seed from the current time", not "seed 0";
-        * the perturbation offsets, via ``np.random.default_rng()`` with no argument, which
-          seeds itself from OS entropy and is independent of ``np.random.seed()``.
-
-        Neither is reachable from NSM, so identical inputs and an identical numpy seed still
-        produce different training data. Reported upstream as gattia/pymskt#54.
+        The path production uses. It goes through ``pymskt.Mesh.rand_pts_around_surface``,
+        which has two independent draws -- the base surface points from
+        ``pcu.sample_mesh_random`` and the perturbation offsets from a ``default_rng`` --
+        and both take the seed NSM derives for that surface. Neither was reachable from
+        NSM before pymskt 0.1.21, which is why this used to be an ``xfail``.
         """
         near = dict(SMALL, sigma_near=[0.05, 0.05], sigma_far=[0.2, 0.2])
         a = build_dataset(meshes, tmp_path_factory.mktemp("seed_n_a"), seed=7, **near)
         b = build_dataset(meshes, tmp_path_factory.mktemp("seed_n_b"), seed=7, **near)
         assert np.array_equal(cached_arrays(a)["pts"], cached_arrays(b)["pts"])
 
-    def test_a_warm_cache_makes_random_seed_look_like_it_works(self, meshes, tmp_path_factory):
-        """
-        Not a defect assertion -- this is the mechanism that hides the defect, and it is
-        genuinely correct behaviour on its own terms. Two runs with the same ``random_seed``
-        get the same cache key, so the second reuses the first's ``.npz`` and is identical
-        to it. That is a cache hit working, and it is why nobody noticed.
-        """
-        near = dict(SMALL, sigma_near=[0.05, 0.05], sigma_far=[0.2, 0.2], random_seed=1234)
-        warm_cache = tmp_path_factory.mktemp("seed_shared")
-        first = build_dataset(meshes, warm_cache, **near)
-        looks_reproducible = build_dataset(meshes, warm_cache, load_cache=True, **near)
-
-        assert np.array_equal(cached_arrays(first)["pts"], cached_arrays(looks_reproducible)["pts"])
-
-    @pytest.mark.xfail(
-        strict=True, reason="worklist #3: random_seed feeds the cache key and seeds nothing"
-    )
     def test_random_seed_must_make_a_cold_run_reproducible(self, meshes, tmp_path_factory):
-        """The same seed against two *cold* caches must give the same samples. It does not."""
+        """The same seed against two *cold* caches gives the same samples."""
         near = dict(SMALL, sigma_near=[0.05, 0.05], sigma_far=[0.2, 0.2], random_seed=1234)
         a = build_dataset(meshes, tmp_path_factory.mktemp("seed_cold_a"), **near)
         b = build_dataset(meshes, tmp_path_factory.mktemp("seed_cold_b"), **near)
 
         assert np.array_equal(cached_arrays(a)["pts"], cached_arrays(b)["pts"])
+
+
+#: Builds one dataset in a fresh interpreter: ``sys.argv[1]`` is the cache directory,
+#: ``sys.argv[2]`` is "1" for ``multiprocessing=True``, ``sys.argv[3]`` is the mesh
+#: directory. Both invocations share one mesh directory so the two builds produce the same
+#: cache *filenames*, which is what lets the caller pair them up.
+_BUILD_IN_SUBPROCESS = f"""
+import sys
+sys.path.insert(0, {os.path.dirname(os.path.abspath(__file__))!r})
+from _harness import build_dataset, write_synthetic_meshes
+
+build_dataset(
+    write_synthetic_meshes(sys.argv[3]),
+    sys.argv[1],
+    random_seed=1234,
+    multiprocessing=sys.argv[2] == "1",
+    n_processes=2,
+    **{SMALL!r},
+)
+"""
+
+
+def _cached_by_name(cache_dir):
+    """``{basename: path}`` for every ``.npz`` under a cache directory."""
+    found = {}
+    for root, _, names in os.walk(cache_dir):
+        for name in names:
+            if name.endswith(".npz"):
+                found[name] = os.path.join(root, name)
+    return found
+
+
+class TestSeedDerivation:
+    """
+    The per-draw seed derivation, pinned property by property.
+
+    ``derive_seed`` hands every (subject, sampling-combo, surface) its own seed, derived
+    from the run seed and the *bytes of the subject's meshes*. All five of the properties
+    below are silent when they break -- the data still looks like data -- so each says what
+    a reader loses if it stops holding.
+    """
+
+    def test_different_seeds_give_different_data(self, meshes, tmp_path_factory):
+        """
+        If this fails the seed is not reaching the sampler at all, and every "reproducible"
+        claim here is really just a cache hit.
+        """
+        a = build_dataset(meshes, tmp_path_factory.mktemp("derive_1234"), random_seed=1234, **SMALL)
+        b = build_dataset(meshes, tmp_path_factory.mktemp("derive_5678"), random_seed=5678, **SMALL)
+        assert not np.array_equal(cached_arrays(a)["pts"], cached_arrays(b)["pts"])
+
+    def test_the_two_sampling_combos_draw_different_points(self, meshes, tmp_path_factory):
+        """
+        Ask for the near and far passes with identical parameters -- same sigma, same
+        count -- and they must still produce different points.
+
+        ``rand_pts_around_surface`` picks base points on the surface and then perturbs
+        them, so one seed shared across the two combos means both passes perturb the *same*
+        base points. The dataset would then carry half as many distinct surface locations
+        as it appears to, at every sigma, and nothing downstream would notice.
+        """
+        identical = dict(
+            SMALL,
+            sigma_near=[0.02, 0.02],
+            sigma_far=[0.02, 0.02],
+            p_near_surface=[0.4, 0.4],
+            p_further_from_surface=[0.4, 0.4],
+            random_seed=99,
+        )
+        dataset = build_dataset(meshes, tmp_path_factory.mktemp("combos"), **identical)
+
+        # pt_sample_combos is [near, far, uniform]; each contributes sum(n_pts) points to
+        # the front of `pts`, in order.
+        near_count, far_count = (sum(combo[0]) for combo in dataset.pt_sample_combos[:2])
+        assert near_count == far_count, "the two combos must be the same size to compare"
+        points = cached_arrays(dataset)["pts"]
+        near, far = points[:near_count], points[near_count : near_count + far_count]
+
+        assert not np.array_equal(near, far)
+
+    def test_the_mesh_list_order_does_not_change_a_subjects_data(self, tmp_path_factory):
+        """
+        Reverse ``list_mesh_paths`` and every subject must keep its own samples.
+
+        This is why the derivation is keyed on the mesh contents and not on ``enumerate``'s
+        index, and it is the property most likely to be "simplified" back out: an index is
+        right there in the loop. Keyed positionally, adding one subject to the front of a
+        training list would resample every other subject -- while their cache keys, and so
+        their cached files, stayed valid.
+        """
+        two = write_synthetic_meshes(tmp_path_factory.mktemp("order_meshes"))[:2]
+        forward = build_dataset(two, tmp_path_factory.mktemp("order_fwd"), random_seed=321, **SMALL)
+        reverse = build_dataset(
+            list(reversed(two)), tmp_path_factory.mktemp("order_rev"), random_seed=321, **SMALL
+        )
+
+        for index in range(2):
+            mine = cached_arrays(forward, index)["pts"]
+            counterpart = cached_arrays(reverse, 1 - index)["pts"]
+            positional = cached_arrays(reverse, index)["pts"]
+            assert np.array_equal(mine, counterpart), f"subject {index} was resampled"
+            assert not np.array_equal(mine, positional), (
+                f"subject {index} matches whatever is at its position, so this test cannot "
+                f"tell the two derivations apart"
+            )
+
+    def test_moving_the_meshes_does_not_change_the_data(self, tmp_path_factory):
+        """
+        The same mesh bytes at two different absolute paths, same ``random_seed``, must
+        sample identically.
+
+        The two cache *keys* differ -- the path is still hashed into them -- so the second
+        build is a genuine cold resample that happens to land on the same answer, not a
+        cache hit. That is the whole point of keying the seed on contents: the seed decides
+        which points get drawn, so relocating a dataset must not silently redraw it.
+        """
+        original = write_synthetic_meshes(tmp_path_factory.mktemp("here"))[:1]
+        moved = write_synthetic_meshes(tmp_path_factory.mktemp("there"))[:1]
+        assert original[0] != moved[0], "the two copies must be at different paths"
+
+        near = dict(SMALL, random_seed=4242)
+        a = build_dataset(original, tmp_path_factory.mktemp("moved_a"), **near)
+        b = build_dataset(moved, tmp_path_factory.mktemp("moved_b"), **near)
+
+        assert a.create_hash(original[0]) != b.create_hash(moved[0]), "cache keys must differ"
+        assert np.array_equal(cached_arrays(a)["pts"], cached_arrays(b)["pts"])
+
+    def test_multiprocessing_does_not_change_the_data(self, tmp_path_factory):
+        """
+        ``multiprocessing=True`` must produce the same cache as ``multiprocessing=False``.
+
+        ``Pool`` forks, so every worker inherits one copy of the parent's global numpy
+        state. Before the seed was threaded through, that state was the only thing driving
+        the sampler and the pooled build reproduced none of the serial one -- all three
+        subjects differed. That path is still live: rerun this with ``random_seed=None``
+        and the same three comparisons come back ``[False, False, False]``.
+
+        Both datasets are built in *separate* processes. Building one in-process and
+        forking for the other hangs -- a pre-existing fork-after-VTK hazard, unrelated to
+        seeding.
+        """
+        mesh_dir = str(tmp_path_factory.mktemp("mp_meshes"))
+        caches = [str(tmp_path_factory.mktemp("mp_off")), str(tmp_path_factory.mktemp("mp_on"))]
+        for cache, flag in zip(caches, ("0", "1")):
+            finished = subprocess.run(
+                [sys.executable, "-c", _BUILD_IN_SUBPROCESS, cache, flag, mesh_dir],
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+            assert finished.returncode == 0, finished.stderr[-2000:]
+
+        serial, parallel = (_cached_by_name(cache) for cache in caches)
+        assert sorted(serial) == sorted(parallel) and len(serial) == 3, (serial, parallel)
+        for name in sorted(serial):
+            assert np.array_equal(
+                np.load(serial[name])["pts"], np.load(parallel[name])["pts"]
+            ), f"{name} differs between the serial and pooled builds"
 
 
 class TestConfigurationsThatDoNotRun:

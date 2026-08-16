@@ -1,24 +1,43 @@
 # Numerical regression harness
 
-Phase 3 §7.1 of `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md`, built to the spec in
-`planning/TEST_HARNESS_HANDOFF.md` §3.
+Phase 3 §7.1 of `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md`.
 
 Its job is to **fail when NSM's training or reconstruction output changes**, so the Phase 4
 decomposition can proceed without silently altering results. Findings that came out of
 building it are in `planning/TEST_HARNESS_NOTES.md`.
 
 ```bash
-pytest testing/NSM/regression/ -q      # 97 passed, 20 xfailed; ~20 s (~13 s with no GPU)
-pytest testing/NSM/regression/ -q -rx  # ... and list what the 20 xfails are
+pytest testing/NSM/regression/ -q      # 103 passed, 18 xfailed; ~36 s (~25 s with no GPU)
+pytest testing/NSM/regression/ -q -rx  # ... and list what the 18 xfails are
 make test                              # runs it along with everything else
 ```
 
 CI needs no change: `.github/workflows/build-test.yml` already runs `make test`, which is
 `pytest testing/ -v`.
 
+## What it was built to do
+
+Four constraints shape this harness, none of them visible from the assertions themselves.
+
+- **It runs in CI on every PR and must stay under two minutes.** Past that people skip it
+  and the whole exercise is wasted. That budget is why the fixtures are three tiny analytic
+  meshes and eight CPU epochs rather than anything realistic, and it is the tightest
+  constraint here — the suite has roughly doubled since the budget was set.
+- **Reconstruction goes through `reconstruct_mesh`, not `reconstruct_latent`.**
+  `reconstruct_mesh` is what the downstream consumer calls, and before this harness it had
+  exactly one executed line in the entire suite: its `def`. It is called the way the
+  consumer calls it — a *list* of mesh paths, every argument by name.
+- **The order of the returned `mesh` list is a contract, so it is asserted.** Index 0 =
+  bone, index 1 = cartilage is hardcoded by the consumer and declared nowhere: not in the
+  signature, not in the docstring, not in the result dict. Nothing but this assertion would
+  notice it inverting.
+- **CPU baselines do not bound GPU divergence.** They are not a weaker form of a GPU check;
+  they say nothing about one. `test_gpu.py` is the only thing here that does, and it is
+  skipped without CUDA.
+
 ## Green does not mean "the library is correct"
 
-It means **nothing changed**. Twenty of the assertions here describe behaviour NSM *should*
+It means **nothing changed**. Eighteen of the assertions here describe behaviour NSM *should*
 have and does not, and they are marked `xfail(strict=True)` rather than written to assert the
 broken behaviour — because a test that passes *because* something is broken makes a green
 suite say the opposite of the truth.
@@ -51,7 +70,7 @@ design decision rather than a statable correctness assertion, and are carried as
 |---|---|
 | `test_training_regression.py` | 8 epochs, CPU, fixed seed: per-param-group learning rate at **every** epoch, loss trajectory and its components, latent-norm trajectory, checkpoint contents |
 | `test_reconstruction_regression.py` | A full `reconstruct_mesh` call: the eight result keys the consumer reads, the **order** of the `mesh` list, fitted latent, mesh geometry, ASSD, registration params |
-| `test_dataset_cache.py` | Cache round-trip, which parameters reach the cache key and which do not, and what NSM's `random_seed` actually does (13 xfail) |
+| `test_dataset_cache.py` | Cache round-trip, which parameters reach the cache key and which do not, and what `random_seed` does and deliberately does not seed (11 xfail) |
 | `test_model_roundtrip.py` | `save_model` → `load_model` is bitwise identical; `padding` is not in the checkpoint; the state dict aliases every VAE layer (5 xfail) |
 | `test_gpu.py` | Skipped without CUDA. The seed-ordering constraint the consumer depends on, and **how far a GPU run diverges from these CPU baselines** |
 
@@ -61,9 +80,9 @@ to do so on every run:
 - `test_training_regression.TestDeliberateBreak` transposes the two learning-rate
   `Target` labels — the exact shape of the bug in `docs/KNOWN_ISSUES_HISTORY.md` §1 — and
   asserts the LR, loss and latent baselines all reject the result.
-- `test_reconstruction_regression.TestDeliberateBreak` moves one vertex of an input mesh
-  by 0.25 (a quarter of the bone radius) and asserts the latent and geometry baselines
-  reject the result.
+- `test_reconstruction_regression.TestDeliberateBreak` dents an input mesh — 20 of the bone
+  sphere's 530 vertices, displaced by a quarter of its radius — and asserts the latent and
+  geometry baselines reject the result.
 
 ## Baselines
 
@@ -85,21 +104,34 @@ not when a number moves.
 
 **Tolerances** are sized from the deliberate breaks, not chosen by taste. Learning rates are
 compared exactly — they are `Initial * Factor ** (epoch // Interval)` in Python floats.
-Everything else leaves at least an order of magnitude between the tolerance and the smallest
-signal it has to catch:
+Every other tolerance is at least an order of magnitude below the break it has to catch:
 
-| Baseline | Tolerance | Smallest break signal | Headroom |
+| Baseline | Tolerance | Break signal | Headroom |
 |---|---|---|---|
-| loss trajectory | `rtol=1e-3` | 1.7 relative (LR swap) | 1700× |
-| training latent norms | `atol=1e-4` | 5.4e-2 (LR swap) | 540× |
-| fitted latent | `atol=5e-4` | 7.0e-3 (moved vertex) | 14× |
-| mesh geometry / deciles | `atol=3e-4` | 9.0e-4 (moved vertex) | 3× |
+| loss trajectory | `rtol=1e-3` | 1.55 relative (LR swap) | 1500× |
+| training latent norms | `atol=1e-4` | 4.3e-2 (LR swap) | 430× |
+| fitted latent | `atol=5e-4` | 1.2e-2 (dented bone) | 24× |
+| mesh geometry / deciles | `atol=3e-4` | 1.7e-2 (dented bone) | 58× |
 | surface metrics | `rtol=2e-3` | — | not a break detector |
+
+"Break signal" is the **largest** element the break moves, because `np.allclose` rejects a
+value as soon as any one element is out of tolerance. For the two trajectories the smallest
+per-element move is the more conservative figure and is still comfortable: the LR swap moves
+even its least-affected epoch's loss by 7.7% (77× `LOSS_RTOL`) and its least-affected latent
+norm by 3.8e-2 (380× `LATENT_ATOL`).
+
+The reconstruction break is a **dent — 20 of the bone's 530 vertices**, displaced by a
+quarter of its radius — and not the single vertex it used to be. One vertex is not enough
+once the fixture samples near the surface: it shifts the fitted latent by 7.4e-4, a bare
+1.5× `LATENT_ATOL`, and deepening it does not rescue that (a full-radius displacement of one
+vertex gives 3.3e-3, and non-monotonically). Near-surface sampling spreads its points over
+the whole surface, so widening the dent is the lever that works. The tolerances were not
+touched.
 
 ### Platform
 
 **The numeric baselines are pinned to Linux-x86_64**, the platform development happens on.
-Each file records the stack it came from under `generated_on`
+Each file records what it came from under `generated_on`
 (Linux-x86_64 / CPU / Python 3.9.25 / torch 2.8.0+cu128 / numpy 2.0.2).
 
 The gate is deliberately asymmetric (`_harness.platform_matches`):
@@ -121,20 +153,23 @@ into a blanket skip unnoticed.
 
 ## How it stays deterministic
 
-**NSM seeds nothing.** `SDFSamples(random_seed=...)` is documented as "Random seed" and is
-only ever appended to the cache key (`test_dataset_cache.TestSeeding`). The harness
-therefore seeds `numpy` and `torch` itself at each entry point.
+`SDFSamples(random_seed=...)` seeds every draw on both sampling paths, so the fixtures run on
+the **near-surface** path production uses (`sigma_near=0.01`, `sigma_far=0.03` — the shipped
+ShapeMedKnee widths, 0.743 mm and 2.35 mm against an ~80 mm femur, expressed in this
+harness's max-radius-1 coordinates). `build_dataset` passes its `seed` there, and seeds
+`torch` and `numpy` globally as well; the `numpy` seed still matters because `random_seed=None`
+deliberately leaves sampling on the legacy global stream. `TestSeeding` and
+`TestSeedDerivation` pin both halves, plus the derivation properties that are silent when
+they break: different seeds give different data, the near and far passes draw different base
+points, mesh list order does not change a subject's data, moving the meshes does not either,
+and `multiprocessing=True` produces the same cache as `multiprocessing=False`.
 
-That is enough on the **uniform** sampling path (`sigma_near`/`sigma_far` of `None`), which
-draws through `np.random.uniform`. It is not enough on the near-surface path, which cannot be
-seeded by a caller at all: `pymskt.Mesh.rand_pts_around_surface` has two independent draws
-that bypass `np.random.seed()` — `pcu.sample_mesh_random(..., random_seed=0)`, where
-`random_seed=0` means "seed from the current time", and `np.random.default_rng()` with no
-argument, which seeds from OS entropy. Reported upstream as
-[gattia/pymskt#54](https://github.com/gattia/pymskt/issues/54).
-
-Every fixture here uses the uniform path for that reason, and `test_dataset_cache.TestSeeding`
-pins both halves so the restriction can be lifted the day that issue lands.
+**A subject's seed is derived from the bytes of its meshes**, not from its cache hash — the
+cache hash contains the mesh's absolute path, so keying on it meant meshes written to
+`/tmp/pytest-of-<user>/pytest-<n>/` were reseeded on every run and no baseline could
+reproduce. Measured at the time: two consecutive runs of the training module disagreed in
+the second decimal of every loss. The fixtures write to ordinary pytest `tmp_path`
+directories.
 
 ## Shape of the fixtures
 
@@ -148,6 +183,11 @@ The surfaces are disjoint solids rather than nested shells because
 `MultiSurfaceSDFSamples.remove_overlapping_points` drops every point interior to two
 objects — nesting them leaves the inner surface with no negative samples and
 `sdf_pos_neg_idx` then divides by zero.
+
+Both surfaces must end up with samples of **both** signs, so that failure mode is worth
+re-checking whenever the sigmas or the geometry move. At the fixture's 2000 points per
+surface, all three subjects come out near 3110 positive / 890 negative for the bone and
+3215 / 785 for the cartilage.
 
 ## Things worth knowing before editing this
 

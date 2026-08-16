@@ -7,17 +7,14 @@ have to import ``conftest`` itself.
 
 Determinism
 -----------
-NSM seeds nothing. ``SDFSamples(random_seed=...)`` only feeds the cache key -- see
-``test_dataset_cache.TestSeeding``. The harness therefore seeds ``numpy`` and ``torch``
-globally at each entry point, which is sufficient *only* on the uniform sampling path
-(``sigma_near``/``sigma_far`` of ``None``), which draws through ``np.random.uniform``.
+``SDFSamples(random_seed=...)`` seeds every draw, on both sampling paths, so the fixtures
+run on the near-surface path production uses. ``build_dataset`` passes its ``seed`` there.
 
-The near-surface path cannot be seeded by a caller at all. It goes through
-``pymskt.Mesh.rand_pts_around_surface``, which has two independent unseedable draws:
-``pcu.sample_mesh_random``, whose ``random_seed=0`` default means "seed from the wall
-clock", and ``np.random.default_rng()`` with no argument, which seeds itself from OS
-entropy and ignores the legacy global state. See gattia/pymskt#54. Every fixture here uses
-the uniform path.
+It also still calls ``np.random.seed``, because ``random_seed=None`` deliberately leaves
+sampling on the legacy global stream -- that is what keeps an unseeded call drawing the
+numbers it always did, and ``test_dataset_cache.TestSeeding`` pins it.
+
+``torch`` is seeded globally at each entry point for the model and optimizer.
 """
 
 import contextlib
@@ -378,9 +375,24 @@ def quiet():
         yield
 
 
+#: Near- and far-surface perturbation widths, in the harness's normalized coordinates.
+#:
+#: Scaled from the shipped ShapeMedKnee configs rather than picked: ``647_nsm_femur_v0.0.1``
+#: and ``551_nsm_femur_bone_v0.0.1`` use ``sigma_near`` ~= 0.743 and ``sigma_far`` = 2.35 in
+#: millimetres, with ``scale_jointly: True``, against a femur roughly 80 mm across. The
+#: harness normalizes each subject to ``max_rad`` 1 (``scale_jointly=False``), so the same
+#: widths relative to the object are ~0.009 and ~0.029.
+SIGMA_NEAR = 0.01
+SIGMA_FAR = 0.03
+
+
 def build_dataset(mesh_paths, cache_dir, seed=0, **overrides):
     """
-    A ``MultiSurfaceSDFSamples`` on the seedable (uniform) sampling path.
+    A ``MultiSurfaceSDFSamples`` on the near-surface sampling path production uses.
+
+    ``seed`` reaches sampling two ways, and both are deliberate: as ``random_seed``, which
+    seeds every draw, and as ``np.random.seed``, which still governs the legacy global
+    stream an unseeded (``random_seed=None``) call draws from.
 
     ``loc_save`` is always an explicit temporary directory. The constructor's default is
     read from ``LOC_SDF_CACHE`` *at import time*, so setting that env var inside a test
@@ -396,8 +408,8 @@ def build_dataset(mesh_paths, cache_dir, seed=0, **overrides):
         n_pts=[N_PTS_PER_SURFACE] * n_surfaces,
         p_near_surface=[0.4] * n_surfaces,
         p_further_from_surface=[0.4] * n_surfaces,
-        sigma_near=[None] * n_surfaces,
-        sigma_far=[None] * n_surfaces,
+        sigma_near=[SIGMA_NEAR] * n_surfaces,
+        sigma_far=[SIGMA_FAR] * n_surfaces,
         center_pts=True,
         norm_pts=True,
         scale_method="max_rad",
@@ -406,7 +418,7 @@ def build_dataset(mesh_paths, cache_dir, seed=0, **overrides):
         store_data_in_memory=False,
         save_cache=True,
         load_cache=False,
-        random_seed=None,
+        random_seed=seed,
         fix_mesh=False,
         mesh_to_scale=0,
         scale_all_meshes=True,

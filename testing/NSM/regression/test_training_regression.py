@@ -34,8 +34,9 @@ from _harness import (
 )
 
 #: Sized from the deliberate break, not from taste. Transposing the two LR targets moves
-#: the loss trajectory by 168% and the final latent norms by 5.4e-2, so these leave three
-#: orders of magnitude of headroom for a different BLAS while still catching it outright.
+#: the loss trajectory by 155% at its widest (7.7% at its narrowest, epoch 1) and the final
+#: latent norms by 4.3e-2, so these leave two to three orders of magnitude of headroom for a
+#: different BLAS while still catching the break outright.
 LOSS_RTOL = 1e-3
 LATENT_ATOL = 1e-4
 

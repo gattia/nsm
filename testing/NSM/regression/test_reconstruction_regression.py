@@ -19,11 +19,11 @@ import torch
 import vtk
 from _harness import mesh_summary, regenerating, run_reconstruction
 
-#: Sized from the deliberate break below, which moves one input vertex by 0.25 and shifts
-#: the fitted latent by 7.0e-3 and the vertex-position deciles by 4.3e-3. These sit an
-#: order of magnitude under that and well above the noise floor -- the latent is 25 Adam
-#: steps from a seeded init, and the meshes come out of marching cubes on a float32 SDF
-#: grid and then a VTK float32 save (~5e-9 per point).
+#: Sized from the deliberate break below, which dents the input bone and shifts the fitted
+#: latent by 1.2e-2 and the vertex-position deciles by 1.7e-2 -- 24x and 58x these. They
+#: also sit well above the noise floor: the latent is 25 Adam steps from a seeded init, and
+#: the meshes come out of marching cubes on a float32 SDF grid and then a VTK float32 save
+#: (~5e-9 per point).
 LATENT_ATOL = 5e-4
 GEOMETRY_ATOL = 3e-4
 METRIC_RTOL = 2e-3
@@ -35,10 +35,18 @@ COUNT_RTOL = 0.03
 #: centred on the origin; the cartilage ellipsoid sits above it. See _harness.SUBJECTS.
 BONE, CART = 0, 1
 
-#: How far the deliberate break moves one input vertex, in mesh units. The bone sphere has
-#: radius 1.0, so this is a quarter of it: unmistakably one vertex, and large enough that
-#: the assertions above have an order of magnitude of headroom rather than a factor of 1.4.
+#: The deliberate break: displace the ``PERTURBED_VERTICES`` vertices nearest vertex 0 by
+#: ``PERTURBATION`` mesh units. The bone sphere has radius 1.0 and 530 vertices, so this is
+#: a dent a quarter of the radius deep covering ~4% of the surface -- still local, and not a
+#: rescale.
+#:
+#: It is 20 vertices and not 1 because one is not enough on this fixture. Moving a single
+#: vertex shifts the fitted latent by 7.4e-4, only 1.5x ``LATENT_ATOL``, and pushing that
+#: one vertex further does not help: at a full radius it is still 3.3e-3, because
+#: near-surface sampling spreads its points over the whole surface and dilutes any single
+#: displaced vertex. Widening the dent is monotone where deepening it is not.
 PERTURBATION = 0.25
+PERTURBED_VERTICES = 20
 
 
 def summaries(result):
@@ -194,7 +202,7 @@ class TestNumericalBaselines:
 class TestDeliberateBreak:
     """
     The second half of "a harness nobody has seen fail is not evidence of anything":
-    move one vertex of the input bone mesh and confirm the baselines reject the result.
+    dent the input bone mesh and confirm the baselines reject the result.
     """
 
     @pytest.fixture(scope="class")
@@ -204,24 +212,25 @@ class TestDeliberateBreak:
         directory = tmp_path_factory.mktemp("perturbed")
         bone = pv.read(synthetic_meshes[0][BONE])
         points = bone.points.copy()
-        points[0] += np.array([PERTURBATION, 0.0, 0.0], dtype=points.dtype)
+        patch = np.argsort(np.linalg.norm(points - points[0], axis=1))[:PERTURBED_VERTICES]
+        points[patch] += np.array([PERTURBATION, 0.0, 0.0], dtype=points.dtype)
         bone.points = points
         bone_path = str(directory / "perturbed_bone.vtk")
         bone.save(bone_path)
         return run_reconstruction([bone_path, synthetic_meshes[0][CART]], reconstruction_model)
 
-    def test_perturbing_one_vertex_changes_the_fitted_latent(
+    def test_denting_the_bone_changes_the_fitted_latent(
         self, reconstruction, perturbed_reconstruction
     ):
         original = reconstruction["latent"].detach().cpu().numpy().ravel()
         perturbed = perturbed_reconstruction["latent"].detach().cpu().numpy().ravel()
         assert not np.allclose(original, perturbed, atol=LATENT_ATOL), (
-            f"moving a bone vertex by {PERTURBATION} left the fitted latent inside the "
-            "harness's "
-            "tolerance -- the latent baseline would not catch a geometry change"
+            f"moving {PERTURBED_VERTICES} bone vertices by {PERTURBATION} left the fitted "
+            f"latent inside the harness's tolerance -- the latent baseline would not catch "
+            f"a geometry change"
         )
 
-    def test_perturbing_one_vertex_fails_the_latent_baseline(
+    def test_denting_the_bone_fails_the_latent_baseline(
         self, perturbed_reconstruction, reconstruction_baseline
     ):
         if regenerating():
@@ -230,7 +239,7 @@ class TestDeliberateBreak:
         with pytest.raises(AssertionError, match="differs from baseline"):
             reconstruction_baseline.check("fitted_latent", latent, atol=LATENT_ATOL)
 
-    def test_perturbing_one_vertex_fails_the_geometry_baseline(
+    def test_denting_the_bone_fails_the_geometry_baseline(
         self, perturbed_reconstruction, reconstruction_baseline
     ):
         if regenerating():

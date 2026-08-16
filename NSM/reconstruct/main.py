@@ -835,6 +835,7 @@ def reconstruct_mesh(
     get_rand_pts=False,
     n_pts_random=100000,
     sigma_rand_pts=0.001,
+    seed=None,
     n_samples_chamfer=None,
     n_samples_latent_recon=10000,
     max_n_samples_latent_recon=None,  # 100000,
@@ -863,6 +864,8 @@ def reconstruct_mesh(
 ):
     """
     Reconstructs mesh at path using decoders.
+
+    `seed` seeds the point sampling when `get_rand_pts` is True; None leaves it unseeded.
 
     NOTES:
     Assumes that length of path = sum(objects_per_decoder)
@@ -995,6 +998,7 @@ def reconstruct_mesh(
             n_pts_random=n_pts_random,
             include_surf_in_pts=get_rand_pts,
             fix_mesh=fix_mesh,
+            seed=seed,
         )
     elif multi_object is True:
         result_ = read_meshes_get_sampled_pts(
@@ -1012,6 +1016,7 @@ def reconstruct_mesh(
             n_pts_random=n_pts_random,
             include_surf_in_pts=get_rand_pts,
             fix_mesh=fix_mesh,
+            seed=seed,
         )
     else:
         raise ValueError("multi_object must be True or False")

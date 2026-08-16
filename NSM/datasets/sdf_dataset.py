@@ -26,7 +26,55 @@ except ModuleNotFoundError:
 today_date = datetime.now().strftime("%b_%d_%Y")
 
 
-def get_rand_uniform_pts(n_pts, mins=(-1, -1, -1), maxs=(1, 1, 1)):
+def derive_seed(seed, *key):
+    """
+    Derive an independent seed for one point set from the run-level seed plus a key.
+
+    Every point set drawn needs its own seed. One seed shared between the near- and
+    far-surface passes hands them the same base surface points; shared across surfaces,
+    bone and cartilage get the same offset vectors; shared across subjects, the subjects
+    correlate. `key` must identify the draw by what it is sampling, never by a position
+    in a list, so that reordering `list_mesh_paths` cannot change a subject's data --
+    see `mesh_content_key`.
+
+    Returns None when `seed` is None, i.e. seeding stays off.
+    """
+    if seed is None:
+        return None
+    return int(np.random.default_rng([seed, *key]).integers(2**31))
+
+
+def mesh_content_key(paths):
+    """
+    A `derive_seed` key identifying a subject by the bytes of its meshes.
+
+    The seed decides which points get drawn, so it should be a function of the meshes
+    themselves. Keying it on the mesh path -- as the cache hash is, since the path is
+    hashed into it -- means moving your data to another directory silently redraws every
+    training sample under the same `random_seed`. The accepted trade-off is the converse:
+    re-exporting a mesh with identical geometry but different bytes (a different VTK
+    header, different float formatting) does change the seed.
+
+    `paths` is one path or an ordered list of them, and order is significant. Anything
+    with no bytes to contribute -- a None surface, which `MultiSurfaceSDFSamples` accepts
+    for a subject missing that structure, or a path that does not exist -- contributes a
+    marker byte instead, so [a, None] and [None, a] still differ. A missing path is not
+    an error here because the samplers skip that whole subject a moment later; raising
+    would make a seeded run fail where an unseeded one skips.
+    """
+    if isinstance(paths, (str, os.PathLike)):
+        paths = [paths]
+    digest = hashlib.md5()
+    for path in paths:
+        if path is None or not os.path.exists(path):
+            digest.update(b"\0")
+        else:
+            with open(path, "rb") as file:
+                digest.update(file.read())
+    return int(digest.hexdigest(), 16)
+
+
+def get_rand_uniform_pts(n_pts, mins=(-1, -1, -1), maxs=(1, 1, 1), seed=None):
     """
     Given a set of points, returns a set of points that are randomly sampled
     from a uniform distribution from min(s) to max(s).
@@ -35,6 +83,7 @@ def get_rand_uniform_pts(n_pts, mins=(-1, -1, -1), maxs=(1, 1, 1)):
         n_pts (int): Number of points to sample
         mins (tuple, optional): Minimum value of the distribution. Defaults to (-1, -1, -1).
         maxs (tuple, optional): Maximum value of the distribution. Defaults to (1, 1, 1).
+        seed (int, optional): Seed for this draw. Defaults to None (unseeded).
 
     Returns:
         np.ndarray: (n_pts, 3) array of points
@@ -44,7 +93,9 @@ def get_rand_uniform_pts(n_pts, mins=(-1, -1, -1), maxs=(1, 1, 1)):
             - Ensure shape (n_pts, 3)
             - Ensure points within input mins/maxs
     """
-    rand_gen = np.random.uniform
+    # seed=None stays on the legacy global stream, so an unseeded call draws exactly the
+    # numbers it always did; default_rng is a different stream entirely.
+    rand_gen = np.random.uniform if seed is None else np.random.default_rng(seed).uniform
 
     pts = np.zeros((n_pts, len(mins)))
     mins = np.tile(mins, [n_pts, 1])
@@ -185,6 +236,7 @@ def read_mesh_get_sampled_pts(
     fix_mesh=True,
     include_surf_in_pts=False,
     uniform_pts_buffer=0.0,
+    seed=None,
     # Single mesh specific
     return_point_cloud=False,
     **kwargs,
@@ -210,6 +262,7 @@ def read_mesh_get_sampled_pts(
         return_point_cloud (bool, optional): Whether to return the point cloud. Defaults to False.
         fix_mesh (bool, optional): Whether to fix the mesh (using meshfix). Defaults to True.
         include_surf_in_pts (bool, optional): Whether to include the surface points in the random points. Defaults to False.
+        seed (int, optional): Seed for the random draw. Defaults to None (unseeded).
 
     Returns:
         dict: Dictionary of results
@@ -300,13 +353,17 @@ def read_mesh_get_sampled_pts(
     if get_random is True:
         if sigma is not None:
             rand_pts = new_mesh.rand_pts_around_surface(
-                n_pts=n_pts, surface_method="random", distribution=rand_function, sigma=sigma
+                n_pts=n_pts,
+                surface_method="random",
+                distribution=rand_function,
+                sigma=sigma,
+                seed=seed,
             )
         else:
             mins, maxs = get_cube_mins_maxs(new_pts)
             mins = mins - uniform_pts_buffer / 2 * (maxs - mins)
             maxs = maxs + uniform_pts_buffer / 2 * (maxs - mins)
-            rand_pts = get_rand_uniform_pts(n_pts, mins=mins, maxs=maxs)
+            rand_pts = get_rand_uniform_pts(n_pts, mins=mins, maxs=maxs, seed=seed)
 
         if include_surf_in_pts is True:
             rand_pts = np.concatenate([rand_pts, new_pts], axis=0)
@@ -428,6 +485,7 @@ def read_meshes_get_sampled_pts(
     verbose=False,
     icp_transform=None,
     uniform_pts_buffer=0.0,
+    seed=None,
     **kwargs,
 ):
     """
@@ -454,6 +512,8 @@ def read_meshes_get_sampled_pts(
         verbose (bool, optional): Whether to print verbose output. Defaults to False.
         icp_transform (vtk.vtkTransform, optional): Pre-computed ICP transform. Defaults to None.
         uniform_pts_buffer (float, optional): Buffer for uniform point sampling. Defaults to 0.0.
+        seed (int, optional): Seed for the random draws; each surface gets its own seed
+            derived from it. Defaults to None (unseeded).
 
     Returns:
         dict: Dictionary containing processed mesh data, points, SDFs, and transforms
@@ -657,15 +717,19 @@ def read_meshes_get_sampled_pts(
             if new_mesh_ is None:
                 continue
             if n_pts[new_pts_idx] > 0:
+                seed_ = derive_seed(seed, new_pts_idx)
                 if sigma[new_pts_idx] is not None:
                     rand_pts_ = new_mesh_.rand_pts_around_surface(
                         n_pts=n_pts[new_pts_idx],
                         surface_method="random",
                         distribution=rand_function,
                         sigma=sigma[new_pts_idx],
+                        seed=seed_,
                     )
                 else:
-                    rand_pts_ = get_rand_uniform_pts(n_pts[new_pts_idx], mins=mins, maxs=maxs)
+                    rand_pts_ = get_rand_uniform_pts(
+                        n_pts[new_pts_idx], mins=mins, maxs=maxs, seed=seed_
+                    )
 
                 if include_surf_in_pts is True:
                     rand_pts_ = np.concatenate([rand_pts_, new_pts_], axis=0)
@@ -796,16 +860,14 @@ class SDFSamples(torch.utils.data.Dataset):
             KNOWN DEFECT, worklist: this default is evaluated when the module is IMPORTED,
             so setting LOC_SDF_CACHE afterwards has no effect and the caller silently
             writes to ~/.cache/nsm_sdf_cache. Pass loc_save explicitly.
-        include_seed_in_hash (bool, optional): Whether to include the random seed in the hash. Defaults to True.
         save_cache (bool, optional): Whether to save the cached files. Defaults to True.
         load_cache (bool, optional): Whether to load the cached files. Defaults to True.
-        random_seed (int, optional): Cache-key ingredient ONLY. Defaults to None.
-
-            KNOWN DEFECT, worklist #3: this does not seed anything. Sampling is not
-            reproducible, and the near-surface path cannot be seeded from here at all --
-            see gattia/pymskt#54. Because the seed DOES change the cache key, two runs
-            with the same seed reuse one cached file and look reproducible; point them at
-            different caches and they are not.
+        random_seed (int, optional): Seeds the sampling, and is part of the cache key.
+            Every subject/surface/sigma draw gets its own seed derived from it, keyed on
+            the subject's mesh *contents* rather than on list position or path, so neither
+            reordering list_mesh_paths nor moving the meshes changes any subject's data.
+            Defaults to None, which leaves sampling unseeded -- the historical behaviour.
+            Reproducible sampling requires mskt>=0.1.21.
         reference_mesh (vtkPolyData or mskt.mesh.Mesh, optional): Reference mesh to register to. Defaults to None.
         verbose (bool, optional): Whether to print verbose output. Defaults to False.
         equal_pos_neg (bool, optional): Whether to have equal positive and negative SDFs. Defaults to True.
@@ -837,7 +899,6 @@ class SDFSamples(torch.utils.data.Dataset):
         loc_save=os.environ.get(
             "LOC_SDF_CACHE", os.path.join(os.path.expanduser("~"), ".cache", "nsm_sdf_cache")
         ),
-        include_seed_in_hash=True,
         save_cache=True,
         load_cache=True,
         random_seed=None,
@@ -886,7 +947,6 @@ class SDFSamples(torch.utils.data.Dataset):
         self.scale_jointly = scale_jointly
         self.joint_scale_buffer = joint_scale_buffer
         self.loc_save = loc_save
-        self.include_seed_in_hash = include_seed_in_hash
         self.random_seed = random_seed
         self.reference_mesh = reference_mesh
         self.verbose = verbose
@@ -1229,6 +1289,12 @@ class SDFSamples(torch.utils.data.Dataset):
                 print("type of reference mesh:", type(reference_mesh))
                 print("ref mesh path:", self.reference_mesh_path)
 
+            # Keyed on the mesh contents, not on the subject's index and not on the cache
+            # hash: an index would resample every subject when the list is reordered, and
+            # the cache hash contains the mesh path, so it would resample everyone when
+            # the data is moved. Read once here rather than per combo.
+            content_key = mesh_content_key(loc_mesh) if self.random_seed is not None else None
+
             for idx_, (n_pts_, sigma_) in enumerate(self.pt_sample_combos):
                 result_ = read_mesh_get_sampled_pts(
                     loc_mesh,
@@ -1246,6 +1312,7 @@ class SDFSamples(torch.utils.data.Dataset):
                     register_to_mean_first=False if reference_mesh is None else True,
                     mean_mesh=reference_mesh,
                     uniform_pts_buffer=self.uniform_pts_buffer,
+                    seed=derive_seed(self.random_seed, content_key, idx_),
                 )
 
                 if result_ is None:
@@ -1453,7 +1520,7 @@ class SDFSamples(torch.utils.data.Dataset):
                     print(loc_mesh)
                 list_hash_params.insert(0, path)
 
-        if (self.include_seed_in_hash is True) and (self.random_seed is not None):
+        if self.random_seed is not None:
             list_hash_params.append(self.random_seed)  # random seed state
         if self.verbose is True:
             print("List Params", list_hash_params)
@@ -1632,7 +1699,6 @@ class MultiSurfaceSDFSamples(SDFSamples):
         loc_save=os.environ.get(
             "LOC_SDF_CACHE", os.path.join(os.path.expanduser("~"), ".cache", "nsm_sdf_cache")
         ),
-        include_seed_in_hash=True,
         save_cache=True,
         load_cache=True,
         random_seed=None,
@@ -1686,7 +1752,6 @@ class MultiSurfaceSDFSamples(SDFSamples):
             scale_method=scale_method,
             scale_jointly=scale_jointly,
             loc_save=loc_save,
-            include_seed_in_hash=include_seed_in_hash,
             save_cache=save_cache,
             load_cache=load_cache,
             random_seed=random_seed,
@@ -1840,6 +1905,8 @@ class MultiSurfaceSDFSamples(SDFSamples):
                 print("type of reference mesh:", type(reference_mesh))
                 print("ref mesh path:", self.reference_mesh_path)
 
+            content_key = mesh_content_key(loc_meshes) if self.random_seed is not None else None
+
             # KNOWN DEFECT, worklist #5: a combo with n_pts_ == 0 is passed to the
             # sampler regardless, so p_near_surface=0 (or p_further_from_surface=0) raises
             # inside point_cloud_utils rather than sampling nothing.
@@ -1864,6 +1931,7 @@ class MultiSurfaceSDFSamples(SDFSamples):
                     scale_all_meshes=self.scale_all_meshes,
                     center_all_meshes=self.center_all_meshes,
                     icp_transform=icp_transform,
+                    seed=derive_seed(self.random_seed, content_key, idx_),
                 )
 
                 if result_ is None:
