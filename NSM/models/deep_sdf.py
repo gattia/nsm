@@ -238,7 +238,7 @@ class Decoder(nn.Module):
         warmup = self.progressive_depth_params["layers"][layer_idx]["warmup_epochs"]
         end = start + warmup
         if self.epoch < start:
-            raise exception("Epoch is before start of progressive depth")
+            raise RuntimeError("Epoch is before start of progressive depth")
         elif start < self.epoch < end:
             # during warmup... linearly phase this block in
             # https://github.com/haidongz-usc/Curriculum-DeepSDF/blob/ca216dda8edc6435139a6f657c45800791be94a7/networks/deep_sdf_decoder_train.py#L113
