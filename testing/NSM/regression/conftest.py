@@ -40,7 +40,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         f"They are not failures and not passes."
     )
     terminalreporter.write_line(
-        "  Tracked in planning/DEFECT_WORKLIST.md. Run with -rx to list them with reasons."
+        "  Tracked in docs/KNOWN_ISSUES.md (Open). Run with -rx to list them with reasons."
     )
     terminalreporter.write_line(
         "  Each is strict: fixing one turns this suite RED until its xfail mark is removed."

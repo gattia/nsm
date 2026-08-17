@@ -3,8 +3,8 @@
 Phase 3 §7.1 of `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md`.
 
 Its job is to **fail when NSM's training or reconstruction output changes**, so the Phase 4
-decomposition can proceed without silently altering results. Findings that came out of
-building it are in `planning/TEST_HARNESS_NOTES.md`.
+decomposition can proceed without silently altering results. The findings that came out of
+building it are entries in `docs/KNOWN_ISSUES.md`, each naming the test that pins it.
 
 ```bash
 pytest testing/NSM/regression/ -q      # 113 passed, 18 xfailed; ~54 s (105 passed, 8 skipped,
@@ -48,7 +48,7 @@ So the report separates three things:
 | Outcome | Meaning |
 |---|---|
 | `passed` | Behaviour that is correct, or a number that has not moved |
-| `xfailed` | A known defect, still present. Listed in `planning/DEFECT_WORKLIST.md` |
+| `xfailed` | A known defect, still present. Listed in `docs/KNOWN_ISSUES.md` (Open) |
 | `failed` | Either a regression, **or a defect that got fixed** — see below |
 
 `strict=True` is what makes this work in both directions. Fix a defect and its xfail starts
@@ -79,7 +79,7 @@ Two of these are deliberate breaks that must go **red** on a broken build and ar
 to do so on every run:
 
 - `test_training_regression.TestDeliberateBreak` transposes the two learning-rate
-  `Target` labels — the exact shape of the bug in `docs/KNOWN_ISSUES_HISTORY.md` §1 — and
+  `Target` labels — the exact shape of the bug in `docs/KNOWN_ISSUES.md` §1 — and
   asserts the LR, loss and latent baselines all reject the result.
 - `test_reconstruction_regression.TestDeliberateBreak` dents an input mesh — one of the bone
   sphere's 530 vertices, displaced by a quarter of its radius — and asserts the latent and

@@ -4,7 +4,7 @@ End-to-end training regression: 8 epochs, CPU, fixed seed, asserted against base
 What this pins, in decreasing order of how much it matters:
 
 1. **The per-param-group learning rate at every epoch.** This is the assertion that would
-   have caught the schedule swap in ``docs/KNOWN_ISSUES_HISTORY.md`` section 1. The two
+   have caught the schedule swap in ``docs/KNOWN_ISSUES.md`` section 1. The two
    schedules used here differ in Interval and Factor as well as Initial, so transposing
    them inverts the run rather than nudging it -- and ``TestDeliberateBreak`` transposes
    them and watches the baselines fail.
