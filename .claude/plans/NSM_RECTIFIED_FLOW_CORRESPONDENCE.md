@@ -1,5 +1,19 @@
 # Plan: A learned rectified-flow correspondence operator for NSM
 
+## State
+
+**Updated:** 2026-08-17 · **Status:** blocked
+
+- **Next:** nothing until the interpolation API is stable. Re-read this after
+  `NSM_CODE_HEALTH_REFACTOR.md` Phase 4 §8.1 (the decoder registry) lands.
+- **Blocked on:** a stable interpolation API, and `NSM_CODE_HEALTH_REFACTOR.md` Phase 2.
+- **Done:** nothing. The prerequisite plan
+  (`completed/NSM_MESH_INTERPOLATION_IMPROVEMENTS_COMPLETED.md`) delivered the
+  `correspondence_metrics.py` module this plan depends on.
+- **Surprises:** none yet — no work has been done against this plan.
+
+---
+
 **Status:** Proposed — not started. Prerequisite
 `NSM_MESH_INTERPOLATION_IMPROVEMENTS.md` **completed 2026-05-22** (archived to
 `completed/NSM_MESH_INTERPOLATION_IMPROVEMENTS_COMPLETED.md`). Track-A

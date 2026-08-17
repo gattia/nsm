@@ -122,7 +122,7 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
         if use_wandb is True:
             wandb.log(log_dict)
 
-    return loss
+    return log_dict
 
 
 def train_epoch(

@@ -1,6 +1,13 @@
 # Multi-Surface Rigid Registration
 
-This document describes the new multi-surface rigid registration functionality added to the NSM dataset code.
+> ⚠️ **Unverified since 2025-08-24.** Nothing in this document has been checked against the
+> code since it was written, and `sdf_dataset.py` — the module it describes — has changed
+> substantially since, including 104 lines in Aug 2026. It is the one `docs/` file the
+> Phase 1 audit did not cover. Verify before relying on it; `CLAUDE.md` § Correcting says
+> how to clear this banner.
+
+This document describes the multi-surface rigid registration functionality in the NSM
+dataset code.
 
 ## Overview
 

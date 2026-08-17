@@ -8,7 +8,7 @@ DELETE THIS FILE once no config still in use predates the ``Target`` key. The on
 is ``resolve_schedule_targets`` in ``NSM/utils.py``, which imports it lazily and needs a
 plain one-line ValueError in its place.
 
-Background: ``docs/KNOWN_ISSUES_HISTORY.md`` section 1.
+Background: ``docs/KNOWN_ISSUES.md`` section 1.
 """
 
 import json
@@ -38,7 +38,7 @@ historical mapping was entry 0 -> {hist_0}, entry 1 -> {hist_1}:
 {annotated}
 {caution}
 For a new run, set '{key}' to whatever each entry should drive; order is ignored.
-Full background: docs/KNOWN_ISSUES_HISTORY.md section 1.
+Full background: docs/KNOWN_ISSUES.md section 1.
 """.strip()
 
 _SCHEDULE_FREE_CAUTION = """

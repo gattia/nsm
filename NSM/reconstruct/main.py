@@ -10,7 +10,7 @@ from .predictive_validation_class import Regress
 from NSM.datasets import read_mesh_get_sampled_pts, read_meshes_get_sampled_pts
 from NSM.datasets.sdf_dataset import combine_meshes
 from NSM.mesh import create_mesh_adaptive
-from NSM.losses import eikonal_loss
+from NSM.losses import EIKONAL_UNSUPPORTED, eikonal_loss
 
 
 import numpy as np
@@ -385,6 +385,9 @@ def reconstruct_latent(
         print("Warning: max_batch_size is deprecated and will be removed in future versions. "
               "Batch processing has been simplified and now processes all data at once for better performance.")
     
+    if eikonal_weight > 0:
+        raise NotImplementedError(EIKONAL_UNSUPPORTED)
+
     sdf_gt = reconstruct_latent_sdf_gt_type_check(sdf_gt, verbose=verbose)
     pts_surface = reconstruct_latent_pts_surface_type_check(
         pts_surface, verbose=verbose, device=device
@@ -832,6 +835,7 @@ def reconstruct_mesh(
     get_rand_pts=False,
     n_pts_random=100000,
     sigma_rand_pts=0.001,
+    seed=None,
     n_samples_chamfer=None,
     n_samples_latent_recon=10000,
     max_n_samples_latent_recon=None,  # 100000,
@@ -860,6 +864,8 @@ def reconstruct_mesh(
 ):
     """
     Reconstructs mesh at path using decoders.
+
+    `seed` seeds the point sampling when `get_rand_pts` is True; None leaves it unseeded.
 
     NOTES:
     Assumes that length of path = sum(objects_per_decoder)
@@ -943,6 +949,13 @@ def reconstruct_mesh(
         if mean_mesh is None:
             # Mean mesh is None if the zero latent vector is not well defined/learned
             # yet. In this case, the results will be very poor, might as well skip.
+            #
+            # KNOWN DEFECT, worklist #12: this early return ignores
+            # return_registration_params, return_timing and orig_mesh, so its result has a
+            # different SHAPE from the successful one -- and the downstream consumer reads
+            # result["center"] unconditionally. It also returns the untouched zero
+            # mean_latent under the "latent" key, so a caller checking "did I get a latent"
+            # gets a correctly shaped tensor that was never fitted.
             result = {
                 "mesh": [
                     None,
@@ -985,6 +998,7 @@ def reconstruct_mesh(
             n_pts_random=n_pts_random,
             include_surf_in_pts=get_rand_pts,
             fix_mesh=fix_mesh,
+            seed=seed,
         )
     elif multi_object is True:
         result_ = read_meshes_get_sampled_pts(
@@ -1002,6 +1016,7 @@ def reconstruct_mesh(
             n_pts_random=n_pts_random,
             include_surf_in_pts=get_rand_pts,
             fix_mesh=fix_mesh,
+            seed=seed,
         )
     else:
         raise ValueError("multi_object must be True or False")

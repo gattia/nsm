@@ -1,5 +1,23 @@
 # Implementation Plan: Sigma Coordinate Space Parameter
 
+## State
+
+**Updated:** 2026-08-17 · **Status:** blocked
+
+> Moved here from `planning/` on 2026-08-17. The *how* for
+> `BREAKING_CHANGE_PROPOSAL.md`'s *what and why* — read that one first.
+
+- **Next:** fold into `NSM_CODE_HEALTH_REFACTOR.md` §8 rather than running standalone.
+- **Blocked on:** the same things as `BREAKING_CHANGE_PROPOSAL.md`.
+- **Done:** nothing. No code has changed.
+- **Surprises:** none recorded.
+
+> ⚠️ **Unverified since 2026-02-01.** The line numbers and code excerpts below were
+> written against a tree that has since moved — `sdf_dataset.py` alone changed by 104
+> lines in Aug 2026. Re-read the code before following any step literally.
+
+---
+
 ## 🎯 Goal
 Add `sigma_coordinate_space` parameter to decouple sigma sampling from `scale_jointly` flag, enabling explicit control over coordinate space interpretation.
 

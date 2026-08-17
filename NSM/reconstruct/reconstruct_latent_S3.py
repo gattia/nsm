@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import wandb
 from NSM.datasets import (
     read_mesh_get_sampled_pts,
     get_pts_center_and_scale,
@@ -124,7 +125,7 @@ def reconstruct_latent_S3(
             xyz = new_sdf[:, :3]
             sdf_gt = new_sdf[:, 3].unsqueeze(1)
         else:
-            raise ValueError(f"Inputted SDF must have shape Nx3 or Nx4 got: {new_s}")
+            raise ValueError(f"Inputted SDF must have shape Nx3 or Nx4 got: {new_sdf.shape}")
 
     # Sensibly initilize the registration parameters
     init_center, init_scale = get_pts_center_and_scale(

@@ -1,4 +1,6 @@
-mskt
+# 0.1.21 is where rand_pts_around_surface gained `seed`. Older versions take no **kwargs,
+# so they raise TypeError on the first sample rather than quietly sampling unseeded.
+mskt>=0.1.21
 scikit-learn  
 scipy  
 numpy  

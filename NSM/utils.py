@@ -208,7 +208,7 @@ def adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False):
     depends on the order of either, which is the point: the previous implementation
     assigned ``lr_schedules[i]`` to ``param_groups[i]``, and because ``get_optimizer``
     orders the groups ``[latent, model...]`` the two schedules were applied swapped for
-    the whole of every affected run. See ``docs/KNOWN_ISSUES_HISTORY.md``.
+    the whole of every affected run. See ``docs/KNOWN_ISSUES.md``.
 
     Several groups may share a target -- every decoder and the classification heads all
     take the model schedule.

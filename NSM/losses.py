@@ -9,6 +9,11 @@ import torch
 import torch.nn.functional as F
 from typing import Optional, Tuple, Union
 
+EIKONAL_UNSUPPORTED = (
+    "eikonal_weight > 0 is not supported: the eikonal loss has never worked. "
+    "See .claude/plans/NSM_CODE_HEALTH_REFACTOR.md section 8.2."
+)
+
 
 def eikonal_loss(
     sdf_values: torch.Tensor,

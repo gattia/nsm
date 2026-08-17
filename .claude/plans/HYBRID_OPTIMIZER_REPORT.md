@@ -1,5 +1,27 @@
 # Adam + L-BFGS Hybrid Latent Optimizer — Findings Report
 
+## State
+
+**Updated:** 2026-08-17 · **Status:** blocked
+
+> Moved here from `planning/` on 2026-08-17: it is a paused research thread with
+> unconcluded work, which makes it a plan rather than a fact about the library.
+
+- **Next:** conclude the exploration described in §5 — the parameters tried *after* the
+  chosen config and never evaluated. Nothing depends on this.
+- **Blocked on:** nobody is working on it. Not blocked technically.
+- **Done:** the sweep ran (Aug 2025) and produced the recommended parameters in §3, which
+  are usable without re-running it.
+- **Surprises:** the two norm-constraint mechanisms confused their own author — the sweep
+  set `latent_norm` and `norm_penalty_weight` but not `use_soft_norm_constraint`, so it
+  silently took the soft path while the author believed otherwise (§4).
+
+> ⚠️ **Unverified since 2025-08.** The `main.py` line numbers below predate the Aug 2026
+> work and will not resolve. Treat them as a guide to which function to open, not as
+> coordinates.
+
+---
+
 ## Purpose of this document
 
 Hand-off summary of the Adam+L-BFGS hybrid optimization parameter sweep run in late August 2025. Another agent picking this up cold should be able to:

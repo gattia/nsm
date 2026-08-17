@@ -1,5 +1,24 @@
 # [BREAKING CHANGE PROPOSAL] Standardize Sigma Sampling to Original Coordinate Space
 
+## State
+
+**Updated:** 2026-08-17 · **Status:** blocked
+
+> Moved here from `planning/` on 2026-08-17. It is a plan, so it lives with the plans.
+> It pairs with `SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` — this file is the *what and
+> why*, that one is the *how*. Both are scheduled into `NSM_CODE_HEALTH_REFACTOR.md` §8
+> and should be executed as part of it, not separately.
+
+- **Next:** fold into `NSM_CODE_HEALTH_REFACTOR.md` §8 rather than running standalone.
+  Until that fold happens, treat these two files as the detail behind that §8 bullet.
+- **Blocked on:** `NSM_CODE_HEALTH_REFACTOR.md` §7.1 green (done) and Phase 4 starting.
+  It changes public behaviour, so it needs a §4-style migration guard.
+- **Done:** the problem is characterised and recorded as a user-visible defect in
+  `docs/KNOWN_ISSUES.md` § Open. No code has changed.
+- **Surprises:** none recorded. This plan stalled mid-Phase-1 rather than failing.
+
+---
+
 ## 🎯 Problem Statement
 
 Currently, our SDF dataset sampling has **two fundamentally different coordinate space interpretations** for sigma values depending on the `scale_jointly` flag:
