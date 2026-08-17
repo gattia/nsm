@@ -5,7 +5,7 @@ Raw output of the Phase 1 mapping pass. Every entry was produced by reading the 
 
 **This is not a to-do list.** It is the evidence base that Phase 2 (documentation),
 Phase 3 (tests) and Phase 4 (decomposition) draw from, and the pool that
-`docs/KNOWN_ISSUES_HISTORY.md` entries get promoted out of. An entry earns a ledger entry
+`docs/KNOWN_ISSUES.md` entries get promoted out of. An entry earns a ledger entry
 only if it silently changed numerical output for inputs that previously ran without error
 (the rule in `CLAUDE.md` § Numerical-behaviour changes).
 
@@ -298,7 +298,7 @@ Lines 65-68 write latent_dim/n_objects/latent_size into the dicts passed as `tri
 
 **NSM/reconstruct/main.py:253 — project_latent is labelled legacy but is still the only path honoured under LBFGS-with-hard-constraint**
 
-Docstring: 'Legacy explicit projection function - use latent_norm_penalty for smoother optimization'. It is still called at lines 709 and 736 whenever `use_soft_norm_constraint=False`. planning/HYBRID_OPTIMIZER_REPORT.md:78 records a sweep that set `latent_norm` and `norm_penalty_weight` but not `use_soft_norm_constraint`, and therefore silently took the soft path while the author believed otherwise -- i.e. the two mechanisms are already documented to have confused their own author. `project_latent` also mutates `latent` in place under `no_grad` (line 266) with no note that it does so.
+Docstring: 'Legacy explicit projection function - use latent_norm_penalty for smoother optimization'. It is still called at lines 709 and 736 whenever `use_soft_norm_constraint=False`. .claude/plans/HYBRID_OPTIMIZER_REPORT.md:78 records a sweep that set `latent_norm` and `norm_penalty_weight` but not `use_soft_norm_constraint`, and therefore silently took the soft path while the author believed otherwise -- i.e. the two mechanisms are already documented to have confused their own author. `project_latent` also mutates `latent` in place under `no_grad` (line 266) with no note that it does so.
 
 **NSM/reconstruct/main.py:536 — pts_surface encoding is an undocumented positional contract**
 
@@ -332,7 +332,7 @@ Lines 1140-1199: if any of `calc_emd`, `calc_symmetric_chamfer`, `calc_assd`, `r
 
 **NSM/reconstruct/utils.py:104 — Two unrelated functions named adjust_learning_rate; the reconstruct one is re-exported from the NSM.reconstruct package namespace**
 
-NSM/reconstruct/utils.py:104 `adjust_learning_rate(initial_lr, optimizer, iteration, decreased_by, adjust_lr_every)` -- step-decay for the *latent-fit* loop, sets EVERY param_group to one lr, no docstring. NSM/utils.py:202 `adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False)` -- the *training* per-target scheduler, raises KeyError on any group missing `target`. Different arity, different semantics, same name. Because NSM/reconstruct/main.py:4 does `from .utils import adjust_learning_rate` and NSM/reconstruct/__init__.py:1 does `from .main import *` with no `__all__`, `NSM.reconstruct.adjust_learning_rate` resolves to the reconstruct/utils version -- verified by introspection. NSM/train/train_deep_sdf.py imports the NSM.utils one at line 3 and imports from NSM.reconstruct by explicit name at lines 13-20, so it is safe today. Change line 13 to a star import and `adjust_learning_rate(config['lr_schedules'], optimizer, epoch)` at train_deep_sdf.py:289 silently rebinds to the 5-arg version and fails with a confusing `missing 2 required positional arguments` instead of running the schedule. This is a live footgun in exactly the area docs/KNOWN_ISSUES_HISTORY.md was written about.
+NSM/reconstruct/utils.py:104 `adjust_learning_rate(initial_lr, optimizer, iteration, decreased_by, adjust_lr_every)` -- step-decay for the *latent-fit* loop, sets EVERY param_group to one lr, no docstring. NSM/utils.py:202 `adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False)` -- the *training* per-target scheduler, raises KeyError on any group missing `target`. Different arity, different semantics, same name. Because NSM/reconstruct/main.py:4 does `from .utils import adjust_learning_rate` and NSM/reconstruct/__init__.py:1 does `from .main import *` with no `__all__`, `NSM.reconstruct.adjust_learning_rate` resolves to the reconstruct/utils version -- verified by introspection. NSM/train/train_deep_sdf.py imports the NSM.utils one at line 3 and imports from NSM.reconstruct by explicit name at lines 13-20, so it is safe today. Change line 13 to a star import and `adjust_learning_rate(config['lr_schedules'], optimizer, epoch)` at train_deep_sdf.py:289 silently rebinds to the 5-arg version and fails with a confusing `missing 2 required positional arguments` instead of running the schedule. This is a live footgun in exactly the area docs/KNOWN_ISSUES.md was written about.
 
 **NSM/reconstruct/utils.py:104 — Two different `adjust_learning_rate` functions in the same package; the reconstruct one shadows via star-import**
 
@@ -580,7 +580,7 @@ Lines 297 and 312 set `penalty = 0.0` (a float) while every other branch returns
 
 **NSM/reconstruct/main.py:445 — `optimizer` / `loss_fn` can be referenced before assignment for unrecognised names**
 
-Lines 445-451: `optimizer` is only bound when `optimizer_name` is exactly 'adam' or 'lbfgs'; anything else falls through and the first use at line 497/510 raises UnboundLocalError with no hint of the real cause. Same at lines 454-460 for `loss_fn` when `loss_type` is not 'l1'/'l1_log'/'l2'. planning/HYBRID_OPTIMIZER_REPORT.md:149 records that this has already bitten people: model configs store `"optimizer": "AdamW"` while reconstruct_latent expects lowercase 'adam'.
+Lines 445-451: `optimizer` is only bound when `optimizer_name` is exactly 'adam' or 'lbfgs'; anything else falls through and the first use at line 497/510 raises UnboundLocalError with no hint of the real cause. Same at lines 454-460 for `loss_fn` when `loss_type` is not 'l1'/'l1_log'/'l2'. .claude/plans/HYBRID_OPTIMIZER_REPORT.md:149 records that this has already bitten people: model configs store `"optimizer": "AdamW"` while reconstruct_latent expects lowercase 'adam'.
 
 **NSM/reconstruct/main.py:588 — Only TriplanarDecoder can actually be reconstructed; the other three loader targets cannot**
 
@@ -636,7 +636,7 @@ Line 83: `latent_vecs = get_latent_vecs(len(data_loader.dataset), config)` — n
 
 **NSM/train/train_deep_sdf_multi_head.py:85 — train_deep_sdf_multi_head builds the optimizer from a leaked loop variable — only the last decoder is trained**
 
-CONFIRMED. Lines 59-60: `for model in models:` / `    model = model.to(config["device"])`. The loop leaks `model` bound to `models[-1]`. Line 85-91: `optimizer = get_optimizer(model, latent_vecs, lr_schedules=..., ...)` passes that leaked single module, not `models`. `get_optimizer` (NSM/utils.py:373-374) wraps a non-list into `[model]`, so exactly one `model_0` param group is created, holding only the last decoder's parameters. Every other decoder in `models` stays at initialization forever while `train_epoch` still runs `model(inputs)` on all of them (line 241-245) and backprops through them (line 392). The same leaked variable is reused at line 403 (`torch.nn.utils.clip_grad_norm_(model.parameters(), ...)`), so grad clipping also only touches the last model. Documented in docs/KNOWN_ISSUES_HISTORY.md:226-250; module now warns (lines 27-33) but is not fixed.
+CONFIRMED. Lines 59-60: `for model in models:` / `    model = model.to(config["device"])`. The loop leaks `model` bound to `models[-1]`. Line 85-91: `optimizer = get_optimizer(model, latent_vecs, lr_schedules=..., ...)` passes that leaked single module, not `models`. `get_optimizer` (NSM/utils.py:373-374) wraps a non-list into `[model]`, so exactly one `model_0` param group is created, holding only the last decoder's parameters. Every other decoder in `models` stays at initialization forever while `train_epoch` still runs `model(inputs)` on all of them (line 241-245) and backprops through them (line 392). The same leaked variable is reused at line 403 (`torch.nn.utils.clip_grad_norm_(model.parameters(), ...)`), so grad clipping also only touches the last model. Documented in docs/KNOWN_ISSUES.md:226-250; module now warns (lines 27-33) but is not fixed.
 
 **NSM/train/train_deep_sdf_multi_head.py:118 — Non-short-circuit `&` on membership tests raises KeyError instead of skipping**
 
@@ -914,7 +914,7 @@ Lines 84-85 (`if "resume_epoch" not in config: config["resume_epoch"] = 0`) can 
 
 **NSM/train/train_deep_sdf_multi_head.py:27 — CLAUDE.md still advertises train_deep_sdf_multi_head as a supported training pipeline**
 
-The repo's CLAUDE.md line 120 reads '`train_deep_sdf_multi_head.py`: Multi-head training for multiple surfaces' with no qualification, under a heading describing NSM/train/ as 'Training pipelines'. The module itself raises a DeprecationWarning calling itself 'DEPRECATED and known to be broken' (lines 27-33), and docs/KNOWN_ISSUES_HISTORY.md:226-250 documents that all runs through it are affected. A reader following CLAUDE.md picks the broken entry point.
+The repo's CLAUDE.md line 120 reads '`train_deep_sdf_multi_head.py`: Multi-head training for multiple surfaces' with no qualification, under a heading describing NSM/train/ as 'Training pipelines'. The module itself raises a DeprecationWarning calling itself 'DEPRECATED and known to be broken' (lines 27-33), and docs/KNOWN_ISSUES.md:226-250 documents that all runs through it are affected. A reader following CLAUDE.md picks the broken entry point.
 
 ### `NSM/train/utils.py`
 
@@ -964,7 +964,7 @@ Observations. Not bugs.
 
 **NSM/_lr_migration.py:7 — _lr_migration.py states its own delete-when condition and it is not yet met**
 
-Quoted verbatim from the module docstring: 'DELETE THIS FILE once no config still in use predates the ``Target`` key. The only caller is ``resolve_schedule_targets`` in ``NSM/utils.py``, which imports it lazily and needs a plain one-line ValueError in its place.' docs/KNOWN_ISSUES_HISTORY.md:189-190 repeats it. The lazy import sits at NSM/utils.py:116 with a comment (lines 113-115) explaining that placement is what keeps the removal a one-liner. Nothing tracks when the condition is satisfied, so the deletion depends on someone remembering to check.
+Quoted verbatim from the module docstring: 'DELETE THIS FILE once no config still in use predates the ``Target`` key. The only caller is ``resolve_schedule_targets`` in ``NSM/utils.py``, which imports it lazily and needs a plain one-line ValueError in its place.' docs/KNOWN_ISSUES.md:189-190 repeats it. The lazy import sits at NSM/utils.py:116 with a comment (lines 113-115) explaining that placement is what keeps the removal a one-liner. Nothing tracks when the condition is satisfied, so the deletion depends on someone remembering to check.
 
 ### `NSM/configs/default_config.json`
 
@@ -1110,9 +1110,9 @@ Lines 115-125: `torch.profiler.schedule(wait=0, warmup=2, active=6)` with no `re
 
 `except ImportError: print("schedulefree not found, skipping import")` runs at import time, and NSM/__init__.py:9 imports utils, so every `import NSM` — including the downstream consumer's `from NSM.models import TriplanarDecoder` (kneepipeline/steps/run_nsm.py:85) — emits this line on stdout. Observed on every python invocation during this audit. The consumer's step protocol parses stdout ('stdout: progress lines followed by a JSON result as the last line'); the print lands before the JSON so it does not break the last-line contract today, but a library writing to stdout at import is a hazard for exactly that reason. `warnings` is already imported in the same file (line 11).
 
-### `docs/KNOWN_ISSUES_HISTORY.md`
+### `docs/KNOWN_ISSUES.md`
 
-**docs/KNOWN_ISSUES_HISTORY.md:183 — Open action recorded in the LR post-mortem that the refactor plan should absorb**
+**docs/KNOWN_ISSUES.md:183 — Open action recorded in the LR post-mortem that the refactor plan should absorb**
 
 '**Open action:** re-tune learning rates under the fixed mapping and compare against the current production models before assuming either is better. Not yet done.' Every pre-Aug-2026 hyperparameter search optimized under the swapped mapping (lines 176-182), so the LR pair shipped in default_config.json:83-98 is tuned for a mapping the code no longer implements.
 
@@ -1127,7 +1127,7 @@ Prose documentation checked line-by-line against the code. `claim` quotes the do
 
 > - `train_deep_sdf_multi_head.py`: Multi-head training for multiple surfaces
 
-**Reality.** The module is deprecated and known broken; the Architecture section lists it as an ordinary training pipeline with no caveat, while docs/KNOWN_ISSUES_HISTORY.md §3 documents it as silently optimizing only the last model. Calling it emits a DeprecationWarning saying so, and `get_optimizer` at line 85 is passed the leaked loop variable `model` rather than `models`, so every decoder but the last stays at initialization. An agent reading only CLAUDE.md's architecture map would pick this entry point for multi-surface work.
+**Reality.** The module is deprecated and known broken; the Architecture section lists it as an ordinary training pipeline with no caveat, while docs/KNOWN_ISSUES.md §3 documents it as silently optimizing only the last model. Calling it emits a DeprecationWarning saying so, and `get_optimizer` at line 85 is passed the leaked loop variable `model` rather than `models`, so every decoder but the last stays at initialization. An agent reading only CLAUDE.md's architecture map would pick this entry point for multi-surface work.
 
 **Evidence.** NSM/train/train_deep_sdf_multi_head.py:27-33,85-91
 
@@ -1177,7 +1177,7 @@ pip install -e .
 
 **Evidence.** NSM/datasets/sdf_dataset.py:1348-1360
 
-### [misleading] `planning/BREAKING_CHANGE_PROPOSAL.md:51`
+### [misleading] `.claude/plans/BREAKING_CHANGE_PROPOSAL.md:51`
 
 > - [x] ✅ Implement warning system for potentially incorrect sigma values
 
@@ -1185,7 +1185,7 @@ pip install -e .
 
 **Evidence.** NSM/datasets/sdf_dataset.py:1092-1105
 
-### [misleading] `planning/BREAKING_CHANGE_PROPOSAL.md:50`
+### [misleading] `.claude/plans/BREAKING_CHANGE_PROPOSAL.md:50`
 
 > - [x] ✅ Add comprehensive documentation about current dual-mode behavior
 
@@ -1239,9 +1239,9 @@ pytest testing/performance/ -v
 
 > - [`docs/MULTI_SURFACE_REGISTRATION.md`](docs/MULTI_SURFACE_REGISTRATION.md) - Multi-surface registration functionality
 
-**Reality.** The docs/ listing is incomplete: docs/ also contains KNOWN_ISSUES_HISTORY.md, added Aug 2026 and the file CLAUDE.md:97 makes mandatory for any numerical-behaviour change. It is the one document a user with old training runs most needs to find from the README.
+**Reality.** The docs/ listing is incomplete: docs/ also contains KNOWN_ISSUES.md, added Aug 2026 and the file CLAUDE.md:97 makes mandatory for any numerical-behaviour change. It is the one document a user with old training runs most needs to find from the README.
 
-**Evidence.** docs/KNOWN_ISSUES_HISTORY.md:1
+**Evidence.** docs/KNOWN_ISSUES.md:1
 
 ### [stale] `README.md:217`
 
@@ -1251,11 +1251,11 @@ pytest testing/performance/ -v
 
 **Evidence.** .github/workflows/docs.yml:25-27; Makefile:23-67
 
-### [stale] `docs/KNOWN_ISSUES_HISTORY.md:192`
+### [stale] `docs/KNOWN_ISSUES.md:192`
 
 > - `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §4 — this fix as the migration template
 
-**Reality.** ~~That file does not exist in the repo.~~ **RESOLVED by merge `458e6e6`.** It was a branch artifact: `docs/KNOWN_ISSUES_HISTORY.md` shipped on `main` while the plan it cites lived only on `plan-code-health-refactor`, so neither tree contained both. Merging `main` in put both in one tree and the three citations (lines 192, 221, 251) now resolve. Keep the entry as a record of the failure mode: a document whose stated purpose is to be answerable years later had two open actions pointing at nothing, purely because two branches each held half the story.
+**Reality.** ~~That file does not exist in the repo.~~ **RESOLVED by merge `458e6e6`.** It was a branch artifact: `docs/KNOWN_ISSUES.md` shipped on `main` while the plan it cites lived only on `plan-code-health-refactor`, so neither tree contained both. Merging `main` in put both in one tree and the three citations (lines 192, 221, 251) now resolve. Keep the entry as a record of the failure mode: a document whose stated purpose is to be answerable years later had two open actions pointing at nothing, purely because two branches each held half the story.
 
 **Evidence.** .claude/plans/ (directory listing: NSM_RECTIFIED_FLOW_CORRESPONDENCE.md, NSM_TRAINING_IDEAS.md, completed/)
 
@@ -1267,7 +1267,7 @@ pytest testing/performance/ -v
 
 **Evidence.** NSM/datasets/sdf_dataset.py:1589 vs NSM/datasets/sdf_dataset.py:2188-2193
 
-### [stale] `planning/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md:4`
+### [stale] `.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md:4`
 
 > Add `sigma_coordinate_space` parameter to decouple sigma sampling from `scale_jointly` flag, enabling explicit control over coordinate space interpretation.
 
@@ -1326,7 +1326,7 @@ pytest testing/performance/ -v
 
 **Evidence.** pyproject.toml:30; requirements.txt:1-30
 
-### [cosmetic] `docs/KNOWN_ISSUES_HISTORY.md:25`
+### [cosmetic] `docs/KNOWN_ISSUES.md:25`
 
 > | **Fixed in** | `fix-lr-schedule-mapping`, Aug 2026 |
 
@@ -1346,9 +1346,9 @@ pytest testing/performance/ -v
 | `DEVELOPMENT.md` | **partly-stale** |
 | `Makefile` | **partly-stale** |
 | `docs/MULTI_SURFACE_REGISTRATION.md` | **partly-stale** |
-| `docs/KNOWN_ISSUES_HISTORY.md` | **partly-stale** |
-| `planning/BREAKING_CHANGE_PROPOSAL.md` | **aspirational** |
-| `planning/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` | **aspirational** |
-| `planning/HYBRID_OPTIMIZER_REPORT.md` | **accurate** |
+| `docs/KNOWN_ISSUES.md` | **partly-stale** |
+| `.claude/plans/BREAKING_CHANGE_PROPOSAL.md` | **aspirational** |
+| `.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` | **aspirational** |
+| `.claude/plans/HYBRID_OPTIMIZER_REPORT.md` | **accurate** |
 | `examples/load_trained_model.py` | **accurate** |
 

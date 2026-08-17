@@ -1,5 +1,24 @@
 # Ideas to improve NSM decoder training
 
+## State
+
+**Updated:** 2026-08-17 · **Status:** open
+
+> **This is the ideas file.** Per `CLAUDE.md` § Documents and work, new training ideas are
+> appended here rather than given their own plan. An idea graduates to its own plan only
+> when someone commits to executing it.
+
+- **Next:** nothing scheduled. Idea 3 (test the Eikonal loss) is the one with a live
+  dependency — it is `NSM_CODE_HEALTH_REFACTOR.md` §8.2, which found three independent
+  failures and gated the loss behind `NotImplementedError`.
+- **Blocked on:** nothing. Each entry is independent and can be picked up on its own.
+- **Done:** nothing from this list has been executed.
+- **Surprises:** the Eikonal loss turned out to be unrunnable rather than untested — it
+  crashed on the first backward pass, cannot work at all for triplanar models, and opposes
+  the clamped-training regime NSM actually uses. See `NSM_CODE_HEALTH_REFACTOR.md` §8.2.
+
+---
+
 **Status:** Open master list — a running register of decoder-training changes
 to try. Not a single sequenced plan; each entry is an independent experiment
 that can be picked up on its own. Append new ideas as they come up.

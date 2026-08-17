@@ -199,7 +199,7 @@ current production models before assuming either is better. Not yet done.
 |---|---|
 | **Affects** | Ongoing — not yet fixed |
 | **Severity** | Silent — ~100× over/under-sampling with no error |
-| **Tracking** | Issue #3; `planning/BREAKING_CHANGE_PROPOSAL.md` |
+| **Tracking** | Issue #3; `.claude/plans/BREAKING_CHANGE_PROPOSAL.md` |
 
 `SDFSamples` interprets `sigma_near` / `sigma_far` in two different coordinate spaces
 depending on the `scale_jointly` flag:

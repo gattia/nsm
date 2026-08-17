@@ -1,21 +1,53 @@
 # Plan: NSM code-health audit and refactor
 
-**Status:** **Open.** Phase A (LR fix) delivered 2026-08-14/15 — PRs #9, #10, #11 merged.
-Phase 0 (scope) and Phase 1 (map) delivered 2026-08-15 — `docs/SCOPE.md`,
-`docs/ARCHITECTURE.md`, `docs/AUDIT_FINDINGS.md`. Phases 2–4 not started.
-**Created:** 2026-08-14. **Last updated:** 2026-08-15.
+**Repo:** `gattia/nsm` (NSM). **Created:** 2026-08-14.
 
-> `main` merged in at `458e6e6`, so everything §4 and §9 cite now exists in this tree.
-> Baseline for all measurements below: 11,861 lines, 34% coverage, 153 tests + 1 skip, 13.1s.
-**Repo:** `gattia/nsm` (NSM).
+## State
+
+**Updated:** 2026-08-17 · **Status:** open
+
+- **Next:** file the open defects as issues (they were held in `planning/DEFECT_WORKLIST.md`
+  until 2026-08-17; the surviving ones are in `docs/KNOWN_ISSUES.md` § Open awaiting
+  filing). Then §7.2 contract tests, or Phase 4.
+- **Blocked on:** nothing. Phase 0b (downstream consumer survey) gates only the physical
+  quarantine move, not the map.
+- **Done:**
+  - Seeding fix + harness punch-list — `eaee68c`, `e432f9a`, `d2ba1c7`, `94b48f0`
+  - Phase 3 §7.1 numerical regression harness — PRs #13, #14
+  - Phase 1 map — `docs/ARCHITECTURE.md`, `docs/AUDIT_FINDINGS.md`
+  - Phase 0 scope — `docs/SCOPE.md`
+  - Phase A LR fix — PRs #9, #10, #11
+- **Surprises:**
+  - **"Fixed seed" was not available.** NSM called no seeding function anywhere, and the
+    near-surface sampler could not be seeded by any caller. Closed via pymskt 0.1.21 plus
+    `derive_seed`; see `docs/KNOWN_ISSUES.md` § History.
+  - **The seed had to be *derived*, per (subject, sampling pass, surface), keyed on mesh
+    content.** Keying on list position and then on the cache hash each silently changed a
+    subject's data when something unrelated moved.
+  - **"Pin current behaviour, bugs included" reported the opposite of the truth.** Written
+    that way, ~20 tests passed *because* something was broken. They now assert the
+    behaviour NSM should have, marked `xfail(strict=True)`.
+  - **Quarantinable code was 882 lines, not ~1,800.** Every module the plan expected to
+    fall held a capability nothing else implements. Treat the 1,800 as a prediction that
+    was tested and failed.
+  - **Both inferred audit claims that were later tested were wrong**, in the direction of
+    overstatement — the triplanar "affine map" claim and the eikonal "forward+backward
+    runs" claim. This is why `AUDIT_FINDINGS.md` entries are hypotheses, not findings.
+
+> Measurements: run `pytest testing/ --cov=NSM` rather than trusting any figure quoted
+> below — the numbers in §1.3, §5 and §7 are as-measured-then and are not maintained.
+
+---
+
 **Motivation:** The LR-schedule bug (see §1) was a silent numerical error that ran
 undetected for ~3 years and was found by an external collaborator, not by us. It is a
 symptom, not an incident. This plan makes that class of bug findable and preventable.
 
 > **Scope.** Code health only: documentation accuracy, structural mapping, test coverage,
 > and decomposition of monoliths. Deliberately **out of scope**: new science
-> (`NSM_TRAINING_IDEAS.md`, `NSM_RECTIFIED_FLOW_CORRESPONDENCE.md`) and the ICP work
-> (`NSM_ICP_REGISTRATION_ROBUSTNESS.md`). Those resume *after* Phase 2, on firmer ground.
+> (`NSM_TRAINING_IDEAS.md`, `NSM_RECTIFIED_FLOW_CORRESPONDENCE.md`) and the ICP
+> registration-robustness work, which has no plan file in this repo. Those resume *after*
+> Phase 2, on firmer ground.
 
 ---
 
@@ -41,7 +73,7 @@ the top of `train_epoch`, so the correct values are overwritten before the first
 `schedule_free_*` runs skipped `adjust_learning_rate` and so were never mis-mapped — but
 they were arguably hurt worse, since every config was *tuned* against the Adam path and
 running one schedule-free applies the values inverted and undecayed. See
-`docs/KNOWN_ISSUES_HISTORY.md` §1.
+`docs/KNOWN_ISSUES.md` §1.
 
 Reported 2026-07-10 by an external collaborator, credited in the ledger.
 
@@ -111,7 +143,7 @@ outside this repo. Enumerating it is the first Phase 0 task (§3), not an input 
 | 6 | pyvista `polydata._faces` syntax update | upstream API rot |
 
 Four of five are exactly what a systematic audit surfaces. Issue #3 is already written up
-as `planning/BREAKING_CHANGE_PROPOSAL.md` and stalled mid-Phase-1.
+as `.claude/plans/BREAKING_CHANGE_PROPOSAL.md` and stalled mid-Phase-1.
 
 ---
 
@@ -191,7 +223,7 @@ because it is the **pattern** every subsequent behaviour-changing fix should fol
   `KeyError` — which is skipped for `schedule_free_*` and would have failed hours in.
 - **Migration code isolated** in `NSM/_lr_migration.py`, with a delete-when condition in
   its header.
-- `docs/KNOWN_ISSUES_HISTORY.md` seeded, with ShapeMedKnee_2024 as a worked example.
+- `docs/KNOWN_ISSUES.md` seeded, with ShapeMedKnee_2024 as a worked example.
 
 ### Approaches tried and rejected
 
@@ -301,19 +333,11 @@ of these is small and independent of the decomposition work:
 
 ## 7. Phase 3 — Test to a known-good baseline
 
-> **STATUS 2026-08-16: §7.1 is DONE and merged** (PRs #13, #14 into
-> `plan-code-health-refactor`). `testing/NSM/regression/`, 117 tests, ~20s, green in CI via
-> `make test`. Every checkbox in §7.1 below is ticked. Findings are in
-> `planning/TEST_HARNESS_NOTES.md`, the resulting work queue in
-> `planning/DEFECT_WORKLIST.md`, and the current state plus what to do next in
-> `planning/HANDOFF_2026-08-16.md` — **start there.**
->
-> Two things §7.1 assumed that turned out to be false, both now recorded:
-> - **"fixed seed" does not work.** NSM seeds nothing, and the near-surface sampler could
->   not be seeded at all. Fixed upstream in pymskt 0.1.21 (gattia/pymskt#54); the NSM half
->   is still open as worklist #3.
-> - **Green does not mean correct.** 20 assertions describe known-broken behaviour and are
->   `xfail(strict=True)`, so fixing one turns the suite red until its mark is removed.
+> **§7.1 is DONE** (PRs #13, #14, then `eaee68c`/`94b48f0`). `testing/NSM/regression/`,
+> green in CI via `make test`; what it asserts and how to work on it is in that directory's
+> `README.md`. Every checkbox in §7.1 below is ticked. The defects it surfaced are in
+> `docs/KNOWN_ISSUES.md` § Open. See the **State** block at the top of this file for
+> what to do next and for what §7.1 assumed that turned out to be false.
 >
 > §7.2 has NOT started. Phase 4 is now unblocked.
 
@@ -352,7 +376,7 @@ worst findings untouched, so add:
 - [ ] **Name the CPU/GPU gap rather than discovering it later.** A <2-minute CI harness is
       CPU; production is CUDA. Add a separate opt-in GPU test asserting the seed-ordering
       constraint `kneepipeline` depends on (`torch.manual_seed` *after* `.cuda()`, per
-      `docs/KNOWN_ISSUES_HISTORY.md`), and state in the harness that CPU baselines do not
+      `docs/KNOWN_ISSUES.md`), and state in the harness that CPU baselines do not
       bound GPU divergence.
 
 Roughly 30–40% more than the original four items, still one bounded artifact, still under
@@ -410,8 +434,8 @@ extracted piece properly.
       TODO to do exactly this — it has been waiting.
 - [ ] `reconstruct/main.py`: separate latent optimization, mesh generation, evaluation.
 - [ ] Fold in the stalled API-cleanup plans, which are Phase-4-shaped and should not run
-      separately: `planning/BREAKING_CHANGE_PROPOSAL.md` +
-      `planning/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` (issue #3).
+      separately: `.claude/plans/BREAKING_CHANGE_PROPOSAL.md` +
+      `.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` (issue #3).
 - [ ] Close issues #1, #2, #5, #6 as the relevant modules are touched.
 
 ### 8.1 Make the library plural — added 2026-08-15
@@ -452,7 +476,7 @@ unlocks the others: until there is one supported way to build a model from a con
 (`train_deep_sdf`, `reconstruct_latent`), with the message in `NSM/losses.py`.
 `testing/NSM/test_losses.py` pins it and is written to **fail once the loss works** —
 deleting that file is part of fixing this. No results are affected — the path always crashed, so per `CLAUDE.md` it gets no
-`KNOWN_ISSUES_HISTORY.md` entry. Neither ShapeMedKnee config contains the key and
+`KNOWN_ISSUES.md` entry. Neither ShapeMedKnee config contains the key and
 `kneepipeline` never passes it; production has never touched this code.
 
 Three independent failures, in the order they must be fixed:
@@ -493,7 +517,7 @@ in a year.
 
 ## 9. Deliverable: the bug provenance ledger
 
-New file `docs/KNOWN_ISSUES_HISTORY.md`. For science code this is a first-class artifact —
+New file `docs/KNOWN_ISSUES.md`. For science code this is a first-class artifact —
 it answers "which of my results are affected?", which a code comment cannot.
 
 Each entry: what was wrong, exact date range affected, which configs/optimizers/code paths,
@@ -561,10 +585,9 @@ land, the library is still meaningfully safer than it is today.
 
 | Document | Status | Relationship |
 |---|---|---|
-| `planning/BREAKING_CHANGE_PROPOSAL.md` | Phase 1 partial | Fold into Phase 4 |
-| `planning/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` | Not started | Fold into Phase 4 |
-| `planning/HYBRID_OPTIMIZER_REPORT.md` | Findings, Aug 2025 | Reference for `reconstruct/main.py` |
-| `.claude/plans/NSM_ICP_REGISTRATION_ROBUSTNESS.md` | Open, Phase 0 done | Resume after Phase 2 |
+| `.claude/plans/BREAKING_CHANGE_PROPOSAL.md` | Phase 1 partial | Fold into Phase 4 |
+| `.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` | Not started | Fold into Phase 4 |
+| `.claude/plans/HYBRID_OPTIMIZER_REPORT.md` | Findings, Aug 2025 | Reference for `reconstruct/main.py` |
 | `.claude/plans/NSM_RECTIFIED_FLOW_CORRESPONDENCE.md` | Proposed | Blocked on stable interpolation API |
 | `.claude/plans/NSM_TRAINING_IDEAS.md` | Open master list | Idea 3 (test Eikonal loss) belongs in Phase 3 |
 | `.claude/plans/completed/NSM_MESH_INTERPOLATION_IMPROVEMENTS_COMPLETED.md` | Complete 2026-05-22 | Target-state example |

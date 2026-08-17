@@ -6,6 +6,41 @@ rectified-flow plan; Track B moved to `NSM_RECTIFIED_FLOW_CORRESPONDENCE.md`).
 **Repo:** `/dataNAS/people/aagatti/programming/NSM/` (NSM). Sole production
 consumer: `nsosim` → the comak gait pipeline.
 
+## State
+
+**Updated:** 2026-08-17 · **Status:** done (2026-05-22)
+
+- **Next:** nothing. The remaining ~40-50% menisci seam fold-over is out of this plan's
+  reach by construction — see **Diverged** below.
+- **Blocked on:** nothing.
+- **Done:** see **Completion Notes** immediately below, which is this plan's `Delivered`
+  section and is not duplicated here.
+- **Surprises:** see **Diverged** below.
+
+## Diverged
+
+Where the work departed from the plan as written. This is the part that exists nowhere
+else — the code shows what was built and git shows when, but only this says what we
+believed beforehand and why it was wrong.
+
+- **Fix 3 (latent-advection predictor) was implemented and then rejected.** It diverged
+  (`a208381` fixed the divergence, `875e4f1` rejected it anyway). The plan assumed all six
+  fixes would be keepers; one was not.
+- **Two fixes were invented during the work and were not in the plan** — Fix 7
+  (smoothed-normals projection, `ec489ad`) and Fix 8 (iterative source-mesh refinement,
+  `9fe360d`). Fix 7 needed its own divergence fix (`03988dd`) via dihedral-angle seam
+  detection, and Fix 8 needed capping three separate times (`b9dda1f`, `9eee303`,
+  `b125e35`) before it stopped running away.
+- **The headline goal was not reached, and could not have been.** The plan aimed to reduce
+  menisci fold-over with numerical fixes alone. It got ~50%; the residual is
+  local-triangulation pathology at the seam that **no Track-A fix removes**. That finding
+  is what motivated `NSM_RECTIFIED_FLOW_CORRESPONDENCE.md` — the conclusion of this plan is
+  the premise of that one.
+- **The production recommendation is narrower than the option set.** Eight fixes shipped as
+  kwarg-gated options; exactly two are recommended (Fix 2 + Fix 4c at θ=45°). The other six
+  are reachable, tested, and not advised — which is a maintenance surface the plan did not
+  anticipate creating.
+
 ## Completion Notes
 
 **Date completed:** 2026-05-22

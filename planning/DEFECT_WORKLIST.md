@@ -60,7 +60,7 @@ Status: `[ ]` open · `[~]` in progress · `[x]` fixed (and its pinning test upd
   *Blast radius:* every existing cache entry misses and is regenerated. That is the point,
   but it is not free — regeneration is not reproducible until #3 lands, so a rebuild
   produces *different* data, not the same data.
-  *Needs a `docs/KNOWN_ISSUES_HISTORY.md` entry* — it silently changes training output for
+  *Needs a `docs/KNOWN_ISSUES.md` entry* — it silently changes training output for
   inputs that previously ran without error.
   *Pinned by:* `test_dataset_cache.TestUnhashedParametersCollide` (5 tests, including the
   measured 4.4× loss of interior samples for the small surface).
@@ -101,7 +101,7 @@ Status: `[ ]` open · `[~]` in progress · `[x]` fixed (and its pinning test upd
 ### `read_meshes_get_sampled_pts` / the sampling path (`:404`)
 
 - [x] **3. Make sampling reproducible.** *Fixed Aug 2026. History:
-  `docs/KNOWN_ISSUES_HISTORY.md` §4.*
+  `docs/KNOWN_ISSUES.md` §4.*
 
   Both halves are in. Upstream, `pymskt.Mesh.rand_pts_around_surface` gained a `seed`
   ([pymskt#54](https://github.com/gattia/pymskt/issues/54) →

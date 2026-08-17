@@ -94,9 +94,98 @@ A plan for a non-trivial change should state, before any code:
 ### Numerical-behaviour changes
 
 Any fix that silently changes training or reconstruction output for inputs that
-previously ran without error needs an entry in `docs/KNOWN_ISSUES_HISTORY.md`. The test is
-whether a reader can determine, years later, if a run they have on disk is affected and
+previously ran without error needs an entry in `docs/KNOWN_ISSUES.md` § History. The test
+is whether a reader can determine, years later, if a run they have on disk is affected and
 what to do about it. Bugs that always crashed need no entry — nobody has results from them.
+
+## Documents and work
+
+**Two homes for knowledge, one queue for work.**
+
+| Where | Holds | Deleting it loses |
+|---|---|---|
+| `docs/` | What is true of the library | Facts about the code |
+| `.claude/plans/` | Intent and state of in-flight work | Why you are mid-refactor |
+| GitHub issues | What we intend to fix | The queue, not any fact |
+
+Nothing else. No `planning/`, no notes files, no findings registers, no handoffs. When
+something has no obvious home it goes to an issue or `docs/KNOWN_ISSUES.md` — starting a
+new file is how a repo ends up with eleven of them.
+
+### `docs/` — three files, plus one per user-facing feature
+
+- **`SCOPE.md`** — supported, deprecated, dead, or unsupported by design
+- **`KNOWN_ISSUES.md`** — **Open**: reproduced, user-visible, not fixed yet.
+  **History**: was wrong, silently changed results, now fixed.
+- **`ARCHITECTURE.md`** — invariants and traps. No table a command regenerates.
+
+Durable facts live here, never in an issue. Issues live on GitHub; the repo is what
+survives. "Which of my runs are affected by this" must be readable in 2031 by someone who
+has the repo and not necessarily the tracker.
+
+### `.claude/plans/` — one per initiative, ≤5 active
+
+Each plan opens with its own state. There is no separate handoff file: a global
+"where we are" cannot survive two concurrent plans. For what a plan must state before any
+code is written, see [Plans](#plans) above.
+
+```
+## State
+**Updated:** YYYY-MM-DD · **Status:** open | blocked | done
+
+- **Next:** the single next action
+- **Blocked on:** nothing
+- **Done:** what landed, each line naming the PR that landed it
+- **Surprises:** an assumption that turned out false, and what replaced it
+```
+
+A completed plan **keeps its body** and moves to `completed/`, gaining two sections:
+
+```
+## Delivered   — what actually shipped, with PR links
+## Diverged    — where reality differed from the plan, and why
+```
+
+`Diverged` is the most valuable thing in the file and it exists nowhere else: the code
+shows what was built, git shows when, and only this shows what we believed beforehand and
+why it was wrong. Do not compress it.
+
+What a plan is *not* is a running log. Keep the intent as written, mark what changed
+against it, and let the PR links carry the detail. Ideas go in the single ideas file,
+never one file per idea.
+
+### Issues — the only work queue
+
+The bar is **evidence plus a fixable statement**: you reproduced it, and you can say what
+"fixed" means. You cannot file one without having run something. That bar is the whole
+point — it is what stops a tracker filling with speculation.
+
+- **Closes** by a PR, or by a decision not to fix — which moves it to `KNOWN_ISSUES.md`
+  § Open or `SCOPE.md`. A won't-fix that closes nowhere becomes the eleventh document.
+- **Order by `file:function`**, so issues surface as you open each file. That is the only
+  moment anyone has the context to act on one.
+- Tests name the issue number in their `xfail` reason.
+
+### Four rules
+
+1. **A number is computed or it is not committed.** Worth keeping → a test computes it (a
+   tolerance's headroom over its measured break; an assertion goes red rather than stale)
+   or CI publishes it (coverage, suite timing). What is forbidden is the hand-transcribed
+   number: stale the day after it is written, and nothing says so.
+2. **Inference is not a finding.** If you did not run it, it is a hypothesis: it goes in a
+   plan's **Next**, not in `docs/` and not in an issue.
+3. **Evidence lives in the test and its docstring.** A measurement that cannot be asserted
+   — why a deliberate break is 20 vertices and not 1 — belongs in the docstring of the test
+   it constrains. Delete it and the next reader simplifies the test back into uselessness.
+4. **A PR that closes work deletes the notes that closing it made obsolete, and leaves a
+   pointer to the PR that closed it.** Not "net-negative lines" — a permanent, non-obvious
+   fact should cost lines. What must not survive is scaffolding answering a question nobody
+   is asking.
+
+### Correcting
+
+When you touch code a `docs/` file describes, verify it in the same commit or put
+`> ⚠️ Unverified since <date>` at its top. A stale doc that says so is honest.
 
 ## Architecture
 
@@ -194,7 +283,7 @@ Several groups may share a target: every decoder and the classification heads al
 the `model` schedule. That many-to-one relation is why group `name` and schedule `Target`
 are separate fields rather than one.
 
-Background: `docs/KNOWN_ISSUES_HISTORY.md` §1 — a positional-mapping bug swapped these two
+Background: `docs/KNOWN_ISSUES.md` §1 — a positional-mapping bug swapped these two
 schedules on every Adam/AdamW run from May 2023 to Aug 2026.
 
 ### Dependencies
