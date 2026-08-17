@@ -81,7 +81,7 @@ to do so on every run:
 - `test_training_regression.TestDeliberateBreak` transposes the two learning-rate
   `Target` labels — the exact shape of the bug in `docs/KNOWN_ISSUES_HISTORY.md` §1 — and
   asserts the LR, loss and latent baselines all reject the result.
-- `test_reconstruction_regression.TestDeliberateBreak` dents an input mesh — 20 of the bone
+- `test_reconstruction_regression.TestDeliberateBreak` dents an input mesh — one of the bone
   sphere's 530 vertices, displaced by a quarter of its radius — and asserts the latent and
   geometry baselines reject the result.
 
@@ -115,10 +115,12 @@ tolerance an observed deviation actually is; both `TestDeliberateBreak` classes 
 `MIN_HEADROOM` (10) and print the measured multiple when they fail, so a fixture change that
 weakens a break goes red on the run that weakens it. A hand-transcribed table used to stand
 here, under the claim that every tolerance was "at least an order of magnitude" below the break
-it catches, and its two reconstruction rows were both wrong: the same breaks measure 95× and
-469× today against the 24× and 58× it recorded. The one margin genuinely under 10× is not in
-this suite at all — it is `test_gpu`'s surface-centroid divergence, 2.4× `GEOMETRY_ATOL`, and it
-was invisible for as long as that module compared against its own wrong copy of the number.
+it catches, and both of its reconstruction rows were wrong — by 4× and 8×, in the direction
+that made the breaks look weaker than they were. That error had already cost something: the
+dent below was widened from one vertex to twenty to escape a margin that was never real. The
+one margin genuinely under 10× is not in this suite at all — it is `test_gpu`'s surface-centroid
+divergence, 2.4× `GEOMETRY_ATOL`, and it was invisible for as long as that module compared
+against its own wrong copy of the number.
 
 Two things have no headroom to measure and are not asserted against `MIN_HEADROOM`: learning
 rates, compared exactly (`Initial * Factor ** (epoch // Interval)` in Python floats), and
@@ -126,13 +128,12 @@ rates, compared exactly (`Initial * Factor ** (epoch // Interval)` in Python flo
 **largest** element a break moves, because `np.allclose` rejects a value as soon as any one
 element is out of tolerance.
 
-The reconstruction break is a **dent — 20 of the bone's 530 vertices**, displaced by a
-quarter of its radius — and not the single vertex it used to be. One vertex is not enough
-once the fixture samples near the surface: it shifts the fitted latent by 7.4e-4, a bare
-1.5× `FITTED_LATENT_ATOL`, and deepening it does not rescue that (a full-radius displacement of one
-vertex gives 3.3e-3, and non-monotonically). Near-surface sampling spreads its points over
-the whole surface, so widening the dent is the lever that works. The tolerances were not
-touched.
+The reconstruction break is **one vertex of the bone sphere's 530**, displaced by a quarter of
+its radius — the smallest geometry change this fixture can express. It clears the floor with
+34.8× to spare. Enlarging it is not the response to a failure here: 5 vertices measure 69× and
+10 measure 119×, so raising that number can only make a failing break pass, which is loosening
+a tolerance wearing a different hat. If this margin ever drops, the fixture or the tolerance is
+what moved.
 
 ### Platform
 
