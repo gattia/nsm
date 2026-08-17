@@ -167,13 +167,24 @@ Harmless there — `reconstruct_mesh` never constructs a dataset — but the lin
 what it looks like it does.
 *Pinned by:* `test_dataset_cache.TestCacheLocationDefault`.
 
-### `Pool` deadlocks on a second dataset in one process
+### `Pool` deadlocks after an in-process build
 
-Constructing a second `SDFSamples`/`MultiSurfaceSDFSamples` with the default
-`multiprocessing=True` hangs indefinitely with idle workers (`:954-957`). Fork-after-VTK,
-and long-standing — it reproduces on pre-Aug-2026 code. Cheapest honest fix is a `spawn`
-context; the cheapest fix of all is documenting it on `multiprocessing=`. Either beats a
-hang with no message.
+A `multiprocessing=True` build hangs indefinitely with idle workers (`:954-957`) **if a
+dataset was already built in the same process with `multiprocessing=False`.** Fork-after-VTK.
+
+The trigger is narrower than "a second dataset", and the distinction matters because
+`multiprocessing=True` is the constructor default:
+
+| Sequence in one process | Result |
+|---|---|
+| `multiprocessing=True` → `multiprocessing=True` | **Fine.** Measured 2.6 s then 0.4 s |
+| `multiprocessing=False` → `multiprocessing=True` | **Hangs.** First build 5.7 s, second never returns |
+
+So a script that builds a train split in-process and then a val split on the default path
+deadlocks, with no message, on the second one. Long-standing rather than new.
+
+Cheapest honest fix is a `spawn` context; the cheapest fix of all is documenting it on
+`multiprocessing=`. Either beats a hang with no output.
 *Worked around in:* `test_dataset_cache.TestSeedDerivation`, which builds its two datasets
 in separate subprocesses.
 
