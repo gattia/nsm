@@ -21,10 +21,20 @@ import sys
 
 import numpy as np
 import pytest
-from _harness import build_dataset, write_synthetic_meshes
+from _harness import (
+    build_dataset,
+    build_model,
+    build_single_surface_dataset,
+    run_training,
+    training_config,
+    write_synthetic_meshes,
+)
 
 #: One subject, few points: these tests are about keys and content identity, not numbers.
 SMALL = dict(n_pts=[600, 600], subsample=64)
+
+#: The same, for the single-surface parent class, whose ``n_pts`` is a scalar.
+SMALL_SINGLE = dict(n_pts=600, subsample=64)
 
 
 @pytest.fixture(scope="module")
@@ -518,6 +528,100 @@ class TestSeedDerivation:
             ), f"{name} differs between the serial and pooled builds"
 
 
+@pytest.fixture(scope="module")
+def bone_meshes(tmp_path_factory):
+    """``[bone, bone]`` -- single paths, not pairs, which is what ``SDFSamples`` takes."""
+    pairs = write_synthetic_meshes(tmp_path_factory.mktemp("single_meshes"))[:2]
+    return [pair[0] for pair in pairs]
+
+
+class TestSingleSurfaceSDFSamples:
+    """
+    The same seeding contract, on the single-surface PARENT class.
+
+    ``SDFSamples`` is not ``MultiSurfaceSDFSamples`` with one surface: it has its own
+    ``get_sample_data_dict``, ``get_pt_sample_combos`` and ``__getitem__``, and its own
+    call to ``read_mesh_get_sampled_pts`` -- the *other* sampler, not the one the subclass
+    uses. Nothing ``TestSeeding`` and ``TestSeedDerivation`` establish above carries over
+    to any of it, and until this class existed nothing in ``testing/`` constructed an
+    ``SDFSamples`` at all.
+
+    The four properties below are the subclass's, restated. They are the ones that would
+    let a seeded run silently stop being reproducible.
+    """
+
+    @pytest.fixture(scope="class")
+    def dataset(self, bone_meshes, tmp_path_factory):
+        return build_single_surface_dataset(
+            bone_meshes, tmp_path_factory.mktemp("single_build"), **SMALL_SINGLE
+        )
+
+    @pytest.fixture(scope="class")
+    def seeded_pair(self, bone_meshes, tmp_path_factory):
+        """The same ``random_seed`` against two *cold*, separate caches."""
+        return [
+            build_single_surface_dataset(
+                bone_meshes, tmp_path_factory.mktemp(f"single_seeded_{label}"), **SMALL_SINGLE
+            )
+            for label in ("a", "b")
+        ]
+
+    def test_it_builds_and_caches_one_file_per_subject(self, dataset, bone_meshes):
+        assert len(dataset.data) == len(bone_meshes)
+        for path in dataset.data:
+            assert os.path.exists(path) and path.endswith(".npz")
+
+    def test_the_scalar_n_pts_is_the_point_count_that_lands_in_the_cache(self, dataset):
+        """
+        The parent preallocates ``data["xyz"]`` with the scalar ``self.n_pts``
+        (``sdf_dataset.py:1275``) where the subclass uses ``sum(self.n_pts)`` over its
+        per-surface list. Both are right for their own class; this pins that the scalar
+        one is, so a later attempt to unify the two cannot quietly truncate this path.
+        """
+        assert cached_arrays(dataset)["pts"].shape == (SMALL_SINGLE["n_pts"], 3)
+
+    def test_the_same_seed_reproduces_a_cold_run(self, seeded_pair):
+        """
+        Two separate cache directories, so neither run can be reading the other's file --
+        the warm-cache illusion that hid the unseeded sampler for as long as it did.
+        """
+        first, second = seeded_pair
+        assert first.data[0] != second.data[0], "the two runs shared a cache file"
+        for index in range(len(first.data)):
+            assert np.array_equal(
+                cached_arrays(first, index)["pts"], cached_arrays(second, index)["pts"]
+            ), f"subject {index} did not reproduce"
+
+    def test_a_different_seed_gives_different_points(
+        self, seeded_pair, bone_meshes, tmp_path_factory
+    ):
+        """The guard on the test above: without this, "reproducible" could just mean inert."""
+        other = build_single_surface_dataset(
+            bone_meshes, tmp_path_factory.mktemp("single_other_seed"), seed=5678, **SMALL_SINGLE
+        )
+        assert not np.array_equal(cached_arrays(seeded_pair[0])["pts"], cached_arrays(other)["pts"])
+
+    def test_an_unseeded_run_is_not_reproducible(self, bone_meshes, tmp_path_factory):
+        """
+        ``random_seed=None`` must stay unseeded. Both runs get the same ``np.random.seed``
+        and still differ, which is the point: on the near-surface path the draw happens
+        inside ``pymskt.Mesh.rand_pts_around_surface``, off the global stream, so
+        ``random_seed`` is the only thing that can make it reproducible.
+        """
+        unseeded = [
+            build_single_surface_dataset(
+                bone_meshes,
+                tmp_path_factory.mktemp(f"single_unseeded_{label}"),
+                random_seed=None,
+                **SMALL_SINGLE,
+            )
+            for label in ("a", "b")
+        ]
+        assert not np.array_equal(
+            cached_arrays(unseeded[0])["pts"], cached_arrays(unseeded[1])["pts"]
+        )
+
+
 class TestConfigurationsThatDoNotRun:
     """
     Constructible-but-uncallable settings: advertised constructor arguments that build fine
@@ -559,29 +663,48 @@ class TestConfigurationsThatDoNotRun:
         item, _ = dataset[0]
         assert {"xyz", "gt_sdf"} <= set(item)
 
-    def test_store_data_in_memory_works_with_load_timing_off(self, meshes, tmp_path_factory):
-        """The workaround, recorded so the pairing is documented somewhere."""
-        dataset = build_dataset(
+    @pytest.fixture(scope="class")
+    def timing_free_dataset(self, meshes, tmp_path_factory):
+        """The apparent workaround for worklist #4: in memory, with load timing off."""
+        return build_dataset(
             meshes,
             tmp_path_factory.mktemp("in_memory_ok"),
             store_data_in_memory=True,
             test_load_times=False,
             **SMALL,
         )
-        item, index = dataset[0]
+
+    def test_store_data_in_memory_works_with_load_timing_off(self, timing_free_dataset):
+        """The workaround, recorded so the pairing is documented somewhere."""
+        item, index = timing_free_dataset[0]
         assert set(item) == {"xyz", "gt_sdf"} and index == 0
 
-    def test_train_epoch_needs_the_timing_keys(self):
+    def test_train_epoch_needs_the_timing_keys(self, timing_free_dataset, tmp_path_factory):
         """
         Why the pairing above is not a real workaround: ``train_epoch`` reads all four
-        timing keys unconditionally (``train_deep_sdf.py:578-581``), so the combination
-        that avoids the crash produces batches the trainer cannot consume.
-        """
-        import NSM.train.train_deep_sdf as trainer
+        timing keys unconditionally (``train_deep_sdf.py:589-592``), so the combination that
+        avoids the crash produces batches the trainer cannot consume.
 
-        source = inspect.getsource(trainer.train_epoch)
-        for key in ("size", "time", "mb_per_sec", "whole_load_time"):
-            assert f'sdf_data["{key}"]' in source
+        Asserted by running the trainer rather than by grepping its source, which is what
+        this used to do. A grep for ``sdf_data["size"]`` lies in both directions: it goes red
+        when the read is renamed or refactored without any behaviour changing, and it stays
+        green if the read is guarded -- the one edit that would actually fix this.
+
+        ``samples_per_object_per_batch`` has to follow ``SMALL``'s ``subsample``: mismatch
+        them and the run dies at the batch concatenation instead, several steps before the
+        key read this is about.
+        """
+        config = training_config(tmp_path_factory.mktemp("in_memory_train"))
+        config.update(
+            {
+                "n_epochs": 1,
+                "checkpoint_epochs": 1,
+                "save_frequency": 1,
+                "samples_per_object_per_batch": SMALL["subsample"],
+            }
+        )
+        with pytest.raises(KeyError, match="size"):
+            run_training(config, build_model(config), timing_free_dataset)
 
 
 class TestCacheLocationDefault:

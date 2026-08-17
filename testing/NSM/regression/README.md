@@ -7,7 +7,8 @@ decomposition can proceed without silently altering results. Findings that came 
 building it are in `planning/TEST_HARNESS_NOTES.md`.
 
 ```bash
-pytest testing/NSM/regression/ -q      # 103 passed, 18 xfailed; ~36 s (~25 s with no GPU)
+pytest testing/NSM/regression/ -q      # 113 passed, 18 xfailed; ~54 s (105 passed, 8 skipped,
+                                       # ~51 s with no GPU)
 pytest testing/NSM/regression/ -q -rx  # ... and list what the 18 xfails are
 make test                              # runs it along with everything else
 ```
@@ -102,28 +103,33 @@ rather than quietly rebaselining.
 Bump `SCHEMA_VERSION` in `_harness.py` only when the *meaning* of a stored key changes,
 not when a number moves.
 
-**Tolerances** are sized from the deliberate breaks, not chosen by taste. Learning rates are
-compared exactly — they are `Initial * Factor ** (epoch // Interval)` in Python floats.
-Every other tolerance is at least an order of magnitude below the break it has to catch:
+**Tolerances** are sized from the deliberate breaks, not chosen by taste — a number that has
+never been shown to catch anything is not a tolerance. They all live in `_harness.py`, in one
+block, imported by every module that compares against them. They were duplicated once and the
+copy was wrong: `test_gpu.py` carried its own `CPU_LATENT_ATOL` and `CPU_GEOMETRY_ATOL`, both
+`1e-4`, against real values of `5e-4` and `3e-4`, so it asserted GPU divergence against a bound
+five times tighter than the one it named.
 
-| Baseline | Tolerance | Break signal | Headroom |
-|---|---|---|---|
-| loss trajectory | `rtol=1e-3` | 1.55 relative (LR swap) | 1500× |
-| training latent norms | `atol=1e-4` | 4.3e-2 (LR swap) | 430× |
-| fitted latent | `atol=5e-4` | 1.2e-2 (dented bone) | 24× |
-| mesh geometry / deciles | `atol=3e-4` | 1.7e-2 (dented bone) | 58× |
-| surface metrics | `rtol=2e-3` | — | not a break detector |
+The margin is **asserted, not written down**. `_harness.headroom()` reports how many times its
+tolerance an observed deviation actually is; both `TestDeliberateBreak` classes require at least
+`MIN_HEADROOM` (10) and print the measured multiple when they fail, so a fixture change that
+weakens a break goes red on the run that weakens it. A hand-transcribed table used to stand
+here, under the claim that every tolerance was "at least an order of magnitude" below the break
+it catches, and its two reconstruction rows were both wrong: the same breaks measure 95× and
+469× today against the 24× and 58× it recorded. The one margin genuinely under 10× is not in
+this suite at all — it is `test_gpu`'s surface-centroid divergence, 2.4× `GEOMETRY_ATOL`, and it
+was invisible for as long as that module compared against its own wrong copy of the number.
 
-"Break signal" is the **largest** element the break moves, because `np.allclose` rejects a
-value as soon as any one element is out of tolerance. For the two trajectories the smallest
-per-element move is the more conservative figure and is still comfortable: the LR swap moves
-even its least-affected epoch's loss by 7.7% (77× `LOSS_RTOL`) and its least-affected latent
-norm by 3.8e-2 (380× `LATENT_ATOL`).
+Two things have no headroom to measure and are not asserted against `MIN_HEADROOM`: learning
+rates, compared exactly (`Initial * Factor ** (epoch // Interval)` in Python floats), and
+`METRIC_RTOL` / `COUNT_RTOL`, which are not break detectors. Headroom is taken over the
+**largest** element a break moves, because `np.allclose` rejects a value as soon as any one
+element is out of tolerance.
 
 The reconstruction break is a **dent — 20 of the bone's 530 vertices**, displaced by a
 quarter of its radius — and not the single vertex it used to be. One vertex is not enough
 once the fixture samples near the surface: it shifts the fitted latent by 7.4e-4, a bare
-1.5× `LATENT_ATOL`, and deepening it does not rescue that (a full-radius displacement of one
+1.5× `FITTED_LATENT_ATOL`, and deepening it does not rescue that (a full-radius displacement of one
 vertex gives 3.3e-3, and non-monotonically). Near-surface sampling spreads its points over
 the whole surface, so widening the dent is the lever that works. The tolerances were not
 touched.

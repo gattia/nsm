@@ -3,10 +3,17 @@ GPU-only checks. Skipped entirely when no CUDA device is present, which is every
 
 **The CPU baselines in this harness do not bound GPU divergence.** That is not a caveat,
 it is measured here: the same reconstruction, same seed, same weights, run on CUDA instead
-of CPU moves the fitted latent by ~4e-2 against a CPU tolerance of 1e-4, changes the
-reconstructed vertex count, and shifts the surface centroid by ~3e-3 against a CPU
-tolerance of 1e-4. A GPU run is a different numerical experiment. If GPU results ever need
-regression cover, they need their own baselines, generated on pinned hardware.
+of CPU moves the fitted latent by ~2.9e-2 against ``FITTED_LATENT_ATOL`` of 5e-4, changes
+the reconstructed vertex count, and shifts the surface centroid by ~7.2e-4 against
+``GEOMETRY_ATOL`` of 3e-4. A GPU run is a different numerical experiment. If GPU results
+ever need regression cover, they need their own baselines, generated on pinned hardware.
+
+Both tolerances come from ``_harness``. This module used to declare its own ``CPU_*``
+copies of them, both 1e-4, which had never matched the real values -- so the two assertions
+below were comparing against a bound five times and three times tighter than the one the
+CPU modules use, and could have passed while the claim they state was false. The margins
+against the true tolerances are 57x on the latent and only **2.4x** on the centroid: the
+geometry claim holds, but not with room to spare.
 
 The second thing here is the seed-ordering constraint the downstream consumer builds on.
 ``kneepipeline/steps/run_nsm.py:172`` seeds *after* ``model.cuda()`` and documents why:
@@ -17,13 +24,15 @@ The second thing here is the seed-ordering constraint the downstream consumer bu
 import numpy as np
 import pytest
 import torch
-from _harness import ARCHITECTURE, build_model, run_reconstruction
+from _harness import (
+    ARCHITECTURE,
+    FITTED_LATENT_ATOL,
+    GEOMETRY_ATOL,
+    build_model,
+    run_reconstruction,
+)
 
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA device")
-
-#: Tolerances the CPU modules use, repeated here so the comparison is explicit.
-CPU_LATENT_ATOL = 1e-4
-CPU_GEOMETRY_ATOL = 1e-4
 
 
 def on_cuda(model):
@@ -110,10 +119,10 @@ class TestGpuDivergesFromTheCpuBaseline:
         cpu = reconstruction["latent"].detach().cpu().numpy().ravel()
         gpu = gpu_reconstruction["latent"].detach().cpu().numpy().ravel()
         divergence = float(np.abs(cpu - gpu).max())
-        assert divergence > CPU_LATENT_ATOL, (
+        assert divergence > FITTED_LATENT_ATOL, (
             f"GPU and CPU latents now agree to {divergence:.3e}, inside the CPU tolerance "
-            f"of {CPU_LATENT_ATOL}. If that holds generally, the CPU baselines could cover "
-            f"GPU runs too -- worth confirming before relying on it."
+            f"of {FITTED_LATENT_ATOL}. If that holds generally, the CPU baselines could "
+            f"cover GPU runs too -- worth confirming before relying on it."
         )
 
     def test_the_gpu_geometry_is_outside_the_cpu_tolerance(
@@ -121,7 +130,11 @@ class TestGpuDivergesFromTheCpuBaseline:
     ):
         cpu = np.asarray(reconstruction["mesh"][0].point_coords).mean(axis=0)
         gpu = np.asarray(gpu_reconstruction["mesh"][0].point_coords).mean(axis=0)
-        assert float(np.abs(cpu - gpu).max()) > CPU_GEOMETRY_ATOL
+        divergence = float(np.abs(cpu - gpu).max())
+        assert divergence > GEOMETRY_ATOL, (
+            f"the GPU surface centroid now agrees with the CPU one to {divergence:.3e}, "
+            f"inside the CPU tolerance of {GEOMETRY_ATOL}."
+        )
 
     def test_the_gpu_result_is_still_the_same_shape(self, gpu_reconstruction, reconstruction):
         """
@@ -136,8 +149,8 @@ class TestGpuDivergesFromTheCpuBaseline:
     def test_the_gpu_result_is_still_broadly_correct(self, gpu_reconstruction, reconstruction):
         """
         A loose bound, so a GPU-only breakage is still caught even though the tight CPU
-        baselines cannot be used. 20% on the surface metrics is far above the ~2% observed
-        divergence and far below anything that would count as broken.
+        baselines cannot be used. 20% on the surface metrics is far above the observed
+        divergence (0.1% and 0.9%) and far below anything that would count as broken.
         """
         for key in ("assd_0", "assd_1"):
             assert gpu_reconstruction[key] == pytest.approx(reconstruction[key], rel=0.2)

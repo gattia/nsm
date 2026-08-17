@@ -22,23 +22,20 @@ import os
 import pytest
 import torch
 from _harness import (
+    LATENT_NORM_ATOL,
+    LOSS_RTOL,
     LR_SCHEDULE,
+    MIN_HEADROOM,
     N_EPOCHS,
     REGENERATE_ENV,
     build_model,
+    headroom,
     platform_matches,
     provenance,
     regenerating,
     run_training,
     training_config,
 )
-
-#: Sized from the deliberate break, not from taste. Transposing the two LR targets moves
-#: the loss trajectory by 155% at its widest (7.7% at its narrowest, epoch 1) and the final
-#: latent norms by 4.3e-2, so these leave two to three orders of magnitude of headroom for a
-#: different BLAS while still catching the break outright.
-LOSS_RTOL = 1e-3
-LATENT_ATOL = 1e-4
 
 
 def test_baselines_are_not_being_regenerated():
@@ -164,14 +161,14 @@ class TestLossTrajectory:
 class TestLatentCodes:
     def test_final_latent_norms_match_baseline(self, training_run, training_baseline):
         training_baseline.check(
-            "final_latent_norms", training_run["records"][-1]["latent_norms"], atol=LATENT_ATOL
+            "final_latent_norms", training_run["records"][-1]["latent_norms"], atol=LATENT_NORM_ATOL
         )
 
     def test_latent_norm_trajectory_matches_baseline(self, training_run, training_baseline):
         training_baseline.check(
             "latent_norm_trajectory",
             [r["latent_norms"] for r in training_run["records"]],
-            atol=LATENT_ATOL,
+            atol=LATENT_NORM_ATOL,
         )
 
     def test_one_latent_per_training_object(self, training_run, training_dataset):
@@ -213,6 +210,11 @@ class TestDeliberateBreak:
     These re-run training with the two learning-rate ``Target`` labels transposed -- the
     exact shape of the bug that started this work -- and assert that the baselines above
     reject the result. They are the reason those baselines can be trusted.
+
+    The two tolerance-based rejections also assert ``MIN_HEADROOM``, so how far outside the
+    tolerance the break lands is measured on every run instead of being written down once.
+    The learning-rate baseline is compared exactly (``rtol=atol=0``) and has no headroom to
+    measure.
     """
 
     @pytest.fixture(scope="class")
@@ -253,20 +255,32 @@ class TestDeliberateBreak:
         """
         if regenerating():
             pytest.skip("baselines are being rewritten")
+        losses = [r["loss"] for r in swapped_schedule_run]
         with pytest.raises(AssertionError, match="differs from baseline"):
-            training_baseline.check(
-                "loss_trajectory", [r["loss"] for r in swapped_schedule_run], rtol=LOSS_RTOL
-            )
+            training_baseline.check("loss_trajectory", losses, rtol=LOSS_RTOL)
+
+        measured = headroom(training_baseline, "loss_trajectory", losses, rtol=LOSS_RTOL)
+        assert measured >= MIN_HEADROOM, (
+            f"the LR swap moves the loss trajectory only {measured:.1f}x LOSS_RTOL "
+            f"({LOSS_RTOL}), under the MIN_HEADROOM of {MIN_HEADROOM}x. Widen the break, "
+            f"never the tolerance."
+        )
 
     def test_swapping_lr_targets_fails_the_latent_baseline(
         self, swapped_schedule_run, training_baseline
     ):
         if regenerating():
             pytest.skip("baselines are being rewritten")
+        norms = swapped_schedule_run[-1]["latent_norms"]
         with pytest.raises(AssertionError, match="differs from baseline"):
-            training_baseline.check(
-                "final_latent_norms", swapped_schedule_run[-1]["latent_norms"], atol=LATENT_ATOL
-            )
+            training_baseline.check("final_latent_norms", norms, atol=LATENT_NORM_ATOL)
+
+        measured = headroom(training_baseline, "final_latent_norms", norms, atol=LATENT_NORM_ATOL)
+        assert measured >= MIN_HEADROOM, (
+            f"the LR swap moves the final latent norms only {measured:.1f}x "
+            f"LATENT_NORM_ATOL ({LATENT_NORM_ATOL}), under the MIN_HEADROOM of "
+            f"{MIN_HEADROOM}x. Widen the break, never the tolerance."
+        )
 
 
 class TestClampedPredictionGradients:

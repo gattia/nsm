@@ -17,36 +17,34 @@ import numpy as np
 import pytest
 import torch
 import vtk
-from _harness import mesh_summary, regenerating, run_reconstruction
-
-#: Sized from the deliberate break below, which dents the input bone and shifts the fitted
-#: latent by 1.2e-2 and the vertex-position deciles by 1.7e-2 -- 24x and 58x these. They
-#: also sit well above the noise floor: the latent is 25 Adam steps from a seeded init, and
-#: the meshes come out of marching cubes on a float32 SDF grid and then a VTK float32 save
-#: (~5e-9 per point).
-LATENT_ATOL = 5e-4
-GEOMETRY_ATOL = 3e-4
-METRIC_RTOL = 2e-3
-
-#: Vertex counts can move by a vertex or two on a different platform's marching cubes.
-COUNT_RTOL = 0.03
+from _harness import (
+    COUNT_RTOL,
+    FITTED_LATENT_ATOL,
+    GEOMETRY_ATOL,
+    METRIC_RTOL,
+    MIN_HEADROOM,
+    headroom,
+    mesh_summary,
+    regenerating,
+    run_reconstruction,
+)
 
 #: Which synthetic surface each result index is supposed to be. The bone sphere is
 #: centred on the origin; the cartilage ellipsoid sits above it. See _harness.SUBJECTS.
 BONE, CART = 0, 1
 
 #: The deliberate break: displace the ``PERTURBED_VERTICES`` vertices nearest vertex 0 by
-#: ``PERTURBATION`` mesh units. The bone sphere has radius 1.0 and 530 vertices, so this is
-#: a dent a quarter of the radius deep covering ~4% of the surface -- still local, and not a
-#: rescale.
+#: ``PERTURBATION`` mesh units. The bone sphere has radius 1.0 and 530 vertices, so ONE
+#: vertex moved a quarter of the radius is the smallest geometry change this fixture can
+#: express -- and the harness catches it with 34.8x ``FITTED_LATENT_ATOL`` to spare.
 #:
-#: It is 20 vertices and not 1 because one is not enough on this fixture. Moving a single
-#: vertex shifts the fitted latent by 7.4e-4, only 1.5x ``LATENT_ATOL``, and pushing that
-#: one vertex further does not help: at a full radius it is still 3.3e-3, because
-#: near-surface sampling spreads its points over the whole surface and dilutes any single
-#: displaced vertex. Widening the dent is monotone where deepening it is not.
+#: Keep it at 1. A wider dent is easier to detect and therefore proves less: the measured
+#: headroom rises to 69x at 5 vertices and 119x at 10, so raising this number can only
+#: make a failing break pass, which is the same mistake as loosening a tolerance wearing a
+#: different hat. If this ever drops under ``MIN_HEADROOM``, the fixture or the tolerance
+#: is what changed, and that is what wants investigating.
 PERTURBATION = 0.25
-PERTURBED_VERTICES = 20
+PERTURBED_VERTICES = 1
 
 
 def summaries(result):
@@ -160,7 +158,7 @@ def surface_distance(reconstructed, original_path):
 class TestNumericalBaselines:
     def test_fitted_latent_matches_baseline(self, reconstruction, reconstruction_baseline):
         latent = reconstruction["latent"].detach().cpu().numpy().ravel()
-        reconstruction_baseline.check("fitted_latent", latent, atol=LATENT_ATOL)
+        reconstruction_baseline.check("fitted_latent", latent, atol=FITTED_LATENT_ATOL)
 
     def test_mesh_geometry_matches_baseline(self, reconstruction, reconstruction_baseline):
         reconstruction_baseline.check(
@@ -203,6 +201,15 @@ class TestDeliberateBreak:
     """
     The second half of "a harness nobody has seen fail is not evidence of anything":
     dent the input bone mesh and confirm the baselines reject the result.
+
+    Each rejection is paired with a ``MIN_HEADROOM`` assertion, so "the break is comfortably
+    outside the tolerance" is measured on every run rather than transcribed once. The
+    transcribed version was wrong by 4x when it was replaced, in the direction that made the
+    break look weaker than it was -- which is the argument for computing it.
+
+    If one of these fails, the break is not the thing to change. Making a deliberate break
+    bigger until it is detected proves only that a bigger break is detectable; see
+    ``PERTURBED_VERTICES``.
     """
 
     @pytest.fixture(scope="class")
@@ -224,7 +231,7 @@ class TestDeliberateBreak:
     ):
         original = reconstruction["latent"].detach().cpu().numpy().ravel()
         perturbed = perturbed_reconstruction["latent"].detach().cpu().numpy().ravel()
-        assert not np.allclose(original, perturbed, atol=LATENT_ATOL), (
+        assert not np.allclose(original, perturbed, atol=FITTED_LATENT_ATOL), (
             f"moving {PERTURBED_VERTICES} bone vertices by {PERTURBATION} left the fitted "
             f"latent inside the harness's tolerance -- the latent baseline would not catch "
             f"a geometry change"
@@ -237,17 +244,146 @@ class TestDeliberateBreak:
             pytest.skip("baselines are being rewritten")
         latent = perturbed_reconstruction["latent"].detach().cpu().numpy().ravel()
         with pytest.raises(AssertionError, match="differs from baseline"):
-            reconstruction_baseline.check("fitted_latent", latent, atol=LATENT_ATOL)
+            reconstruction_baseline.check("fitted_latent", latent, atol=FITTED_LATENT_ATOL)
+
+        measured = headroom(
+            reconstruction_baseline, "fitted_latent", latent, atol=FITTED_LATENT_ATOL
+        )
+        assert measured >= MIN_HEADROOM, (
+            f"the dent moves the fitted latent only {measured:.1f}x FITTED_LATENT_ATOL "
+            f"({FITTED_LATENT_ATOL}), under the MIN_HEADROOM of {MIN_HEADROOM}x. Widen the "
+            f"break -- more vertices, not a deeper dent -- never the tolerance."
+        )
 
     def test_denting_the_bone_fails_the_geometry_baseline(
         self, perturbed_reconstruction, reconstruction_baseline
     ):
         if regenerating():
             pytest.skip("baselines are being rewritten")
+        summary = summaries(perturbed_reconstruction)
         with pytest.raises(AssertionError, match="differs from baseline"):
-            reconstruction_baseline.check(
-                "mesh_geometry", summaries(perturbed_reconstruction), atol=GEOMETRY_ATOL
+            reconstruction_baseline.check("mesh_geometry", summary, atol=GEOMETRY_ATOL)
+
+        measured = headroom(reconstruction_baseline, "mesh_geometry", summary, atol=GEOMETRY_ATOL)
+        assert measured >= MIN_HEADROOM, (
+            f"the dent moves the mesh geometry only {measured:.1f}x GEOMETRY_ATOL "
+            f"({GEOMETRY_ATOL}), under the MIN_HEADROOM of {MIN_HEADROOM}x. Widen the "
+            f"break -- more vertices, not a deeper dent -- never the tolerance."
+        )
+
+
+#: Turns ``reconstruct_mesh``'s point draw on. ``RECON_KWARGS`` keeps ``get_rand_pts=False``
+#: -- every baselined number above is fitted to the mesh VERTICES -- and with it False the
+#: samplers return early and ``reconstruct_mesh``'s ``seed`` argument reaches nothing at
+#: all. These tests are the only ones in the suite where that argument does any work.
+#:
+#: ``n_pts_random`` is passed and IGNORED; see ``TestSampledReconstructionIsSeeded``. The
+#: draw is 200,000 points per surface either way, which is what each of these
+#: reconstructions ~4s costs and why there are only five of them.
+SAMPLED = dict(get_rand_pts=True, n_pts_random=200)
+
+SAMPLE_SEED = 7
+
+
+class TestSampledReconstructionIsSeeded:
+    """
+    ``reconstruct_mesh(seed=...)`` on the multi-object branch, which is the one the
+    downstream consumer takes.
+
+    Two things about this path are worth knowing before reading the assertions.
+
+    **The seed has to be handed over under a different name.** ``run_reconstruction``
+    declares its own ``seed`` -- the global torch/numpy one -- so it swallows the keyword
+    and ``reconstruct_mesh`` keeps its default of ``None``. The harness spells the
+    sampling seed ``sample_seed`` for that reason; passing ``seed=`` here would reseed
+    torch, leave the draw unseeded, and these tests would still pass three times out of
+    four while asserting nothing.
+
+    **``n_pts_random`` does not reach the sampler.** ``reconstruct_mesh`` passes it as
+    ``n_pts_random=`` to ``read_meshes_get_sampled_pts``, whose parameter is called
+    ``n_pts``; it lands in ``**kwargs`` and is dropped without a warning, so the draw uses
+    the default 200,000 per surface however small a number is asked for. Measured here as
+    400,688 points from a request for 200: 200,000 x 2, plus the 344 surface points
+    ``include_surf_in_pts`` appends -- twice, because that append reads a leaked loop
+    variable rather than the current surface. Neither is asserted on: they are library
+    defects, recorded so the cost of this class is explained rather than mysterious.
+
+    The single-object branch is not covered. It needs a one-output decoder, which this
+    fixture's model is not, and it is unreachable anyway: with ``get_rand_pts=True`` its
+    sampler returns the drawn points under ``xyz`` while ``reconstruct_mesh`` reads
+    ``result_["pts"]``, which only exists on the ``get_random=False`` path.
+    """
+
+    @pytest.fixture(scope="class")
+    def seeded_pair(self, synthetic_meshes, reconstruction_model):
+        return [
+            run_reconstruction(
+                synthetic_meshes[0], reconstruction_model, sample_seed=SAMPLE_SEED, **SAMPLED
             )
+            for _ in range(2)
+        ]
+
+    @pytest.fixture(scope="class")
+    def other_seed(self, synthetic_meshes, reconstruction_model):
+        return run_reconstruction(
+            synthetic_meshes[0], reconstruction_model, sample_seed=SAMPLE_SEED + 1, **SAMPLED
+        )
+
+    @pytest.fixture(scope="class")
+    def unseeded_pair(self, synthetic_meshes, reconstruction_model):
+        return [
+            run_reconstruction(
+                synthetic_meshes[0], reconstruction_model, sample_seed=None, **SAMPLED
+            )
+            for _ in range(2)
+        ]
+
+    @staticmethod
+    def _latent(result):
+        return result["latent"].detach().cpu().numpy().ravel()
+
+    def test_the_draw_actually_happened(self, seeded_pair, reconstruction):
+        """
+        The premise. ``reconstruction`` is the same subject and the same model with
+        ``get_rand_pts=False``, so if turning the draw on left the fit unchanged, every
+        assertion below would be about a code path that never ran.
+        """
+        assert not np.allclose(
+            self._latent(seeded_pair[0]), self._latent(reconstruction), atol=FITTED_LATENT_ATOL
+        )
+
+    def test_the_same_seed_fits_the_same_latent(self, seeded_pair):
+        first, second = (self._latent(result) for result in seeded_pair)
+        assert np.array_equal(first, second), f"max difference {np.abs(first - second).max():.3e}"
+
+    def test_the_same_seed_reconstructs_the_same_geometry(self, seeded_pair):
+        """
+        Exact vertex equality, not the decile summary the baselines use: this is one
+        process reconstructing one subject twice, so anything short of identical means the
+        draw moved.
+        """
+        first, second = seeded_pair
+        for index in (BONE, CART):
+            assert np.array_equal(
+                np.asarray(first["mesh"][index].point_coords),
+                np.asarray(second["mesh"][index].point_coords),
+            ), f"surface {index} differs between two runs at the same seed"
+
+    def test_a_different_seed_fits_a_different_latent(self, seeded_pair, other_seed):
+        """The guard: without it, "reproducible" would also be satisfied by a dead argument."""
+        assert not np.allclose(
+            self._latent(seeded_pair[0]), self._latent(other_seed), atol=FITTED_LATENT_ATOL
+        )
+
+    def test_an_unseeded_draw_is_not_reproducible(self, unseeded_pair):
+        """
+        ``sample_seed=None`` is the default and must stay unseeded. Both runs get the same
+        global torch and numpy seed from ``run_reconstruction`` and still diverge, which is
+        what shows the sampling seed -- not the global state -- is what makes the seeded
+        pair above agree.
+        """
+        first, second = (self._latent(result) for result in unseeded_pair)
+        assert not np.allclose(first, second, atol=FITTED_LATENT_ATOL)
 
 
 class NoZeroLevelSetDecoder(torch.nn.Module):

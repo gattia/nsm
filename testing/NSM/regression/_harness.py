@@ -228,6 +228,91 @@ def assert_matches(key, expected, actual, rtol=0.0, atol=0.0, context=""):
 
 
 # ---------------------------------------------------------------------------
+# Tolerances
+# ---------------------------------------------------------------------------
+#
+# Every numeric tolerance the harness compares against, in one block, because they are
+# cross-referenced and copies drift: ``test_gpu`` compares GPU divergence against the
+# reconstruction tolerances and used to carry its own 1e-4 copies of both, which had never
+# matched the real 5e-4 and 3e-4.
+#
+# Each is sized from a deliberate break rather than by taste, and that margin is now
+# asserted on every run rather than transcribed into a table -- see :data:`MIN_HEADROOM`.
+# The two latent tolerances are separate constants because they are separate quantities: a
+# training latent NORM and a component of a fitted latent VECTOR.
+
+#: Training: the loss trajectory and its components.
+LOSS_RTOL = 1e-3
+
+#: Training: the per-object latent norms.
+LATENT_NORM_ATOL = 1e-4
+
+#: Reconstruction: the fitted latent vector. Above its noise floor -- the latent is 25 Adam
+#: steps from a seeded init.
+FITTED_LATENT_ATOL = 5e-4
+
+#: Reconstruction: vertex-position deciles, bounding boxes, centroids, registration centre.
+#: Above the float32 floor -- marching cubes on a float32 SDF grid, then a VTK float32 save
+#: (~5e-9 per point).
+GEOMETRY_ATOL = 3e-4
+
+#: Reconstruction: ASSD and the registration scale. Not a break detector.
+METRIC_RTOL = 2e-3
+
+#: Reconstruction: mesh point counts, which marching cubes can move by a vertex or two.
+COUNT_RTOL = 0.03
+
+#: The floor on :func:`headroom`: how many times its tolerance a deliberate break must move
+#: a baseline for that tolerance to count as sized rather than coincidental. Asserted by
+#: both ``TestDeliberateBreak`` classes, so a fixture change that weakens a break goes red
+#: on the run that weakens it.
+MIN_HEADROOM = 10
+
+
+def _leaf_pairs(expected, actual, key):
+    """``(baseline, observed)`` float arrays, walking the nesting ``assert_matches`` allows."""
+    if isinstance(expected, dict):
+        assert set(expected) == set(
+            actual
+        ), f"{key}: baseline keys {sorted(expected)} != observed {sorted(actual)}"
+        for sub in expected:
+            yield from _leaf_pairs(expected[sub], actual[sub], f"{key}.{sub}")
+        return
+    exp = np.asarray(expected, dtype=float).ravel()
+    got = np.asarray(actual, dtype=float).ravel()
+    assert exp.shape == got.shape, f"{key}: baseline shape {exp.shape}, observed {got.shape}"
+    yield exp, got
+
+
+def headroom(store, key, observed, rtol=0.0, atol=0.0):
+    """
+    How many times the tolerance ``observed`` actually deviates from the baseline.
+
+    Same arguments as :meth:`BaselineStore.check`, and meant to be read beside it: ``check``
+    asserts the deviation is under 1x the tolerance, ``headroom`` says what it is. The
+    baseline is taken from the store rather than from ``check``'s return value because the
+    callers are the deliberate-break tests, where ``check`` raises instead of returning.
+
+    * ``atol``: ``max|observed - baseline| / atol``
+    * ``rtol``: ``max(|observed - baseline| / |baseline|) / rtol``
+
+    Exactly one of the two, because a margin against ``np.allclose``'s combined
+    ``atol + rtol * |baseline|`` has no single meaning.
+    """
+    if (atol > 0) == (rtol > 0):
+        raise ValueError("headroom takes exactly one of rtol= or atol=")
+
+    worst = 0.0
+    for expected, actual in _leaf_pairs(store.values[key], _jsonable(observed), key):
+        delta = np.abs(actual - expected)
+        scale = np.full(delta.shape, atol) if atol else rtol * np.abs(expected)
+        # A zero baseline under rtol can never be matched by a nonzero observation.
+        ratio = np.divide(delta, scale, out=np.full(delta.shape, np.inf), where=scale > 0)
+        worst = max(worst, float(np.max(np.where(delta == 0, 0.0, ratio))))
+    return worst
+
+
+# ---------------------------------------------------------------------------
 # Synthetic anatomy
 # ---------------------------------------------------------------------------
 
@@ -431,6 +516,53 @@ def build_dataset(mesh_paths, cache_dir, seed=0, **overrides):
         return MultiSurfaceSDFSamples(**kwargs)
 
 
+def build_single_surface_dataset(mesh_paths, cache_dir, seed=0, **overrides):
+    """
+    An ``SDFSamples`` -- the single-surface PARENT class -- on the same near-surface path.
+
+    Same conventions as :func:`build_dataset`, for the same reasons: explicit ``loc_save``,
+    ``multiprocessing=False``, and ``seed`` used both as ``random_seed`` and through
+    ``np.random.seed``.
+
+    What differs is the shape of the arguments, not their meaning. ``SDFSamples`` takes
+    SCALARS where the subclass takes one entry per surface -- ``n_pts`` is an int, the two
+    sigmas and the two probabilities are floats -- and ``mesh_paths`` is a list of single
+    paths rather than a list of lists. The multi-surface arguments (``mesh_to_scale``,
+    ``scale_all_meshes``) do not exist on the parent at all.
+
+    ``SDFSamples.get_sample_data_dict``, ``get_pt_sample_combos`` and ``__getitem__`` are
+    each separate code from the subclass's overrides, so nothing the subclass's tests
+    establish carries over to them.
+    """
+    from NSM.datasets.sdf_dataset import SDFSamples
+
+    kwargs = dict(
+        list_mesh_paths=mesh_paths,
+        subsample=SUBSAMPLE,
+        n_pts=N_PTS_PER_SURFACE,
+        p_near_surface=0.4,
+        p_further_from_surface=0.4,
+        sigma_near=SIGMA_NEAR,
+        sigma_far=SIGMA_FAR,
+        center_pts=True,
+        norm_pts=True,
+        scale_method="max_rad",
+        loc_save=str(cache_dir),
+        multiprocessing=False,
+        store_data_in_memory=False,
+        save_cache=True,
+        load_cache=False,
+        random_seed=seed,
+        fix_mesh=False,
+        equal_pos_neg=True,
+    )
+    kwargs.update(overrides)
+
+    np.random.seed(seed)
+    with quiet():
+        return SDFSamples(**kwargs)
+
+
 def build_model(config, seed=42):
     """
     Construct the decoder ``config`` describes, exactly as ``load_model`` would.
@@ -536,10 +668,28 @@ RECON_KWARGS = dict(
 )
 
 
-def run_reconstruction(mesh_paths, model, seed=42, **overrides):
+def run_reconstruction(mesh_paths, model, seed=42, sample_seed=None, **overrides):
     """
     Call ``reconstruct_mesh`` the way ``kneepipeline/steps/run_nsm.py:170`` does: a *list*
     of mesh paths, every argument by name.
+
+    Two different seeds meet here and they are not interchangeable:
+
+    * ``seed`` is this harness's own. It seeds ``torch`` and ``numpy`` globally before the
+      call, which covers the latent initialization and the latent optimizer.
+    * ``sample_seed`` is ``reconstruct_mesh``'s ``seed`` argument, which seeds the POINT
+      DRAW. It does nothing at all unless ``get_rand_pts=True``, and ``RECON_KWARGS``
+      leaves that False.
+
+    They need separate names because a parameter this function declares can never reach
+    ``overrides``: ``run_reconstruction(..., seed=7)`` reseeds torch and numpy and leaves
+    ``reconstruct_mesh`` on its default ``seed=None``. That shadowing is silent -- the
+    reconstruction still runs and still looks seeded -- so it is stated here rather than
+    left to be rediscovered.
+
+    ``sample_seed=None`` is the default and is what ``reconstruct_mesh`` would have used
+    anyway, so passing it explicitly leaves every existing caller, and every committed
+    baseline, bit-for-bit unchanged.
     """
     from NSM.reconstruct import reconstruct_mesh
 
@@ -548,7 +698,7 @@ def run_reconstruction(mesh_paths, model, seed=42, **overrides):
     torch.manual_seed(seed)
     np.random.seed(seed)
     with quiet():
-        return reconstruct_mesh(path=list(mesh_paths), decoders=model, **kwargs)
+        return reconstruct_mesh(path=list(mesh_paths), decoders=model, seed=sample_seed, **kwargs)
 
 
 #: Deciles of each coordinate axis. Compared instead of the raw vertex array because
