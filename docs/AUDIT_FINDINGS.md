@@ -1,13 +1,30 @@
 # Audit findings register
 
-Raw output of the Phase 1 mapping pass. Every entry was produced by reading the code on
-`main` at commit `73a0326` and carries a `file:line`. Nothing here has been fixed.
+> ## ⚠️ These are hypotheses, not findings. Do not cite an entry without re-running it.
+>
+> **178 of the 216 entries below were produced by reading the code, not by executing it**,
+> and every inferred claim that has since been tested was **wrong, in the direction of
+> overstatement** — the triplanar "affine map" claim (`ARCHITECTURE.md` §7.1) and the
+> eikonal "forward+backward runs" claim. Treat any entry as *a line number and a
+> suspicion*.
+>
+> The 38 executed entries are no safer to cite blind: they were run against `main` at
+> `73a0326`, and `sdf_dataset.py` alone has moved 104 lines since. **Executed once is not
+> true now.**
+>
+> **Delete when:** every entry is either a GitHub issue, an entry in `KNOWN_ISSUES.md`, a
+> ruling in `SCOPE.md`, or deleted. Per `CLAUDE.md` § Four rules, inference is not a
+> finding and does not belong in `docs/` — this file is transitional and its continued
+> existence is a debt, not an asset. Anything that does not survive re-running goes in a
+> plan's **Next**, not into `KNOWN_ISSUES.md`. Git has the rest.
 
-**This is not a to-do list.** It is the evidence base that Phase 2 (documentation),
-Phase 3 (tests) and Phase 4 (decomposition) draw from, and the pool that
-`docs/KNOWN_ISSUES.md` entries get promoted out of. An entry earns a ledger entry
-only if it silently changed numerical output for inputs that previously ran without error
-(the rule in `CLAUDE.md` § Numerical-behaviour changes).
+Raw output of the Phase 1 mapping pass. Every entry carries a `file:line`. Nothing here has
+been fixed.
+
+**This is not a to-do list** — GitHub issues are. It is the pool that `KNOWN_ISSUES.md`
+entries were promoted out of, and an entry earns a History entry only if it silently
+changed numerical output for inputs that previously ran without error (the rule in
+`CLAUDE.md` § Numerical-behaviour changes).
 
 ## Severity vocabulary
 
@@ -1127,7 +1144,7 @@ Prose documentation checked line-by-line against the code. `claim` quotes the do
 
 > - `train_deep_sdf_multi_head.py`: Multi-head training for multiple surfaces
 
-**Reality.** The module is deprecated and known broken; the Architecture section lists it as an ordinary training pipeline with no caveat, while docs/KNOWN_ISSUES.md §3 documents it as silently optimizing only the last model. Calling it emits a DeprecationWarning saying so, and `get_optimizer` at line 85 is passed the leaked loop variable `model` rather than `models`, so every decoder but the last stays at initialization. An agent reading only CLAUDE.md's architecture map would pick this entry point for multi-surface work.
+**Reality.** The module is deprecated and known broken; the Architecture section lists it as an ordinary training pipeline with no caveat, while docs/KNOWN_ISSUES.md §2 documents it as silently optimizing only the last model. Calling it emits a DeprecationWarning saying so, and `get_optimizer` at line 85 is passed the leaked loop variable `model` rather than `models`, so every decoder but the last stays at initialization. An agent reading only CLAUDE.md's architecture map would pick this entry point for multi-surface work.
 
 **Evidence.** NSM/train/train_deep_sdf_multi_head.py:27-33,85-91
 

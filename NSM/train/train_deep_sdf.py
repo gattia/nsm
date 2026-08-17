@@ -155,7 +155,7 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
                 f"Checkpoint at epoch {config['resume_epoch']} carries no optimizer "
                 f"param-group targets, so it predates Aug 2026 and its learning-rate "
                 f"schedules cannot be mapped. Resuming it is not supported; start a "
-                f"fresh run. See docs/KNOWN_ISSUES_HISTORY.md section 1."
+                f"fresh run. See docs/KNOWN_ISSUES.md section 1."
             )
 
         # load the latent vectors

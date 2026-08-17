@@ -1,18 +1,309 @@
-# Known issues history
+# Known issues
 
-A record of bugs that silently changed NSM's numerical behaviour, and the exact date and
-configuration ranges each one affects.
+Two sections, and the difference matters:
+
+- **[Open](#open)** — reproduced, user-visible, **not fixed**. What you need in order to
+  interpret results from the code as it stands today.
+- **[History](#history)** — was wrong, silently changed results, **now fixed**. What you
+  need in order to interpret a run you already have on disk.
 
 **Why this file exists.** For research code, "which of my results are affected by this
-bug?" is a question that has to be answerable years later, by someone who was not there.
-A fix commit and a code comment cannot answer it. Every entry below should let a reader
-determine, for a run they have on disk, whether that run is affected and what to do about it.
+bug?" has to be answerable years later, by someone who was not there. A fix commit and a
+code comment cannot answer it. Every entry should let a reader determine, for a run they
+have, whether it is affected and what to do about it.
 
-**When to add an entry.** Any time a fix changes the numerical output of training or
-reconstruction for inputs that previously ran without error. Bugs that always crashed do
-not need an entry — nobody has results from them.
+**When an entry moves Open → History.** When the fix lands *and* it silently changed
+numerical output for inputs that previously ran without error. A bug that always crashed
+closes by deletion instead — nobody has results from it. See `CLAUDE.md`
+§ Numerical-behaviour changes.
+
+**Open is not the work queue** — GitHub issues are. An entry here says "this is true of
+the library today"; an issue says "we intend to fix it". Most Open entries have both, and
+neither replaces the other: issues live on GitHub, and this file is what survives in the
+repo.
+
+> **Transitional, 2026-08-17.** The Open entries below were merged in from the defect work
+> list that used to live in `planning/`, and are **awaiting issue filing**. Once each has an issue,
+> its entry keeps only what a *user* needs — what is wrong and how to tell if it affects
+> them — and the fix plan moves to the issue. Delete this note when that is done.
 
 ---
+
+# Open
+
+Every entry below was **executed**, not inferred, and each names the test that pins it.
+Ordered by file and function rather than by severity, so they surface as you open the
+relevant code. Severity is in the table.
+
+| Where | Issue | Severity |
+|---|---|---|
+| [Cache key omits parameters that change cached content](#cache-key-omits-parameters-that-change-what-is-cached) | **High** — silently wrong training data |
+| [Cache key omits mesh content](#cache-key-omits-mesh-content) | Medium — edit a mesh in place, get stale data |
+| [`reference_mesh` hashed by memory address](#reference_mesh-is-hashed-by-memory-address) | Medium — the cache never hits |
+| [Sigma coordinate space depends on `scale_jointly`](#sigma-sampling-coordinate-space-depends-on-scale_jointly) | **High** — ~100× over/under-sampling |
+| [`store_data_in_memory=True` raises](#store_data_in_memorytrue-raises-on-the-first-item) | Medium — advertised option, unusable |
+| [`p_near_surface=0` crashes](#p_near_surface0-crashes-inside-point_cloud_utils) | Low |
+| [`get_pts_center_and_scale` ignores its arguments](#get_pts_center_and_scale-ignores-center-and-scale-and-mutates-its-input) | Medium |
+| [`LOC_SDF_CACHE` read at import time](#loc_sdf_cache-is-read-at-import-time) | Low |
+| [`Pool` deadlocks on a second dataset](#pool-deadlocks-on-a-second-dataset-in-one-process) | Low — hangs, does not corrupt |
+| [`padding` absent from checkpoints](#padding-is-not-in-the-checkpoint-and-the-mismatch-is-silent) | **High** — silent wrong-scale sampling |
+| [`normalize_coordinates(padding=)` ignored](#normalize_coordinates-ignores-its-own-padding-argument) | Low |
+| [Every VAE layer stored twice](#every-vae-layer-is-stored-twice-in-the-state-dict) | Medium — 1.92× checkpoints |
+| [`enforce_minmax` clamps predictions](#enforce_minmax-clamps-the-prediction-not-just-the-target) | Medium — config semantics |
+| [`train_deep_sdf` returns nothing](#train_deep_sdf-returns-nothing) | Low — blocks observability |
+| [Early return drops requested keys](#the-early-return-drops-keys-the-caller-asked-for) | Medium |
+| [Tooling defects](#tooling) | Low |
+
+---
+
+## `datasets/sdf_dataset.py`
+
+### Cache key omits parameters that change what is cached
+
+`get_hash_params` (`:1973-1999`) does not include `mesh_to_scale`, `uniform_pts_buffer` or
+`subsample`, all of which change what gets written. Two runs differing only in one share an
+`md5`, and with `load_cache=True` — what both shipped configs use — the second silently
+trains on the first's data.
+
+Not equally severe: `mesh_to_scale` invalidates **every** array (it decides which surface
+drives centering and normalization, so the two runs are in different coordinate frames);
+`uniform_pts_buffer` moves the points; `subsample` touches only the index arrays. Fix
+`mesh_to_scale` first.
+
+**Measured.** One subject cached at `subsample=64` and reloaded at `512`: the small
+surface's interior fraction in a batch fell 0.258 → 0.059, a **4.4× under-representation**
+of interior samples, with `equal_pos_neg=True` set throughout. `sdf_pos_neg_idx` sizes the
+repeated index arrays for the `subsample` in force when the cache was written (`:2029`);
+reload with a larger one and `__getitem__` tops the batch up with uniform random points
+(`:2122-2127`). In a real dataset the small surface is the cartilage.
+
+The reload guard that should have caught this compares `len(data["pos_idx"])` against the
+number of *meshes* (`:1764-1771`), never against the subsample the arrays were built for.
+
+*Fixing it needs a History entry* — it silently changes training output for inputs that
+previously ran. Do not fix it before sampling is reproducible (done, Aug 2026), or a
+regenerated cache produces *different* data rather than the same data.
+*Pinned by:* `test_dataset_cache.TestUnhashedParametersCollide` (5 tests).
+
+### Cache key omits mesh content
+
+The key is `md5(params + mesh paths)`. Edit a mesh in place and the key does not move, so
+the stale `.npz` is served and you train on the old geometry. Same class as the two entries
+either side of it: something that changes cached content is not in the key.
+
+A full content hash on every load may not be worth it for a large dataset; size and mtime
+would catch the realistic case. The decision is which, not whether.
+*Not currently pinned by a test.*
+
+### `reference_mesh` is hashed by memory address
+
+`create_hash` stringifies every hash parameter (`:1437`) and `reference_mesh` is one
+(`:1406`, `:1981`). `str(Mesh(...))` begins `Mesh (0x7f478a24ce20)`, so the key is
+per-object: two `Mesh` instances from the same file hash differently, and the same instance
+hashes differently in the next process. **The cache can never hit.** Passing the reference
+as a path string is stable, and is the workaround people are implicitly relying on.
+*Pinned by:* `test_dataset_cache.TestReferenceMeshHashing`.
+
+### Sigma sampling coordinate space depends on `scale_jointly`
+
+`SDFSamples` interprets `sigma_near` / `sigma_far` in two different coordinate spaces:
+
+- `scale_jointly=False` — sigma is applied **after** per-mesh normalization, so it is in
+  normalized `[-1, 1]` cube units (typical values 0.01–0.1).
+- `scale_jointly=True` — sigma is applied **before** normalization, so it is in original
+  mesh units, e.g. mm (typical values 0.5–5.0).
+
+The same number means two very different things, and using values tuned for one mode in the
+other changes effective sampling density by roughly **100×**, silently.
+
+**How to tell whether a run is affected:** check `scale_jointly` and the sigma values
+together in `model_params_config.json`. Small sigmas (< 0.2) with `scale_jointly=True`, or
+large sigmas (> 0.5) with `scale_jointly=False`, indicate a probable mismatch.
+
+*Planned fix:* an explicit `sigma_coordinate_space` parameter, standardizing on original
+coordinate space, with a migration guard of the same shape as History §1's. Written up in
+`.claude/plans/BREAKING_CHANGE_PROPOSAL.md` and
+`.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md`, scheduled into
+`.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §8. Tracked upstream as repo issue #3.
+
+### `store_data_in_memory=True` raises on the first item
+
+`MultiSurfaceSDFSamples.__getitem__:2158-2162` reads `time_` and `size`, bound only in the
+`store_data_in_memory is False` branch (`:2050-2057`), so the first `__getitem__` raises
+`UnboundLocalError`. `SDFSamples.__getitem__:1563` guards the identical block correctly —
+the two classes disagree about the same option.
+
+The apparent workaround, `test_load_times=False`, is not one: it yields items with only
+`{"xyz", "gt_sdf"}` and `train_epoch` reads all four timing keys unconditionally
+(`train_deep_sdf.py:578-581`). **No combination of the two flags both constructs and
+trains.** Fixing it means deciding whether the timing keys are part of the batch contract.
+*Pinned by:* `test_dataset_cache.TestConfigurationsThatDoNotRun` (3 tests).
+
+### `p_near_surface=0` crashes inside `point_cloud_utils`
+
+`get_pt_sample_combos` emits a `[0, sigma]` combo and `get_sample_data_dict:1820` calls the
+sampler with it regardless, so asking for no near-surface points raises
+`ValueError: Invalid input point cloud with zero points`. Same for `p_further_from_surface=0`.
+*Pinned by:* `test_dataset_cache...::test_zero_sampling_probability_must_sample_nothing`.
+
+### `get_pts_center_and_scale` ignores `center=` and `scale=`, and mutates its input
+
+Both are rebound before they are read (`:88`, `:94`), so centering and scaling happen
+unconditionally and `center=False, scale=False` does nothing. Separately, `pts -= center` at
+`:91` writes through to the caller's array; all three in-repo call sites pass `np.copy(...)`,
+so the convention exists only as a habit at the call sites and a fourth caller will not have
+it. Either honour the arguments or delete them.
+*Pinned by:* `test_dataset_cache.TestPointCenteringAndScaling`.
+
+### `LOC_SDF_CACHE` is read at import time
+
+It is read inside a **default argument** — `loc_save=os.environ.get("LOC_SDF_CACHE", ...)`
+at `:820-822` and `:1609-1611` — so it binds once when the module is imported. Setting it
+afterwards has no effect and the caller silently writes to `~/.cache/nsm_sdf_cache`.
+
+The downstream consumer does exactly this: `kneepipeline/steps/run_nsm.py` sets
+`os.environ["LOC_SDF_CACHE"] = ""` *after* importing `reconstruct_mesh` on the line above.
+Harmless there — `reconstruct_mesh` never constructs a dataset — but the line does not do
+what it looks like it does.
+*Pinned by:* `test_dataset_cache.TestCacheLocationDefault`.
+
+### `Pool` deadlocks on a second dataset in one process
+
+Constructing a second `SDFSamples`/`MultiSurfaceSDFSamples` with the default
+`multiprocessing=True` hangs indefinitely with idle workers (`:954-957`). Fork-after-VTK,
+and long-standing — it reproduces on pre-Aug-2026 code. Cheapest honest fix is a `spawn`
+context; the cheapest fix of all is documenting it on `multiprocessing=`. Either beats a
+hang with no message.
+*Worked around in:* `test_dataset_cache.TestSeedDerivation`, which builds its two datasets
+in separate subprocesses.
+
+## `models/triplanar.py`
+
+### `padding` is not in the checkpoint, and the mismatch is silent
+
+`TriplanarDecoder.padding` scales query coordinates before they index the feature planes
+(`:322`). It is **not a learned parameter**, so a checkpoint trained at one value loads
+cleanly under strict `load_state_dict` at another and then samples at the wrong scale.
+
+**Measured.** A model built at `padding=0.35`, saved, and loaded through `load_model` with
+a config that omits `padding` (`loader.py:133` defaults it to 0.1) loads without error and
+computes a maximum absolute SDF difference of **0.063**. The output is `tanh`-bounded to
+(−1, 1), so that is ~3% of the full range, not a rounding artefact. Stating `padding` in the
+config restores bitwise-identical output.
+
+`kneepipeline/steps/run_nsm.py:94-112` passes 15 of `TriplanarDecoder`'s 16 meaningful
+arguments, and `padding` is the one it omits.
+
+*Options, in increasing order of how much they fix:* (a) refuse to load when the config
+omits it; (b) write it into the checkpoint beside the state dict; (c) give NSM the public
+"build the model this config describes" call that `SCOPE.md` §3.1 already calls the
+highest-value API change available, and have both `load_model` and the consumer use it.
+*Pinned by:* `test_model_roundtrip.TestPaddingIsNotInTheCheckpoint`.
+
+### `normalize_coordinates` ignores its own `padding` argument
+
+The signature is `normalize_coordinates(self, query, plane, padding=0.1)` (`:312`) and the
+body reads `self.padding` (`:322`). Accepted, no effect, at any value. Same defect class as
+the entry above and as `get_pts_center_and_scale` — which is why they should be swept
+together rather than one at a time.
+*Pinned by:* `test_model_roundtrip...::test_normalize_coordinates_must_honour_its_padding_argument`.
+
+### Every VAE layer is stored twice in the state dict
+
+`VAEDecoder` registers each layer twice — once in `self.layers`, a `ModuleList` (`:58-97`),
+and again in `self.decoder = nn.Sequential(*self.layers)` (`:99`). Both are child modules,
+so `state_dict()` emits every VAE tensor under two aliased names.
+
+Loading is unaffected — the names alias one parameter. Two things are:
+
+- **Checkpoint size.** All three shipped models store 39.96M elements for 20.80M
+  parameters, **1.92×**. The 275 MB files would be about 143 MB.
+- **Checkpoint surgery.** Editing by key silently loses the edit if only one name is
+  written. Not hypothetical: the first draft of `test_the_comparison_can_fail` did exactly
+  that and looked like a passing round trip.
+
+**This is a checkpoint-format break in both directions, verified.** Dropping `self.layers`
+makes every existing checkpoint fail strict load with `Unexpected key(s)`, and a new
+checkpoint fails against the current model with `Missing key(s)`. It needs a migration shim
+— per `CLAUDE.md`, in its own module with a delete-when condition — not a one-line fix.
+*Pinned by:* `test_model_roundtrip.TestAliasedCheckpointEntries`.
+
+## `train/train_deep_sdf.py`
+
+### `enforce_minmax` clamps the prediction, not just the target
+
+`train_epoch` clamps `pred_sdf` as well as the target (`:401`), and `torch.clamp` passes no
+gradient outside its bounds. Every sample predicted outside ±`clamp_dist` therefore
+contributes **exactly zero gradient**, however wrong it is.
+
+**Measured.** On a freshly built triplanar decoder, **44.6%** of predictions already fall
+outside ±0.1 before the first step. The shipped `default_config.json` uses `clamp_dist: 0.1`;
+both ShapeMedKnee configs use `1.0`.
+
+Whether that stalls a given run is configuration-dependent — an earlier claim that it always
+does was **false**, and was withdrawn after being run. The defect is that the name and the
+docs describe a target transform while the behaviour is a training-dynamics knob. This is a
+documentation-or-decision call, not a bug fix, and belongs with the config work in
+`SCOPE.md` §2.2.
+*Pinned by:* `test_training_regression.TestClampedPredictionGradients`.
+
+### `train_deep_sdf` returns nothing
+
+`:272` is a bare `return`. `train_epoch` builds a full `log_dict` per epoch and
+`train_deep_sdf` forwards it only to `wandb`, so a caller without a wandb key can learn
+nothing about a run except by reading checkpoints back off disk. The regression harness has
+to wrap `train_epoch` to observe anything (`testing/NSM/regression/_harness.py`) — fixing
+this deletes that wrapper.
+
+## `reconstruct/main.py`
+
+### The early return drops keys the caller asked for
+
+When the decoder's mean shape has no zero level set, `reconstruct_mesh` returns early at
+`:946-966` with only `{mesh, latent, assd_*}`, ignoring `return_registration_params`,
+`return_timing` and `orig_mesh`. The two result shapes are not interchangeable and the
+consumer reads `result["center"]` unconditionally (`kneepipeline/steps/run_nsm.py:230`).
+
+Sharper than the missing keys: **the result looks successful.** `mesh` is `[None, None]`,
+`assd_*` are `nan`, and `latent` is a correctly-shaped `(1, latent_size)` tensor of zeros —
+the untouched `mean_latent`, never fitted. A caller checking "did I get a latent" gets yes.
+Either return the same keys with honest values, or fail loudly.
+*Pinned by:* `test_reconstruction_regression.TestDecoderWithNoZeroLevelSet` (5 tests).
+
+## Upstream
+
+Dependency bugs that reach an NSM user.
+
+- **[pymskt#56](https://github.com/gattia/pymskt/issues/56)** — `rand_pts_around_surface`
+  raises a broadcast error under `surface_method="bluenoise"`, which is its **default**.
+  NSM is not currently hit because every call site passes `surface_method="random"`
+  explicitly (`sdf_dataset.py`), so this is a trap for anyone who changes that, not a live
+  defect. Open upstream.
+- **`mskt>=0.1.21` is required**, not optional — see History §3. An older install raises
+  `TypeError` on the first sampling call rather than silently reverting to unseeded draws.
+
+## Tooling
+
+Each is its own small PR.
+
+- `pyproject.toml:95` — `testpaths = ["tests"]` names a directory that does not exist.
+  Collection works only via pytest 8's rootdir fallback.
+- `pyproject.toml` — `addopts = "-k 'not train_test.py'"` filters a file that no longer
+  exists, and `-k` matches test *names*, not filenames, so it never worked.
+- `make lint` reports ~400 flake8 violations in `NSM/` including **4 `F821` undefined
+  names**, in a CI job marked `continue-on-error`. Three were fixed in `d2ba1c7`; the
+  remaining ones are latent `NameError`s. The job cannot gate until the backlog is cleared,
+  so any coverage number CI publishes is decoration until then.
+- `black --check` fails on 9 files, against a standard `CLAUDE.md` states as met.
+- `.github/workflows/docs.yml` invokes `make requirements dev` and `make docs`, neither of
+  which is a target. The documentation site the README links has never been buildable.
+- `testing/testing_h5_vs_np_loading/save_and_load_h5_vs_np.py:1` is a shell command in a
+  `.py` file, which breaks any AST-based tooling over the repo and makes `make quick-test`
+  unable to reach its test phase.
+
+---
+
+# History
 
 ## 1. Learning-rate schedules applied swapped (model ↔ latent codes)
 
@@ -193,37 +484,7 @@ current production models before assuming either is better. Not yet done.
 
 ---
 
-## 2. Sigma sampling coordinate space depends on `scale_jointly`
-
-| | |
-|---|---|
-| **Affects** | Ongoing — not yet fixed |
-| **Severity** | Silent — ~100× over/under-sampling with no error |
-| **Tracking** | Issue #3; `.claude/plans/BREAKING_CHANGE_PROPOSAL.md` |
-
-`SDFSamples` interprets `sigma_near` / `sigma_far` in two different coordinate spaces
-depending on the `scale_jointly` flag:
-
-- `scale_jointly=False` — sigma sampling happens **after** per-mesh normalization, so
-  sigma is in normalized `[-1, 1]` cube units (typical values 0.01–0.1).
-- `scale_jointly=True` — sigma sampling happens **before** normalization, so sigma is in
-  original mesh units, e.g. mm (typical values 0.5–5.0).
-
-The same sigma value therefore means two very different things, and using values tuned for
-one mode in the other changes effective sampling density by roughly 100× — silently.
-
-**How to tell whether a run is affected:** check `scale_jointly` and the sigma values
-together in `model_params_config.json`. Small sigmas (< 0.2) with `scale_jointly=True`, or
-large sigmas (> 0.5) with `scale_jointly=False`, indicate a probable mismatch.
-
-**Planned fix:** standardize on original coordinate space with an explicit
-`sigma_coordinate_space` parameter and a migration path. Scheduled into Phase 4 of
-`.claude/plans/NSM_CODE_HEALTH_REFACTOR.md`. It must ship with a migration guard of the
-same shape as issue 1's.
-
----
-
-## 3. `train_deep_sdf_multi_head` optimizes only the last model
+## 2. `train_deep_sdf_multi_head` optimizes only the last model
 
 | | |
 |---|---|
@@ -252,7 +513,7 @@ decision in `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md`.
 
 ---
 
-## 4. Sampling was never seeded — no run before Aug 2026 is reproducible
+## 3. Sampling was never seeded — no run before Aug 2026 is reproducible
 
 | | |
 |---|---|

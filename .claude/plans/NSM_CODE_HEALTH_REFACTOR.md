@@ -6,9 +6,9 @@
 
 **Updated:** 2026-08-17 · **Status:** open
 
-- **Next:** file the open defects as issues (they were held in `planning/DEFECT_WORKLIST.md`
-  until 2026-08-17; the surviving ones are in `docs/KNOWN_ISSUES.md` § Open awaiting
-  filing). Then §7.2 contract tests, or Phase 4.
+- **Next:** file the open defects as issues. They are in `docs/KNOWN_ISSUES.md` § Open,
+  merged there on 2026-08-17 from the defect work list that used to live in `planning/`.
+  Then §7.2 contract tests, or Phase 4.
 - **Blocked on:** nothing. Phase 0b (downstream consumer survey) gates only the physical
   quarantine move, not the map.
 - **Done:**

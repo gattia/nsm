@@ -1,7 +1,11 @@
 # NSM architecture
 
 **Phase 1 deliverable of `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md`.**
-Measured against `main` at commit `73a0326`, 2026-08-15.
+**Verified:** 2026-08-15, against `main` at commit `73a0326`.
+
+> ⚠️ The structural claims below — layering, the single cycle, the star-import surface, the
+> six traps — have not been re-checked since the Aug 2026 seeding work, which changed
+> `sdf_dataset.py` by 104 lines. Re-run the `ast` pass before relying on any of them.
 
 Method: import edges extracted with Python's `ast` over all 55 `.py` files, recording each
 import's enclosing scope so deferred imports are distinguished structurally. Coverage from
@@ -15,22 +19,22 @@ status rulings are in [`SCOPE.md`](SCOPE.md).
 
 ## 1. Baseline
 
-The plan's §1.3 table was measured on 2026-08-14, before PRs #9–#11 merged. Re-measured:
+Per `CLAUDE.md` § Four rules, the size and coverage numbers that used to be tabulated here
+are not committed — they were stale within two days of being written. Regenerate them:
 
-| Metric | Plan §1.3 | On `main` today |
-|---|---|---|
-| `NSM/` source | 11,565 lines | **11,861** |
-| Tests | 100 + 1 skip | **153 + 1 skip** |
-| Suite runtime | 13s | 13.1s (18.1s with coverage) |
-| Coverage | 32% | **34%** (4,459 statements) |
-| Docstrings, module-level public | 48% (mixed denominator) | **64% of functions (84/131), 35% of classes (9/26)** |
+```bash
+pytest testing/ --cov=NSM --cov-report=term-missing   # coverage, test count, runtime
+tokei NSM/ || cloc NSM/                               # lines
+```
 
-The docstring figures are not comparable — the plan's 247 denominator includes methods.
-Both are also the wrong metric: **31 of the documented public symbols have docstrings that
-contradict the code**, which no coverage number detects. That is what Phase 2 is for.
+Two things about those numbers do **not** regenerate, and are the reason this section
+exists at all:
 
-Coverage understates the gap: `train/deprecated/` (880 lines) has no `__init__.py`, is
-never imported, and so does not appear in the 4,459-statement denominator at all.
+- **Docstring coverage is the wrong metric.** 31 of the documented public symbols have
+  docstrings that *contradict* the code. No coverage number detects that; it is what
+  Phase 2 is for.
+- **Coverage understates the gap.** `train/deprecated/` (880 lines) has no `__init__.py`,
+  is never imported, and so does not appear in the denominator at all.
 
 ---
 
@@ -188,51 +192,37 @@ to the library that contains them.
 
 ## 3. Module ledger
 
-`doc` = documented / total module-level public functions + classes.
-`bad` = docstrings that contradict the implementation.
-`in` / `ext` = importers in-repo / in `kneepipeline`.
+Only the columns that do **not** regenerate. Line counts, coverage and importer counts are
+a command away (§1); `bad` is the count of docstrings that *contradict* the implementation,
+which is audit judgement and exists nowhere else. Status rulings and their reasoning are in
+[`SCOPE.md`](SCOPE.md) §2 — this is the index, that is the argument.
 
-| Module | Lines | Cov | doc | bad | in | ext | Status |
-|---|---|---|---|---|---|---|---|
-| `datasets/sdf_dataset.py` | 2195 | 7% | 10/14 | 7 | 6 | 4 | prod |
-| `reconstruct/main.py` | 1443 | 24% | 7/13 | 5 | 6 | 3 | prod |
-| `mesh/main.py` | 867 | 62% | 8/13 | 5 | 3 | 0 | prod |
-| `mesh/correspondence_metrics.py` | 699 | 94% | 9/9 | 1 | 1 | 0 | research |
-| `mesh/interpolate.py` | 678 | 62% | 9/11 | 2 | 1 | 0 | prod |
-| `train/train_deep_sdf.py` | 629 | 10% | 0/2 | 0 | 2 | 0 | prod |
-| `train/deprecated/train_deep_sdf_multi_surface_orig.py` | 562 | — | 0/2 | 0 | 0 | 0 | **dead → quarantine** |
-| `mesh/refine_mesh.py` | 480 | 0% | 14/14 | 6 | 0 | 0 | research |
-| `utils.py` | 445 | 55% | 6/19 | 2 | 9 | 0 | prod |
-| `train/train_deep_sdf_multi_head.py` | 428 | 11% | 0/2 | 0 | 2 | 0 | **supported, broken** |
-| `models/triplanar.py` | 413 | 77% | 2/4 | 2 | 5 | 6 | prod |
-| `models/loader.py` | 387 | 84% | 3/3 | 2 | 4 | 0 | prod |
-| `reconstruct/reconstruct_latent_S3.py` | 350 | 4% | 2/3 | 2 | 1 | 0 | deferred research |
-| `train/deprecated/train_deep_sdf_orig.py` | 318 | — | 0/2 | 0 | 0 | 0 | **dead after 12-line port** |
-| `models/deep_sdf.py` | 310 | 57% | 3/5 | 2 | 5 | 0 | prod |
-| `models/modulated_periodic_activations.py` | 252 | 67% | 1/9 | 1 | 3 | 0 | research |
-| `losses.py` | 231 | 10% | 5/5 | 2 | 2 | 0 | research |
-| `dependencies/sinkhorn.py` | 164 | 6% | 1/1 | 1 | 3 | 0 | research |
-| `reconstruct/cartilage_func.py` | 149 | 18% | 0/5 | 0 | 3 | 0 | prod |
-| `train/utils.py` | 125 | 52% | 4/6 | 3 | 6 | 0 | prod |
-| `reconstruct/recon_evaluation.py` | 121 | 13% | 1/1 | 1 | 1 | 0 | prod |
-| `configs/generate_sdf_default_config.py` | 112 | 60% | 1/1 | 0 | 4 | 0 | supported |
-| `reconstruct/utils.py` | 107 | 38% | 4/5 | 1 | 3 | 0 | prod |
-| `reconstruct/predictive_validation_class.py` | 97 | 28% | 1/1 | 1 | 1 | 0 | research |
-| `mesh/triangle_metrics.py` | 97 | 65% | 0/5 | 0 | 2 | 0 | research |
-| `models/two_stage.py` | 92 | 100% | 1/1 | 1 | 3 | 0 | research |
-| `_lr_migration.py` | 76 | 100% | 1/1 | 0 | 1 | 0 | prod (transitional) |
-| `__init__.py` | 11 | 100% | — | 0 | 3 | 6 | prod |
-| `reconstruct/__init__.py` | 9 | 100% | — | 0 | 5 | 3 | prod |
-| `models/__init__.py` | 5 | 100% | — | 0 | 3 | 3 | prod |
-| `train/__init__.py` | 5 | 100% | — | 0 | 3 | 0 | prod |
-| `datasets/utils.py` | 2 | 100% | — | 0 | 0 | 0 | **dead (2-line TODO)** |
-| `datasets/__init__.py` | 1 | 100% | — | 0 | 3 | 1 | prod |
-| `mesh/__init__.py` | 1 | 100% | — | 0 | 1 | 0 | prod |
+Modules with no inaccurate docstrings and an unremarkable status are omitted.
 
-The plan's observation that coverage is inverted relative to risk holds and is worse than
-stated: the four modules on the production path (`sdf_dataset`, `reconstruct/main`,
-`mesh/main`, `train_deep_sdf`) are 5,134 lines at a weighted 17%, while the two research
-modules nothing imports sit at 94% and 62%.
+| Module | bad | Status |
+|---|---|---|
+| `datasets/sdf_dataset.py` | 7 | prod |
+| `mesh/refine_mesh.py` | 6 | research — raises on its own defaults |
+| `reconstruct/main.py` | 5 | prod |
+| `mesh/main.py` | 5 | prod |
+| `train/utils.py` | 3 | prod |
+| `utils.py` | 2 | prod |
+| `models/triplanar.py` | 2 | prod |
+| `models/loader.py` | 2 | prod |
+| `models/deep_sdf.py` | 2 | prod |
+| `mesh/interpolate.py` | 2 | prod |
+| `losses.py` | 2 | research — gated behind `NotImplementedError` |
+| `reconstruct/reconstruct_latent_S3.py` | 2 | deferred research |
+| `train/train_deep_sdf_multi_head.py` | 0 | **supported, broken** |
+| `train/deprecated/train_deep_sdf_multi_surface_orig.py` | 0 | **dead → quarantine** |
+| `train/deprecated/train_deep_sdf_orig.py` | 0 | **dead after a 12-line port** |
+| `datasets/utils.py` | 0 | **dead (2-line TODO)** |
+| `_lr_migration.py` | 0 | prod (transitional — delete-when in its header) |
+
+**Coverage is inverted relative to risk**, and worse than the plan assumed: the four
+modules on the production path (`sdf_dataset`, `reconstruct/main`, `mesh/main`,
+`train_deep_sdf`) are the least covered, while the two research modules nothing imports are
+the best covered. That ordering is the durable finding; the percentages are not.
 
 ---
 
@@ -358,21 +348,14 @@ you write it" — and the same rule applies to an audit's own findings, not just
 
 ## 8. Tooling defects found while mapping
 
-- **`pyproject.toml:95`** — `testpaths = ["tests"]` names a directory that does not exist.
-  Collection works only because pytest 8 warns and falls back to rootdir recursion.
-  Version-dependent luck.
-- **`pyproject.toml`** — `addopts = "-k 'not train_test.py'"` filters a file that no longer
-  exists, and `-k` matches test *names*, not filenames, so it could never have worked.
-- **`make quick-test` cannot reach its test phase.** It depends on `format`, and `black`
-  exits 123 because `testing/testing_h5_vs_np_loading/save_and_load_h5_vs_np.py:1` is a
-  shell command, not Python. The same file breaks any AST-based tooling over the repo.
-- **`make lint` always fails** — 445 flake8 violations on `main`, including 4 F821
-  undefined names. CI marks the lint job `continue-on-error`, so Phase 2's plan to enforce
-  docstrings through `make lint` would land in a job that cannot fail. It needs its own
-  gating check, scoped to the API contract.
-- **`black --check` fails on 9 files** including `reconstruct/main.py`, `mesh/main.py`,
-  `losses.py`, `models/triplanar.py` — against a standard `CLAUDE.md` states as met.
-- **`NSM.configs` and `NSM.train.deprecated` are absent from the built distribution** (no
-  `__init__.py`, no `package-data`). Editable installs mask it.
-- **`.github/workflows/docs.yml` invokes `make requirements dev` and `make docs`**, neither
-  of which is a target. The documentation site the README links has never been buildable.
+Moved to [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) § Open § Tooling, which is where open defects
+live. One that is structural rather than a defect, and so stays here:
+
+**`NSM.configs` and `NSM.train.deprecated` are absent from the built distribution** — no
+`__init__.py`, no `package-data`. Editable installs mask it, which is why nobody has hit
+it. It is a packaging property of the layout above, not a bug with a line number.
+
+**Phase 2's plan to enforce docstrings through `make lint` cannot work as written**: that
+job is `continue-on-error` with a large pre-existing backlog, so a new rule added to it
+lands in a job that cannot fail. Docstring enforcement needs its own gating check, scoped
+to the API contract.

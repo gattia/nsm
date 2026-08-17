@@ -1,7 +1,7 @@
 # NSM scope
 
 **Phase 0 deliverable of `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md`.**
-Measured against `main` at commit `73a0326`, 2026-08-15.
+**Verified:** 2026-08-15, against `main` at commit `73a0326`.
 
 This document makes the calls that Phase 1 needs before it can mark anything for
 quarantine: what NSM is for, what each module's status is, and what the public API is.
