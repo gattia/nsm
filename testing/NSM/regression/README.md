@@ -7,8 +7,8 @@ decomposition can proceed without silently altering results. The findings that c
 building it are entries in `docs/KNOWN_ISSUES.md`, each naming the test that pins it.
 
 ```bash
-pytest testing/NSM/regression/ -q      # 113 passed, 18 xfailed; ~54 s (105 passed, 8 skipped,
-                                       # ~51 s with no GPU)
+pytest testing/NSM/regression/ -q      # 117 passed, 18 xfailed; ~56 s (109 passed, 8 skipped,
+                                       # ~52 s with no GPU)
 pytest testing/NSM/regression/ -q -rx  # ... and list what the 18 xfails are
 make test                              # runs it along with everything else
 ```
@@ -70,7 +70,7 @@ design decision rather than a statable correctness assertion, and are carried as
 | Module | Pins |
 |---|---|
 | `test_training_regression.py` | 8 epochs, CPU, fixed seed: per-param-group learning rate at **every** epoch, loss trajectory and its components, latent-norm trajectory, checkpoint contents |
-| `test_reconstruction_regression.py` | A full `reconstruct_mesh` call: the eight result keys the consumer reads, the **order** of the `mesh` list, fitted latent, mesh geometry, ASSD, registration params |
+| `test_reconstruction_regression.py` | A full `reconstruct_mesh` call on the **committed decoder** (below): the eight result keys the consumer reads, the **order** of the `mesh` list, fitted latent, mesh geometry, ASSD, registration params. Plus one un-baselined smoke test that a *freshly trained* decoder can be reconstructed from at all |
 | `test_dataset_cache.py` | Cache round-trip, which parameters reach the cache key and which do not, and what `random_seed` does and deliberately does not seed (11 xfail) |
 | `test_model_roundtrip.py` | `save_model` → `load_model` is bitwise identical; `padding` is not in the checkpoint; the state dict aliases every VAE layer (5 xfail) |
 | `test_gpu.py` | Skipped without CUDA. The seed-ordering constraint the consumer depends on, and **how far a GPU run diverges from these CPU baselines** |
@@ -157,6 +157,66 @@ Regenerating on a platform other than the pinned one **refuses** rather than clo
 committed baseline. To support a second platform, add a per-platform baseline file — do not
 overwrite this one. `TestBaselinePlatformPin` exercises the gate itself, so it cannot decay
 into a blanket skip unnoticed.
+
+## The reconstruction decoder is a committed asset
+
+`assets/reconstruction_decoder.pt` (74 KB) holds the one decoder every reconstruction test
+runs on. It is **loaded, not retrained**.
+
+Until Aug 2026 the `reconstruction_model` fixture retrained it in-session, 60 epochs every
+run — so `baselines/reconstruction.json` pinned a gradient-descent trajectory rather than
+`reconstruct_mesh`. Gradient descent amplifies a last-bit arithmetic difference
+exponentially, and a trajectory is therefore not portable across dependency versions.
+Measured between torch 2.8.0+cu128 and 2.7.1+cu126, by decomposition:
+
+| what varied | drift in the geometry baseline |
+|---|---|
+| everything (the old fixture) | **763× `GEOMETRY_ATOL`** |
+| torch only, same decoder weights | 0.005× |
+| decoder weights only, same torch | 763× |
+
+The weights diverge 6.3e-07 by epoch 10, 1.7e-05 by 20, 1.4e-02 by 30, saturating near
+3.9e-02: past epoch 30 the two stacks hold *different models*. Surviving a torch bump by
+widening the tolerance would have meant a tolerance 12× larger than the deliberate break it
+exists to detect — a detector that swallows its own signal. Training output is pinned
+directly, and better, by `baselines/training.json`, at 8 epochs where it has not yet
+diverged: it moved ~1e-8 across the same bump, 0.0002× its tolerance.
+
+With the decoder frozen, the suite passes identically on both torch versions and the
+residual drift is 0.005× `GEOMETRY_ATOL`.
+
+**Provenance lives inside the checkpoint**, under `generated_on`, for the same reason
+`baselines/*.json` carry theirs inside: a sidecar file can be separated from the weights it
+describes, or left stale against them. `TestTheCommittedDecoder` asserts it is there.
+
+The asset is read with `torch.load(..., weights_only=True)` into a model built by
+`_harness.build_model`, then `load_state_dict(..., strict=True)`. Strict is deliberate: an
+architecture change must fail loudly rather than half-load. A missing or unloadable asset is
+an **error naming the regeneration command**, never a skip.
+
+### Regenerating it
+
+Needed when the architecture changes, and essentially never otherwise.
+
+```bash
+NSM_REGENERATE_RECON_DECODER=1 pytest testing/NSM/regression/  # retrain + rewrite the asset
+NSM_REGENERATE_BASELINES=1 pytest testing/NSM/regression/      # then rebaseline against it
+pytest testing/NSM/regression/                                 # then verify
+```
+
+The second step is not optional, and is why this is a **separate switch** from
+`NSM_REGENERATE_BASELINES`: every reconstruction baseline is fitted to these exact weights.
+Driving both from one variable would make that step invisible.
+`test_the_reconstruction_decoder_is_not_being_regenerated` turns a run with the variable set
+red, for the same reason its baseline equivalent does, and regenerating on a platform other
+than the pinned one **refuses** rather than clobbering — mirroring `BaselineStore.flush`.
+
+`TestAFreshlyTrainedDecoder` buys back the one thing freezing the decoder cost: nothing else
+now checks that a model straight out of `train_deep_sdf` can be reconstructed from. It
+trains and reconstructs and asserts only that a surface comes back and the latent has the
+right shape — **no numeric baseline**, since those are precisely the chaotic numbers. It
+costs ~2.5 s, and it goes through `_harness.train_reconstruction_decoder`, so the
+regeneration path above is executed on every run instead of rotting between uses.
 
 ## How it stays deterministic
 

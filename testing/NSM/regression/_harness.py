@@ -39,9 +39,29 @@ REGENERATE_ENV = "NSM_REGENERATE_BASELINES"
 
 REGENERATE_CMD = f"{REGENERATE_ENV}=1 pytest testing/NSM/regression/"
 
+#: Set this to retrain and rewrite the committed reconstruction decoder,
+#: :data:`RECON_DECODER_ASSET`.
+#:
+#: A SECOND switch rather than a mode of :data:`REGENERATE_ENV`, because the two do
+#: opposite things. Regenerating a baseline records what the code now produces.
+#: Regenerating the decoder changes what the code is asked to produce -- every
+#: reconstruction baseline is fitted to these weights, so they all have to be regenerated
+#: after it, in a separate run. One variable driving both would hide that second step.
+REGENERATE_DECODER_ENV = "NSM_REGENERATE_RECON_DECODER"
+
+REGENERATE_DECODER_CMD = f"{REGENERATE_DECODER_ENV}=1 pytest testing/NSM/regression/"
+
+
+def _enabled(variable):
+    return os.environ.get(variable, "") not in ("", "0")
+
 
 def regenerating():
-    return os.environ.get(REGENERATE_ENV, "") not in ("", "0")
+    return _enabled(REGENERATE_ENV)
+
+
+def regenerating_decoder():
+    return _enabled(REGENERATE_DECODER_ENV)
 
 
 def provenance():
@@ -629,10 +649,132 @@ def run_training(config, model, dataset, seed=42):
     return records, returned
 
 
-#: Epochs of training for the reconstruction fixture. A decoder that has not learnt a sign
+# ---------------------------------------------------------------------------
+# The reconstruction decoder, as a committed asset
+# ---------------------------------------------------------------------------
+#
+# Every reconstruction test runs on ONE decoder, and until Aug 2026 the harness retrained
+# it in-session on every run. That made ``baselines/reconstruction.json`` a pin on a
+# 60-epoch gradient-descent trajectory rather than on ``reconstruct_mesh``, and gradient
+# descent amplifies a last-bit arithmetic difference exponentially. Measured between torch
+# 2.8.0+cu128 and 2.7.1+cu126 on identical inputs: weights diverge 6.3e-07 by epoch 10,
+# 1.7e-05 by 20, 1.4e-02 by 30, saturating near 3.9e-02 -- past epoch 30 the two stacks
+# hold different models. The geometry baselines moved 763x GEOMETRY_ATOL across that bump;
+# ``reconstruct_mesh`` run on FIXED weights moved 0.005x. Absorbing the difference would
+# have meant a tolerance 12x wider than the deliberate break it exists to detect.
+#
+# Training output is pinned directly, and better, by ``baselines/training.json``. So the
+# decoder is generated once and committed, and what the reconstruction baselines pin is
+# reconstruction. README.md has the full decomposition and the regeneration procedure.
+
+RECON_DECODER_ASSET = os.path.join(os.path.dirname(__file__), "assets", "reconstruction_decoder.pt")
+
+#: Epochs the committed decoder was trained for. A decoder that has not learnt a sign
 #: change has no zero level set, and every reconstruction returns ``mesh=[None, None]``.
-#: See ``test_reconstruction_regression.TestUntrainedDecoder``.
+#: See ``test_reconstruction_regression.TestDecoderWithNoZeroLevelSet``.
 RECON_TRAINING_EPOCHS = 60
+
+
+def train_reconstruction_decoder(dataset, experiment_directory):
+    """
+    Train the decoder :data:`RECON_DECODER_ASSET` holds. The only producer of those weights.
+
+    Also run on every suite invocation by
+    ``test_reconstruction_regression.TestAFreshlyTrainedDecoder``, so the regeneration path
+    cannot rot between the rare occasions anyone needs it.
+    """
+    config = training_config(experiment_directory)
+    config.update(
+        {
+            "n_epochs": RECON_TRAINING_EPOCHS,
+            "checkpoint_epochs": RECON_TRAINING_EPOCHS,
+            "save_frequency": RECON_TRAINING_EPOCHS,
+            "code_regularization_warmup": 20,
+            "LearningRateSchedule": [
+                {"Target": "model", "Type": "Step", "Initial": 0.01, "Interval": 40, "Factor": 0.5},
+                {
+                    "Target": "latent",
+                    "Type": "Step",
+                    "Initial": 0.005,
+                    "Interval": 40,
+                    "Factor": 0.5,
+                },
+            ],
+        }
+    )
+    model = build_model(config)
+    run_training(config, model, dataset)
+    model.eval()
+    return model
+
+
+def save_reconstruction_decoder(model, path=RECON_DECODER_ASSET):
+    """
+    Write the asset, provenance included.
+
+    ``generated_on`` goes INSIDE the checkpoint rather than in a sidecar file, for the same
+    reason ``baselines/*.json`` carry theirs inside: it cannot then be separated from, or
+    left stale against, the weights it describes. Its values are coerced to ``str`` because
+    ``torch.__version__`` is a ``TorchVersion``, which ``weights_only=True`` refuses to
+    unpickle -- so an uncoerced dict would write an asset :func:`load_reconstruction_decoder`
+    cannot read.
+
+    Refuses to overwrite an asset from another platform, mirroring ``BaselineStore.flush``
+    and for a stronger reason: the committed reconstruction baselines are fitted to these
+    exact weights, so replacing them from a different machine moves every one of them.
+    """
+    if os.path.exists(path):
+        existing = torch.load(path, weights_only=True).get("generated_on", {})
+        if not platform_matches(existing):
+            raise AssertionError(
+                f"Refusing to overwrite {os.path.basename(path)}: it was generated on "
+                f"{existing.get('platform')} and this is {provenance()['platform']}. Every "
+                f"committed reconstruction baseline is fitted to that decoder and would "
+                f"move. Delete the file first if that is really what you want."
+            )
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    torch.save(
+        {
+            "generated_on": {field: str(value) for field, value in provenance().items()},
+            "state_dict": model.state_dict(),
+        },
+        path,
+    )
+
+
+def load_reconstruction_decoder(path=RECON_DECODER_ASSET):
+    """
+    The committed decoder, in eval mode.
+
+    A missing or unloadable asset is an ERROR that says how to rebuild it, never a skip: a
+    reconstruction suite that quietly stops running is indistinguishable from one that
+    passes.
+
+    The model is built through :func:`build_model`, so the architecture stays stated in one
+    place, and loaded with ``strict=True`` on purpose -- an architecture change must fail
+    here, loudly, rather than half-load a checkpoint into a model it no longer fits.
+    """
+    if not os.path.exists(path):
+        raise AssertionError(
+            f"No reconstruction decoder at {path}. It is a committed test asset, not "
+            f"something a run rebuilds on its own. Regenerate with: {REGENERATE_DECODER_CMD}"
+        )
+
+    model = build_model(dict(ARCHITECTURE))
+    try:
+        model.load_state_dict(torch.load(path, weights_only=True)["state_dict"], strict=True)
+    except Exception as error:
+        raise AssertionError(
+            f"{os.path.basename(path)} did not load into the model ARCHITECTURE describes "
+            f"-- an architecture change, or a damaged file: {error}\n"
+            f"  Regenerate with: {REGENERATE_DECODER_CMD}\n"
+            f"  Then regenerate the reconstruction baselines with {REGENERATE_CMD}, "
+            f"because a different decoder reconstructs different numbers."
+        ) from error
+    model.eval()
+    return model
+
 
 #: Reconstruction settings. Small enough for CPU, large enough to resolve both surfaces.
 #: ``create_mesh_adaptive``'s coarse pass is fixed at 64^3 and is not reachable through

@@ -10,12 +10,15 @@ import os
 import pytest
 from _harness import (
     BASELINE_DIR,
-    RECON_TRAINING_EPOCHS,
     BaselineStore,
     build_dataset,
     build_model,
+    load_reconstruction_decoder,
+    regenerating_decoder,
     run_reconstruction,
     run_training,
+    save_reconstruction_decoder,
+    train_reconstruction_decoder,
     training_config,
     write_synthetic_meshes,
 )
@@ -84,31 +87,28 @@ def training_run(training_dataset, tmp_path_factory):
 
 
 @pytest.fixture(scope="session")
-def reconstruction_model(training_dataset, tmp_path_factory):
-    """A decoder trained far enough that its zero level set exists."""
-    config = training_config(tmp_path_factory.mktemp("recon_train"))
-    config.update(
-        {
-            "n_epochs": RECON_TRAINING_EPOCHS,
-            "checkpoint_epochs": RECON_TRAINING_EPOCHS,
-            "save_frequency": RECON_TRAINING_EPOCHS,
-            "code_regularization_warmup": 20,
-            "LearningRateSchedule": [
-                {"Target": "model", "Type": "Step", "Initial": 0.01, "Interval": 40, "Factor": 0.5},
-                {
-                    "Target": "latent",
-                    "Type": "Step",
-                    "Initial": 0.005,
-                    "Interval": 40,
-                    "Factor": 0.5,
-                },
-            ],
-        }
-    )
-    model = build_model(config)
-    run_training(config, model, training_dataset)
-    model.eval()
-    return model
+def reconstruction_model(request, tmp_path_factory):
+    """
+    A decoder trained far enough that its zero level set exists -- LOADED from a committed
+    asset, not retrained.
+
+    It used to be retrained here every session, which is what made the reconstruction
+    baselines pin a 60-epoch gradient-descent trajectory instead of ``reconstruct_mesh``.
+    ``_harness``'s asset section has the measurements; the short version is that a torch
+    bump moved the geometry baselines 763x their tolerance through the training, and 0.005x
+    through reconstruction on fixed weights.
+
+    ``training_dataset`` is requested rather than declared, because only the regeneration
+    branch needs training data and building a dataset the load path never touches would be
+    a dependency that is not one.
+    """
+    if regenerating_decoder():
+        model = train_reconstruction_decoder(
+            request.getfixturevalue("training_dataset"), tmp_path_factory.mktemp("recon_train")
+        )
+        save_reconstruction_decoder(model)
+        return model
+    return load_reconstruction_decoder()
 
 
 @pytest.fixture(scope="session")

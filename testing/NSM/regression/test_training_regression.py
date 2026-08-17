@@ -27,12 +27,14 @@ from _harness import (
     LR_SCHEDULE,
     MIN_HEADROOM,
     N_EPOCHS,
+    REGENERATE_DECODER_ENV,
     REGENERATE_ENV,
     build_model,
     headroom,
     platform_matches,
     provenance,
     regenerating,
+    regenerating_decoder,
     run_training,
     training_config,
 )
@@ -46,6 +48,21 @@ def test_baselines_are_not_being_regenerated():
     assert not regenerating(), (
         f"{REGENERATE_ENV} is set: baselines were REWRITTEN, not checked. "
         f"Unset it and re-run to verify."
+    )
+
+
+def test_the_reconstruction_decoder_is_not_being_regenerated():
+    """
+    The same rule for the other committed artifact, and a separate test so its own message
+    is the one that prints. A run that rewrote ``assets/reconstruction_decoder.pt`` checked
+    nothing about reconstruction: every baseline it compared against was fitted to whatever
+    weights it had just written.
+    """
+    assert not regenerating_decoder(), (
+        f"{REGENERATE_DECODER_ENV} is set: the reconstruction decoder was RETRAINED and "
+        f"rewritten, so the reconstruction baselines were compared against a decoder this "
+        f"run produced. Unset it and re-run to verify -- and if the decoder really changed, "
+        f"the reconstruction baselines have to be regenerated too."
     )
 
 

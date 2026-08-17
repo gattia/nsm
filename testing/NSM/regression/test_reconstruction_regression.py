@@ -23,10 +23,13 @@ from _harness import (
     GEOMETRY_ATOL,
     METRIC_RTOL,
     MIN_HEADROOM,
+    RECON_DECODER_ASSET,
     headroom,
     mesh_summary,
+    provenance,
     regenerating,
     run_reconstruction,
+    train_reconstruction_decoder,
 )
 
 #: Which synthetic surface each result index is supposed to be. The bone sphere is
@@ -384,6 +387,61 @@ class TestSampledReconstructionIsSeeded:
         """
         first, second = (self._latent(result) for result in unseeded_pair)
         assert not np.allclose(first, second, atol=FITTED_LATENT_ATOL)
+
+
+class TestTheCommittedDecoder:
+    """
+    Every assertion above runs on one frozen decoder, loaded from
+    ``assets/reconstruction_decoder.pt``. This is the part of that arrangement a reader
+    years from now needs: which stack produced the weights the baselines are fitted to.
+    """
+
+    def test_it_records_the_stack_it_was_generated_on(self, reconstruction_model):
+        """
+        ``reconstruction_model`` is requested so the asset is known to exist -- that fixture
+        is what loads it, or what writes it on a regeneration run.
+        """
+        recorded = torch.load(RECON_DECODER_ASSET, weights_only=True)["generated_on"]
+        assert set(recorded) == set(provenance()), recorded
+        assert recorded["platform"] == "Linux-x86_64", recorded
+
+
+class TestAFreshlyTrainedDecoder:
+    """
+    The one thing freezing the decoder took away: with the fixture loading a checkpoint,
+    nothing else here checks that a model straight out of ``train_deep_sdf`` can be
+    reconstructed from at all.
+
+    Structural only, and that is the point. The numbers a fresh run produces are the chaotic
+    ones -- 60 epochs of gradient descent is what moved the reconstruction baselines 763x
+    their tolerance under a torch bump -- so this asserts that a surface comes back and the
+    latent has the right shape, and pins no value. ``baselines/training.json`` is what pins
+    training output, directly and at 8 epochs where it has not yet diverged.
+
+    Costs about 2.5 s on a warm process: ~1.3 s to train the ``RECON_TRAINING_EPOCHS``
+    epochs the asset was generated from, ~1.2 s to reconstruct. Training through
+    ``_harness.train_reconstruction_decoder`` rather than inline is deliberate -- it keeps
+    the asset's regeneration path executed on every run, instead of only when someone sets
+    ``NSM_REGENERATE_RECON_DECODER``.
+    """
+
+    @pytest.fixture(scope="class")
+    def fresh_reconstruction(self, synthetic_meshes, training_dataset, tmp_path_factory):
+        model = train_reconstruction_decoder(
+            training_dataset, tmp_path_factory.mktemp("fresh_recon_train")
+        )
+        return run_reconstruction(synthetic_meshes[0], model)
+
+    def test_a_surface_comes_back_for_every_object(self, fresh_reconstruction):
+        """``[None, None]`` is what a decoder with no zero level set returns -- see below."""
+        meshes = fresh_reconstruction["mesh"]
+        assert meshes != [None, None]
+        assert all(mesh is not None for mesh in meshes), meshes
+
+    def test_the_fitted_latent_has_the_configured_shape(self, fresh_reconstruction):
+        from _harness import LATENT_SIZE
+
+        assert fresh_reconstruction["latent"].shape == (1, LATENT_SIZE)
 
 
 class NoZeroLevelSetDecoder(torch.nn.Module):
