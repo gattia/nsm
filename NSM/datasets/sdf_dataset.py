@@ -1063,7 +1063,14 @@ class SDFSamples(torch.utils.data.Dataset):
             self.print_memory_summary()
 
         if self.multiprocessing is True:
-            os.sched_setaffinity(0, range(multiprocessing.cpu_count()))
+            try:
+                os.sched_setaffinity(0, range(multiprocessing.cpu_count()))
+            except AttributeError:
+                # sched_setaffinity is not available on all platforms (eg., mac/windows).
+                # Forking a Pool worker resets CPU affinity on Linux; elsewhere there is
+                # nothing to reset, so skipping it is the correct no-op rather than a
+                # degraded path. Matches the guard on sched_getaffinity above.
+                pass
         data = self.get_sample_data_dict(loc_mesh)
 
         if data is None:
