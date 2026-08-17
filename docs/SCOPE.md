@@ -3,6 +3,11 @@
 **Phase 0 deliverable of `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md`.**
 **Verified:** 2026-08-15, against `main` at commit `73a0326`.
 
+> ⚠️ **Line references predate the Aug 2026 seeding work.** That work moved
+> `sdf_dataset.py` by over 100 lines, so a `file:line` below may not land where it did when
+> this was written. The rulings and the module inventory are unaffected; only the line
+> numbers are. Re-locate by symbol name rather than trusting a number.
+
 This document makes the calls that Phase 1 needs before it can mark anything for
 quarantine: what NSM is for, what each module's status is, and what the public API is.
 
@@ -107,7 +112,7 @@ Two qualifications from the maintainer:
   Nothing unique. **Dead. Quarantine.**
 - `train_deep_sdf_orig.py` (318) — contains the only *live* `sample_difficulty_lx`
   inverse-Lx loss-weighting branch (`:235-247`). `train_deep_sdf.py` stops at
-  `sample_difficulty_weight` (`:448-464`) and has that algorithm only as a commented-out
+  `sample_difficulty_weight` (`:462-478`) and has that algorithm only as a commented-out
   block. **Port those ~12 lines into `train_deep_sdf.py` first** — the helpers are already
   imported there — then it is dead.
 
@@ -377,10 +382,12 @@ quarantined costs nothing; moving it costs a broken downstream. So:
 - **0a (done, this document):** rulings from evidence available here → unblocks Phase 1.
 - **0b (blocked on the survey):** the quarantine move only.
 
-**No release tag exists to pin.** The plan's §10 prerequisite — tag `v2.x`, have consumers
-pin it — cannot be met as written: `pyproject.toml` derives the version from
-`NSM.__version__`, which is `"0.0.1"` and has never been bumped. Pick a real version before
-asking anyone to pin one.
+**The release tag still needs settling.** The plan's §10 prerequisite — tag a version, have
+consumers pin it — is not yet met. `pyproject.toml` derives the version from
+`NSM.__version__`, which the code-health branch bumps from `"0.0.1"` to `"0.1.0"`. A
+`v0.1.0` tag exists but points at a commit on that branch rather than on `main`, so it is
+not the pre-refactor rollback point it is sometimes described as. Settle which commit the
+tag names before asking anyone to pin it.
 
 **`NSM.configs` will not ship in a built distribution.** It has no `__init__.py`, so
 `find_packages(include=['NSM','NSM.*'])` excludes it; there is no `package-data` or

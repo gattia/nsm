@@ -61,7 +61,7 @@ queue.
 
 ### Cache key omits parameters that change what is cached
 
-`get_hash_params` (`:1973-1999`) does not include `mesh_to_scale`, `uniform_pts_buffer` or
+`get_hash_params` (`:2074-2106`) does not include `mesh_to_scale`, `uniform_pts_buffer` or
 `subsample`, all of which change what gets written. Two runs differing only in one share an
 `md5`, and with `load_cache=True` — what both shipped configs use — the second silently
 trains on the first's data.
@@ -74,12 +74,12 @@ drives centering and normalization, so the two runs are in different coordinate 
 **Measured.** One subject cached at `subsample=64` and reloaded at `512`: the small
 surface's interior fraction in a batch fell 0.258 → 0.059, a **4.4× under-representation**
 of interior samples, with `equal_pos_neg=True` set throughout. `sdf_pos_neg_idx` sizes the
-repeated index arrays for the `subsample` in force when the cache was written (`:2029`);
+repeated index arrays for the `subsample` in force when the cache was written (`:2108`);
 reload with a larger one and `__getitem__` tops the batch up with uniform random points
-(`:2122-2127`). In a real dataset the small surface is the cartilage.
+(`:2229-2234`). In a real dataset the small surface is the cartilage.
 
 The reload guard that should have caught this compares `len(data["pos_idx"])` against the
-number of *meshes* (`:1764-1771`), never against the subsample the arrays were built for.
+number of *meshes* (`:1861-1865`), never against the subsample the arrays were built for.
 
 **How to tell whether you are affected:** if you reused a cache directory across runs that
 differed in `mesh_to_scale`, `uniform_pts_buffer` or `subsample`, the later run trained on the
@@ -102,8 +102,8 @@ without moving or renaming it, any run after that reused the pre-edit samples.
 
 ### `reference_mesh` is hashed by memory address
 
-`create_hash` stringifies every hash parameter (`:1437`) and `reference_mesh` is one
-(`:1406`, `:1981`). `str(Mesh(...))` begins `Mesh (0x7f478a24ce20)`, so the key is
+`create_hash` stringifies every hash parameter (`:1534`) and `reference_mesh` is one
+(`:1503`, `:2088`). `str(Mesh(...))` begins `Mesh (0x7f478a24ce20)`, so the key is
 per-object: two `Mesh` instances from the same file hash differently, and the same instance
 hashes differently in the next process. **The cache can never hit** — you pay full
 regeneration every run. Passing the reference as a path string is stable, and is the
@@ -137,14 +137,14 @@ coordinate space, with a migration guard of the same shape as History §1's. Wri
 
 ### `store_data_in_memory=True` raises on the first item
 
-`MultiSurfaceSDFSamples.__getitem__:2158-2162` reads `time_` and `size`, bound only in the
-`store_data_in_memory is False` branch (`:2050-2057`), so the first `__getitem__` raises
+`MultiSurfaceSDFSamples.__getitem__:2270-2272` reads `time_` and `size`, bound only in the
+`store_data_in_memory is False` branch (`:2153-2164`), so the first `__getitem__` raises
 `UnboundLocalError`. `SDFSamples.__getitem__:1563` guards the identical block correctly —
 the two classes disagree about the same option.
 
 The apparent workaround, `test_load_times=False`, is not one: it yields items with only
 `{"xyz", "gt_sdf"}` and `train_epoch` reads all four timing keys unconditionally
-(`train_deep_sdf.py:578-581`). **No combination of the two flags both constructs and
+(`train_deep_sdf.py:589-592`). **No combination of the two flags both constructs and
 trains.**
 
 *Fix:* [#22](https://github.com/gattia/nsm/issues/22). *Pinned by:*
@@ -160,9 +160,9 @@ sampler with it regardless, so asking for no near-surface points raises
 
 ### `get_pts_center_and_scale` ignores `center=` and `scale=`, and mutates its input
 
-Both are rebound before they are read (`:88`, `:94`), so centering and scaling happen
+Both are rebound before they are read (`:145`, `:151`), so centering and scaling happen
 unconditionally and `center=False, scale=False` does nothing. Separately, `pts -= center` at
-`:91` writes through to the caller's array; all three in-repo call sites pass `np.copy(...)`,
+`:148` writes through to the caller's array; all three in-repo call sites pass `np.copy(...)`,
 so the convention exists only as a habit at the call sites and a fourth caller will not have
 it.
 
@@ -174,7 +174,7 @@ traps before touching them, the obvious fix is worse than the bug** — and
 ### `LOC_SDF_CACHE` is read at import time
 
 It is read inside a **default argument** — `loc_save=os.environ.get("LOC_SDF_CACHE", ...)`
-at `:820-822` and `:1609-1611` — so it binds once when the module is imported. Setting it
+at `:899-901` and `:1706-1708` — so it binds once when the module is imported. Setting it
 afterwards has no effect and the caller silently writes to `~/.cache/nsm_sdf_cache`.
 
 The downstream consumer does exactly this: `kneepipeline/steps/run_nsm.py` sets
@@ -187,7 +187,7 @@ what it looks like it does.
 
 ### `Pool` deadlocks after an in-process build
 
-A `multiprocessing=True` build hangs indefinitely with idle workers (`:954-957`) **if a
+A `multiprocessing=True` build hangs indefinitely with idle workers (`:1016`) **if a
 dataset was already built in the same process with `multiprocessing=False`.** Fork-after-VTK.
 
 The trigger is narrower than "a second dataset", and the distinction matters because
@@ -209,7 +209,7 @@ in separate subprocesses.
 ### `padding` is not in the checkpoint, and the mismatch is silent
 
 `TriplanarDecoder.padding` scales query coordinates before they index the feature planes
-(`:322`). It is **not a learned parameter**, so a checkpoint trained at one value loads
+(`:336`). It is **not a learned parameter**, so a checkpoint trained at one value loads
 cleanly under strict `load_state_dict` at another and then samples at the wrong scale.
 
 **Measured.** A model built at `padding=0.35`, saved, and loaded through `load_model` with
@@ -230,8 +230,8 @@ arguments, and `padding` is the one it omits — so the shipped consumer is expo
 
 ### `normalize_coordinates` ignores its own `padding` argument
 
-The signature is `normalize_coordinates(self, query, plane, padding=0.1)` (`:312`) and the
-body reads `self.padding` (`:322`). Accepted, no effect, at any value. Same defect class as
+The signature is `normalize_coordinates(self, query, plane, padding=0.1)` (`:324`) and the
+body reads `self.padding` (`:336`). Accepted, no effect, at any value. Same defect class as
 the entry above and as `get_pts_center_and_scale` — which is why they should be swept
 together rather than one at a time.
 
@@ -244,7 +244,7 @@ together rather than one at a time.
 ### Every VAE layer is stored twice in the state dict
 
 `VAEDecoder` registers each layer twice — once in `self.layers`, a `ModuleList` (`:58-97`),
-and again in `self.decoder = nn.Sequential(*self.layers)` (`:99`). Both are child modules,
+and again in `self.decoder = nn.Sequential(*self.layers)` (`:105`). Both are child modules,
 so `state_dict()` emits every VAE tensor under two aliased names.
 
 Loading is unaffected — the names alias one parameter. Two things are:
@@ -267,7 +267,7 @@ both directions and needs a migration shim. *Pinned by:*
 
 ### `enforce_minmax` clamps the prediction, not just the target
 
-`train_epoch` clamps `pred_sdf` as well as the target (`:401`), and `torch.clamp` passes no
+`train_epoch` clamps `pred_sdf` as well as the target (`:411`), and `torch.clamp` passes no
 gradient outside its bounds. Every sample predicted outside ±`clamp_dist` therefore
 contributes **exactly zero gradient**, however wrong it is.
 
@@ -284,7 +284,7 @@ config work in `SCOPE.md` §2.2.
 
 ### `train_deep_sdf` returns nothing
 
-`:272` is a bare `return`. `train_epoch` builds a full `log_dict` per epoch and
+`:276` is a bare `return`. `train_epoch` builds a full `log_dict` per epoch and
 `train_deep_sdf` forwards it only to `wandb`, so a caller without a wandb key can learn
 nothing about a run except by reading checkpoints back off disk. The regression harness has
 to wrap `train_epoch` to observe anything (`testing/NSM/regression/_harness.py`) — fixing
@@ -297,7 +297,7 @@ this deletes that wrapper.
 ### The early return drops keys the caller asked for
 
 When the decoder's mean shape has no zero level set, `reconstruct_mesh` returns early at
-`:946-966` with only `{mesh, latent, assd_*}`, ignoring `return_registration_params`,
+`:953-976` with only `{mesh, latent, assd_*}`, ignoring `return_registration_params`,
 `return_timing` and `orig_mesh`. The two result shapes are not interchangeable and the
 consumer reads `result["center"]` unconditionally (`kneepipeline/steps/run_nsm.py:230`).
 
@@ -327,11 +327,15 @@ Each is its own small PR.
   Collection works only via pytest 8's rootdir fallback.
 - `pyproject.toml` — `addopts = "-k 'not train_test.py'"` filters a file that no longer
   exists, and `-k` matches test *names*, not filenames, so it never worked.
-- `make lint` reports ~400 flake8 violations in `NSM/` including **4 `F821` undefined
-  names**, in a CI job marked `continue-on-error`. Three were fixed in `d2ba1c7`; the
-  remaining ones are latent `NameError`s. The job cannot gate until the backlog is cleared,
-  so any coverage number CI publishes is decoration until then.
-- `black --check` fails on 9 files, against a standard `CLAUDE.md` states as met.
+- `make lint` reports several hundred flake8 violations in `NSM/`, in a CI job marked
+  `continue-on-error`. The four `F821` undefined names it used to report are fixed
+  (`d2ba1c7`, `e338ba2`), so nothing outstanding is a latent `NameError`; what remains is
+  whitespace and line length, plus about a dozen F-codes (unused imports, unused locals)
+  that each need a look. The job cannot gate until that backlog is cleared, so any coverage
+  number CI publishes is decoration until then.
+- `black --check` fails on 9 files, against a standard `CLAUDE.md` states as met. The CI
+  step named "Lint - isort, black" runs `make lint`, which is `flake8` only — neither
+  `black` nor `isort` is checked anywhere in CI, which is how those 9 files drifted.
 - `.github/workflows/docs.yml` invokes `make requirements dev` and `make docs`, neither of
   which is a target. The documentation site the README links has never been buildable.
 - `testing/testing_h5_vs_np_loading/save_and_load_h5_vs_np.py:1` is a shell command in a

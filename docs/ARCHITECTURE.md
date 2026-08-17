@@ -6,6 +6,10 @@
 > ⚠️ The structural claims below — layering, the single cycle, the star-import surface, the
 > six traps — have not been re-checked since the Aug 2026 seeding work, which changed
 > `sdf_dataset.py` by 104 lines. Re-run the `ast` pass before relying on any of them.
+>
+> The same applies to every `file:line` on this page, including §7's defect-class table:
+> the counts and the classes hold, but a line number may no longer land on the code it
+> names. Re-locate by symbol.
 
 Method: import edges extracted with Python's `ast` over all 55 `.py` files, recording each
 import's enclosing scope so deferred imports are distinguished structurally. Coverage from
@@ -297,8 +301,8 @@ instance" asks for. The LR bug's class is the largest group.
 | Class | Count | Representative |
 |---|---|---|
 | **Undocumented positional/index ordering** — the LR bug's exact shape | ~12 | `reconstruct/main.py:1118`: reconstructed mesh order *is* the surface identity contract, named nowhere, hardcoded by the consumer. `losses.py:110`: `cat([latent, points])` with nothing validating the width. `mesh/main.py:690`: 17 positional args into `create_mesh`. |
-| **Parameter accepted and silently ignored** | ~10 | `sdf_dataset.py:87`: `center=` / `scale=` are rebound before they are read, so both operations happen unconditionally. `n_pts_random` swallowed by `**kwargs` — the consumer passes 100,000 for it. |
-| **Silent in-place mutation of caller data** | 7 | `sdf_dataset.py:91` mutates the passed array; all three in-repo callers pass `np.copy()` defensively, so the convention exists only as a habit at the call sites. |
+| **Parameter accepted and silently ignored** | ~10 | `sdf_dataset.py:145`: `center=` / `scale=` are rebound before they are read, so both operations happen unconditionally. `n_pts_random` swallowed by `**kwargs` — the consumer passes 100,000 for it. |
+| **Silent in-place mutation of caller data** | 7 | `sdf_dataset.py:148` mutates the passed array; all three in-repo callers pass `np.copy()` defensively, so the convention exists only as a habit at the call sites. |
 | **Cache key omits a parameter that changes cached content** | 4 | `mesh_to_scale`, `uniform_pts_buffer`, `subsample` are all absent from `get_hash_params`. |
 | **Import-time side effect** | 10 | §4 above. |
 | **Constructed and discarded / leaked loop variable** | 3 | `train_deep_sdf_multi_head.py:85` (only the last decoder trains), `sdf_dataset.py:665`, `triplanar.py:87` (the activation is built and never appended — the VAE decoder has no pointwise nonlinearity; see §7.1). |
