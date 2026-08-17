@@ -22,37 +22,38 @@ the library today"; an issue says "we intend to fix it". Most Open entries have 
 neither replaces the other: issues live on GitHub, and this file is what survives in the
 repo.
 
-> **Transitional, 2026-08-17.** The Open entries below were merged in from the defect work
-> list that used to live in `planning/`, and are **awaiting issue filing**. Once each has an issue,
-> its entry keeps only what a *user* needs — what is wrong and how to tell if it affects
-> them — and the fix plan moves to the issue. Delete this note when that is done.
-
 ---
 
 # Open
 
 Every entry below was **executed**, not inferred, and each names the test that pins it.
 Ordered by file and function rather than by severity, so they surface as you open the
-relevant code. Severity is in the table.
+relevant code.
 
-| Where | Issue | Severity |
+Each entry says what is wrong and how to tell whether it affects you. **How to fix it is in
+the issue** — that is the split: this file is what survives in the repo, the issue is the
+queue.
+
+| Defect | Severity | Issue |
 |---|---|---|
-| [Cache key omits parameters that change cached content](#cache-key-omits-parameters-that-change-what-is-cached) | **High** — silently wrong training data |
-| [Cache key omits mesh content](#cache-key-omits-mesh-content) | Medium — edit a mesh in place, get stale data |
-| [`reference_mesh` hashed by memory address](#reference_mesh-is-hashed-by-memory-address) | Medium — the cache never hits |
-| [Sigma coordinate space depends on `scale_jointly`](#sigma-sampling-coordinate-space-depends-on-scale_jointly) | **High** — ~100× over/under-sampling |
-| [`store_data_in_memory=True` raises](#store_data_in_memorytrue-raises-on-the-first-item) | Medium — advertised option, unusable |
-| [`p_near_surface=0` crashes](#p_near_surface0-crashes-inside-point_cloud_utils) | Low |
-| [`get_pts_center_and_scale` ignores its arguments](#get_pts_center_and_scale-ignores-center-and-scale-and-mutates-its-input) | Medium |
-| [`LOC_SDF_CACHE` read at import time](#loc_sdf_cache-is-read-at-import-time) | Low |
-| [`Pool` deadlocks on a second dataset](#pool-deadlocks-on-a-second-dataset-in-one-process) | Low — hangs, does not corrupt |
-| [`padding` absent from checkpoints](#padding-is-not-in-the-checkpoint-and-the-mismatch-is-silent) | **High** — silent wrong-scale sampling |
-| [`normalize_coordinates(padding=)` ignored](#normalize_coordinates-ignores-its-own-padding-argument) | Low |
-| [Every VAE layer stored twice](#every-vae-layer-is-stored-twice-in-the-state-dict) | Medium — 1.92× checkpoints |
-| [`enforce_minmax` clamps predictions](#enforce_minmax-clamps-the-prediction-not-just-the-target) | Medium — config semantics |
-| [`train_deep_sdf` returns nothing](#train_deep_sdf-returns-nothing) | Low — blocks observability |
-| [Early return drops requested keys](#the-early-return-drops-keys-the-caller-asked-for) | Medium |
-| [Tooling defects](#tooling) | Low |
+| Cache key does not cover what changes cached content | **High** — silently wrong training data | [#19](https://github.com/gattia/nsm/issues/19) |
+| Sigma coordinate space depends on `scale_jointly` | **High** — ~100× over/under-sampling | [#3](https://github.com/gattia/nsm/issues/3) |
+| `padding` absent from checkpoints | **High** — silent wrong-scale sampling | [#26](https://github.com/gattia/nsm/issues/26) |
+| `include_surf_in_pts` appends a leaked loop variable | **High** | [#17](https://github.com/gattia/nsm/issues/17) |
+| Parameters accepted and never read | Medium — **read the traps first** | [#20](https://github.com/gattia/nsm/issues/20) |
+| `get_pts_center_and_scale` mutates the caller's array | Medium | [#21](https://github.com/gattia/nsm/issues/21) |
+| `store_data_in_memory=True` raises | Medium — advertised option, unusable | [#22](https://github.com/gattia/nsm/issues/22) |
+| Every VAE layer stored twice | Medium — 1.92× checkpoints | [#27](https://github.com/gattia/nsm/issues/27) |
+| `reconstruct_mesh` early return drops requested keys | Medium | [#29](https://github.com/gattia/nsm/issues/29) |
+| `reconstruct_mesh` raises `KeyError: 'pts'` on one branch | Medium | [#15](https://github.com/gattia/nsm/issues/15) |
+| `n_pts_random` accepted and discarded | Medium | [#16](https://github.com/gattia/nsm/issues/16) |
+| `sample_difficulty_lx` shipped but unimplemented | Medium | [#18](https://github.com/gattia/nsm/issues/18) |
+| `enforce_minmax` clamps predictions | Medium — config semantics | *none — a docs/design call, see below* |
+| `p_near_surface=0` crashes | Low | [#23](https://github.com/gattia/nsm/issues/23) |
+| `LOC_SDF_CACHE` read at import time | Low | [#24](https://github.com/gattia/nsm/issues/24) |
+| `Pool` deadlocks after an in-process build | Low — hangs, does not corrupt | [#25](https://github.com/gattia/nsm/issues/25) |
+| `train_deep_sdf` returns nothing | Low — blocks observability | [#28](https://github.com/gattia/nsm/issues/28) |
+| Tooling defects | Low | *one PR, not issues* |
 
 ---
 
@@ -80,10 +81,13 @@ reload with a larger one and `__getitem__` tops the batch up with uniform random
 The reload guard that should have caught this compares `len(data["pos_idx"])` against the
 number of *meshes* (`:1764-1771`), never against the subsample the arrays were built for.
 
-*Fixing it needs a History entry* — it silently changes training output for inputs that
-previously ran. Do not fix it before sampling is reproducible (done, Aug 2026), or a
-regenerated cache produces *different* data rather than the same data.
-*Pinned by:* `test_dataset_cache.TestUnhashedParametersCollide` (5 tests).
+**How to tell whether you are affected:** if you reused a cache directory across runs that
+differed in `mesh_to_scale`, `uniform_pts_buffer` or `subsample`, the later run trained on the
+earlier one's data. Different cache directory per configuration, and you are fine.
+
+*Fix:* [#19](https://github.com/gattia/nsm/issues/19), bundled with the two entries below
+because all three invalidate every cached `.npz` — one regeneration, not three. *Pinned by:*
+`test_dataset_cache.TestUnhashedParametersCollide` (5 tests).
 
 ### Cache key omits mesh content
 
@@ -91,18 +95,22 @@ The key is `md5(params + mesh paths)`. Edit a mesh in place and the key does not
 the stale `.npz` is served and you train on the old geometry. Same class as the two entries
 either side of it: something that changes cached content is not in the key.
 
-A full content hash on every load may not be worth it for a large dataset; size and mtime
-would catch the realistic case. The decision is which, not whether.
-*Not currently pinned by a test.*
+**How to tell whether you are affected:** if you have ever edited or re-exported a mesh
+without moving or renaming it, any run after that reused the pre-edit samples.
+
+*Fix:* [#19](https://github.com/gattia/nsm/issues/19). *Not currently pinned by a test.*
 
 ### `reference_mesh` is hashed by memory address
 
 `create_hash` stringifies every hash parameter (`:1437`) and `reference_mesh` is one
 (`:1406`, `:1981`). `str(Mesh(...))` begins `Mesh (0x7f478a24ce20)`, so the key is
 per-object: two `Mesh` instances from the same file hash differently, and the same instance
-hashes differently in the next process. **The cache can never hit.** Passing the reference
-as a path string is stable, and is the workaround people are implicitly relying on.
-*Pinned by:* `test_dataset_cache.TestReferenceMeshHashing`.
+hashes differently in the next process. **The cache can never hit** — you pay full
+regeneration every run. Passing the reference as a path string is stable, and is the
+workaround people are implicitly relying on.
+
+*Fix:* [#19](https://github.com/gattia/nsm/issues/19). *Pinned by:*
+`test_dataset_cache.TestReferenceMeshHashing`.
 
 ### Sigma sampling coordinate space depends on `scale_jointly`
 
@@ -124,7 +132,8 @@ large sigmas (> 0.5) with `scale_jointly=False`, indicate a probable mismatch.
 coordinate space, with a migration guard of the same shape as History §1's. Written up in
 `.claude/plans/BREAKING_CHANGE_PROPOSAL.md` and
 `.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md`, scheduled into
-`.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §8. Tracked upstream as repo issue #3.
+`.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §8. Tracked as
+[#3](https://github.com/gattia/nsm/issues/3), open since Sept 2025.
 
 ### `store_data_in_memory=True` raises on the first item
 
@@ -136,15 +145,18 @@ the two classes disagree about the same option.
 The apparent workaround, `test_load_times=False`, is not one: it yields items with only
 `{"xyz", "gt_sdf"}` and `train_epoch` reads all four timing keys unconditionally
 (`train_deep_sdf.py:578-581`). **No combination of the two flags both constructs and
-trains.** Fixing it means deciding whether the timing keys are part of the batch contract.
-*Pinned by:* `test_dataset_cache.TestConfigurationsThatDoNotRun` (3 tests).
+trains.**
+
+*Fix:* [#22](https://github.com/gattia/nsm/issues/22). *Pinned by:*
+`test_dataset_cache.TestConfigurationsThatDoNotRun` (3 tests).
 
 ### `p_near_surface=0` crashes inside `point_cloud_utils`
 
 `get_pt_sample_combos` emits a `[0, sigma]` combo and `get_sample_data_dict:1820` calls the
 sampler with it regardless, so asking for no near-surface points raises
 `ValueError: Invalid input point cloud with zero points`. Same for `p_further_from_surface=0`.
-*Pinned by:* `test_dataset_cache...::test_zero_sampling_probability_must_sample_nothing`.
+*Fix:* [#23](https://github.com/gattia/nsm/issues/23). *Pinned by:*
+`test_dataset_cache...::test_zero_sampling_probability_must_sample_nothing`.
 
 ### `get_pts_center_and_scale` ignores `center=` and `scale=`, and mutates its input
 
@@ -152,8 +164,12 @@ Both are rebound before they are read (`:88`, `:94`), so centering and scaling h
 unconditionally and `center=False, scale=False` does nothing. Separately, `pts -= center` at
 `:91` writes through to the caller's array; all three in-repo call sites pass `np.copy(...)`,
 so the convention exists only as a habit at the call sites and a fourth caller will not have
-it. Either honour the arguments or delete them.
-*Pinned by:* `test_dataset_cache.TestPointCenteringAndScaling`.
+it.
+
+*Fix:* [#20](https://github.com/gattia/nsm/issues/20) for the ignored arguments — **read its
+traps before touching them, the obvious fix is worse than the bug** — and
+[#21](https://github.com/gattia/nsm/issues/21) for the mutation. *Pinned by:*
+`test_dataset_cache.TestPointCenteringAndScaling`.
 
 ### `LOC_SDF_CACHE` is read at import time
 
@@ -165,7 +181,9 @@ The downstream consumer does exactly this: `kneepipeline/steps/run_nsm.py` sets
 `os.environ["LOC_SDF_CACHE"] = ""` *after* importing `reconstruct_mesh` on the line above.
 Harmless there — `reconstruct_mesh` never constructs a dataset — but the line does not do
 what it looks like it does.
-*Pinned by:* `test_dataset_cache.TestCacheLocationDefault`.
+
+*Fix:* [#24](https://github.com/gattia/nsm/issues/24). *Pinned by:*
+`test_dataset_cache.TestCacheLocationDefault`.
 
 ### `Pool` deadlocks after an in-process build
 
@@ -183,9 +201,7 @@ The trigger is narrower than "a second dataset", and the distinction matters bec
 So a script that builds a train split in-process and then a val split on the default path
 deadlocks, with no message, on the second one. Long-standing rather than new.
 
-Cheapest honest fix is a `spawn` context; the cheapest fix of all is documenting it on
-`multiprocessing=`. Either beats a hang with no output.
-*Worked around in:* `test_dataset_cache.TestSeedDerivation`, which builds its two datasets
+*Fix:* [#25](https://github.com/gattia/nsm/issues/25). *Worked around in:* `test_dataset_cache.TestSeedDerivation`, which builds its two datasets
 in separate subprocesses.
 
 ## `models/triplanar.py`
@@ -203,13 +219,14 @@ computes a maximum absolute SDF difference of **0.063**. The output is `tanh`-bo
 config restores bitwise-identical output.
 
 `kneepipeline/steps/run_nsm.py:94-112` passes 15 of `TriplanarDecoder`'s 16 meaningful
-arguments, and `padding` is the one it omits.
+arguments, and `padding` is the one it omits — so the shipped consumer is exposed.
 
-*Options, in increasing order of how much they fix:* (a) refuse to load when the config
-omits it; (b) write it into the checkpoint beside the state dict; (c) give NSM the public
-"build the model this config describes" call that `SCOPE.md` §3.1 already calls the
-highest-value API change available, and have both `load_model` and the consumer use it.
-*Pinned by:* `test_model_roundtrip.TestPaddingIsNotInTheCheckpoint`.
+**How to tell whether you are affected:** if the model was trained at a `padding` other than
+0.1 and your config or caller does not state it, every SDF it computes is wrong by up to
+~3% of the output range. Stating `padding` in the config restores bitwise-identical output.
+
+*Fix:* [#26](https://github.com/gattia/nsm/issues/26). *Pinned by:*
+`test_model_roundtrip.TestPaddingIsNotInTheCheckpoint`.
 
 ### `normalize_coordinates` ignores its own `padding` argument
 
@@ -217,6 +234,11 @@ The signature is `normalize_coordinates(self, query, plane, padding=0.1)` (`:312
 body reads `self.padding` (`:322`). Accepted, no effect, at any value. Same defect class as
 the entry above and as `get_pts_center_and_scale` — which is why they should be swept
 together rather than one at a time.
+
+> ⚠️ **The obvious fix is worse than the bug**, and the test pinning this rewards the wrong
+> one. Read [#20](https://github.com/gattia/nsm/issues/20)'s traps before changing anything
+> here.
+
 *Pinned by:* `test_model_roundtrip...::test_normalize_coordinates_must_honour_its_padding_argument`.
 
 ### Every VAE layer is stored twice in the state dict
@@ -233,11 +255,13 @@ Loading is unaffected — the names alias one parameter. Two things are:
   written. Not hypothetical: the first draft of `test_the_comparison_can_fail` did exactly
   that and looked like a passing round trip.
 
-**This is a checkpoint-format break in both directions, verified.** Dropping `self.layers`
-makes every existing checkpoint fail strict load with `Unexpected key(s)`, and a new
-checkpoint fails against the current model with `Missing key(s)`. It needs a migration shim
-— per `CLAUDE.md`, in its own module with a delete-when condition — not a one-line fix.
-*Pinned by:* `test_model_roundtrip.TestAliasedCheckpointEntries`.
+**How to tell whether you are affected:** every NSM checkpoint is. Your models are correct —
+this costs disk, not accuracy — but any tooling that edits a checkpoint by key needs to write
+both names.
+
+*Fix:* [#27](https://github.com/gattia/nsm/issues/27), which is a checkpoint-format break in
+both directions and needs a migration shim. *Pinned by:*
+`test_model_roundtrip.TestAliasedCheckpointEntries`.
 
 ## `train/train_deep_sdf.py`
 
@@ -254,8 +278,8 @@ both ShapeMedKnee configs use `1.0`.
 Whether that stalls a given run is configuration-dependent — an earlier claim that it always
 does was **false**, and was withdrawn after being run. The defect is that the name and the
 docs describe a target transform while the behaviour is a training-dynamics knob. This is a
-documentation-or-decision call, not a bug fix, and belongs with the config work in
-`SCOPE.md` §2.2.
+documentation-or-decision call, not a bug fix, so it has **no issue** — it belongs with the
+config work in `SCOPE.md` §2.2.
 *Pinned by:* `test_training_regression.TestClampedPredictionGradients`.
 
 ### `train_deep_sdf` returns nothing
@@ -265,6 +289,8 @@ documentation-or-decision call, not a bug fix, and belongs with the config work 
 nothing about a run except by reading checkpoints back off disk. The regression harness has
 to wrap `train_epoch` to observe anything (`testing/NSM/regression/_harness.py`) — fixing
 this deletes that wrapper.
+
+*Fix:* [#28](https://github.com/gattia/nsm/issues/28).
 
 ## `reconstruct/main.py`
 
@@ -278,8 +304,8 @@ consumer reads `result["center"]` unconditionally (`kneepipeline/steps/run_nsm.p
 Sharper than the missing keys: **the result looks successful.** `mesh` is `[None, None]`,
 `assd_*` are `nan`, and `latent` is a correctly-shaped `(1, latent_size)` tensor of zeros —
 the untouched `mean_latent`, never fitted. A caller checking "did I get a latent" gets yes.
-Either return the same keys with honest values, or fail loudly.
-*Pinned by:* `test_reconstruction_regression.TestDecoderWithNoZeroLevelSet` (5 tests).
+*Fix:* [#29](https://github.com/gattia/nsm/issues/29). *Pinned by:*
+`test_reconstruction_regression.TestDecoderWithNoZeroLevelSet` (5 tests).
 
 ## Upstream
 
