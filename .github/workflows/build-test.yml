@@ -11,14 +11,10 @@ on:
 jobs:
 
   lint:
-    # Lint reports pre-existing style issues across the whole repo; do not
-    # block PR merges on them. (~600 pre-existing flake8 violations across
-    # NSM/ + testing/ when the .flake8 max-line-length is set to Black's
-    # 100 chars -- including F821 undefined names, F841 unused locals,
-    # F403 star imports, and assorted whitespace/style. Cleanup is its own
-    # PR.) Lint output stays visible in the run for anyone who wants to
-    # work through it; it just doesn't gate merging.
-    continue-on-error: true
+    # NSM/ + testing/ report zero flake8 violations and are clean under isort and
+    # black, so this gates. It did not previously: the backlog was several hundred
+    # and the job carried continue-on-error, which is how nine files drifted out of
+    # black compliance without anyone seeing it.
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -37,9 +33,13 @@ jobs:
           python -m pip install --upgrade pip
           make install-dev
 
-      - name: Lint - isort, black
+      - name: Lint - flake8
         run: |
           make lint
+
+      - name: Format check - isort, black
+        run: |
+          make format-check
 
   build:
     needs: lint

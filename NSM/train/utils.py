@@ -1,7 +1,5 @@
 import numpy as np
 import torch
-
-import torch
 from torch.profiler import profile, tensorboard_trace_handler
 
 from NSM.utils import LR_TARGET_LATENT, LR_TARGET_MODEL, resolve_schedule_targets
@@ -38,7 +36,6 @@ def cyclic_anneal_linear(
     https://github.com/haofuml/cyclical_annealing
     """
     cycle_length = np.floor(n_epochs / n_cycles).astype(int)
-    cycle = epoch // cycle_length
     cycle_progress = epoch % cycle_length
 
     weight = (cycle_progress / cycle_length) * (1 / ratio)

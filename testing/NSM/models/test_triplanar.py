@@ -1,5 +1,6 @@
-from NSM.models import TriplanarDecoder
 import torch
+
+from NSM.models import TriplanarDecoder
 
 
 def test_triplanar(n_pts=1000, latent_size=512, deep_size=2, n_objects=2):

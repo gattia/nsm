@@ -126,8 +126,15 @@ def test_tangent_laplacian_runs():
     model = SphereSDF()
     z1, z2 = _latents(1.0, 1.2)
     warped = interpolate_points(
-        model, z1, z2, n_steps=15, points1=pts, surface_idx=0,
-        faces=faces, tangent_laplacian=True, tangent_laplacian_alpha=0.3,
+        model,
+        z1,
+        z2,
+        n_steps=15,
+        points1=pts,
+        surface_idx=0,
+        faces=faces,
+        tangent_laplacian=True,
+        tangent_laplacian_alpha=0.3,
     )
     assert np.isfinite(warped).all()
     np.testing.assert_allclose(_radii(warped), 1.2, atol=1e-2)

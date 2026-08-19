@@ -1,9 +1,10 @@
-import torch
 import numpy as np
+import torch
 import wandb
+
 from NSM.datasets import (
-    read_mesh_get_sampled_pts,
     get_pts_center_and_scale,
+    read_mesh_get_sampled_pts,
 )
 
 from .utils import adjust_learning_rate
@@ -49,10 +50,10 @@ def get_axis_angle_rotation_matrix(polar_angle, azimuthal_angle, theta, epsilon=
     w3 = w3 / norm
 
     w = get_w(w1, w2, w3)
-    I = torch.eye(3)
+    eye = torch.eye(3)
     # See section 5.1 of paper:
     # https://arxiv.org/pdf/2004.09048.pdf
-    R = I + w * torch.sin(theta) + w @ w * (1 - torch.cos(theta))
+    R = eye + w * torch.sin(theta) + w @ w * (1 - torch.cos(theta))
     return R
 
 

@@ -62,7 +62,7 @@ config = {
     "sample_difficulty_lx_cooldown": None,  # cooldown period for sample difficulty lx weighting
     "sample_difficulty_lx_epsilon": 1e-4,  # epsilon to avoid divide by zero errors
     # optimizer
-    "optimizer": "Adam",  #  "AdamW"
+    "optimizer": "Adam",  # "AdamW"
     "weight_decay": 0.0001,
     # Learning Rate:
     # Each entry MUST declare "Target": "model" or "latent". Entry order is ignored --

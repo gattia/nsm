@@ -1,38 +1,34 @@
-import torch
-import logging
-
-from .utils import adjust_learning_rate
-
-from .recon_evaluation import compute_recon_loss
-
-from .predictive_validation_class import Regress
-
-from NSM.datasets import read_mesh_get_sampled_pts, read_meshes_get_sampled_pts
-from NSM.datasets.sdf_dataset import combine_meshes
-from NSM.mesh import create_mesh_adaptive
-from NSM.losses import EIKONAL_UNSUPPORTED, eikonal_loss
-
-
-import numpy as np
-import sys
-import os
 import copy
-import pymskt as mskt
-import wandb
+import logging
+import os
+import sys
 import time
 from fnmatch import fnmatch
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+import numpy as np
+import pymskt as mskt
+import torch
+import wandb
 
+from NSM.datasets import read_mesh_get_sampled_pts, read_meshes_get_sampled_pts
+from NSM.datasets.sdf_dataset import combine_meshes
+from NSM.losses import EIKONAL_UNSUPPORTED, eikonal_loss
+from NSM.mesh import create_mesh_adaptive
+
+from .predictive_validation_class import Regress
+from .recon_evaluation import compute_recon_loss
+from .utils import adjust_learning_rate
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 
 try:
     from NSM.dependencies import sinkhorn
 
     __emd__ = True
-except:
+except Exception:
     print("Error importing `sinkhorn` from NSM.dependencies")
     __emd__ = False
 
@@ -40,89 +36,91 @@ except:
 def _process_meshes_for_wandb(meshes, mesh_prefix, max_points_3d, log_faces, verbose):
     """
     Helper function to process a list of meshes for wandb logging.
-    
+
     Args:
         meshes (list): List of mesh objects to process
         mesh_prefix (str): Prefix for wandb keys (e.g., "recon_mesh", "orig_mesh")
         max_points_3d (int): Maximum number of points to log (subsampled if exceeded)
         log_faces (bool): Whether to include mesh faces in 3D visualization if available
         verbose (bool): Whether to print processing details
-    
+
     Returns:
         dict: Dictionary with wandb-ready mesh data
     """
     mesh_data = {}
-    
+
     for i, mesh in enumerate(meshes):
-        if mesh is not None and hasattr(mesh, 'point_coords'):
+        if mesh is not None and hasattr(mesh, "point_coords"):
             points = mesh.point_coords
-            
+
             # Subsample if too many points
             if len(points) > max_points_3d:
                 if verbose:
-                    print(f"Subsampling {mesh_prefix}_{i} from {len(points)} to {max_points_3d} points")
+                    print(
+                        f"Subsampling {mesh_prefix}_{i} from {len(points)} to {max_points_3d} points"
+                    )
                 indices = np.random.choice(len(points), max_points_3d, replace=False)
                 points = points[indices]
-            
+
             # Create 3D object with or without faces
-            if log_faces and hasattr(mesh, 'faces') and mesh.faces is not None:
+            if log_faces and hasattr(mesh, "faces") and mesh.faces is not None:
                 try:
-                    mesh_data[f"{mesh_prefix}_{i}"] = wandb.Object3D({
-                        "type": "lidar/beta",
-                        "points": points,
-                        "faces": mesh.faces
-                    })
+                    mesh_data[f"{mesh_prefix}_{i}"] = wandb.Object3D(
+                        {"type": "lidar/beta", "points": points, "faces": mesh.faces}
+                    )
                 except Exception as e:
                     if verbose:
-                        print(f"Failed to log faces for {mesh_prefix}_{i}, logging points only: {e}")
+                        print(
+                            f"Failed to log faces for {mesh_prefix}_{i}, logging points only: {e}"
+                        )
                     mesh_data[f"{mesh_prefix}_{i}"] = wandb.Object3D(points)
             else:
                 mesh_data[f"{mesh_prefix}_{i}"] = wandb.Object3D(points)
-            
+
             # Log mesh statistics
             mesh_data[f"{mesh_prefix}_{i}_n_points"] = len(mesh.point_coords)
-            if hasattr(mesh, 'faces') and mesh.faces is not None:
+            if hasattr(mesh, "faces") and mesh.faces is not None:
                 mesh_data[f"{mesh_prefix}_{i}_n_faces"] = len(mesh.faces)
-    
+
     return mesh_data
 
 
 def prepare_results_for_wandb(result, max_points_3d=10000, log_faces=True, verbose=False):
     """
     Prepare reconstruction results for wandb logging with 3D point cloud visualization and robust JSON serialization.
-    
+
     Args:
         result (dict): Dictionary containing reconstruction results
         max_points_3d (int): Maximum number of points to log for 3D visualization (subsampled if exceeded)
         log_faces (bool): Whether to include mesh faces in 3D visualization if available
         verbose (bool): Whether to print preparation details
-    
+
     Returns:
         dict: Dictionary ready for wandb logging (JSON serializable + 3D objects)
     """
     if verbose:
         print("Preparing results for wandb logging...")
-    
+
     # Create a copy to avoid modifying the original
     result_wandb = copy.copy(result)
-    
+
     # Process reconstructed meshes
     if "mesh" in result_wandb and result_wandb["mesh"] is not None:
         recon_mesh_data = _process_meshes_for_wandb(
             result_wandb["mesh"], "recon_mesh", max_points_3d, log_faces, verbose
         )
         result_wandb.update(recon_mesh_data)
-    
+
     # Process original meshes
     if "orig_mesh" in result_wandb and result_wandb["orig_mesh"] is not None:
         orig_mesh_data = _process_meshes_for_wandb(
             result_wandb["orig_mesh"], "orig_mesh", max_points_3d, log_faces, verbose
         )
         result_wandb.update(orig_mesh_data)
-    
+
     # Robust JSON serialization filtering
     keys_to_delete = []
-    
+
     for key, value in result_wandb.items():
         if value is None:
             continue  # None is JSON serializable
@@ -147,26 +145,26 @@ def prepare_results_for_wandb(result, max_points_3d=10000, log_faces=True, verbo
                 if verbose:
                     print(f"Removing large tensor '{key}' with {value.numel()} elements")
                 keys_to_delete.append(key)
-        elif hasattr(value, '__class__') and 'wandb' in str(type(value)):
+        elif hasattr(value, "__class__") and "wandb" in str(type(value)):
             continue  # Keep wandb objects (like Object3D)
         else:
             if verbose:
                 print(f"Removing non-serializable object '{key}' of type {type(value)}")
             keys_to_delete.append(key)
-    
+
     # Delete non-serializable items
     for key in keys_to_delete:
         del result_wandb[key]
-    
+
     # Delete original mesh objects (but keep the 3D point clouds we created)
     if "mesh" in result_wandb:
         del result_wandb["mesh"]
     if "orig_mesh" in result_wandb:
         del result_wandb["orig_mesh"]
-    
+
     if verbose:
         print(f"Prepared {len(result_wandb)} items for wandb logging")
-    
+
     return result_wandb
 
 
@@ -270,23 +268,23 @@ def latent_norm_penalty(latent, target_norm, penalty_weight=1.0, penalty_type="q
     """
     Compute a soft penalty term to encourage latent norm to be near target_norm.
     This is smoother than explicit projection and works better with gradient-based optimizers.
-    
+
     Args:
         latent: The latent vector
         target_norm: Target norm value or (min_norm, max_norm) tuple
         penalty_weight: Weight for the penalty term
         penalty_type: "quadratic", "huber", or "barrier"
-    
+
     Returns:
         penalty: Scalar penalty term to add to loss
     """
     current_norm = latent.norm(p=2)
-    
+
     if isinstance(target_norm, (list, tuple)):
         if len(target_norm) != 2:
             raise ValueError("target_norm must be a single value or a tuple/list of two values")
         min_norm, max_norm = target_norm
-        
+
         if penalty_type == "quadratic":
             # Quadratic penalty outside the range [min_norm, max_norm]
             if current_norm < min_norm:
@@ -300,23 +298,21 @@ def latent_norm_penalty(latent, target_norm, penalty_weight=1.0, penalty_type="q
             delta = (max_norm - min_norm) * 0.1  # 10% of range as threshold
             if current_norm < min_norm:
                 diff = min_norm - current_norm
-                penalty = torch.where(diff <= delta, 
-                                    0.5 * diff ** 2,
-                                    delta * (diff - 0.5 * delta))
+                penalty = torch.where(diff <= delta, 0.5 * diff**2, delta * (diff - 0.5 * delta))
             elif current_norm > max_norm:
                 diff = current_norm - max_norm
-                penalty = torch.where(diff <= delta,
-                                    0.5 * diff ** 2, 
-                                    delta * (diff - 0.5 * delta))
+                penalty = torch.where(diff <= delta, 0.5 * diff**2, delta * (diff - 0.5 * delta))
             else:
                 penalty = 0.0
         elif penalty_type == "barrier":
             # Log barrier penalty that becomes infinite at boundaries
             eps = 1e-6
-            penalty = -torch.log(current_norm - min_norm + eps) - torch.log(max_norm - current_norm + eps)
+            penalty = -torch.log(current_norm - min_norm + eps) - torch.log(
+                max_norm - current_norm + eps
+            )
         else:
             raise ValueError(f"Unknown penalty_type: {penalty_type}")
-            
+
     else:
         # Single target norm
         if penalty_type == "quadratic":
@@ -324,15 +320,13 @@ def latent_norm_penalty(latent, target_norm, penalty_weight=1.0, penalty_type="q
         elif penalty_type == "huber":
             diff = torch.abs(current_norm - target_norm)
             delta = target_norm * 0.1  # 10% of target as threshold
-            penalty = torch.where(diff <= delta,
-                                0.5 * diff ** 2,
-                                delta * (diff - 0.5 * delta))
+            penalty = torch.where(diff <= delta, 0.5 * diff**2, delta * (diff - 0.5 * delta))
         elif penalty_type == "barrier":
             # For single target, use quadratic penalty (barrier doesn't make sense)
             penalty = (current_norm - target_norm) ** 2
         else:
             raise ValueError(f"Unknown penalty_type: {penalty_type}")
-    
+
     return penalty_weight * penalty
 
 
@@ -382,9 +376,11 @@ def reconstruct_latent(
 
     # Check for deprecated parameters
     if "max_batch_size" in kwargs:
-        print("Warning: max_batch_size is deprecated and will be removed in future versions. "
-              "Batch processing has been simplified and now processes all data at once for better performance.")
-    
+        print(
+            "Warning: max_batch_size is deprecated and will be removed in future versions. "
+            "Batch processing has been simplified and now processes all data at once for better performance."
+        )
+
     if eikonal_weight > 0:
         raise NotImplementedError(EIKONAL_UNSUPPORTED)
 
@@ -420,7 +416,6 @@ def reconstruct_latent(
         mean=latent_init_mean, std=latent_init_std
     )
     latent.requires_grad = True
-    latent_input = latent.expand(n_samples, -1)
 
     # Initialize optimizer(s)
     if hybrid_optimizer:
@@ -429,36 +424,42 @@ def reconstruct_latent(
             adam_iterations = num_iterations
         if lbfgs_iterations is None:
             lbfgs_iterations = 0
-            
+
         # Update total iterations to match the sum
         total_iterations = adam_iterations + lbfgs_iterations
-        
+
         # Initialize both optimizers
         adam_optimizer = torch.optim.Adam([latent], lr=lr)
-        lbfgs_optimizer = torch.optim.LBFGS([latent], 
-                                           lr=lbfgs_lr,
-                                           max_iter=lbfgs_max_iter,
-                                           history_size=lbfgs_history_size)
-        
+        lbfgs_optimizer = torch.optim.LBFGS(
+            [latent], lr=lbfgs_lr, max_iter=lbfgs_max_iter, history_size=lbfgs_history_size
+        )
+
         if verbose:
-            print(f"Hybrid optimizer: {adam_iterations} Adam iterations + {lbfgs_iterations} LBFGS iterations")
+            print(
+                f"Hybrid optimizer: {adam_iterations} Adam iterations + {lbfgs_iterations} LBFGS iterations"
+            )
             print(f"Total iterations: {total_iterations}")
     else:
         # Single optimizer mode
         if optimizer_name == "adam":
             optimizer = torch.optim.Adam([latent], lr=lr)
         elif optimizer_name == "lbfgs":
-            optimizer = torch.optim.LBFGS([latent], 
-                                          lr=lr,           # LBFGS typically uses lr=1.0
-                                          max_iter=10,     # More internal iterations per step  
-                                          history_size=100) # Larger history for better Hessian approx
+            optimizer = torch.optim.LBFGS(
+                [latent],
+                lr=lr,  # LBFGS typically uses lr=1.0
+                max_iter=10,  # More internal iterations per step
+                history_size=100,
+            )  # Larger history for better Hessian approx
 
     # Initialize loss
     if loss_type == "l1":
         loss_fn = torch.nn.L1Loss(reduction="none")
     elif loss_type == "l1_log":
         eps = 1e-8
-        loss_fn = lambda x, y: torch.log(torch.abs(x - y) + eps)
+
+        def loss_fn(x, y):
+            return torch.log(torch.abs(x - y) + eps)
+
     elif loss_type == "l2":
         loss_fn = torch.nn.MSELoss(reduction="none")
 
@@ -478,27 +479,29 @@ def reconstruct_latent(
 
     # Track whether we've switched to LBFGS in hybrid mode
     switched_to_lbfgs = False
-    
+
     # Determine actual number of iterations to run
     if hybrid_optimizer:
         actual_num_iterations = total_iterations
     else:
         actual_num_iterations = num_iterations
-    
+
     for step in range(actual_num_iterations):
         # Determine current optimizer and phase
         if hybrid_optimizer:
             current_optimizer_name = "adam" if step < adam_iterations else "lbfgs"
             current_optimizer = adam_optimizer if step < adam_iterations else lbfgs_optimizer
-            
+
             # Handle transition from Adam to LBFGS
             if step == adam_iterations and not switched_to_lbfgs and lbfgs_iterations > 0:
                 switched_to_lbfgs = True
-                logger.info(f"Switching from Adam to LBFGS at step {step} (latent_norm: {latent.norm().item():.6f})")
+                logger.info(
+                    f"Switching from Adam to LBFGS at step {step} (latent_norm: {latent.norm().item():.6f})"
+                )
         else:
             current_optimizer_name = optimizer_name
             current_optimizer = optimizer
-        
+
         # update LR (only for Adam)
         if current_optimizer_name == "adam":
             if hybrid_optimizer:
@@ -518,10 +521,9 @@ def reconstruct_latent(
                     adjust_lr_every=adjust_lr_every,
                 )
 
-
         def compute_loss():
             """Compute loss for current latent vector - used by both Adam and LBFGS"""
-            
+
             # Sample selection
             if n_samples_init is not None:
                 n_samples_ = n_samples_init + int(
@@ -589,7 +591,7 @@ def reconstruct_latent(
             for decoder_idx, decoder in enumerate(decoders):
                 # Fast inference: pass latent and xyz separately
                 pred_sdf = decoder(latent=latent.squeeze(0), xyz=xyz_input)
-                
+
                 # initialize loss as zeros with same device (will be averaged later)
                 _loss_ = 0
 
@@ -635,12 +637,9 @@ def reconstruct_latent(
 
                         if difficulty_weight is not None:
                             error_sign = torch.sign(
-                                sdf_gt_[sdf_idx].squeeze()
-                                - pred_sdf[:, sdf_idx].squeeze()
+                                sdf_gt_[sdf_idx].squeeze() - pred_sdf[:, sdf_idx].squeeze()
                             )
-                            sdf_gt_sign = torch.sign(
-                                sdf_gt_[sdf_idx].squeeze()
-                            )
+                            sdf_gt_sign = torch.sign(sdf_gt_[sdf_idx].squeeze())
                             sample_weights = 1 + difficulty_weight * sdf_gt_sign * error_sign
                         else:
                             sample_weights = torch.ones_like(pred_sdf[:, sdf_idx].squeeze())
@@ -668,13 +667,13 @@ def reconstruct_latent(
             if eikonal_weight > 0:
                 # Need to recompute with gradients enabled for eikonal loss
                 xyz_input_grad = xyz_input.detach().requires_grad_(True)
-                
+
                 for decoder_idx, decoder in enumerate(decoders):
                     # Fast inference mode for eikonal loss
                     pred_sdf_grad = decoder(latent=latent.squeeze(0), xyz=xyz_input_grad)
                     eik_loss = eikonal_loss(pred_sdf_grad, xyz_input_grad, reduction="mean")
                     eikonal_loss_value += eik_loss
-                
+
                 # Average over decoders if multiple
                 if len(decoders) > 1:
                     eikonal_loss_value = eikonal_loss_value / len(decoders)
@@ -694,7 +693,9 @@ def reconstruct_latent(
                     latent, latent_norm, norm_penalty_weight, norm_penalty_type
                 )
 
-            total_loss = recon_loss + latent_loss + eikonal_weight * eikonal_loss_value + norm_penalty_loss
+            total_loss = (
+                recon_loss + latent_loss + eikonal_weight * eikonal_loss_value + norm_penalty_loss
+            )
 
             return total_loss, recon_loss, latent_loss, eikonal_loss_value, norm_penalty_loss
 
@@ -704,13 +705,16 @@ def reconstruct_latent(
             total_loss, _, _, _, _ = compute_loss()
             # retain_graph=True because LBFGS will call this closure multiple times
             total_loss.backward(retain_graph=True)
-            
+
             # Only use hard projection if soft constraint is disabled
-            if (current_optimizer_name == "lbfgs" and latent_norm is not None 
-                and not use_soft_norm_constraint):
+            if (
+                current_optimizer_name == "lbfgs"
+                and latent_norm is not None
+                and not use_soft_norm_constraint
+            ):
                 with torch.no_grad():
                     project_latent(latent, latent_norm)
-            
+
             return total_loss
 
         # Run the appropriate optimizer step
@@ -725,15 +729,20 @@ def reconstruct_latent(
             # Compute final losses for tracking (without gradients)
             with torch.no_grad():
                 _, recon_loss_, latent_loss_, eikonal_loss_, norm_penalty_loss_ = compute_loss()
-        
+
         # Log progress at reasonable intervals
         if step % 50 == 0 or (step < 10):
-            logger.info(f"Step {step}: Loss={loss_.item():.6f}, Recon={recon_loss_.item():.6f}, Latent_norm={latent.norm().item():.3f}")
+            logger.info(
+                f"Step {step}: Loss={loss_.item():.6f}, Recon={recon_loss_.item():.6f}, Latent_norm={latent.norm().item():.3f}"
+            )
 
         # check if want to project onto hypersphere (skip for LBFGS since it's done in closure)
         # Only use hard projection if soft constraint is disabled
-        if (latent_norm is not None and current_optimizer_name != "lbfgs" 
-            and not use_soft_norm_constraint):
+        if (
+            latent_norm is not None
+            and current_optimizer_name != "lbfgs"
+            and not use_soft_norm_constraint
+        ):
             if verbose is True:
                 print(f"Projecting latent onto hypersphere of norm in range: {latent_norm}")
             project_latent(latent, latent_norm)
@@ -745,10 +754,18 @@ def reconstruct_latent(
                 print(f"Step: {step}{optimizer_info}, Loss: {loss_.item()}")
                 print("\tRecon loss: ", recon_loss_.item())
                 if eikonal_weight > 0:
-                    eikonal_val = eikonal_loss_.item() if hasattr(eikonal_loss_, 'item') else float(eikonal_loss_)
+                    eikonal_val = (
+                        eikonal_loss_.item()
+                        if hasattr(eikonal_loss_, "item")
+                        else float(eikonal_loss_)
+                    )
                     print(f"\tEikonal loss: {eikonal_val:.6f}")
                 if latent_norm is not None and use_soft_norm_constraint:
-                    norm_penalty_val = norm_penalty_loss_.item() if hasattr(norm_penalty_loss_, 'item') else float(norm_penalty_loss_)
+                    norm_penalty_val = (
+                        norm_penalty_loss_.item()
+                        if hasattr(norm_penalty_loss_, "item")
+                        else float(norm_penalty_loss_)
+                    )
                     print(f"\tNorm penalty loss: {norm_penalty_val:.6f}")
                 print("\tLatent norm: ", latent.norm)
 
@@ -762,9 +779,15 @@ def reconstruct_latent(
                 "latent_norm": latent.norm().item(),
             }
             if eikonal_weight > 0:
-                log_dict["eikonal_loss"] = eikonal_loss_.item() if hasattr(eikonal_loss_, 'item') else float(eikonal_loss_)
+                log_dict["eikonal_loss"] = (
+                    eikonal_loss_.item() if hasattr(eikonal_loss_, "item") else float(eikonal_loss_)
+                )
             if latent_norm is not None and use_soft_norm_constraint:
-                log_dict["norm_penalty_loss"] = norm_penalty_loss_.item() if hasattr(norm_penalty_loss_, 'item') else float(norm_penalty_loss_)
+                log_dict["norm_penalty_loss"] = (
+                    norm_penalty_loss_.item()
+                    if hasattr(norm_penalty_loss_, "item")
+                    else float(norm_penalty_loss_)
+                )
             wandb.log(log_dict)
 
         # Handle end of loop accounting of loss/latent based on convergence criteria
@@ -777,7 +800,9 @@ def reconstruct_latent(
                 patience += 1
 
             if patience > convergence_patience:
-                logger.info(f"Converged (overall_loss) after {step} steps! Final loss: {loss_.item():.6f}")
+                logger.info(
+                    f"Converged (overall_loss) after {step} steps! Final loss: {loss_.item():.6f}"
+                )
                 break
         elif convergence == "recon_loss":
             if recon_loss_ < recon_loss:
@@ -788,7 +813,9 @@ def reconstruct_latent(
                 patience += 1
 
             if patience > convergence_patience:
-                logger.info(f"Converged (recon_loss) after {step} steps! Final recon loss: {recon_loss_.item():.6f}")
+                logger.info(
+                    f"Converged (recon_loss) after {step} steps! Final recon loss: {recon_loss_.item():.6f}"
+                )
                 break
         else:
             loss = loss_
@@ -874,11 +901,13 @@ def reconstruct_mesh(
         path1_mesh = decoder0_mesh1 OR decoder1_mesh0
         etc.
     """
-    
+
     # warning batch_size_latent_recon is deprecated
     if "batch_size_latent_recon" in kwargs:
-        print("Warning: batch_size_latent_recon is deprecated and will be removed in future versions. "
-              "Batch processing has been simplified and now processes all data at once for better performance.")
+        print(
+            "Warning: batch_size_latent_recon is deprecated and will be removed in future versions. "
+            "Batch processing has been simplified and now processes all data at once for better performance."
+        )
 
     # Check if path is a single mesh or a list of meshes & set multi_object flag
     if isinstance(path, str):
@@ -1177,7 +1206,7 @@ def reconstruct_mesh(
                 calc_assd=calc_assd,
                 calc_emd=calc_emd,
             )
-            print('finished computing recon loss')
+            print("finished computing recon loss")
             toc = time.time()
             time_calc_recon_loss = toc - tic
             if verbose is True:
@@ -1202,7 +1231,7 @@ def reconstruct_mesh(
             # Prepare and log results to wandb with 3D point cloud visualization
             result_wandb = prepare_results_for_wandb(result, verbose=verbose)
             wandb.log(result_wandb)
-            print('done wandb stuff')
+            print("done wandb stuff")
 
         if return_registration_params:
             result["icp_transform"] = result_["icp_transform"]

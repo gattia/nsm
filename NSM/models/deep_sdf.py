@@ -1,8 +1,9 @@
-import torch.nn as nn
-import torch
-import torch.nn.functional as F
-import numpy as np
 import warnings
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 PROGRESSIVE_PARAMS = {
     "n_layers": 3,
@@ -138,13 +139,13 @@ class Decoder(nn.Module):
         return lin_layer
 
     def get_layer_dims(self, layer):
-        if self.concat_latent_input == False:
+        if self.concat_latent_input is False:
             in_dim = self.dims[layer]
             if layer + 1 in self.latent_in:
                 out_dim = self.dims[layer + 1] - self.dims[0]
             else:
                 out_dim = self.dims[layer + 1]
-        elif self.concat_latent_input == True:
+        elif self.concat_latent_input is True:
             out_dim = self.dims[layer + 1]
             if layer in self.latent_in:
                 in_dim = self.dims[layer] + self.dims[0]
@@ -193,7 +194,6 @@ class Decoder(nn.Module):
         if epoch is not None:
             self.epoch = epoch
 
-        xyz = input_[:, -3:]
         x = input_
 
         for layer_idx, layer in enumerate(self.layers):  # range(0, self.num_layers - 1):

@@ -305,9 +305,7 @@ def build_mesh_laplacian(faces, n_points, device, dtype=torch.float32):
     - torch.sparse_coo_tensor: row-normalised adjacency, shape (n_points, n_points).
     """
     faces = np.asarray(faces).reshape(-1, 3).astype(np.int64)
-    edges = np.concatenate(
-        [faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]], axis=0
-    )
+    edges = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]], axis=0)
     edges = np.concatenate([edges, edges[:, ::-1]], axis=0)
     edges = np.unique(edges, axis=0)
     i, j = edges[:, 0], edges[:, 1]
@@ -356,9 +354,7 @@ def compute_feature_mask(faces, points, dihedral_threshold_deg=45.0):
     fn = np.cross(e1, e2)
     fn = fn / np.clip(np.linalg.norm(fn, axis=1, keepdims=True), 1e-20, None)
 
-    edges = np.concatenate(
-        [faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]], axis=0
-    )
+    edges = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]], axis=0)
     edges = np.sort(edges, axis=1)
     face_idx = np.tile(np.arange(n_tri), 3)
 
@@ -366,9 +362,7 @@ def compute_feature_mask(faces, points, dihedral_threshold_deg=45.0):
     order = np.argsort(inverse, kind="stable")
     inv_sorted = inverse[order]
     face_sorted = face_idx[order]
-    starts = np.concatenate(
-        ([0], np.where(np.diff(inv_sorted) != 0)[0] + 1, [len(inv_sorted)])
-    )
+    starts = np.concatenate(([0], np.where(np.diff(inv_sorted) != 0)[0] + 1, [len(inv_sorted)]))
 
     cos_thr = float(np.cos(np.deg2rad(dihedral_threshold_deg)))
     mask = np.zeros(n_points, dtype=bool)
@@ -456,16 +450,29 @@ def _latent_at(latent1, latent2, t, spherical):
 
 
 def _advance(
-    model, points, z_end, surface_idx, laplacian, pin_mask,
-    tangent_laplacian, tangent_alpha, tangent_iters,
+    model,
+    points,
+    z_end,
+    surface_idx,
+    laplacian,
+    pin_mask,
+    tangent_laplacian,
+    tangent_alpha,
+    tangent_iters,
 ):
     """Apply one latent increment: Newton projection (+ optional smoothing)."""
     z_end_t = _to_model_tensor(z_end, model)
     points, _ = _project_once(model, z_end_t, points, surface_idx)
     if tangent_laplacian:
         points = _tangent_laplacian_step(
-            model, z_end_t, points, surface_idx, laplacian, pin_mask,
-            tangent_alpha, tangent_iters,
+            model,
+            z_end_t,
+            points,
+            surface_idx,
+            laplacian,
+            pin_mask,
+            tangent_alpha,
+            tangent_iters,
         )
     return points
 
@@ -509,9 +516,11 @@ def interpolate_common(
             if verbose:
                 print(f"{idx + 1}/{n_steps}")
             new_latent = _to_model_tensor(
-                slerp_latent(latent1, latent2, step)
-                if spherical
-                else linear_interp_latent(latent1, latent2, step),
+                (
+                    slerp_latent(latent1, latent2, step)
+                    if spherical
+                    else linear_interp_latent(latent1, latent2, step)
+                ),
                 model,
             )
             points = _to_model_tensor(data.point_coords.copy(), model)
@@ -551,13 +560,12 @@ def interpolate_common(
     laplacian = None
     pin_mask = None
     if tangent_laplacian:
-        laplacian = build_mesh_laplacian(
-            faces, points.shape[0], device=device, dtype=points.dtype
-        )
+        laplacian = build_mesh_laplacian(faces, points.shape[0], device=device, dtype=points.dtype)
         # Pin geometric seams (high dihedral) plus any topological boundaries
         # so smoothing cannot blur across sharp folds or contract open rims.
         pin_np = compute_feature_mask(
-            faces, points.detach().cpu().numpy(),
+            faces,
+            points.detach().cpu().numpy(),
             dihedral_threshold_deg=tangent_laplacian_feature_angle,
         )
         pin_mask = torch.as_tensor(pin_np, device=device)
@@ -567,8 +575,15 @@ def interpolate_common(
             print(f"{idx + 1}/{n_steps}")
         z_end = _latent_at(latent1, latent2, float(t), spherical)
         points = _advance(
-            model, points, z_end, surface_idx, laplacian, pin_mask,
-            tangent_laplacian, tangent_laplacian_alpha, tangent_laplacian_iters,
+            model,
+            points,
+            z_end,
+            surface_idx,
+            laplacian,
+            pin_mask,
+            tangent_laplacian,
+            tangent_laplacian_alpha,
+            tangent_laplacian_iters,
         )
 
     return points.detach().cpu().numpy()

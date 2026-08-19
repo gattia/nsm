@@ -47,9 +47,11 @@ lint:
 	flake8 NSM/ testing/
 
 format:
+	isort NSM/ testing/
 	black NSM/ testing/
 
 format-check:
+	isort NSM/ testing/ --check-only
 	black NSM/ testing/ --check
 
 # Cleanup targets

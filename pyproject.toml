@@ -91,6 +91,7 @@ skip = ["*-win32", "*i686", "*aarch64", "*ppc64le", "*s390x", "*musllinux*"]
 run.omit = ["testing/*", "*/*_test.py"]
 
 [tool.pytest.ini_options]
-addopts = "-k 'not train_test.py'"
-testpaths = ["tests"]
+# Tests live in testing/, not tests/. The previous value named a directory that does
+# not exist, and collection worked only through pytest's rootdir fallback.
+testpaths = ["testing"]
 pythonpath = ["."]

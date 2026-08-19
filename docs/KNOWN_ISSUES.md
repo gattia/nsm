@@ -41,6 +41,7 @@ queue.
 | `padding` absent from checkpoints | **High** — silent wrong-scale sampling | [#26](https://github.com/gattia/nsm/issues/26) |
 | `include_surf_in_pts` appends a leaked loop variable | **High** | [#17](https://github.com/gattia/nsm/issues/17) |
 | Parameters accepted and never read | Medium — **read the traps first** | [#20](https://github.com/gattia/nsm/issues/20) |
+| `xyz_in_all` accepted and never read | Medium — silent no-op | [#20](https://github.com/gattia/nsm/issues/20) |
 | `get_pts_center_and_scale` mutates the caller's array | Medium | [#21](https://github.com/gattia/nsm/issues/21) |
 | `store_data_in_memory=True` raises | Medium — advertised option, unusable | [#22](https://github.com/gattia/nsm/issues/22) |
 | Every VAE layer stored twice | Medium — 1.92× checkpoints | [#27](https://github.com/gattia/nsm/issues/27) |
@@ -53,7 +54,6 @@ queue.
 | `LOC_SDF_CACHE` read at import time | Low | [#24](https://github.com/gattia/nsm/issues/24) |
 | `Pool` deadlocks after an in-process build | Low — hangs, does not corrupt | [#25](https://github.com/gattia/nsm/issues/25) |
 | `train_deep_sdf` returns nothing | Low — blocks observability | [#28](https://github.com/gattia/nsm/issues/28) |
-| Tooling defects | Low | *one PR, not issues* |
 
 ---
 
@@ -271,6 +271,22 @@ both names.
 both directions and needs a migration shim. *Pinned by:*
 `test_model_roundtrip.TestAliasedCheckpointEntries`.
 
+## `models/deep_sdf.py`
+
+### `xyz_in_all` is accepted and never read
+
+`deep_sdf.Decoder.__init__` takes `xyz_in_all`, documents it as "for deepSDF decoder, include
+XYZ at each layer", and never stores it. `forward` computed `xyz = input_[:, -3:]` and never
+used it either — the vestige of the unimplemented feature, removed when `NSM/` was brought
+to zero flake8 violations. `default_config.json` ships the key and `loader` plumbs it
+through in four places, so a config setting `xyz_in_all: true` is silently a no-op.
+
+Same class as `normalize_coordinates`' `padding` and `get_pts_center_and_scale`'s `center=`
+— an argument accepted and discarded — so it belongs to the same sweep.
+
+*Fix:* [#20](https://github.com/gattia/nsm/issues/20). *Not pinned by a test:* found by
+reading, not by a failure.
+
 ## `train/train_deep_sdf.py`
 
 ### `enforce_minmax` clamps the prediction, not just the target
@@ -326,29 +342,6 @@ Dependency bugs that reach an NSM user.
   defect. Open upstream.
 - **`mskt>=0.1.21` is required**, not optional — see History §3. An older install raises
   `TypeError` on the first sampling call rather than silently reverting to unseeded draws.
-
-## Tooling
-
-Each is its own small PR.
-
-- `pyproject.toml` sets `testpaths = ["tests"]`, naming a directory that does not exist.
-  Collection works only via pytest 8's rootdir fallback.
-- `pyproject.toml` — `addopts = "-k 'not train_test.py'"` filters a file that no longer
-  exists, and `-k` matches test *names*, not filenames, so it never worked.
-- `make lint` reports several hundred flake8 violations in `NSM/`, in a CI job marked
-  `continue-on-error`. The four `F821` undefined names it used to report are fixed
-  (`d2ba1c7`, `e338ba2`), so nothing outstanding is a latent `NameError`; what remains is
-  whitespace and line length, plus about a dozen F-codes (unused imports, unused locals)
-  that each need a look. The job cannot gate until that backlog is cleared, so any coverage
-  number CI publishes is decoration until then.
-- `black --check` fails on 9 files, against a standard `CLAUDE.md` states as met. The CI
-  step named "Lint - isort, black" runs `make lint`, which is `flake8` only — neither
-  `black` nor `isort` is checked anywhere in CI, which is how those 9 files drifted.
-- `.github/workflows/docs.yml` invokes `make requirements dev` and `make docs`, neither of
-  which is a target. The documentation site the README links has never been buildable.
-- `testing/testing_h5_vs_np_loading/save_and_load_h5_vs_np.py:1` is a shell command in a
-  `.py` file, which breaks any AST-based tooling over the repo and makes `make quick-test`
-  unable to reach its test phase.
 
 ---
 

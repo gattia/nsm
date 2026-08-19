@@ -5,14 +5,15 @@ This module provides functions to load pre-trained NSM models from configuration
 and state files, supporting multiple model architectures.
 """
 
-import torch
 import warnings
-from typing import Dict, Any, Union, Optional
+from typing import Any, Dict, Optional, Union
+
+import torch
 
 from .deep_sdf import Decoder
+from .modulated_periodic_activations import ImplicitDecoder, LinearBlockFactory, SirenBlockFactory
 from .triplanar import TriplanarDecoder
 from .two_stage import TwoStageDecoder
-from .modulated_periodic_activations import ImplicitDecoder, SirenBlockFactory, LinearBlockFactory
 
 
 def load_model(

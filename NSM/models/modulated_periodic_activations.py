@@ -1,8 +1,9 @@
+from functools import partial
+from math import pi, sqrt
+from typing import Callable, List, Optional
+
 import torch
 from torch import nn
-from functools import partial
-from typing import Optional, List, Callable
-from math import pi, sqrt
 
 
 # https://github.com/kklemon/gon-pytorch/blob/master/gon_pytorch/modules.py

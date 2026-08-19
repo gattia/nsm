@@ -1,5 +1,5 @@
-import vtk
 import numpy as np
+import vtk
 
 
 def get_triangle_area(cell):
