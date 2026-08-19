@@ -150,7 +150,7 @@ class TestPaddingIsNotInTheCheckpoint:
 
     @pytest.mark.xfail(
         strict=True,
-        reason="worklist #7: padding is not in the checkpoint, so a mismatch loads silently",
+        reason="#26: padding is not in the checkpoint, so a mismatch loads silently",
     )
     def test_a_padding_mismatch_must_not_silently_change_the_sdf(
         self, checkpoint_at_a_nondefault_padding
@@ -183,21 +183,66 @@ class TestPaddingIsNotInTheCheckpoint:
         assert torch.equal(forward(model, inputs), forward(loaded, inputs))
 
     @pytest.mark.xfail(
-        strict=True, reason="worklist #8: normalize_coordinates ignores its padding argument"
+        strict=True,
+        reason="#20: normalize_coordinates still accepts a `padding` argument it never reads",
     )
-    def test_normalize_coordinates_must_honour_its_padding_argument(self):
+    def test_normalize_coordinates_must_not_accept_a_padding_argument(self):
         """
-        A second way to get this wrong: ``normalize_coordinates(query, plane, padding=0.1)``
-        accepts ``padding`` and reads ``self.padding`` instead (``triplanar.py:312-322``).
+        The fix is to DELETE the parameter, so this asserts it is gone -- not that it works.
+
+        ``TriplanarDecoder.normalize_coordinates(self, query, plane, padding=0.1)`` accepts
+        ``padding`` and divides by ``self.padding`` instead. Its sole caller,
+        ``sample_plane_features``, passes none and depends on that. So making the argument
+        authoritative would hand the only real caller the ``0.1`` default in place of the
+        shipped 0.35 -- a measured 0.063 max SDF difference on a ``tanh``-bounded output.
+        See #20's traps.
+
+        The predecessor of this test asserted the opposite -- that ``padding`` is present
+        AND that passing it changes the result -- which meant deletion reported ``xfailed``
+        (green, defect looks unfixed) and honouring it reported ``XPASS(strict)`` (red,
+        congratulating the harmful change). Both signals were backwards.
+
+        ``test_self_padding_alone_governs_normalization`` below is the other half: it is a
+        plain passing test, so honouring the argument turns it RED. It has to be, because
+        honouring the argument ALSO makes the ``#26`` xfail above XPASS -- with
+        ``self.padding`` unread, a padding mismatch really does stop changing the SDF --
+        so without it the harmful fix reports as two defects fixed and nothing dissents.
         """
         model = build_model(dict(ARCHITECTURE))
-        assert "padding" in inspect.signature(model.normalize_coordinates).parameters
+        assert "padding" not in inspect.signature(model.normalize_coordinates).parameters
 
-        points = torch.rand(8, 3)
+    def test_self_padding_alone_governs_normalization(self):
+        """
+        What ``normalize_coordinates`` must keep doing, whatever happens to the signature.
+
+        Deliberately calls with the sole caller's argument list -- ``(query, plane)`` -- so
+        deleting the parameter leaves this green, and reading the argument instead of
+        ``self.padding`` turns it red: with no ``padding`` passed, both models below would
+        then divide by the same ``0.1`` default and the outputs would coincide.
+
+        The exact quotient is asserted, not just the inequality, because "the two differ"
+        also holds for a fix that reads ``self.padding`` through some new scaling.
+
+        ``torch.manual_seed`` is set because ``build_model`` consumes RNG during weight
+        initialisation, so without it the sampled points depend on construction details.
+        """
+        shipped = build_model(dict(ARCHITECTURE, padding=self.TRAINED_PADDING))
+        default = build_model(dict(ARCHITECTURE))
+        assert (shipped.padding, default.padding) == (self.TRAINED_PADDING, 0.1)
+
+        torch.manual_seed(0)
+        points = torch.rand(8, 3)  # in [0, 1): inside the clamp at either padding
+
         assert not torch.equal(
-            model.normalize_coordinates(points.clone(), "xy"),
-            model.normalize_coordinates(points.clone(), "xy", padding=0.9),
-        )
+            shipped.normalize_coordinates(points.clone(), "xy"),
+            default.normalize_coordinates(points.clone(), "xy"),
+        ), "self.padding no longer reaches normalize_coordinates"
+
+        for model in (shipped, default):
+            assert torch.equal(
+                model.normalize_coordinates(points.clone(), "xy").reshape(-1, 2),
+                points[:, [0, 1]] / (1 + model.padding + 10e-6),
+            )
 
 
 class TestSavedConfigIsEnoughToReload:
@@ -256,7 +301,7 @@ class TestAliasedCheckpointEntries:
     def state_dict(self):
         return build_model(dict(ARCHITECTURE)).state_dict()
 
-    @pytest.mark.xfail(strict=True, reason="worklist #9: VAEDecoder registers every layer twice")
+    @pytest.mark.xfail(strict=True, reason="#27: VAEDecoder registers every layer twice")
     def test_each_parameter_must_appear_once_in_the_state_dict(self, state_dict):
         aliased = {
             name
@@ -268,7 +313,7 @@ class TestAliasedCheckpointEntries:
             not aliased
         ), f"{len(aliased)} tensors are stored under two names: {sorted(aliased)[:3]}"
 
-    @pytest.mark.xfail(strict=True, reason="worklist #9: aliasing inflates every checkpoint ~1.92x")
+    @pytest.mark.xfail(strict=True, reason="#27: aliasing inflates every checkpoint ~1.92x")
     def test_the_checkpoint_must_not_hold_more_elements_than_the_model_has_parameters(
         self, state_dict
     ):
@@ -277,9 +322,7 @@ class TestAliasedCheckpointEntries:
         parameters = sum(p.numel() for p in model.parameters())
         assert stored == parameters, f"{stored} elements stored for {parameters} parameters"
 
-    @pytest.mark.xfail(
-        strict=True, reason="worklist #9: an edit to one alias is reverted by the other"
-    )
+    @pytest.mark.xfail(strict=True, reason="#27: an edit to one alias is reverted by the other")
     def test_editing_a_checkpoint_by_key_must_take_effect(self, tmp_path):
         """The failure mode, demonstrated."""
         from NSM.models.loader import load_model

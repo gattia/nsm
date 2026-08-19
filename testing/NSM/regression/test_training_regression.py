@@ -350,7 +350,7 @@ class TestClampedPredictionGradients:
 
 
 class TestTrainerContract:
-    @pytest.mark.xfail(strict=True, reason="worklist #11: train_deep_sdf returns nothing")
+    @pytest.mark.xfail(strict=True, reason="#28: train_deep_sdf returns nothing")
     def test_train_deep_sdf_returns_its_history(self, training_run):
         """
         No loss history is observable from the public entry point, so ``run_training`` has

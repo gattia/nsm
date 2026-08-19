@@ -7,9 +7,8 @@ decomposition can proceed without silently altering results. The findings that c
 building it are entries in `docs/KNOWN_ISSUES.md`, each naming the test that pins it.
 
 ```bash
-pytest testing/NSM/regression/ -q      # 117 passed, 18 xfailed; ~56 s (109 passed, 8 skipped,
-                                       # ~52 s with no GPU)
-pytest testing/NSM/regression/ -q -rx  # ... and list what the 18 xfails are
+pytest testing/NSM/regression/ -q      # ~1 min; some tests skip without a GPU
+pytest testing/NSM/regression/ -q -rx  # ... and list the strict xfails and their issues
 make test                              # runs it along with everything else
 ```
 
@@ -38,7 +37,7 @@ Four constraints shape this harness, none of them visible from the assertions th
 
 ## Green does not mean "the library is correct"
 
-It means **nothing changed**. Eighteen of the assertions here describe behaviour NSM *should*
+It means **nothing changed**. The strict-xfail assertions here describe behaviour NSM *should*
 have and does not, and they are marked `xfail(strict=True)` rather than written to assert the
 broken behaviour — because a test that passes *because* something is broken makes a green
 suite say the opposite of the truth.
@@ -53,7 +52,7 @@ So the report separates three things:
 
 `strict=True` is what makes this work in both directions. Fix a defect and its xfail starts
 passing, which pytest reports as `XPASS(strict)` — a **failure**. The suite goes red and names
-the worklist item, so whoever fixed it has to come back, delete the mark, and tick the list.
+the issue, so whoever fixed it has to come back, delete the mark, and close the issue.
 Without `strict`, a fixed defect would silently keep reporting `xfailed` forever and the mark
 would rot.
 
@@ -62,7 +61,7 @@ reports `xfailed` and hides it. Mitigation is to keep each xfail body minimal an
 one thing, which they are — several assert the premise still holds before asserting the defect,
 so the mark cannot pass vacuously.
 
-Not every worklist item has an xfail. Some (#10 `clamp_dist` semantics) are a documentation or
+Not every known defect has an xfail. Some (`clamp_dist`, `KNOWN_ISSUES.md`) are a documentation or
 design decision rather than a statable correctness assertion, and are carried as measurements.
 
 ## What is asserted

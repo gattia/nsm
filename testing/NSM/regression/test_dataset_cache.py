@@ -173,7 +173,7 @@ class TestUnhashedParametersCollide:
 
     **These assert the behaviour NSM should have, and are expected to fail.** Each shows
     that the cached content genuinely differs first, so the ``xfail`` lands on the cache
-    key rather than on a vacuous premise. Fixing worklist #1 turns them green, which under
+    key rather than on a vacuous premise. Fixing #19 (a) turns them green, which under
     ``strict=True`` fails the suite until they are un-marked -- see the module docstring.
     """
 
@@ -189,7 +189,7 @@ class TestUnhashedParametersCollide:
         }
         return a.create_hash(meshes[0]), b.create_hash(meshes[0]), differing
 
-    @pytest.mark.xfail(strict=True, reason="worklist #1: get_hash_params omits mesh_to_scale")
+    @pytest.mark.xfail(strict=True, reason="#19: get_hash_params omits mesh_to_scale")
     def test_mesh_to_scale_must_change_the_cache_key(self, meshes, tmp_path_factory):
         """
         The worst of the three: ``mesh_to_scale`` decides which surface drives centering
@@ -205,7 +205,7 @@ class TestUnhashedParametersCollide:
         } <= differing, f"premise gone: content no longer differs ({differing})"
         assert key_a != key_b, "the cached content differs but the cache key does not"
 
-    @pytest.mark.xfail(strict=True, reason="worklist #1: get_hash_params omits uniform_pts_buffer")
+    @pytest.mark.xfail(strict=True, reason="#19: get_hash_params omits uniform_pts_buffer")
     def test_uniform_pts_buffer_must_change_the_cache_key(self, meshes, tmp_path_factory):
         """It sets the bounds the uniform points are drawn from, so the samples move."""
         key_a, key_b, differing = self._content_differs(
@@ -217,7 +217,7 @@ class TestUnhashedParametersCollide:
         } <= differing, f"premise gone: content no longer differs ({differing})"
         assert key_a != key_b, "the cached content differs but the cache key does not"
 
-    @pytest.mark.xfail(strict=True, reason="worklist #1: get_hash_params omits subsample")
+    @pytest.mark.xfail(strict=True, reason="#19: get_hash_params omits subsample")
     def test_subsample_must_change_the_cache_key(self, meshes, tmp_path_factory):
         """
         Milder but still real: ``subsample`` sets ``samples_per_sign_``, which decides how
@@ -237,7 +237,7 @@ class TestUnhashedParametersCollide:
         ), f"premise gone: index arrays no longer differ ({differing})"
         assert key_a != key_b, "the cached index arrays differ but the cache key does not"
 
-    @pytest.mark.xfail(strict=True, reason="worklist #1: colliding runs share a cache file")
+    @pytest.mark.xfail(strict=True, reason="#19: colliding runs share a cache file")
     def test_a_changed_parameter_must_not_reuse_the_previous_runs_cache(
         self, meshes, tmp_path_factory
     ):
@@ -249,7 +249,7 @@ class TestUnhashedParametersCollide:
         assert second.data[0] != first.data[0], "the second run was handed the first run's file"
 
     @pytest.mark.xfail(
-        strict=True, reason="worklist #1: a subsample collision silently unbalances the batch"
+        strict=True, reason="#19: a subsample collision silently unbalances the batch"
     )
     def test_equal_pos_neg_must_hold_after_a_subsample_change(self, meshes, tmp_path_factory):
         """
@@ -301,9 +301,7 @@ class TestReferenceMeshHashing:
     construction.
     """
 
-    @pytest.mark.xfail(
-        strict=True, reason="worklist #2: a Mesh reference_mesh is hashed by memory address"
-    )
+    @pytest.mark.xfail(strict=True, reason="#19: a Mesh reference_mesh is hashed by memory address")
     def test_two_equal_mesh_objects_must_hash_the_same(self, dataset, meshes):
         """Same geometry, same file, two objects -- the cache key must not care."""
         from pymskt.mesh import Mesh
@@ -629,7 +627,7 @@ class TestConfigurationsThatDoNotRun:
     """
 
     @pytest.mark.xfail(
-        strict=True, reason="worklist #5: a zero-count sampling combo is passed to pcu anyway"
+        strict=True, reason="#23: a zero-count sampling combo is passed to pcu anyway"
     )
     def test_zero_sampling_probability_must_sample_nothing(self, meshes, tmp_path_factory):
         """
@@ -648,7 +646,7 @@ class TestConfigurationsThatDoNotRun:
         assert len(dataset) == len(meshes)
 
     @pytest.mark.xfail(
-        strict=True, reason="worklist #4: store_data_in_memory=True raises UnboundLocalError"
+        strict=True, reason="#22: store_data_in_memory=True raises UnboundLocalError"
     )
     def test_store_data_in_memory_must_yield_an_item(self, meshes, tmp_path_factory):
         """
@@ -665,7 +663,7 @@ class TestConfigurationsThatDoNotRun:
 
     @pytest.fixture(scope="class")
     def timing_free_dataset(self, meshes, tmp_path_factory):
-        """The apparent workaround for worklist #4: in memory, with load timing off."""
+        """The apparent workaround for #22: in memory, with load timing off."""
         return build_dataset(
             meshes,
             tmp_path_factory.mktemp("in_memory_ok"),
@@ -715,7 +713,7 @@ class TestCacheLocationDefault:
     ``~/.cache/nsm_sdf_cache``. The harness passes ``loc_save`` explicitly for this reason.
     """
 
-    @pytest.mark.xfail(strict=True, reason="worklist: LOC_SDF_CACHE is read once, at import time")
+    @pytest.mark.xfail(strict=True, reason="#24: LOC_SDF_CACHE is read once, at import time")
     def test_setting_the_env_var_must_change_where_the_cache_goes(self, monkeypatch):
         from NSM.datasets.sdf_dataset import MultiSurfaceSDFSamples
 
@@ -732,7 +730,7 @@ class TestPointCenteringAndScaling:
     """
 
     @pytest.mark.xfail(
-        strict=True, reason="worklist #6: center= and scale= are rebound before they are read"
+        strict=True, reason="#20: center= and scale= are rebound before they are read"
     )
     def test_center_and_scale_arguments_must_be_honoured(self):
         """
@@ -746,7 +744,7 @@ class TestPointCenteringAndScaling:
         center, _ = get_pts_center_and_scale(points.copy(), center=False, scale=False)
         assert np.allclose(center, [0.0, 0.0, 0.0]), "centering happened despite center=False"
 
-    @pytest.mark.xfail(strict=True, reason="worklist #6: pts is modified in place")
+    @pytest.mark.xfail(strict=True, reason="#21: pts is modified in place")
     def test_the_callers_array_must_not_be_mutated(self):
         """
         ``pts -= center`` at ``:91`` writes through to the caller's array. All three in-repo
