@@ -33,13 +33,9 @@ jobs:
           python -m pip install --upgrade pip
           make install-dev
 
-      - name: Lint - flake8
+      - name: Lint - isort, black, flake8
         run: |
           make lint
-
-      - name: Format check - isort, black
-        run: |
-          make format-check
 
   build:
     needs: lint
