@@ -105,42 +105,36 @@ def get_rand_uniform_pts(n_pts, mins=(-1, -1, -1), maxs=(1, 1, 1), seed=None):
     return pts
 
 
-def get_pts_center_and_scale(
-    pts, center=True, scale=True, scale_method="max_rad", return_pts=False, pts_center=None
-):
+def get_pts_center_and_scale(pts, scale_method="max_rad", return_pts=False, pts_center=None):
     """
-    Given a set of points, returns the center and scale of the points.
+    Given a set of points, return the center and scale that normalize them.
+
+    Centering and scaling are **unconditional**. This took ``center`` and ``scale``
+    booleans until Aug 2026, but both were shadowed by the values computed from them
+    before they were ever read, so neither had any effect at any value. They are removed
+    rather than honoured: every caller passes ``scale=norm_pts``, which defaults to
+    ``False`` everywhere and is unset in the shipped configs, so making the argument
+    authoritative would stop scaling on a default run and change the coordinate frame of
+    every dataset, checkpoint and reconstruction ever produced. See #20.
+
+    ``pts`` is not modified; it is copied first. It was mutated in place until Aug 2026,
+    which every in-repo caller worked around with a defensive ``np.copy()``. See #21.
 
     Args:
         pts (np.ndarray): (n_pts, 3) array of points
-        center (bool, optional): Whether to center the points. Defaults to True.
-        scale (bool, optional): Whether to scale the points. Defaults to True.
         scale_method (str, optional): Method to scale the points. Defaults to 'max_rad'.
-        return_pts (bool, optional): Whether to return the centered and scaled points. Defaults to False.
-        pts_center (np.ndarray, optional): (n_pts, 3) array of points to center the points on. Defaults to None.
+        return_pts (bool, optional): Whether to also return the normalized points. Defaults to False.
+        pts_center (np.ndarray, optional): (n_pts, 3) array to take the center from instead
+            of ``pts``. Used to center on the bone alone while scaling by bone + cartilage.
 
     Returns:
-        tuple: (center, scale) of the points
+        tuple: ``(center, scale)``, or ``(center, scale, pts)`` if ``return_pts``
 
     Raises:
         NotImplementedError: If scale_method is not implemented
-
-    Notes:
-        If pts_center is not None, then use that to center the points
-        and use all of the points in pts to scale. This is used for
-        the bone only, and then scaling based on bone + cartilage
-
-        KNOWN DEFECTS, #20 (accepted-and-ignored args) and #21 (in-place mutation):
-        - `center` and `scale` are both rebound before they are read (below), so they are
-          accepted and ignored: centering and scaling happen unconditionally.
-        - `pts` is modified IN PLACE. Every in-repo caller passes np.copy() defensively,
-          so the convention exists only as a habit at the call sites.
-
-    Tests:
-        - Ensure returns tuple length 2
-        - Ensure center is np array of shape (3,)
-        - Ensure scale is float
     """
+
+    pts = np.copy(pts)
 
     if pts_center is None:
         center = np.mean(pts, axis=0)
@@ -336,9 +330,7 @@ def read_mesh_get_sampled_pts(
     if (center_pts is True) or (norm_pts is True):
         print("Scaling and centering mesh")
         center, scale, new_pts = get_pts_center_and_scale(
-            np.copy(new_mesh.point_coords),
-            center=center_pts,
-            scale=norm_pts,
+            new_mesh.point_coords,
             scale_method=scale_method,
             return_pts=True,
         )
@@ -674,9 +666,7 @@ def read_meshes_get_sampled_pts(
                 pts_center = None
 
         center, scale = get_pts_center_and_scale(
-            np.copy(pts_),
-            center=center_pts,
-            scale=norm_pts,
+            pts_,
             scale_method=scale_method,
             return_pts=False,
             pts_center=pts_center,

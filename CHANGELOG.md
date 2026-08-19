@@ -28,7 +28,23 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ## Unreleased
 
-Nothing yet.
+### Breaking
+
+- **`get_pts_center_and_scale` no longer takes `center` or `scale`.** Both were shadowed by
+  the values computed from them before they were read, so neither had any effect at any
+  value. They are removed rather than made authoritative: every caller passes
+  `scale=norm_pts`, which defaults to `False` everywhere and is unset in the shipped
+  configs, so an argument that worked would stop scaling on a default run and change the
+  coordinate frame of every dataset and checkpoint NSM has produced. **No numerical output
+  changes** — the arguments were inert, and the committed regression baselines are
+  unmoved. Delete the arguments from any call; centering and scaling were always
+  unconditional and still are.
+
+### Fixed
+
+- **`get_pts_center_and_scale` no longer mutates its input.** It copies first. The three
+  in-repo callers each carried a defensive `np.copy(...)`; those are removed, since the
+  copy now happens inside. A caller written without one is no longer silently corrupted.
 
 ---
 
