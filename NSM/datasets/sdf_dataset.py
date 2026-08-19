@@ -255,9 +255,6 @@ def read_mesh_get_sampled_pts(
         norm_pts (bool, optional): Whether to normalize the points. Defaults to False.
         scale_method (str, optional): Method to scale the points. Defaults to 'max_rad'.
         get_random (bool, optional): Whether to sample random points. Defaults to True.
-        return_orig_mesh (bool, optional): Whether to return the original mesh. Defaults to False.
-        return_new_mesh (bool, optional): Whether to return the new mesh. Defaults to False.
-        return_orig_pts (bool, optional): Whether to return the original points. Defaults to False.
         register_to_mean_first (bool, optional): Whether to register the mesh to the mean mesh first. Defaults to False.
         mean_mesh (vtkPolyData or mskt.mesh.Mesh, optional): Mean mesh to register to. Defaults to None.
         return_point_cloud (bool, optional): Whether to return the point cloud. Defaults to False.
@@ -279,6 +276,9 @@ def read_mesh_get_sampled_pts(
     Tests:
         -
     """
+    # Accepted for backwards compatibility and ignored: each is now unconditionally on,
+    # so passing False did not do what it said. They were documented as live parameters
+    # defaulting to False until Aug 2026, which is the opposite of what this does.
     list_deprecated = [
         "return_scale",
         "return_center",
@@ -1314,8 +1314,6 @@ class SDFSamples(torch.utils.data.Dataset):
                     norm_pts=self.norm_pts,
                     scale_method=self.scale_method,
                     get_random=True,
-                    return_orig_mesh=False,
-                    return_new_mesh=False,
                     fix_mesh=self.fix_mesh,
                     register_to_mean_first=False if reference_mesh is None else True,
                     mean_mesh=reference_mesh,
