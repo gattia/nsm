@@ -1,9 +1,10 @@
+import time
+
+import numpy as np
+import point_cloud_utils as pcu
 import pymskt as mskt
 import vtk
 from vtk.util.numpy_support import numpy_to_vtk, vtk_to_numpy
-import time
-import numpy as np
-import point_cloud_utils as pcu
 
 
 def vtk_sdf(mesh, pts):

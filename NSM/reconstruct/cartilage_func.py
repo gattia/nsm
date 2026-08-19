@@ -138,9 +138,6 @@ def compare_cart_thickness(
         dict_results[f"func_cart_thick_{cart_region}_mean_thick_diff"] = mean_diff
         dict_results[f"func_cart_thick_{cart_region}_std_thick_diff"] = std_diff
 
-    orig_array = orig_bone.get_scalar("thickness (mm)")
-    recon_array = recon_bone.get_scalar("thickness (mm)")
-
     # # Compute KL divergence between two distributions
     # thickness_kld = entropy(orig_array, qk=recon_array)
 

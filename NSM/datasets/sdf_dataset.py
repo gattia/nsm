@@ -1,22 +1,23 @@
-import os
-import pymskt as mskt
-from pymskt.mesh import Mesh
-import numpy as np
-import vtk
-from vtk.util.numpy_support import numpy_to_vtk, vtk_to_numpy
-import torch
-import hashlib
-from datetime import datetime
-import warnings
-import time
-import point_cloud_utils as pcu
-from multiprocessing import Pool
-import multiprocessing
-import zipfile
 import gc
+import hashlib
+import multiprocessing
+import os
+import time
+import warnings
+import zipfile
+from datetime import datetime
+from multiprocessing import Pool
+
+import numpy as np
+import point_cloud_utils as pcu
+import pymskt as mskt
+import torch
+import vtk
+from pymskt.mesh import Mesh
+from vtk.util.numpy_support import numpy_to_vtk, vtk_to_numpy
 
 try:
-    from pympler import tracker, muppy  # asizeof, summary, muppy, tracker
+    from pympler import muppy, tracker  # asizeof, summary, muppy, tracker
 except ModuleNotFoundError:
     print(
         "Pympler not installed, cannot use asizeof - if trying to debug memory usage, install pympler"
@@ -2117,7 +2118,6 @@ class MultiSurfaceSDFSamples(SDFSamples):
         pos_idx = []
         neg_idx = []
         surf_idx = []
-        pts_idx_ = 0
         if self.verbose is True:
             print("data", data["xyz"].shape, data["gt_sdf"].shape)
 

@@ -2,7 +2,6 @@ from typing import Union
 
 import pykeops.torch as keops
 import torch
-
 import tqdm
 
 

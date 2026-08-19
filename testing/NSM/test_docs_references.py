@@ -30,7 +30,18 @@ DOCS = [REPO / "docs" / n for n in ("KNOWN_ISSUES.md", "SCOPE.md", "ARCHITECTURE
 TOKEN = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+)`")
 
 # `sdf_dataset.py` is a filename, not a symbol, and parses as a dotted identifier.
-FILE_SUFFIXES = {"py", "toml", "yml", "yaml", "json", "md", "cfg", "txt"}
+FILE_SUFFIXES = {"py", "toml", "yml", "yaml", "json", "md", "cfg", "txt", "in"}
+
+# A CamelCase head is a class reference and must resolve -- otherwise renaming a class
+# makes its citations vanish from this check instead of failing it, which is the hole a
+# line-number checker would also have had. These are the CamelCase names the docs may
+# legitimately mention that are not NSM classes; adding to this set is a deliberate act.
+NOT_NSM_CLASSES = {
+    "NSM",  # the package itself: `NSM.datasets`, `NSM.__version__` are paths, not symbols
+    "Regress",  # lives in the downstream consumer, not in this repo
+    "Mesh",  # pymskt
+}
+CAMEL = re.compile(r"^[A-Z][A-Za-z0-9]*$")
 
 
 def _qualnames(path):
@@ -96,8 +107,11 @@ def _citations():
             if token.rsplit(".", 1)[-1] in FILE_SUFFIXES:
                 continue
             head = token.split(".")[0]
-            # Only ours: the head must name an NSM module or an NSM top-level symbol.
-            if head in INDEX or head in TOP_LEVEL:
+            if head in NOT_NSM_CLASSES:
+                continue
+            # Ours if the head names an NSM module or top-level symbol -- or if it simply
+            # looks like a class, so that a renamed class fails rather than disappearing.
+            if head in INDEX or head in TOP_LEVEL or CAMEL.match(head):
                 yield doc.name, token
 
 

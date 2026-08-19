@@ -1,41 +1,40 @@
+import itertools
+import os
+import time
+import warnings
+
+import numpy as np
+import torch
+import wandb
+
+from NSM.losses import EIKONAL_UNSUPPORTED, eikonal_loss
+from NSM.reconstruct import (
+    compare_cart_thickness,
+    compare_cart_thickness_femur,
+    compare_cart_thickness_patella,
+    compare_cart_thickness_tibia,
+    compare_cart_thickness_whole_joint,
+    get_mean_errors,
+)
+from NSM.train.utils import (
+    NoOpProfiler,
+    add_plain_lr_to_config,
+    calc_weight,
+    cyclic_anneal_linear,
+    get_kld,
+    get_profiler,
+)
 from NSM.utils import (
-    get_learning_rate_schedules,
     adjust_learning_rate,
+    clear_gpu_cache,
+    get_checkpoints,
+    get_latent_vecs,
+    get_learning_rate_schedules,
+    get_optimizer,
     save_latent_vectors,
     save_model,
     save_model_params,
-    get_optimizer,
-    get_latent_vecs,
-    get_checkpoints,
-    clear_gpu_cache,
 )
-from NSM.losses import EIKONAL_UNSUPPORTED, eikonal_loss
-from NSM.reconstruct import (
-    get_mean_errors,
-    compare_cart_thickness,
-    compare_cart_thickness_tibia,
-    compare_cart_thickness_patella,
-    compare_cart_thickness_femur,
-    compare_cart_thickness_whole_joint,
-)
-
-from NSM.train.utils import (
-    get_kld,
-    cyclic_anneal_linear,
-    calc_weight,
-    add_plain_lr_to_config,
-    NoOpProfiler,
-    get_profiler,
-)
-
-import wandb
-import os
-import torch
-import time
-import numpy as np
-import itertools
-import warnings
-
 
 DICT_VALIDATION_FUNCS = {
     "compare_cart_thickness": compare_cart_thickness,
@@ -432,7 +431,7 @@ def train_epoch(
                     )
                 )
 
-            if config.get("multi_object_overlap", False) == True:
+            if config.get("multi_object_overlap", False) is True:
                 raise Exception("Not implemented yet")
                 # Should add some weighted penalty to the l1 loss
                 # this is similar to surface_accuracy_e below

@@ -5,20 +5,21 @@ Tests the load_model function and related utilities for loading
 pre-trained Neural Shape Models from configuration and state files.
 """
 
-import pytest
-import torch
-import tempfile
 import os
+import tempfile
 from pathlib import Path
 
+import pytest
+import torch
+
 from NSM.models import (
-    load_model,
-    list_supported_models,
-    get_model_config_template,
-    TriplanarDecoder,
     Decoder,
-    TwoStageDecoder,
     ImplicitDecoder,
+    TriplanarDecoder,
+    TwoStageDecoder,
+    get_model_config_template,
+    list_supported_models,
+    load_model,
 )
 
 
@@ -65,10 +66,10 @@ class TestModelLoader:
 
             # Import the internal parameter extraction functions
             from NSM.models.loader import (
-                _get_triplanar_params,
                 _get_deepsdf_params,
-                _get_two_stage_params,
                 _get_implicit_params,
+                _get_triplanar_params,
+                _get_two_stage_params,
             )
 
             if model_type == "triplanar":

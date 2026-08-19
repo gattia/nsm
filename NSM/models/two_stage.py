@@ -1,8 +1,8 @@
-from torch import nn
 import torch
+from torch import nn
 
-from .triplanar import TriplanarDecoder
 from .deep_sdf import Decoder
+from .triplanar import TriplanarDecoder
 
 default_triplanar_params = {
     "latent_dim": 256,

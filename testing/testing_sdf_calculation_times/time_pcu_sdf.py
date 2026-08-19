@@ -1,10 +1,11 @@
+import time
+
+import numpy as np
+import point_cloud_utils as pcu
 import pymskt as mskt
 
 # import vtk
 from vtk.util.numpy_support import numpy_to_vtk, vtk_to_numpy
-import time
-import numpy as np
-import point_cloud_utils as pcu
 
 MEAN = (0, 0, 0)
 # SIGMA = 0.00025 ** (1/2) * 45

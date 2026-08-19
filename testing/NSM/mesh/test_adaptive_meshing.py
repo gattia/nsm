@@ -5,18 +5,19 @@ Covers: _dilate6, coarse_bounds_from_sign_change, create_grid_samples_in_bounds,
         crop_sdf_to_narrow_band, and create_mesh_adaptive (integration with mocked decoder).
 """
 
+from unittest.mock import MagicMock
+
 import numpy as np
 import pytest
 import torch
-from unittest.mock import MagicMock
 
 from NSM.mesh.main import (
     _dilate6,
     coarse_bounds_from_sign_change,
-    create_grid_samples_in_bounds,
     create_grid_samples,
-    crop_sdf_to_narrow_band,
+    create_grid_samples_in_bounds,
     create_mesh_adaptive,
+    crop_sdf_to_narrow_band,
 )
 
 
@@ -63,7 +64,7 @@ class TestCoarseBoundsFromSignChange:
         lin = np.linspace(0, 1, n)
         # meshgrid with indexing="ij" gives (Z, Y, X) when we pass z, y, x
         Z, Y, X = np.meshgrid(lin, lin, lin, indexing="ij")
-        sdf = np.sqrt((X - center[2])**2 + (Y - center[1])**2 + (Z - center[0])**2) - radius
+        sdf = np.sqrt((X - center[2]) ** 2 + (Y - center[1]) ** 2 + (Z - center[0]) ** 2) - radius
         return sdf  # (Z, Y, X)
 
     def test_sphere_bounds_enclose_surface(self):
@@ -185,9 +186,7 @@ class TestCreateGridSamplesInBounds:
         bounds_min = np.array([0.0, 0.0, 0.0])
         bounds_max = np.array([0.001, 0.001, 0.001])
         spacing = 0.01
-        _, dims, _ = create_grid_samples_in_bounds(
-            bounds_min, bounds_max, spacing, min_dim=64
-        )
+        _, dims, _ = create_grid_samples_in_bounds(bounds_min, bounds_max, spacing, min_dim=64)
         for d in dims:
             assert d >= 64
 
@@ -196,9 +195,7 @@ class TestCreateGridSamplesInBounds:
         bounds_min = np.array([0.5, 0.5, 0.5])
         bounds_max = np.array([1.5, 1.5, 1.5])
         spacing = 0.01
-        _, _, origin = create_grid_samples_in_bounds(
-            bounds_min, bounds_max, spacing, padding=0.2
-        )
+        _, _, origin = create_grid_samples_in_bounds(bounds_min, bounds_max, spacing, padding=0.2)
         for i in range(3):
             assert origin[i] < bounds_min[i]
 
@@ -220,9 +217,9 @@ class TestCreateGridSamplesInBounds:
             # Grid should not extend far beyond padded_max
             assert samples[:, i].max() <= bounds_max[i] + padding + spacing
             # Grid must actually reach past bounds_max (coverage)
-            assert samples[:, i].max() >= bounds_max[i], (
-                f"axis {i}: grid max {samples[:, i].max()} doesn't cover bounds_max {bounds_max[i]}"
-            )
+            assert (
+                samples[:, i].max() >= bounds_max[i]
+            ), f"axis {i}: grid max {samples[:, i].max()} doesn't cover bounds_max {bounds_max[i]}"
 
     def test_min_pad_voxels_fine(self):
         """min_pad_voxels_fine should override padding when it's larger."""

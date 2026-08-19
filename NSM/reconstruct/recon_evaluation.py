@@ -1,11 +1,12 @@
 import logging
+
 import numpy as np
 
 try:
     from NSM.dependencies import sinkhorn
 
     __emd__ = True
-except:
+except Exception:
     print("Error importing `sinkhorn` from NSM.dependencies")
     __emd__ = False
 
@@ -42,7 +43,9 @@ def compute_recon_loss(
     """
     logger.info("Starting reconstruction loss computation")
     logger.debug(f"Computing loss for {len(meshes) if isinstance(meshes, list) else 1} meshes")
-    logger.debug(f"Loss calculation settings: chamfer={calc_symmetric_chamfer}, assd={calc_assd}, emd={calc_emd}")
+    logger.debug(
+        f"Loss calculation settings: chamfer={calc_symmetric_chamfer}, assd={calc_assd}, emd={calc_emd}"
+    )
 
     result = {}
 
@@ -54,12 +57,12 @@ def compute_recon_loss(
     assert len(meshes) == len(
         orig_meshes
     ), "Number of meshes and number of original points must be equal"
-    
+
     logger.debug(f"Processing {len(meshes)} mesh pairs")
 
     for mesh_idx, mesh in enumerate(meshes):
         logger.debug(f"Processing mesh {mesh_idx + 1}/{len(meshes)}")
-        
+
         if mesh is not None:
             pts_recon_ = mesh.point_coords
             logger.debug(f"Mesh {mesh_idx}: {len(pts_recon_)} reconstructed points")
@@ -75,7 +78,9 @@ def compute_recon_loss(
             # if __chamfer__ is True:
             if pts_recon_ is None:
                 chamfer_loss_ = np.nan
-                logger.warning(f"Mesh {mesh_idx}: Chamfer distance set to NaN (no reconstructed mesh)")
+                logger.warning(
+                    f"Mesh {mesh_idx}: Chamfer distance set to NaN (no reconstructed mesh)"
+                )
             else:
                 chamfer_loss_ = compute_chamfer(
                     xyz_orig_, pts_recon_, num_samples=n_samples_chamfer, power=chamfer_norm
@@ -93,7 +98,9 @@ def compute_recon_loss(
             else:
                 # make sure the points for the meshes are the same types
                 mesh.point_coords = mesh.point_coords.astype(np.float32)
-                orig_meshes[mesh_idx].point_coords = orig_meshes[mesh_idx].point_coords.astype(np.float32)
+                orig_meshes[mesh_idx].point_coords = orig_meshes[mesh_idx].point_coords.astype(
+                    np.float32
+                )
                 assd_loss_ = mesh.get_assd_mesh(orig_meshes[mesh_idx])
                 logger.debug(f"Mesh {mesh_idx}: ASSD = {assd_loss_:.6f}")
                 #     xyz_orig_,

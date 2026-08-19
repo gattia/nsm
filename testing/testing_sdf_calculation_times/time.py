@@ -2,9 +2,9 @@ import os
 
 os.environ["LOC_SDF_CACHE"] = "/dataNAS/people/aagatti/projects/deepsdf_femur/cache"
 
-from NSM.datasets import MultiSurfaceSDFSamples
-
 import json
+
+from NSM.datasets import MultiSurfaceSDFSamples
 
 with open(
     "/dataNAS/people/aagatti/projects/OAI_Segmentation/data_splits_July.5.2023.json", "r"

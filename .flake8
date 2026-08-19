@@ -10,8 +10,12 @@
 #   E402 -- module-level import not at top (existing in several test files)
 #   E721 -- do not compare types with == (one existing case)
 #   F401 -- unused imports (several scratch / timing scripts)
+#   E501 -- line too long. Black owns line length for code and reflows anything it
+#           can; every E501 that survives a Black pass is prose Black will not touch
+#           (docstring bodies, comments, inline comments). Flagging those adds no
+#           signal, so length is enforced by `black --check`, not here.
 max-line-length = 100
-extend-ignore = E203, W503, E402, E721, F401
+extend-ignore = E203, W503, E402, E721, F401, E501
 exclude =
     .git,
     __pycache__,

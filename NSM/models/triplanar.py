@@ -1,23 +1,24 @@
+import logging
+import time
+
 import torch
 from torch import nn
-from .deep_sdf import Decoder
 from torch.nn.functional import grid_sample
-import time
-import logging
 
+from .deep_sdf import Decoder
 
 """
-We will create a triplanar neural implicit representation model. 
-First, we will create a VAE that takes a latent vector, reshapes it into 
+We will create a triplanar neural implicit representation model.
+First, we will create a VAE that takes a latent vector, reshapes it into
 a CX2x2 tensor, and then uses a 2D CNN to output a C2xHxH tensor that is a
 set of 2D planar feature maps. We will use the first 1/3 of the channels
 as features for the xy plane, the second 1/3 for the xz plane, and the last
-1/3 for the yz plane. 
+1/3 for the yz plane.
 
-Then, we will train an MLP as a SDF decoder. Instead of only taking the xyz 
+Then, we will train an MLP as a SDF decoder. Instead of only taking the xyz
 position of each point and a fixed latent code, we will sample the latent code
-from the planar feature mapes outputted from the VAE. This will be done using 
-summation of the latent codes from each plane using bilinear interpolation. This 
+from the planar feature mapes outputted from the VAE. This will be done using
+summation of the latent codes from each plane using bilinear interpolation. This
 way, we get a specific latent code for each point in space.
 """
 
@@ -152,16 +153,17 @@ unique_consecutive = UniqueConsecutive.apply
 class FastUnique(torch.autograd.Function):
     """
     Fast autograd function that mimics unique_consecutive behavior for single latent.
-    
+
     This provides the same gradient expansion as unique_consecutive but with minimal
     forward computation cost - just unsqueeze(0) instead of expensive unique operation.
     """
+
     @staticmethod
     def forward(ctx, latent_input, num_points):
         ctx.num_points = num_points
         return latent_input.unsqueeze(0)  # (1, D)
-    
-    @staticmethod 
+
+    @staticmethod
     def backward(ctx, grad_output):
         # Expand gradient to match original input size (like unique_consecutive does)
         # grad_output: (1, D) -> expanded_grad: (num_points, D)
@@ -172,17 +174,18 @@ class FastUnique(torch.autograd.Function):
 class TriplanarDecoder(nn.Module):
     """
     Triplanar neural implicit representation decoder.
-    
+
     Combines a VAE decoder (latent -> 2D feature maps) with an SDF decoder (MLP).
     Uses triplanar interpolation to sample features from xy, xz, and yz planes.
-    
+
     Performance Notes:
     - The main bottleneck is triplanar interpolation (~90% of forward pass time)
     - VAE computation is only ~5-10% of total time
-    - Previously attempted feature caching optimization, but it provided minimal 
+    - Previously attempted feature caching optimization, but it provided minimal
       speedup (~1.01-1.09x) due to low hit rates and wrong bottleneck targeting
     - Current optimization: FastUnique bypass for single-latent inference scenarios
     """
+
     def __init__(
         self,
         latent_dim,
@@ -258,8 +261,6 @@ class TriplanarDecoder(nn.Module):
             layer_split=None,
         )
 
-
-
     def forward_with_plane_features(self, plane_features, query):
         """
         Sample features from triplanar representation.
@@ -267,7 +268,7 @@ class TriplanarDecoder(nn.Module):
         Args:
             plane_features: (3 * sdf_latent_size, H, W) - triplanar feature maps
             query: (N, 3) - query points
-            
+
         Returns:
             plane_feats: (N, sdf_latent_size) - sampled features
         """
@@ -283,7 +284,7 @@ class TriplanarDecoder(nn.Module):
         plane_feats_list = [
             self.sample_plane_features(query, feat_xz, "xz"),
             self.sample_plane_features(query, feat_yz, "yz"),
-            self.sample_plane_features(query, feat_xy, "xy")
+            self.sample_plane_features(query, feat_xy, "xy"),
         ]
 
         # Combine features
@@ -344,25 +345,27 @@ class TriplanarDecoder(nn.Module):
     def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
         """
         Forward pass through the triplanar decoder.
-        
+
         Args:
             x: Input tensor with latent codes and xyz coordinates (legacy interface)
             latent: Single latent vector (D,) or (1,D) - for fast inference
-            xyz: Query points (N,3) - for fast inference  
+            xyz: Query points (N,3) - for fast inference
             epoch: Current training epoch (for logging)
             verbose: Whether to print debug information
-        
-        Note: 
+
+        Note:
             - Use either x OR (latent + xyz), not both
             - Using (latent + xyz) is much faster for inference with single latent
         """
-        
+
         # Handle different input modes
-        if (latent is not None and xyz is not None):
+        if latent is not None and xyz is not None:
             # Fast inference mode: separate latent and xyz
             if x is not None:
-                raise ValueError("Cannot specify both x and (latent, xyz). Use one interface or the other.")
-            
+                raise ValueError(
+                    "Cannot specify both x and (latent, xyz). Use one interface or the other."
+                )
+
             # Ensure latent is 1D for consistency
             if latent.dim() == 2:
                 latent = latent.squeeze(0)
@@ -370,17 +373,19 @@ class TriplanarDecoder(nn.Module):
                 raise ValueError(f"latent must be 1D or (1,D), got shape {latent.shape}")
             if xyz.dim() != 2 or xyz.shape[1] != 3:
                 raise ValueError(f"xyz must be (N,3), got shape {xyz.shape}")
-            
+
             # Fast path: use custom autograd function that properly handles gradient expansion
             unique_latent = FastUnique.apply(latent, xyz.shape[0])
             unique_indices = torch.zeros(xyz.shape[0], dtype=torch.long, device=xyz.device)
             num_unique = 1
-            
+
         elif x is not None:
             # Legacy mode: concatenated input
             if latent is not None or xyz is not None:
-                raise ValueError("Cannot specify both x and (latent, xyz). Use one interface or the other.")
-                
+                raise ValueError(
+                    "Cannot specify both x and (latent, xyz). Use one interface or the other."
+                )
+
             if verbose:
                 print("Triplanar.forward()")
                 print("Epoch:", epoch)
@@ -393,17 +398,17 @@ class TriplanarDecoder(nn.Module):
             # Input parsing
             xyz = x[:, -3:]
             latent = x[:, :-3:]
-            
-            # Unique latent computation for legacy mode  
+
+            # Unique latent computation for legacy mode
             unique_latent, unique_indices = unique_consecutive(latent, 0, True)
             num_unique = unique_latent.shape[0]
-                
+
         else:
             raise ValueError("Must specify either x OR (latent, xyz)")
 
         # Feature computation
         per_unique_feats = self.vae_decoder(unique_latent)  # (U,C,H,W)
-        
+
         pts_latents = []
         for idx in range(num_unique):
             feats = per_unique_feats[idx]
@@ -423,5 +428,3 @@ class TriplanarDecoder(nn.Module):
             sdf = sdf + low_freq_sdf
 
         return sdf
-
-

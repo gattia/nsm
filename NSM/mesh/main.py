@@ -13,53 +13,54 @@ The coarse bounding helper expects (Z, Y, X) internally for vectorized corner sl
 transpose to ZYX when calling it, to keep the helper simple and fast.
 """
 
-from skimage.measure import marching_cubes
-import pyvista as pv
+import inspect
 import os
-import torch
+
 import numpy as np
 import pymskt as mskt
+import pyvista as pv
+import torch
 import vtk
-import inspect
+from skimage.measure import marching_cubes
 
 
 def _dilate6(mask: np.ndarray) -> np.ndarray:
     """
     One-iteration 6-neighborhood dilation (faces only).
-    
+
     Args:
         mask: Boolean array of shape (Z, Y, X)
-    
+
     Returns:
         Dilated boolean array of same shape
     """
     z, y, x = mask.shape
     out = mask.copy()
-    out |= np.pad(mask[1:  ,:   ,:   ], ((0,1),(0,0),(0,0)), constant_values=False)  # -Z
-    out |= np.pad(mask[: -1,:   ,:   ], ((1,0),(0,0),(0,0)), constant_values=False)  # +Z
-    out |= np.pad(mask[:   ,1:  ,:   ], ((0,0),(0,1),(0,0)), constant_values=False)  # -Y
-    out |= np.pad(mask[:   ,: -1,:   ], ((0,0),(1,0),(0,0)), constant_values=False)  # +Y
-    out |= np.pad(mask[:   ,:   ,1:  ], ((0,0),(0,0),(0,1)), constant_values=False)  # -X
-    out |= np.pad(mask[:   ,:   ,: -1], ((0,0),(0,0),(1,0)), constant_values=False)  # +X
+    out |= np.pad(mask[1:, :, :], ((0, 1), (0, 0), (0, 0)), constant_values=False)  # -Z
+    out |= np.pad(mask[:-1, :, :], ((1, 0), (0, 0), (0, 0)), constant_values=False)  # +Z
+    out |= np.pad(mask[:, 1:, :], ((0, 0), (0, 1), (0, 0)), constant_values=False)  # -Y
+    out |= np.pad(mask[:, :-1, :], ((0, 0), (1, 0), (0, 0)), constant_values=False)  # +Y
+    out |= np.pad(mask[:, :, 1:], ((0, 0), (0, 0), (0, 1)), constant_values=False)  # -X
+    out |= np.pad(mask[:, :, :-1], ((0, 0), (0, 0), (1, 0)), constant_values=False)  # +X
     return out
 
 
 def coarse_bounds_from_sign_change(
-    sdf_coarse_zyx,       # np.ndarray or torch.Tensor, shape (Z, Y, X)
-    origin,               # (ox, oy, oz) world origin of coarse grid
-    spacing_c: float,     # coarse voxel size
-    tau_voxels: float = 1.0,   # near-zero band width, in coarse voxels
-    dilate_cells: int = 2,     # dilation iterations in coarse-cell units
-    limit_near0_to_band: int = 1  # restrict near0 to band around sign_change
+    sdf_coarse_zyx,  # np.ndarray or torch.Tensor, shape (Z, Y, X)
+    origin,  # (ox, oy, oz) world origin of coarse grid
+    spacing_c: float,  # coarse voxel size
+    tau_voxels: float = 1.0,  # near-zero band width, in coarse voxels
+    dilate_cells: int = 2,  # dilation iterations in coarse-cell units
+    limit_near0_to_band: int = 1,  # restrict near0 to band around sign_change
 ):
     """
     Compute coarse AABB that tightly encloses the zero level set using:
     - sign change across 2x2x2 cell corners (precise),
     - near-zero corners |SDF| <= tau (recall),
     - small index-space dilation (safety).
-    
+
     Input must be (Z, Y, X) shape for vectorized corner slicing.
-    
+
     Args:
         sdf_coarse_zyx: SDF values in (Z, Y, X) layout
         origin: (ox, oy, oz) world origin of coarse grid
@@ -67,11 +68,15 @@ def coarse_bounds_from_sign_change(
         tau_voxels: Near-zero band width, in coarse voxels
         dilate_cells: Dilation iterations in coarse-cell units
         limit_near0_to_band: Restrict near0 to band around sign_change
-    
+
     Returns:
         tuple: (bounds_min, bounds_max) where each is (x, y, z), or None if no surface found
     """
-    sdf = sdf_coarse_zyx.detach().cpu().numpy() if isinstance(sdf_coarse_zyx, torch.Tensor) else sdf_coarse_zyx
+    sdf = (
+        sdf_coarse_zyx.detach().cpu().numpy()
+        if isinstance(sdf_coarse_zyx, torch.Tensor)
+        else sdf_coarse_zyx
+    )
     Z, Y, X = sdf.shape
     if min(Z, Y, X) < 2:
         return None
@@ -83,14 +88,14 @@ def coarse_bounds_from_sign_change(
     for dz in (0, 1):
         for dy in (0, 1):
             for dx in (0, 1):
-                c.append(sdf[dz:Z-1+dz, dy:Y-1+dy, dx:X-1+dx])
+                c.append(sdf[dz : Z - 1 + dz, dy : Y - 1 + dy, dx : X - 1 + dx])
     corners = np.stack(c, axis=0)
 
     cell_min = corners.min(axis=0)
     cell_max = corners.max(axis=0)
     sign_change = (cell_min <= 0.0) & (cell_max >= 0.0)  # (Z-1, Y-1, X-1)
 
-    near0 = np.any(np.abs(corners) <= tau, axis=0)       # (Z-1, Y-1, X-1)
+    near0 = np.any(np.abs(corners) <= tau, axis=0)  # (Z-1, Y-1, X-1)
 
     # Limit near0 growth: expand sign_change by limit_near0_to_band and only allow near0 inside that band
     band = sign_change.copy()
@@ -110,16 +115,14 @@ def coarse_bounds_from_sign_change(
     z1, y1, x1 = idx.max(axis=0) + 1  # +1 to include far faces
 
     # map coarse cell indices → world bounds (X,Y,Z), remembering input was Z,Y,X
-    bounds_min = np.array([
-        origin[0] + x0 * spacing_c,
-        origin[1] + y0 * spacing_c,
-        origin[2] + z0 * spacing_c
-    ], dtype=float)
-    bounds_max = np.array([
-        origin[0] + x1 * spacing_c,
-        origin[1] + y1 * spacing_c,
-        origin[2] + z1 * spacing_c
-    ], dtype=float)
+    bounds_min = np.array(
+        [origin[0] + x0 * spacing_c, origin[1] + y0 * spacing_c, origin[2] + z0 * spacing_c],
+        dtype=float,
+    )
+    bounds_max = np.array(
+        [origin[0] + x1 * spacing_c, origin[1] + y1 * spacing_c, origin[2] + z1 * spacing_c],
+        dtype=float,
+    )
     return bounds_min, bounds_max
 
 
@@ -166,7 +169,6 @@ def scale_mesh(
             new_mesh = mskt.mesh.Mesh(
                 new_mesh
             )  # should handle vtk, pyvista, or string path to file
-        new_pts = new_mesh.point_coords
 
         offset = np.mean(old_pts, axis=0)
         old_pts -= offset
@@ -315,10 +317,12 @@ def sdf_grid_to_mesh(
     return mesh
 
 
-def crop_sdf_to_narrow_band(sdf_values, voxel_origin, voxel_size, band_width=3.0, pad_voxels=2, verbose=False):
+def crop_sdf_to_narrow_band(
+    sdf_values, voxel_origin, voxel_size, band_width=3.0, pad_voxels=2, verbose=False
+):
     """
     Crop SDF volume to a narrow band around the surface for faster processing.
-    
+
     Args:
         sdf_values: numpy array containing SDF values
         voxel_origin: Origin point of the voxel grid (x, y, z)
@@ -326,25 +330,25 @@ def crop_sdf_to_narrow_band(sdf_values, voxel_origin, voxel_size, band_width=3.0
         band_width: Width of narrow band in world units (multiplier of voxel_size)
         pad_voxels: Number of voxels to pad around cropped region
         verbose: Whether to print progress messages
-    
+
     Returns:
         tuple: (cropped_sdf, new_origin) or (original_sdf, original_origin) if no cropping needed
     """
     orig_nx, orig_ny, orig_nz = sdf_values.shape
-    
+
     if verbose:
         print(f"Applying narrow band optimization (band_width={band_width} * voxel_size)...")
-    
+
     # Find voxels within the narrow band around the surface
     band = band_width * voxel_size
     mask = np.abs(sdf_values) <= band
     z, y, x = np.where(mask)
-    
+
     if len(z) == 0:
         if verbose:
             print("WARNING: No voxels found within narrow band - using full volume")
         return sdf_values, voxel_origin
-    
+
     # Calculate cropping bounds with padding
     xs = max(x.min() - pad_voxels, 0)
     xe = min(x.max() + pad_voxels + 1, orig_nz)
@@ -352,21 +356,21 @@ def crop_sdf_to_narrow_band(sdf_values, voxel_origin, voxel_size, band_width=3.0
     ye = min(y.max() + pad_voxels + 1, orig_ny)
     zs = max(z.min() - pad_voxels, 0)
     ze = min(z.max() + pad_voxels + 1, orig_nx)
-    
+
     # Extract subvolume
     sub_sdf = sdf_values[zs:ze, ys:ye, xs:xe]
-    
+
     # Calculate new origin: array[x,y,z] layout means zs→X, ys→Y, xs→Z in world coords
     crop_origin = (
         voxel_origin[0] + zs * voxel_size,  # X
         voxel_origin[1] + ys * voxel_size,  # Y
-        voxel_origin[2] + xs * voxel_size   # Z
+        voxel_origin[2] + xs * voxel_size,  # Z
     )
-    
+
     if verbose:
         print(f"Cropped volume from {orig_nx}x{orig_ny}x{orig_nz} to {sub_sdf.shape}")
         print(f"Original origin: {voxel_origin}, Cropped origin: {crop_origin}")
-    
+
     return sub_sdf, crop_origin
 
 
@@ -381,7 +385,7 @@ def sdf_grid_to_mesh_vtk(
 ):
     """
     Create mesh from SDF values using VTK Flying Edges algorithm instead of marching cubes.
-    
+
     Args:
         sdf_values: PyTorch tensor containing SDF values
         voxel_origin: Origin point of the voxel grid (x, y, z)
@@ -390,17 +394,17 @@ def sdf_grid_to_mesh_vtk(
         narrow_band: Whether to crop volume to narrow band around surface for speed
         band_width: Width of narrow band in world units (multiplier of voxel_size)
         pad_voxels: Number of voxels to pad around cropped region
-    
+
     Returns:
         mskt.mesh.Mesh object
     """
     # Convert to numpy if needed
-    if hasattr(sdf_values, 'cpu'):
+    if hasattr(sdf_values, "cpu"):
         sdf_values = sdf_values.cpu().numpy()
-    
+
     if verbose:
         print("Starting VTK Flying Edges mesh extraction...")
-    
+
     # Apply narrow band optimization if requested
     if narrow_band:
         sub_sdf, crop_origin = crop_sdf_to_narrow_band(
@@ -409,10 +413,10 @@ def sdf_grid_to_mesh_vtk(
     else:
         sub_sdf = sdf_values
         crop_origin = voxel_origin
-    
+
     # Get grid dimensions (cropped or original)
     nx, ny, nz = sub_sdf.shape
-    
+
     # Create PyVista ImageData: dimensions are (X,Y,Z) from array.shape = (nx, ny, nz)
     # Flatten with order="F" (Fortran) so X varies fastest, matching VTK's expectation
     grid = pv.ImageData()
@@ -420,19 +424,19 @@ def sdf_grid_to_mesh_vtk(
     grid.spacing = (voxel_size, voxel_size, voxel_size)
     grid.origin = crop_origin  # World coordinates (X, Y, Z)
     grid["sdf"] = sub_sdf.ravel(order="F")  # Fortran-order: X varies fastest
-    
+
     # Apply Flying Edges 3D algorithm
     fe = vtk.vtkFlyingEdges3D()
     fe.SetInputData(grid)
     fe.SetValue(0, 0.0)  # SDF iso-level
     fe.ComputeNormalsOff()  # compute later from SDF grads if desired
     fe.Update()
-    
+
     # Wrap the output as PyVista mesh and create mskt mesh directly
-    mesh = mskt.mesh.Mesh(mesh=fe.GetOutput())    
+    mesh = mskt.mesh.Mesh(mesh=fe.GetOutput())
     if verbose:
         print(f"Extracted mesh with {mesh.n_points} vertices and {mesh.n_faces_strict} faces")
-        print("Creating final mesh object...")    
+        print("Creating final mesh object...")
 
     return mesh
 
@@ -449,7 +453,7 @@ def find_object_bounds_random_sampling(
 ):
     """
     Find bounding box of objects by random sampling and detecting interior points (SDF < 0).
-    
+
     Args:
         decoder: SDF decoder network
         latent_vector: Latent code for the objects
@@ -459,38 +463,40 @@ def find_object_bounds_random_sampling(
         batch_size: Batch size for SDF computation
         device: Device to run computation on
         verbose: Whether to print progress
-    
+
     Returns:
         tuple: (bounds_min, bounds_max) where each is (x, y, z), or None if no objects found
     """
     if verbose:
         print(f"Finding object bounds with {n_random_samples} random samples...")
-    
+
     # Generate random samples in the search space
-    samples = torch.rand(n_random_samples, 3) * (search_bounds[1] - search_bounds[0]) + search_bounds[0]
-    
+    samples = (
+        torch.rand(n_random_samples, 3) * (search_bounds[1] - search_bounds[0]) + search_bounds[0]
+    )
+
     # Get SDF values for random samples
     sdf_values = get_sdfs(decoder, samples, latent_vector, batch_size, objects, device)
-    
+
     # Find points that are inside any object (SDF < 0)
     interior_mask = torch.any(sdf_values < 0, dim=1)  # True if inside ANY object
     interior_points = samples[interior_mask]
-    
+
     if len(interior_points) == 0:
         if verbose:
             print("WARNING: No interior points found in random sampling")
         return None
-    
+
     # Calculate bounding box
     bounds_min = interior_points.min(dim=0)[0].cpu().numpy()
     bounds_max = interior_points.max(dim=0)[0].cpu().numpy()
-    
+
     if verbose:
         print(f"Found {len(interior_points)} interior points")
         print(f"Object bounds: min={bounds_min}, max={bounds_max}")
         extent = bounds_max - bounds_min
         print(f"Object extent: {extent}")
-    
+
     return bounds_min, bounds_max
 
 
@@ -504,15 +510,15 @@ def create_grid_samples_in_bounds(
 ):
     """
     Create dense grid samples within discovered bounds using consistent spacing.
-    
+
     Args:
         bounds_min: (x, y, z) minimum bounds
-        bounds_max: (x, y, z) maximum bounds  
+        bounds_max: (x, y, z) maximum bounds
         original_spacing: Voxel spacing from original full grid
         padding: Extra space around bounds (world units)
         min_dim: Minimum dimension per axis (for VTK stability)
         min_pad_voxels_fine: Minimum padding in fine voxels
-    
+
     Returns:
         tuple: (samples, grid_dims, voxel_origin) where:
             - samples: Grid samples of shape (N, 3)
@@ -521,30 +527,30 @@ def create_grid_samples_in_bounds(
     """
     # World padding: keep the larger of explicit padding and min-pad in fine voxels
     pad_world = max(padding, min_pad_voxels_fine * original_spacing)
-    
+
     padded_min = bounds_min - pad_world
     padded_max = bounds_max + pad_world
-    
+
     # Calculate grid dimensions to maintain original spacing, enforcing minimum
     nx = max(int((padded_max[0] - padded_min[0]) / original_spacing) + 1, min_dim)
     ny = max(int((padded_max[1] - padded_min[1]) / original_spacing) + 1, min_dim)
     nz = max(int((padded_max[2] - padded_min[2]) / original_spacing) + 1, min_dim)
-    
+
     n_pts_total = nx * ny * nz
-    
+
     indices = torch.arange(0, n_pts_total, out=torch.LongTensor())
     samples = torch.zeros(n_pts_total, 3)
-    
+
     # Generate samples with Z varying fastest (same pattern as create_grid_samples)
     samples[:, 2] = indices % nz
     samples[:, 1] = (indices // nz) % ny
     samples[:, 0] = ((indices // nz) // ny) % nx
-    
+
     # Scale to actual coordinates within bounds
     samples[:, 0] = samples[:, 0] * original_spacing + padded_min[0]
     samples[:, 1] = samples[:, 1] * original_spacing + padded_min[1]
     samples[:, 2] = samples[:, 2] * original_spacing + padded_min[2]
-    
+
     return samples, (nx, ny, nz), (padded_min[0], padded_min[1], padded_min[2])
 
 
@@ -578,7 +584,7 @@ def create_mesh_adaptive(
 ):
     """
     Create mesh using adaptive two-pass sampling with deterministic coarse grid bounds detection.
-    
+
     Adaptive meshing overview
     -------------------------
     Pass 1 (coarse): Evaluate a coarse SDF grid over [search_bounds]^3.
@@ -596,7 +602,7 @@ def create_mesh_adaptive(
 
     This method is deterministic, robust to thin structures, and avoids
     the randomness/clumping of point sampling.
-    
+
     Args:
         decoder: SDF decoder network
         latent_vector: Latent code for the shape
@@ -624,53 +630,50 @@ def create_mesh_adaptive(
         device: Device for computation
         use_vtk: Use VTK Flying Edges (vs marching cubes)
         fallback_to_original: Fall back to full grid if bounds detection fails
-    
+
     Returns:
         Single mesh (if objects==1) or list of meshes
-    
+
     Falls back to original create_mesh if bounds detection fails.
     """
     if verbose:
         print("Starting adaptive mesh creation...")
-    
+
     # Calculate voxel size if not provided
     if voxel_size is None:
         original_extent = search_bounds[1] - search_bounds[0]
         voxel_size = original_extent / (n_pts_per_axis - 1)
-    
+
     # Use voxel_size as the original spacing
     original_spacing = voxel_size
-    
+
     decoder.eval()
-    
+
     # Pass 1: Coarse grid to find object bounds
     if verbose:
         print(f"Pass 1: Evaluating coarse {n_pts_coarse}^3 grid...")
-    
+
     coarse_origin = (search_bounds[0], search_bounds[0], search_bounds[0])
     coarse_extent = search_bounds[1] - search_bounds[0]
     coarse_spacing = coarse_extent / (n_pts_coarse - 1)
-    
+
     # Generate coarse grid samples
     coarse_samples = create_grid_samples(
-        n_pts_per_axis=n_pts_coarse,
-        voxel_origin=coarse_origin,
-        voxel_size=coarse_spacing
+        n_pts_per_axis=n_pts_coarse, voxel_origin=coarse_origin, voxel_size=coarse_spacing
     )
-    
+
     # Evaluate SDF on coarse grid
     coarse_sdf_values_flat = get_sdfs(
-        decoder, coarse_samples, latent_vector,
-        batch_size, objects=objects, device=device
+        decoder, coarse_samples, latent_vector, batch_size, objects=objects, device=device
     )
-    
+
     # Union across objects (inside if any object is inside): min over objects
     coarse_sdf_flat = torch.min(coarse_sdf_values_flat, dim=1)[0]
-    
+
     # Reshape to (X,Y,Z), then transpose to (Z,Y,X) for the helper
     sdf_coarse_xyz = coarse_sdf_flat.reshape(n_pts_coarse, n_pts_coarse, n_pts_coarse)
     sdf_coarse_zyx = np.transpose(sdf_coarse_xyz.cpu().numpy(), (2, 1, 0))
-    
+
     # Detect bounds using sign-change + near-zero + dilation
     bounds_result = coarse_bounds_from_sign_change(
         sdf_coarse_zyx,
@@ -678,9 +681,9 @@ def create_mesh_adaptive(
         spacing_c=coarse_spacing,
         tau_voxels=tau_voxels,
         dilate_cells=dilate_cells,
-        limit_near0_to_band=limit_near0_to_band
+        limit_near0_to_band=limit_near0_to_band,
     )
-    
+
     if bounds_result is None:
         if verbose:
             print("Coarse pass found no surface. Falling back.")
@@ -688,55 +691,72 @@ def create_mesh_adaptive(
             if verbose:
                 print("Falling back to original create_mesh...")
             return create_mesh(
-                decoder, latent_vector, n_pts_per_axis,
-                voxel_origin, voxel_size, batch_size, scale, offset,
-                path_save, filename, path_original_mesh, scale_to_original_mesh,
-                icp_transform, objects, verbose, device, use_vtk
+                decoder,
+                latent_vector,
+                n_pts_per_axis,
+                voxel_origin,
+                voxel_size,
+                batch_size,
+                scale,
+                offset,
+                path_save,
+                filename,
+                path_original_mesh,
+                scale_to_original_mesh,
+                icp_transform,
+                objects,
+                verbose,
+                device,
+                use_vtk,
             )
         else:
             return [None] * objects if objects > 1 else None
-    
+
     bounds_min, bounds_max = bounds_result
-    
+
     if verbose:
         print(f"Coarse spacing: {coarse_spacing:.6f}, tau: {tau_voxels * coarse_spacing:.6f}")
         print(f"Coarse bounds: min={bounds_min}, max={bounds_max}")
         extent = bounds_max - bounds_min
         print(f"Object extent: {extent}")
-    
+
     # Pass 2: Dense sampling in bounded region
     if verbose:
         print("Pass 2: Creating dense grid in bounded region...")
-    
+
     samples, grid_dims, voxel_origin = create_grid_samples_in_bounds(
-        bounds_min, bounds_max, original_spacing, bounds_padding,
-        min_dim=min_dim, min_pad_voxels_fine=min_pad_voxels_fine
+        bounds_min,
+        bounds_max,
+        original_spacing,
+        bounds_padding,
+        min_dim=min_dim,
+        min_pad_voxels_fine=min_pad_voxels_fine,
     )
-    
+
     if verbose:
         print(f"Dense dims: {grid_dims}, voxel_size: {original_spacing:.6f}")
         print(f"Dense grid: {samples.shape[0]} points (vs {n_pts_per_axis**3} original)")
         print(f"Speedup: {n_pts_per_axis**3 / samples.shape[0]:.1f}x fewer points")
-    
+
     # Get SDF values for dense grid
     sdf_values_ = get_sdfs(
         decoder, samples, latent_vector, batch_size, objects=objects, device=device
     )
-    
+
     # Reshape SDF values: C-order makes array[x, y, z] correspond to world (X,Y,Z)
     nx, ny, nz = grid_dims
     sdf_values = torch.zeros((nx, ny, nz, objects))
     for i in range(objects):
         sdf_values[..., i] = sdf_values_[..., i].reshape(nx, ny, nz)
-    
+
     # Calculate voxel size for the bounded grid
     voxel_size = original_spacing
-    
+
     # Create meshes from gridded SDFs (same as original pipeline)
     meshes = []
     for mesh_idx in range(objects):
         sdf_values_ = sdf_values[..., mesh_idx]
-        
+
         # Check if there is a surface
         if 0 < sdf_values_.min() or 0 > sdf_values_.max():
             if verbose is True:
@@ -772,7 +792,7 @@ def create_mesh_adaptive(
                 meshes[mesh_idx].save_mesh(
                     os.path.join(path_save, filename.format(mesh_idx=mesh_idx))
                 )
-    
+
     return meshes[0] if objects == 1 else meshes
 
 
@@ -804,7 +824,7 @@ def create_grid_samples(
 def get_sdfs(decoder, samples, latent_vector, batch_size=32**3, objects=1, device="cuda"):
     """
     Get SDF values for samples.
-    
+
     Args:
         decoder: The decoder model
         samples: Sample points to evaluate
@@ -827,22 +847,24 @@ def get_sdfs(decoder, samples, latent_vector, batch_size=32**3, objects=1, devic
     while current_idx < n_pts_total:
         current_batch_size = min(batch_size, n_pts_total - current_idx)
         sampled_pts = samples[current_idx : current_idx + current_batch_size, :3].to(device)
-        
+
         sdf_values[current_idx : current_idx + current_batch_size, :] = (
             decode_sdf(decoder, latent_vector, sampled_pts).detach().cpu()
         )
 
         current_idx += current_batch_size
-        print(f"Processed {current_idx} / {n_pts_total} points (batch {batch_num+1}: CNN+MLP, size={current_batch_size})")
+        print(
+            f"Processed {current_idx} / {n_pts_total} points (batch {batch_num+1}: CNN+MLP, size={current_batch_size})"
+        )
         batch_num += 1
-        
+
     return sdf_values
 
 
 def decode_sdf(decoder, latent_vector, queries):
     """
     Decode SDF values for query points.
-    
+
     Args:
         decoder: The decoder model
         latent_vector: Latent code for the shape
@@ -855,12 +877,12 @@ def decode_sdf(decoder, latent_vector, queries):
         return decoder(inputs)
     else:
         # Check if decoder supports fast inference interface (latent + xyz)
-        if hasattr(decoder, 'forward'):
+        if hasattr(decoder, "forward"):
             sig = inspect.signature(decoder.forward)
-            if 'latent' in sig.parameters and 'xyz' in sig.parameters:
+            if "latent" in sig.parameters and "xyz" in sig.parameters:
                 # Use fast inference interface
                 return decoder(latent=latent_vector.squeeze(), xyz=queries)
-        
+
         # Fall back to legacy concatenated interface
         latent_repeat = latent_vector.expand(num_samples, -1)
         inputs = torch.cat([latent_repeat, queries], dim=1)

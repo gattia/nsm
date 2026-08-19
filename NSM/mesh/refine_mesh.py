@@ -1,7 +1,8 @@
 import numpy as np
 import pyvista as pv
-from .triangle_metrics import TriangleProperties
 from vtk.util.numpy_support import numpy_to_vtk
+
+from .triangle_metrics import TriangleProperties
 
 
 def midpoint(vertex1, vertex2):

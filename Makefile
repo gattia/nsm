@@ -1,7 +1,9 @@
 # NSM Development Makefile
 # Simplifies common development tasks
 
-.PHONY: help install install-dev test test-coverage lint format clean
+.PHONY: help install install-dev test test-loader test-coverage lint autoformat docs clean env-setup quick-test
+# docs/ and build/ are real directories, so without .PHONY make would treat
+# `make docs` as an up-to-date file target and do nothing.
 
 # Default target
 help:
@@ -42,15 +44,18 @@ test-coverage:
 # test-parallel:
 #	pytest testing/ -n auto -v
 
-# Code quality targets
+# Code quality targets -- same names as gattia/pymskt, so `make lint` and
+# `make autoformat` mean the same thing in both repos.
 lint:
+	set -e
+	isort -c NSM/ testing/
+	black --check --config pyproject.toml NSM/ testing/
 	flake8 NSM/ testing/
 
-format:
-	black NSM/ testing/
-
-format-check:
-	black NSM/ testing/ --check
+autoformat:
+	set -e
+	isort NSM/ testing/
+	black --config pyproject.toml NSM/ testing/
 
 # Cleanup targets
 clean:
@@ -67,18 +72,22 @@ env-setup:
 	@echo "Environment created. Activate it with: conda activate nsm-dev"
 	@echo "Then run: make install-dev"
 
-# TODO: Documentation targets - considering pdoc vs sphinx
-# Currently using pdoc might be easier than sphinx for this project
-# docs:
-#	pdoc --html --output-dir docs NSM
-# OR for sphinx (once configured):
-# docs:
-#	sphinx-build -b html docs docs/_build/html
+# Documentation. pdoc renders an API reference from docstrings into site/.
+#
+# site/, NOT docs/: docs/ holds hand-written engineering documents (SCOPE,
+# ARCHITECTURE, KNOWN_ISSUES) that pdoc would overwrite. pymskt writes into its
+# docs/ because that directory is generated output; ours is not.
+#
+# PDOC_ALLOW_EXEC=1 because importing NSM.dependencies pulls in pykeops, which
+# compiles a probe binary at import. pdoc blocks subprocesses by default, and the
+# import fails without it.
+docs:
+	PDOC_ALLOW_EXEC=1 pdoc -o site/ NSM
 
 # TODO: CI/CD targets - set these up once CI is configured
 # ci-test: install-dev test-coverage lint
 #	@echo "CI tests completed!"
 
 # Quick development helpers
-quick-test: format test-loader
+quick-test: autoformat test-loader
 	@echo "Quick development cycle completed!"

@@ -1,40 +1,57 @@
 name: website
 
-# build the documentation whenever there are new commits on main
+# NOT wired to `push` yet, deliberately.
+#
+# pdoc renders the API reference from docstrings, and docs/ARCHITECTURE.md records
+# that 31 documented public symbols currently have docstrings that CONTRADICT the
+# code. Publishing today would put those 31 wrong descriptions up as the official
+# reference, which is worse than having no site.
+#
+# The plan's Phase 2 is the docstring-accuracy pass. When it lands, delete this
+# comment and replace `workflow_dispatch` with:
+#
+#   push:
+#     branches:
+#       - main
+#
+# Until then `make docs` works locally and this can be run by hand from the Actions
+# tab, so the plumbing is proven without publishing anything untrue.
 on:
-  push:
-    branches:
-      - main
-    # Alternative: only build for tags.
-    # tags:
-    #   - '*'
+  workflow_dispatch:
 
 # security: restrict permissions for CI jobs.
 permissions:
   contents: read
 
 jobs:
-  # Build the documentation and upload the static HTML files as an artifact.
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v3
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
 
-      # ADJUST THIS: install all dependencies (including pdoc)
-      - run: make requirements dev
-      # ADJUST THIS: build your documentation into docs/.
-      - run: make docs
-      # We use a custom build script for pdoc itself, ideally you just run `pdoc -o docs/ ...` here.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          make install-dev
 
-      - run: tar --directory docs/ -hcf artifact.tar .
-      - uses: actions/upload-artifact@v3
+      # Renders into site/. docs/ is hand-written and must not be overwritten.
+      - name: Build documentation
+        run: make docs
+
+      - name: Package documentation
+        run: tar --directory site/ -hcf artifact.tar .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
           name: github-pages
           path: ./artifact.tar
-  
-  # Deploy the artifact to GitHub pages.
-  # This is a separate job so that only actions/deploy-pages has the necessary permissions.
+
+  # Separate job so only actions/deploy-pages holds the elevated permissions.
   deploy:
     needs: build
     runs-on: ubuntu-latest
@@ -45,5 +62,6 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - id: deployment
-        uses: actions/deploy-pages@v1
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

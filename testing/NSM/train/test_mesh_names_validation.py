@@ -3,13 +3,12 @@ Tests for mesh_names config validation in train_deep_sdf and train_deep_sdf_mult
 """
 
 import warnings
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from NSM.train.train_deep_sdf import train_deep_sdf as train_single
 from NSM.train.train_deep_sdf_multi_head import train_deep_sdf as train_multi_head
-
 
 # Patch add_plain_lr_to_config to stop execution after validation
 PATCH_SINGLE = "NSM.train.train_deep_sdf.add_plain_lr_to_config"

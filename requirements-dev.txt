@@ -8,10 +8,12 @@ pytest-xdist>=3.0.0  # For parallel test execution
 
 # Code quality
 black>=22.0.0
+isort>=5.0.0  # configured with profile=black in pyproject.toml; `make format-check` runs it
 flake8>=5.0.0
 mypy>=1.0.0
 
 # Documentation
+pdoc>=14.0.0  # `make docs` -- API reference from docstrings
 sphinx>=5.0.0
 sphinx-rtd-theme>=1.0.0
 
