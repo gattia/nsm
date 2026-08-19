@@ -130,7 +130,7 @@ def reconstruct_latent_S3(
 
     # Sensibly initilize the registration parameters
     init_center, init_scale = get_pts_center_and_scale(
-        np.copy(xyz), center=True, scale=True, scale_method=init_scale_method, return_pts=False
+        xyz, scale_method=init_scale_method, return_pts=False
     )
     init_center = torch.from_numpy(init_center).float()
 

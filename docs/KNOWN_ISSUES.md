@@ -42,7 +42,6 @@ queue.
 | `include_surf_in_pts` appends a leaked loop variable | **High** | [#17](https://github.com/gattia/nsm/issues/17) |
 | Parameters accepted and never read | Medium — **read the traps first** | [#20](https://github.com/gattia/nsm/issues/20) |
 | `xyz_in_all` accepted and never read | Medium — silent no-op | [#20](https://github.com/gattia/nsm/issues/20) |
-| `get_pts_center_and_scale` mutates the caller's array | Medium | [#21](https://github.com/gattia/nsm/issues/21) |
 | `store_data_in_memory=True` raises | Medium — advertised option, unusable | [#22](https://github.com/gattia/nsm/issues/22) |
 | Every VAE layer stored twice | Medium — 1.92× checkpoints | [#27](https://github.com/gattia/nsm/issues/27) |
 | `reconstruct_mesh` early return drops requested keys | Medium | [#29](https://github.com/gattia/nsm/issues/29) |
@@ -161,19 +160,24 @@ sampler with it regardless, so asking for no near-surface points raises
 *Fix:* [#23](https://github.com/gattia/nsm/issues/23). *Pinned by:*
 `test_dataset_cache...::test_zero_sampling_probability_must_sample_nothing`.
 
-### `get_pts_center_and_scale` ignores `center=` and `scale=`, and mutates its input
+### `center_pts` and `norm_pts` do not select which normalization happens
 
-Both are rebound before they are read, so centering and scaling happen unconditionally and
-`center=False, scale=False` does nothing. Separately, the `pts -= center` in the same
-function writes through to the caller's array; all three in-repo call sites pass
-`np.copy(...)`,
-so the convention exists only as a habit at the call sites and a fourth caller will not have
-it.
+Together they decide *whether* points are normalized: the block is skipped only if both are
+false. They do **not** decide *which* operation runs — if either is set, points are both
+centered and scaled to unit max-radius.
 
-*Fix:* [#20](https://github.com/gattia/nsm/issues/20) for the ignored arguments — **read its
-traps before touching them, the obvious fix is worse than the bug** — and
-[#21](https://github.com/gattia/nsm/issues/21) for the mutation. *Pinned by:*
-`test_dataset_cache.TestPointCenteringAndScaling`.
+So `center_pts: true, norm_pts: false` — the shipped configuration — asks for centering
+without scaling and gets both. No run has ever been centered-but-unscaled.
+
+This is what is left of #20 in this file after the function-level half was fixed: the
+arguments `get_pts_center_and_scale` accepted and ignored are gone (removed rather than
+honoured, because honouring them would have switched scaling off on every default run), but
+the two config keys still read as independent switches and are not.
+
+*Fix:* [#20](https://github.com/gattia/nsm/issues/20) — **read its traps first.** Any fix
+that makes `norm_pts` authoritative changes the coordinate frame of every dataset and
+checkpoint ever produced, and needs a migration, not a patch. *Pinned by:*
+`test_dataset_cache.TestPointCenteringAndScaling::test_centering_and_scaling_still_happen_unconditionally`.
 
 ### `LOC_SDF_CACHE` is read at import time
 

@@ -729,27 +729,49 @@ class TestPointCenteringAndScaling:
     Two of its documented behaviours are not its behaviours.
     """
 
-    @pytest.mark.xfail(
-        strict=True, reason="#20: center= and scale= are rebound before they are read"
-    )
-    def test_center_and_scale_arguments_must_be_honoured(self):
+    def test_center_and_scale_are_not_accepted_as_arguments(self):
         """
-        Both are rebound before they are read (``sdf_dataset.py:88`` and ``:94``), so
-        centering and scaling happen unconditionally and ``center=False, scale=False``
-        changes nothing.
+        They were removed rather than honoured, so this asserts they are gone.
+
+        Both were shadowed by the values computed from them before they were read, so
+        neither had any effect at any value. Honouring them instead would have been the
+        harmful fix: every caller passes ``scale=norm_pts``, which defaults to ``False``
+        at all four definition sites and is unset in the shipped configs, so an
+        authoritative argument would stop scaling on a default run -- measured, a point
+        cloud of max radius 24.95 stays at 24.95 instead of normalizing to 1.0. That
+        changes the coordinate frame of every dataset, checkpoint and reconstruction
+        NSM has ever produced. See #20.
+        """
+        import inspect
+
+        from NSM.datasets.sdf_dataset import get_pts_center_and_scale
+
+        taken = inspect.signature(get_pts_center_and_scale).parameters
+        assert "center" not in taken
+        assert "scale" not in taken
+
+    def test_centering_and_scaling_still_happen_unconditionally(self):
+        """
+        The behaviour the removal must preserve: both operations always run.
+
+        This is the half that goes red if someone reinstates the arguments and wires
+        them up, because the defaults would then switch scaling off.
         """
         from NSM.datasets.sdf_dataset import get_pts_center_and_scale
 
         points = np.array([[1.0, 1.0, 1.0], [3.0, 3.0, 3.0]])
-        center, _ = get_pts_center_and_scale(points.copy(), center=False, scale=False)
-        assert np.allclose(center, [0.0, 0.0, 0.0]), "centering happened despite center=False"
+        center, scale, normalized = get_pts_center_and_scale(points, return_pts=True)
 
-    @pytest.mark.xfail(strict=True, reason="#21: pts is modified in place")
+        assert np.allclose(center, [2.0, 2.0, 2.0]), "centering did not happen"
+        assert np.isclose(
+            np.max(np.linalg.norm(normalized, axis=-1)), 1.0
+        ), "scaling did not happen"
+
     def test_the_callers_array_must_not_be_mutated(self):
         """
-        ``pts -= center`` at ``:91`` writes through to the caller's array. All three in-repo
-        call sites pass ``np.copy(...)``, so the convention exists only as a habit at the
-        call sites -- a fourth caller written without it gets silently corrupted input.
+        ``pts -= center`` used to write through to the caller's array. All three in-repo
+        call sites carried a defensive ``np.copy(...)``; the copy now lives inside the
+        function, where a fourth caller gets it for free. See #21.
         """
         from NSM.datasets.sdf_dataset import get_pts_center_and_scale
 
