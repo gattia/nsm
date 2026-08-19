@@ -78,7 +78,7 @@ def _qualnames(path):
                     attrs(child, qual + ".")
                 walk(child, qual + ".")
 
-    walk(ast.parse(path.read_text()), "")
+    walk(ast.parse(path.read_text(encoding="utf-8")), "")
     return out
 
 
@@ -103,7 +103,7 @@ def _citations():
     for doc in DOCS:
         if not doc.exists():
             continue
-        for token in TOKEN.findall(doc.read_text()):
+        for token in TOKEN.findall(doc.read_text(encoding="utf-8")):
             if token.rsplit(".", 1)[-1] in FILE_SUFFIXES:
                 continue
             head = token.split(".")[0]

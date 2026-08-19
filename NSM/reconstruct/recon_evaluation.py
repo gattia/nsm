@@ -32,10 +32,13 @@ def compute_recon_loss(
 
     Args:
         meshes (list): A list of predicted meshes.
-        orig_pts (list): A list of pts from ground truth meshes.
+        orig_meshes (list): A list of ground truth meshes. (Replaced ``orig_pts``, which is
+            commented out of the signature.)
         n_samples_chamfer (int, optional): The number of samples to use for the chamfer distance calculation. Defaults to None.
+        n_samples_assd (int, optional): The number of samples to use for the ASSD calculation. Defaults to None.
         chamfer_norm (int, optional): The power to which the chamfer distance is raised. Defaults to 1.
         calc_symmetric_chamfer (bool, optional): Whether to calculate the symmetric chamfer distance. Defaults to False.
+        calc_assd (bool, optional): Whether to calculate the average symmetric surface distance. Defaults to False.
         calc_emd (bool, optional): Whether to calculate the earth mover's distance. Defaults to False.
 
     Returns:
