@@ -61,10 +61,10 @@ queue.
 
 ### Cache key omits parameters that change what is cached
 
-`get_hash_params` (`:2074-2106`) does not include `mesh_to_scale`, `uniform_pts_buffer` or
-`subsample`, all of which change what gets written. Two runs differing only in one share an
-`md5`, and with `load_cache=True` — what both shipped configs use — the second silently
-trains on the first's data.
+`MultiSurfaceSDFSamples.get_hash_params` does not include `mesh_to_scale`, `uniform_pts_buffer`
+or `subsample`, all of which change what gets written. Two runs differing only in one share an
+`md5`, and with `load_cache=True` — what both shipped configs use — the second silently trains
+on the first's data.
 
 Not equally severe: `mesh_to_scale` invalidates **every** array (it decides which surface
 drives centering and normalization, so the two runs are in different coordinate frames);
@@ -74,12 +74,14 @@ drives centering and normalization, so the two runs are in different coordinate 
 **Measured.** One subject cached at `subsample=64` and reloaded at `512`: the small
 surface's interior fraction in a batch fell 0.258 → 0.059, a **4.4× under-representation**
 of interior samples, with `equal_pos_neg=True` set throughout. `sdf_pos_neg_idx` sizes the
-repeated index arrays for the `subsample` in force when the cache was written (`:2108`);
-reload with a larger one and `__getitem__` tops the batch up with uniform random points
-(`:2229-2234`). In a real dataset the small surface is the cartilage.
+repeated index arrays for the `subsample` in force when the cache was written
+(`MultiSurfaceSDFSamples.sdf_pos_neg_idx`); reload with a larger one and `__getitem__` tops
+the batch up with uniform random points (`MultiSurfaceSDFSamples.__getitem__`). In a real
+dataset the small surface is the cartilage.
 
 The reload guard that should have caught this compares `len(data["pos_idx"])` against the
-number of *meshes* (`:1861-1865`), never against the subsample the arrays were built for.
+number of *meshes* (`MultiSurfaceSDFSamples.get_sample_data_dict`), never against the
+subsample the arrays were built for.
 
 **How to tell whether you are affected:** if you reused a cache directory across runs that
 differed in `mesh_to_scale`, `uniform_pts_buffer` or `subsample`, the later run trained on the
@@ -102,12 +104,12 @@ without moving or renaming it, any run after that reused the pre-edit samples.
 
 ### `reference_mesh` is hashed by memory address
 
-`create_hash` stringifies every hash parameter (`:1534`) and `reference_mesh` is one
-(`:1503`, `:2088`). `str(Mesh(...))` begins `Mesh (0x7f478a24ce20)`, so the key is
-per-object: two `Mesh` instances from the same file hash differently, and the same instance
-hashes differently in the next process. **The cache can never hit** — you pay full
-regeneration every run. Passing the reference as a path string is stable, and is the
-workaround people are implicitly relying on.
+`SDFSamples.create_hash` stringifies every hash parameter, and `reference_mesh` is one of them
+in both classes' `get_hash_params`. `str(Mesh(...))` begins `Mesh (0x7f478a24ce20)`, so the key
+is per-object: two `Mesh` instances from the same file hash differently, and the same instance
+hashes differently in the next process. **The cache can never hit** — you pay full regeneration
+every run. Passing the reference as a path string is stable, and is the workaround people are
+implicitly relying on.
 
 *Fix:* [#19](https://github.com/gattia/nsm/issues/19). *Pinned by:*
 `test_dataset_cache.TestReferenceMeshHashing`.
@@ -137,14 +139,15 @@ coordinate space, with a migration guard of the same shape as History §1's. Wri
 
 ### `store_data_in_memory=True` raises on the first item
 
-`MultiSurfaceSDFSamples.__getitem__:2270-2272` reads `time_` and `size`, bound only in the
-`store_data_in_memory is False` branch (`:2153-2164`), so the first `__getitem__` raises
-`UnboundLocalError`. `SDFSamples.__getitem__:1563` guards the identical block correctly —
+`MultiSurfaceSDFSamples.__getitem__` reads `time_` and `size`, bound only in the
+`store_data_in_memory is False` branch of `MultiSurfaceSDFSamples.__getitem__`, so the
+first `__getitem__` raises
+`UnboundLocalError`. `SDFSamples.__getitem__` guards the identical block correctly —
 the two classes disagree about the same option.
 
 The apparent workaround, `test_load_times=False`, is not one: it yields items with only
 `{"xyz", "gt_sdf"}` and `train_epoch` reads all four timing keys unconditionally
-(`train_deep_sdf.py:589-592`). **No combination of the two flags both constructs and
+(`train_deep_sdf.train_epoch`). **No combination of the two flags both constructs and
 trains.**
 
 *Fix:* [#22](https://github.com/gattia/nsm/issues/22). *Pinned by:*
@@ -152,7 +155,7 @@ trains.**
 
 ### `p_near_surface=0` crashes inside `point_cloud_utils`
 
-`get_pt_sample_combos` emits a `[0, sigma]` combo and `get_sample_data_dict:1820` calls the
+`get_pt_sample_combos` emits a `[0, sigma]` combo and `get_sample_data_dict` calls the
 sampler with it regardless, so asking for no near-surface points raises
 `ValueError: Invalid input point cloud with zero points`. Same for `p_further_from_surface=0`.
 *Fix:* [#23](https://github.com/gattia/nsm/issues/23). *Pinned by:*
@@ -160,9 +163,10 @@ sampler with it regardless, so asking for no near-surface points raises
 
 ### `get_pts_center_and_scale` ignores `center=` and `scale=`, and mutates its input
 
-Both are rebound before they are read (`:145`, `:151`), so centering and scaling happen
-unconditionally and `center=False, scale=False` does nothing. Separately, `pts -= center` at
-`:148` writes through to the caller's array; all three in-repo call sites pass `np.copy(...)`,
+Both are rebound before they are read, so centering and scaling happen unconditionally and
+`center=False, scale=False` does nothing. Separately, the `pts -= center` in the same
+function writes through to the caller's array; all three in-repo call sites pass
+`np.copy(...)`,
 so the convention exists only as a habit at the call sites and a fourth caller will not have
 it.
 
@@ -174,7 +178,7 @@ traps before touching them, the obvious fix is worse than the bug** — and
 ### `LOC_SDF_CACHE` is read at import time
 
 It is read inside a **default argument** — `loc_save=os.environ.get("LOC_SDF_CACHE", ...)`
-at `:899-901` and `:1706-1708` — so it binds once when the module is imported. Setting it
+in both dataset constructors — so it binds once when the module is imported. Setting it
 afterwards has no effect and the caller silently writes to `~/.cache/nsm_sdf_cache`.
 
 The downstream consumer does exactly this: `kneepipeline/steps/run_nsm.py` sets
@@ -187,7 +191,8 @@ what it looks like it does.
 
 ### `Pool` deadlocks after an in-process build
 
-A `multiprocessing=True` build hangs indefinitely with idle workers (`:1016`) **if a
+A `multiprocessing=True` build hangs indefinitely with idle workers (`SDFSamples.__init__`)
+**if a
 dataset was already built in the same process with `multiprocessing=False`.** Fork-after-VTK.
 
 The trigger is narrower than "a second dataset", and the distinction matters because
@@ -201,21 +206,23 @@ The trigger is narrower than "a second dataset", and the distinction matters bec
 So a script that builds a train split in-process and then a val split on the default path
 deadlocks, with no message, on the second one. Long-standing rather than new.
 
-*Fix:* [#25](https://github.com/gattia/nsm/issues/25). *Worked around in:* `test_dataset_cache.TestSeedDerivation`, which builds its two datasets
-in separate subprocesses.
+*Fix:* [#25](https://github.com/gattia/nsm/issues/25). *Worked around in:*
+`test_dataset_cache.TestSeedDerivation`, which builds its two datasets in separate
+subprocesses.
 
 ## `models/triplanar.py`
 
 ### `padding` is not in the checkpoint, and the mismatch is silent
 
 `TriplanarDecoder.padding` scales query coordinates before they index the feature planes
-(`:336`). It is **not a learned parameter**, so a checkpoint trained at one value loads
+(`TriplanarDecoder.normalize_coordinates`). It is **not a learned parameter**, so a
+checkpoint trained at one value loads
 cleanly under strict `load_state_dict` at another and then samples at the wrong scale.
 
-**Measured.** A model built at `padding=0.35`, saved, and loaded through `load_model` with
-a config that omits `padding` (`loader.py:133` defaults it to 0.1) loads without error and
-computes a maximum absolute SDF difference of **0.063**. The output is `tanh`-bounded to
-(−1, 1), so that is ~3% of the full range, not a rounding artefact. Stating `padding` in the
+**Measured.** A model built at `padding=0.35`, saved, and loaded through `load_model` with a
+config that omits `padding` (`loader._get_triplanar_params` defaults it to 0.1) loads without
+error and computes a maximum absolute SDF difference of **0.063**. The output is `tanh`-bounded
+to (−1, 1), so that is ~3% of the full range, not a rounding artefact. Stating `padding` in the
 config restores bitwise-identical output.
 
 `kneepipeline/steps/run_nsm.py:94-112` passes 15 of `TriplanarDecoder`'s 16 meaningful
@@ -230,8 +237,8 @@ arguments, and `padding` is the one it omits — so the shipped consumer is expo
 
 ### `normalize_coordinates` ignores its own `padding` argument
 
-The signature is `normalize_coordinates(self, query, plane, padding=0.1)` (`:324`) and the
-body reads `self.padding` (`:336`). Accepted, no effect, at any value. Same defect class as
+The signature is `TriplanarDecoder.normalize_coordinates(self, query, plane, padding=0.1)`
+and the body reads `self.padding`. Accepted, no effect, at any value. Same defect class as
 the entry above and as `get_pts_center_and_scale` — which is why they should be swept
 together rather than one at a time.
 
@@ -239,12 +246,13 @@ together rather than one at a time.
 > one. Read [#20](https://github.com/gattia/nsm/issues/20)'s traps before changing anything
 > here.
 
-*Pinned by:* `test_model_roundtrip...::test_normalize_coordinates_must_honour_its_padding_argument`.
+*Pinned by:*
+`test_model_roundtrip...::test_normalize_coordinates_must_honour_its_padding_argument`.
 
 ### Every VAE layer is stored twice in the state dict
 
-`VAEDecoder` registers each layer twice — once in `self.layers`, a `ModuleList` (`:58-97`),
-and again in `self.decoder = nn.Sequential(*self.layers)` (`:105`). Both are child modules,
+`VAEDecoder.__init__` registers each layer twice — once in `self.layers`, a `ModuleList`,
+and again in `self.decoder = nn.Sequential(*self.layers)`. Both are child modules,
 so `state_dict()` emits every VAE tensor under two aliased names.
 
 Loading is unaffected — the names alias one parameter. Two things are:
@@ -267,7 +275,7 @@ both directions and needs a migration shim. *Pinned by:*
 
 ### `enforce_minmax` clamps the prediction, not just the target
 
-`train_epoch` clamps `pred_sdf` as well as the target (`:411`), and `torch.clamp` passes no
+`train_epoch` clamps `pred_sdf` as well as the target, and `torch.clamp` passes no
 gradient outside its bounds. Every sample predicted outside ±`clamp_dist` therefore
 contributes **exactly zero gradient**, however wrong it is.
 
@@ -284,7 +292,7 @@ config work in `SCOPE.md` §2.2.
 
 ### `train_deep_sdf` returns nothing
 
-`:276` is a bare `return`. `train_epoch` builds a full `log_dict` per epoch and
+`train_deep_sdf` ends in a bare `return`. `train_epoch` builds a full `log_dict` per epoch and
 `train_deep_sdf` forwards it only to `wandb`, so a caller without a wandb key can learn
 nothing about a run except by reading checkpoints back off disk. The regression harness has
 to wrap `train_epoch` to observe anything (`testing/NSM/regression/_harness.py`) — fixing
@@ -297,7 +305,7 @@ this deletes that wrapper.
 ### The early return drops keys the caller asked for
 
 When the decoder's mean shape has no zero level set, `reconstruct_mesh` returns early at
-`:953-976` with only `{mesh, latent, assd_*}`, ignoring `return_registration_params`,
+with only `{mesh, latent, assd_*}`, ignoring `return_registration_params`,
 `return_timing` and `orig_mesh`. The two result shapes are not interchangeable and the
 consumer reads `result["center"]` unconditionally (`kneepipeline/steps/run_nsm.py:230`).
 
@@ -323,7 +331,7 @@ Dependency bugs that reach an NSM user.
 
 Each is its own small PR.
 
-- `pyproject.toml:95` — `testpaths = ["tests"]` names a directory that does not exist.
+- `pyproject.toml` sets `testpaths = ["tests"]`, naming a directory that does not exist.
   Collection works only via pytest 8's rootdir fallback.
 - `pyproject.toml` — `addopts = "-k 'not train_test.py'"` filters a file that no longer
   exists, and `-k` matches test *names*, not filenames, so it never worked.
