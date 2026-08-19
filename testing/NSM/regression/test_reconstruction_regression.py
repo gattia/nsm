@@ -500,7 +500,7 @@ class TestDecoderWithNoZeroLevelSet:
 
     @pytest.mark.xfail(
         strict=True,
-        reason="worklist #12: the early return ignores return_registration_params",
+        reason="#29: the early return ignores return_registration_params",
     )
     def test_registration_params_must_be_returned_when_requested(self, degenerate_result):
         """

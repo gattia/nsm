@@ -268,7 +268,7 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
 
             clear_gpu_cache(config["device"])
 
-    # KNOWN DEFECT, worklist #11: train_epoch builds a full per-epoch log_dict and it goes
+    # KNOWN DEFECT, #28: train_epoch builds a full per-epoch log_dict and it goes
     # only to wandb, so a caller without a wandb key can observe nothing about a run except
     # by reading checkpoints back off disk. Returning the history would let
     # testing/NSM/regression drop its train_epoch wrapper.
@@ -400,7 +400,7 @@ def train_epoch(
                 else:
                     pred_sdf = pred_sdf.unsqueeze(1)  # Add surface dimension if needed
 
-            # KNOWN DEFECT, worklist #10: this clamps the PREDICTION, not just the
+            # KNOWN DEFECT, docs/KNOWN_ISSUES.md Open: this clamps the PREDICTION, not just the
             # target, and torch.clamp passes no gradient outside its bounds -- so every
             # sample predicted beyond +/-clamp_dist contributes exactly zero gradient
             # however wrong it is. 44.6% of a freshly built triplanar decoder's

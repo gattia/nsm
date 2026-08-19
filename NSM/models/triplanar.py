@@ -97,7 +97,7 @@ class VAEDecoder(nn.Module):
         )
         self.layers.append(final_layer)
 
-        # KNOWN DEFECT, worklist #9: every layer is now registered TWICE -- once in
+        # KNOWN DEFECT, #27: every layer is now registered TWICE -- once in
         # self.layers and again here -- so state_dict() emits each tensor under two
         # aliased names. Shipped checkpoints are 1.92x larger than their parameter count,
         # and editing a checkpoint by key loses the edit unless both names are written.
@@ -219,7 +219,7 @@ class TriplanarDecoder(nn.Module):
         self.sdf_activation = sdf_activation
         self.sdf_dropout_prob = sdf_dropout_prob
         self.sum_sdf_features = sum_sdf_features
-        # KNOWN DEFECT, worklist #7: `padding` scales query coordinates before they index
+        # KNOWN DEFECT, #26: `padding` scales query coordinates before they index
         # the feature planes, and it is NOT a learned parameter -- so a checkpoint trained
         # at one value loads cleanly under strict load_state_dict at another and then
         # samples at the wrong scale, silently. Measured: 0.35 vs the 0.1 that load_model
@@ -323,8 +323,8 @@ class TriplanarDecoder(nn.Module):
         return sampled_feats.T
 
     def normalize_coordinates(self, query, plane, padding=0.1):
-        # KNOWN DEFECT, worklist #8: `padding` is accepted and ignored -- the body reads
-        # self.padding. Same defect class as worklist #6 and #7.
+        # KNOWN DEFECT, #20: `padding` is accepted and ignored -- the body reads
+        # self.padding. Same class as get_pts_center_and_scale, also #20; see also #26.
         if plane == "xy":
             xy = query[:, [0, 1]]
         elif plane == "xz":

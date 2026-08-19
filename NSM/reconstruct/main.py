@@ -979,7 +979,7 @@ def reconstruct_mesh(
             # Mean mesh is None if the zero latent vector is not well defined/learned
             # yet. In this case, the results will be very poor, might as well skip.
             #
-            # KNOWN DEFECT, worklist #12: this early return ignores
+            # KNOWN DEFECT, #29: this early return ignores
             # return_registration_params, return_timing and orig_mesh, so its result has a
             # different SHAPE from the successful one -- and the downstream consumer reads
             # result["center"] unconditionally. It also returns the untouched zero
