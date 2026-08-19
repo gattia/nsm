@@ -108,7 +108,7 @@ flowchart LR
 
   NSMpkg --> Uutils
   Ulrmig --> Uutils
-  Uutils -.->|"deferred: utils.py:116"| Ulrmig
+  Uutils -.->|"deferred import"| Ulrmig
 
   DSpkg -->|star| DSsdf
   DPpkg --> DPsink
@@ -175,7 +175,8 @@ why `from NSM.models import TriplanarDecoder` is cheap for the consumer, and it 
 property to preserve deliberately rather than by luck (see `SCOPE.md` §3.3).
 
 **Exactly one cycle,** `utils` ↔ `_lr_migration`, and it is deliberate: deferred at one end
-(`utils.py:116`, inside the `if None in targets:` branch), documented at both, and
+(`utils.resolve_schedule_targets`, inside the `if None in targets:` branch), documented at
+both, and
 structured so the shim deletes in one line. **Not a refactor target.**
 
 **Hub:** `NSM.utils` has by far the highest in-degree — 8 importers. It is the module that
@@ -234,23 +235,23 @@ the best covered. That ordering is the durable finding; the percentages are not.
 
 Ten modules do something at import beyond defining names. Two matter:
 
-**`reconstruct/main.py:26` — `logging.basicConfig(...)` at module scope.** This
+**`reconstruct/main.py` — `logging.basicConfig(...)` at module scope.** This
 reconfigures the **root logger of the host process**. Because
-`reconstruct/__init__.py:1` star-imports `.main`, it fires on any `import NSM.reconstruct`
+`reconstruct/__init__.py` star-imports `.main`, it fires on any `import NSM.reconstruct`
 — invisible at the call site — and it hits the downstream consumer on every NSM fit.
 Nothing inside NSM reads the root logger config, so removing it has no intra-package
 dependency. **Highest-value single cleanup in the graph.**
 
-**`utils.py:6-10` — prints to stdout when `schedulefree` is absent.** Because
-`NSM/__init__.py:9` does `from . import utils`, this fires on *any* `import NSM.*`
+**`NSM/utils.py` — prints to stdout at import when `schedulefree` is absent.** Because
+`NSM/__init__.py` does `from . import utils`, this fires on *any* `import NSM.*`
 whatsoever. `python -c 'import NSM'` emits `schedulefree not found, skipping import`.
 The consumer's orchestrator parses the last stdout line of each step as JSON.
 
 The rest: three separate `try/except` optional-dependency probes that print and set module
-globals (`recon_evaluation.py:4`, `sdf_dataset.py:18`, `correspondence_metrics.py:68` —
+globals (`recon_evaluation.py`, `sdf_dataset.py`, `correspondence_metrics.py` —
 the last silently switches exact point-to-surface distance to a nearest-vertex fallback);
 `loss_l1 = torch.nn.L1Loss(...)` instantiated at import in **four** separate training
-modules; `today_date` frozen at import time in `sdf_dataset.py:26`; and top-level `import
+modules; `today_date` frozen at import time in `sdf_dataset.py`; and top-level `import
 wandb` in every trainer.
 
 `configs/generate_sdf_default_config.py` is the fixed reference case — its write is now
@@ -283,10 +284,10 @@ The plan flagged one. There are six.
 
 | Trap | Where | Why it bites |
 |---|---|---|
-| **Two `adjust_learning_rate`** | `utils.py:227` (target-keyed, per-epoch) and `reconstruct/utils.py` (step decay for latent fitting) | Unrelated signatures, same name, and the second is *leaked into `NSM.reconstruct`'s namespace* by the star-import — so `from NSM.reconstruct import adjust_learning_rate` silently gets the wrong one. |
-| **Four `loss_l1 = torch.nn.L1Loss(...)`** | `train_deep_sdf.py:49`, `train_deep_sdf_multi_head.py:22`, both `deprecated/` trainers | Four copies of a shared import-time module. |
-| **Two `Sine` classes** | `deep_sdf.py:27` (w0 hardcoded, `__init__` misspelled as `__init`, never runs) and `modulated_periodic_activations.py:43` | Incompatible defaults; the star-import decides which one `NSM.models.Sine` means. |
-| **Two edge-ratio implementations** | `correspondence_metrics.py:224` and `triangle_metrics.py` | Divergent results from the same-named statistic. |
+| **Two `adjust_learning_rate`** | `utils.adjust_learning_rate` (target-keyed, per-epoch) and `reconstruct/utils.py` (step decay for latent fitting) | Unrelated signatures, same name, and the second is *leaked into `NSM.reconstruct`'s namespace* by the star-import — so `from NSM.reconstruct import adjust_learning_rate` silently gets the wrong one. |
+| **Four `loss_l1 = torch.nn.L1Loss(...)`** | module-level `loss_l1` in `train_deep_sdf.py`, `train_deep_sdf_multi_head.py`, and both `deprecated/` trainers | Four copies of a shared import-time module. |
+| **Two `Sine` classes** | `deep_sdf.Sine` (w0 hardcoded, `__init__` misspelled as `__init`, never runs) and `modulated_periodic_activations.Sine` | Incompatible defaults; the star-import decides which one `NSM.models.Sine` means. |
+| **Two edge-ratio implementations** | `correspondence_metrics.triangle_health` and `triangle_metrics.py` | Divergent results from the same-named statistic. |
 | **`train_deep_sdf` defined twice** | `train/train_deep_sdf.py` and `train/train_deep_sdf_multi_head.py` | Same function name in two modules, second parameter is `model` in one and `models` in the other. Tests alias them to disambiguate. |
 | **`unpack_pts` / `unpack_numpy_data`** | `sdf_dataset.py` and duplicated verbatim in a testing script | Encodes the `.npz` cache layout in two places. |
 
@@ -300,12 +301,12 @@ instance" asks for. The LR bug's class is the largest group.
 
 | Class | Count | Representative |
 |---|---|---|
-| **Undocumented positional/index ordering** — the LR bug's exact shape | ~12 | `reconstruct/main.py:1118`: reconstructed mesh order *is* the surface identity contract, named nowhere, hardcoded by the consumer. `losses.py:110`: `cat([latent, points])` with nothing validating the width. `mesh/main.py:690`: 17 positional args into `create_mesh`. |
-| **Parameter accepted and silently ignored** | ~10 | `sdf_dataset.py:145`: `center=` / `scale=` are rebound before they are read, so both operations happen unconditionally. `n_pts_random` swallowed by `**kwargs` — the consumer passes 100,000 for it. |
-| **Silent in-place mutation of caller data** | 7 | `sdf_dataset.py:148` mutates the passed array; all three in-repo callers pass `np.copy()` defensively, so the convention exists only as a habit at the call sites. |
+| **Undocumented positional/index ordering** — the LR bug's exact shape | ~12 | `reconstruct_mesh`: reconstructed mesh order *is* the surface identity contract, named nowhere, hardcoded by the consumer. `losses.compute_sdf_gradients`: `cat([latent, points])` with nothing validating the width. `mesh.create_mesh_adaptive`: 17 positional args into `create_mesh`. |
+| **Parameter accepted and silently ignored** | ~10 | `get_pts_center_and_scale`: `center=` / `scale=` are rebound before they are read, so both operations happen unconditionally. `n_pts_random` swallowed by `**kwargs` — the consumer passes 100,000 for it. |
+| **Silent in-place mutation of caller data** | 7 | `get_pts_center_and_scale` mutates the passed array; all three in-repo callers pass `np.copy()` defensively, so the convention exists only as a habit at the call sites. |
 | **Cache key omits a parameter that changes cached content** | 4 | `mesh_to_scale`, `uniform_pts_buffer`, `subsample` are all absent from `get_hash_params`. |
 | **Import-time side effect** | 10 | §4 above. |
-| **Constructed and discarded / leaked loop variable** | 3 | `train_deep_sdf_multi_head.py:85` (only the last decoder trains), `sdf_dataset.py:665`, `triplanar.py:87` (the activation is built and never appended — the VAE decoder has no pointwise nonlinearity; see §7.1). |
+| **Constructed and discarded / leaked loop variable** | 3 | `train_deep_sdf_multi_head.train_deep_sdf` (only the last decoder trains), `read_meshes_get_sampled_pts`, `VAEDecoder.__init__` (the activation is built and never appended — the VAE decoder has no pointwise nonlinearity; see §7.1). |
 | **Constructible-but-uncallable configuration** | 5 | `Decoder(activation='linear')`, `Decoder(norm_layers=...)`, `progressive_add_depth=True`, `TwoStageDecoder()` with its own defaults, `refine_mesh.get_target_cells()` with its own defaults. Each builds fine and raises on first use. |
 
 **71 of the 216 are landmines** — wrong behaviour that raises nothing and returns a
@@ -317,7 +318,7 @@ asserts "it ran" catches almost none of them.
 Included because the first draft of this document got it wrong, and the correction is more
 interesting than the original claim.
 
-**The defect is real.** `triplanar.py:87` builds `activation = activation_fn()` and never
+**The defect is real.** `VAEDecoder.__init__` builds `activation = activation_fn()` and never
 appends it, while the two lines above it do `self.layers.append(...)`. The resulting stack
 is `ConvTranspose2d → norm` × N, then `Conv2d → Tanh`. `LeakyReLU` appears nowhere; the
 only pointwise nonlinearity in the entire feature-plane generator is the final `Tanh`.

@@ -40,7 +40,7 @@ fix rather than limitations to document:
 
 - **Only `TriplanarDecoder` survives the reconstruction path.** `reconstruct_latent` calls
   decoders with a keyword-only `(latent=, xyz=)` interface that only `TriplanarDecoder`
-  implements (`reconstruct/main.py:588`), with no fallback — while `mesh/main.py:855-867`
+  implements (`reconstruct.reconstruct_latent`), with no fallback — while `mesh.decode_sdf`
   inspects the signature and *does* fall back. Two conventions in one pipeline; `load_model`
   advertises four model types and three of them cannot be reconstructed.
   → **Phase 4 work item: a common decoder interface plus a registration pathway**, so a
@@ -82,16 +82,17 @@ Proposed: *deprecate; superseded by `train_deep_sdf` with `objects_per_decoder >
 **Not superseded.** The two trainers are different architectures, not two spellings of one:
 
 - `train_deep_sdf(config, model, ...)` takes **one** decoder emitting N channels from
-  shared hidden layers (`train_deep_sdf.py:388`, split at `:390`).
+  shared hidden layers (`train_deep_sdf.train_epoch`).
 - `train_deep_sdf(config, models: tuple, ...)` in multi_head takes **N independent
   decoder networks** against a single shared latent embedding, with per-surface loss
-  weighting (`train_deep_sdf_multi_head.py:329-341`).
+  weighting (`train_deep_sdf_multi_head.train_epoch`).
 
 Deleting it removes the multi-network-per-latent capability from the library entirely.
-The defect is real — the optimizer is built from a leaked loop variable at `:85`, so only
+The defect is real — the optimizer is built from a leaked loop variable in `train_deep_sdf`,
+so only
 the last decoder is trained — but it is a two-identifier repair (`model` → `models`)
 against a `get_optimizer` that already normalizes list input and emits one `model_{idx}`
-group per decoder (`utils.py:373-374`).
+group per decoder (`utils.get_optimizer`).
 
 **Ruling: supported. Fix the optimizer, keep the `DeprecationWarning` until it is fixed.**
 The plan's §3 text on this module is wrong and should be corrected.
@@ -100,7 +101,7 @@ Two qualifications from the maintainer:
 
 - **Its current warning text is actively wrong and must be rewritten.** It says "Use
   `NSM.train.train_deep_sdf` with `'objects_per_decoder' > 1` instead"
-  (`train_deep_sdf_multi_head.py:30`) — advice that silently hands the user a different
+  (its `DeprecationWarning`) — advice that silently hands the user a different
   architecture. It should say broken-and-unfixed, and name no replacement.
 - **Do not advertise it as a supported training path.** Its hyperparameters have never been
   tuned and it has effectively never been used. Keep the capability, keep it out of the
@@ -111,8 +112,8 @@ Two qualifications from the maintainer:
 - `train_deep_sdf_multi_surface_orig.py` (562) — strict subset of `train_deep_sdf.py`.
   Nothing unique. **Dead. Quarantine.**
 - `train_deep_sdf_orig.py` (318) — contains the only *live* `sample_difficulty_lx`
-  inverse-Lx loss-weighting branch (`:235-247`). `train_deep_sdf.py` stops at
-  `sample_difficulty_weight` (`:462-478`) and has that algorithm only as a commented-out
+  inverse-Lx loss-weighting branch (in its `train_epoch`). `train_deep_sdf.py` stops at
+  `sample_difficulty_weight` and has that algorithm only as a commented-out
   block. **Port those ~12 lines into `train_deep_sdf.py` first** — the helpers are already
   imported there — then it is dead.
 
@@ -136,7 +137,7 @@ test-coverage`.
 Proposed: *zero importers, 0% coverage, therefore dead.*
 
 Zero importers is confirmed. "Therefore dead" is not. `subdivide_triangles_on_base_mesh`
-(`:438`) selects cells by metrics computed on **one** mesh and splits them on a
+selects cells by metrics computed on **one** mesh and splits them on a
 **different** mesh, preserving original point IDs. `pyvista.subdivide_adaptive` is present
 and cannot express that base/warped split — the completed interpolation plan records that
 both were tested for exactly this reason, and states in writing that the hand-built code
@@ -146,7 +147,8 @@ Dead code is code nobody decided about. This is code someone decided to keep, in
 
 **Ruling: research. Keep, documented as such** — with three conditions, in order:
 
-1. **Make it work.** `:399` reads `np.zeros_like(max_length_binary)` where it means
+1. **Make it work.** `get_target_cells` reads `np.zeros_like(max_length_binary)` where it
+   means
    `max_lengths`, so both public entry points raise `UnboundLocalError` on their own
    defaults. One-word fix, and it comes first — documenting a module that raises describes
    something nobody can run.
@@ -172,20 +174,20 @@ More decisively, it is an active work item: branch `icp-registration-robustness`
 plan whose §5 states the module has a gradient-flow bug that alone explains the earlier
 negative result, so the method has not had a fair test.
 
-**Ruling: deferred research, scheduled for repair.** Keep the `reconstruct/__init__.py:2`
-re-export — removing it is a public-surface break.
+**Ruling: deferred research, scheduled for repair.** Keep the `reconstruct_latent_S3`
+re-export from `reconstruct/__init__.py` — removing it is a public-surface break.
 
 ### 2.5 `reconstruct/cartilage_func.py` (149) and `predictive_validation_class.py` (97)
 
 Proposed: *research-only, no production caller.* Wrong on the caller half for both.
 
-- `cartilage_func.py` is imported by the **live** trainer (`train_deep_sdf.py:15-19`) and
-  wired into `DICT_VALIDATION_FUNCS` (`:41-45`), dispatched by config key
+- `cartilage_func.py` is imported by the **live** trainer and wired into its
+  `DICT_VALIDATION_FUNCS`, dispatched by config key
   `recon_val_func_name`. It also owns the only region-index maps in the repo
   (`CART_REGIONS`, `CART_REGIONS_DICT`). **Production.**
 - `predictive_validation_class.py` is called from `reconstruct/main.py`. It is the only
   latent-to-factor regression validator. **Research**, and it has a live defect:
-  `main.py:1372` passes the whole result dict to `Regress.add_latent` instead of
+  `reconstruct.get_mean_errors` passes the whole result dict to `Regress.add_latent` instead of
   `result_["latent"]`.
 
 **Maintainer confirmation:** both were used for training and validation in the ShapeMedKnee
@@ -333,7 +335,8 @@ Eager import is not cheap or neutral here. `NSM.models` is fully isolated — im
 pulls neither `wandb` nor `pykeops` — which is precisely why the consumer's
 `from NSM.models import TriplanarDecoder` is fast. Importing `NSM.reconstruct` pulls
 `wandb`, `pymskt`, `vtk`, `point_cloud_utils`, and reconfigures the **root logger** for the
-host process (`reconstruct/main.py:26`). Making that unavoidable for anyone who types
+host process (at `reconstruct/main.py` module scope). Making that unavoidable for anyone who
+types
 `import NSM` is a regression, not a cleanup.
 
 **Recommendation:** put `__all__` in each subpackage `__init__.py`, which is where the
@@ -354,7 +357,7 @@ consumers silently.
 |---|---|---|---|
 | `model_params_config.json` | `utils.save_model_params` | `load_model`, `examples/load_trained_model.py`, **both consumer scripts (hand-rolled)** | No |
 | checkpoint `{epoch, model, optimizer}` | `utils.save_model` | `loader.py` (4 possible key layouts), consumer `load_state_dict` | Pre-Aug-2026 refused at load |
-| `latent_codes/{epoch}.pth` | `utils.save_latent_vectors` | `train_deep_sdf.py:159` on resume | No |
+| `latent_codes/{epoch}.pth` | `utils.save_latent_vectors` | `train_deep_sdf` on resume | No |
 | `LearningRateSchedule[].Target` | config author | `utils.resolve_schedule_targets` | Yes — missing key raises with a migration message |
 | SDF cache `.npz` / `.h5` | `sdf_dataset` | `sdf_dataset` | **No, and the hash is wrong** — see below |
 | `NSM_recon_params.json` → `latent` | consumer, from `reconstruct_mesh` | `steps/compute_bscore.py:72` | No |
