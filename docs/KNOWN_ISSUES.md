@@ -214,6 +214,37 @@ deadlocks, with no message, on the second one. Long-standing rather than new.
 `test_dataset_cache.TestSeedDerivation`, which builds its two datasets in separate
 subprocesses.
 
+## Packaging and configuration
+
+### Shipped model configs predate the `Target` requirement and cannot be trained from
+
+Both production model configs — `647_nsm_femur_v0.0.1` and `551_nsm_femur_bone_v0.0.1` —
+carry two `LearningRateSchedule` entries with no `Target`. `get_learning_rate_schedules`
+raises `ValueError` on either.
+
+**Inference is unaffected**, which is why nobody has hit it: `steps/run_nsm.py` reads those
+files only for constructor kwargs and never builds a schedule. What does not work is
+resuming or re-training from a shipped model's own config without annotating it first.
+
+The consequence for the codebase is that `NSM/_lr_migration.py`'s delete-when condition —
+no configs left that omit `Target` — is objectively unmet, and was not recorded anywhere.
+Do not delete that module on the assumption the migration is finished.
+
+**How to tell whether you are affected:** if you load a `model_params_config.json` written
+before Aug 2026 and call anything in the training path, you get the `ValueError`, and its
+message prints the paste-ready annotation for that run's optimizer. Take it from there
+rather than hand-writing `Target`, since Adam and `schedule_free_*` migrate to opposite
+values.
+
+### `F401` is project-ignored, so unused imports do not appear in `make lint`
+
+`.flake8`'s `extend-ignore` has carried `F401` since before the Aug 2026 lint work. `make
+lint` reports zero violations, and separately there are **43** unused imports it will never
+show. "flake8 is at zero" is true and does not mean the imports are gone.
+
+*Fix:* not filed. Removing the ignore is a judgement call — several are deliberate
+re-exports in `__init__.py` files, which is the usual reason `F401` gets ignored wholesale.
+
 ## `models/triplanar.py`
 
 ### `padding` is not in the checkpoint, and the mismatch is silent
