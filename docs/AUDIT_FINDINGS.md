@@ -39,6 +39,22 @@ trivial and none of which closes a class — the failure #19 and #20 exist to av
 
 File the group, not the entries.
 
+> ### ⚠️ The mechanisms are verified. The *impact* claims are not.
+>
+> Every entry below was reproduced by execution, and in this triage no mechanism was
+> fabricated. But three rounds of agent work on this repo have now shown the same pattern:
+> **the mechanism is found exactly where described, and the stated consequence is
+> overstated.** The reconciler put ~30 entries in that category itself.
+>
+> So a sentence like "enabled in production" or "both shipped configs set this" is a
+> *hypothesis about blast radius*, separate from the defect, and has to be checked against
+> `kneepipeline/config.json` and the shipped `model_params_config.json` files before it is
+> repeated in an issue.
+>
+> **Two of seventeen have been checked so far.** They came out differently — one confirmed,
+> one refuted. The other fifteen carry their agent's impact claim unverified; they are
+> marked `IMPACT UNVERIFIED` below.
+
 ### 1. The single- and multi-mesh samplers have diverged: uniform box, clipping and return types
 
 Arithmetic bug present in both copies (mins is rebound before maxs reads it, so the box grows
@@ -347,6 +363,12 @@ loop). refine_mesh:399 first — it fires on the module's own defaults and gates
 SCOPE §2.3 says to keep. The NaN trigger on :794 is a plausible production failure that
 reports itself as the wrong exception; the same block returns the literal sentinel 100 as its
 loss under convergence='recon_loss', which is what both shipped production configs set.
+
+> **IMPACT CHECKED — confirmed.** Both `647_nsm_femur_v0.0.1` and
+> `551_nsm_femur_bone_v0.0.1` set `convergence_type_recon: "recon_loss"`, so this is the
+> production reconstruction path, not a corner. `loss`/`recon_loss` are initialised to the
+> literal `100` at `reconstruct/main.py:468-469`; what still needs establishing is the exact
+> path on which that initial value is returned rather than overwritten.
 
 <details><summary>Folds in 5 entries</summary>
 
@@ -721,6 +743,13 @@ FastUnique and is scaled by N, while latent_loss reaches the same leaf directly 
 the configured latent_reg_weight is silently divided by the number of query points.
 kneepipeline/steps/run_nsm.py:190-191 enables it in production. Not a regression, so the fix
 needs a KNOWN_ISSUES.md § History entry.
+
+> **IMPACT CHECKED — the production claim is wrong.** `run_nsm.py:190-191` passes
+> `l2reg=model_config["l2reg_recon"]`, and both shipped configs set it to `false`. The code
+> is `if l2reg is True: latent_loss = latent_reg_weight * ... else: latent_loss = 0`, so the
+> term this dilutes is **zero in production**. The 1000x measurement stands; "enabled in
+> production" does not. File it as a defect for anyone who turns `l2reg` on, not as a live
+> production bug, and it needs no `History` entry because no shipped run was affected.
 
 <details><summary>Folds in 1 entries</summary>
 
