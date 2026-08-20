@@ -41,6 +41,26 @@ make quick-test
 - Tests live in `testing/` directory (not `tests/`)
 - Pytest is configured in pyproject.toml
 
+## Working on this repo
+
+Operational facts that are not derivable from the code, and that cost time to rediscover.
+
+- **Environment:** `/mnt/data/conda-envs/nsm-dev`. `make` targets need it on `PATH`
+  (`export PATH=/mnt/data/conda-envs/nsm-dev/bin:$PATH`); invoking `python -m pytest`
+  directly works without it.
+- **`make lint` checks isort, black and flake8; `make autoformat` applies the first two.**
+  Same names as `gattia/pymskt`. `flake8` is at zero and CI gates it, so a lint failure
+  blocks the test job.
+- **`main` is protected** — no direct pushes. One approving review and four passing status
+  checks. Admins are exempt, deliberately: GitHub forbids approving your own pull request,
+  and in a single-maintainer repo that would otherwise be a permanent lock. **An admin merge
+  is the normal path here, not a bypass of last resort.**
+- **Fold related commits into one PR.** A docs-only change or a State-block update rides
+  along with the work that caused it.
+- **Reading files in tests needs `encoding="utf-8"` explicitly.** Something in the suite
+  resets the locale to ASCII, so a bare `read_text()` passes in isolation and raises
+  `UnicodeDecodeError` under the full suite.
+
 ## Making Changes
 
 This is a research library with one maintainer. Every line added is a line someone
