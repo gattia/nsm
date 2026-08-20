@@ -18,13 +18,10 @@ make test
 # Run specific test file
 pytest testing/NSM/models/test_loader.py -v
 
-# Format code (Black, 100 char line length)
-make format
+# Apply isort and black (100 char line length)
+make autoformat
 
-# Check formatting without modifying
-make format-check
-
-# Lint with flake8
+# Check formatting and lint without modifying: isort, black, flake8
 make lint
 
 # Run tests with coverage report
