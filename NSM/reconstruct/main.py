@@ -999,7 +999,7 @@ def reconstruct_mesh(
                     result[f"assd_{idx}"] = np.nan
             if calc_emd:
                 for idx in range(sum(objects_per_decoder)):
-                    result["emd_{idx}"] = np.nan
+                    result[f"emd_{idx}"] = np.nan
             if return_latent:
                 result["latent"] = mean_latent
             return result
