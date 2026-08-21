@@ -90,7 +90,10 @@ def test_reconstruct_latent_invalid_input(n_pts=100):
     sdf_gt = "invalid_input"  # Invalid SDF input
     pts_surface = [0] * n_pts
 
-    with pytest.raises(Exception):
+    # Matches the intended message: before the (str,) fix this branch was unreachable
+    # (`in (str)` iterates the type object) and the bare Exception assertion passed via
+    # an accidental TypeError instead.
+    with pytest.raises(Exception, match="reconstruct_mesh instead"):
         reconstruct_latent(
             decoders=decoders,
             num_iterations=10,

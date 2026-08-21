@@ -173,7 +173,7 @@ def reconstruct_latent_sdf_gt_type_check(sdf_gt, verbose=False):
         sdf_gt = [sdf_gt]
     elif type(sdf_gt) in (list, tuple):
         pass
-    elif type(sdf_gt) in (str):
+    elif type(sdf_gt) in (str,):
         raise Exception(
             "Must provided xyz/sdf from mesh - resconstruct latent will not load mesh"
             + "from file. Try reconstruct_mesh instead."
