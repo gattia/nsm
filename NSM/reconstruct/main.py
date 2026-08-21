@@ -767,7 +767,7 @@ def reconstruct_latent(
                         else float(norm_penalty_loss_)
                     )
                     print(f"\tNorm penalty loss: {norm_penalty_val:.6f}")
-                print("\tLatent norm: ", latent.norm)
+                print("\tLatent norm: ", latent.norm().item())
 
         # Log to wandb as appropriate
         if (log_wandb is True) and (step % log_wandb_step == 0):
