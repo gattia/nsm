@@ -351,6 +351,15 @@ this deletes that wrapper.
 
 *Fix:* [#28](https://github.com/gattia/nsm/issues/28).
 
+### `grad_clip` clips the model only, never the latent codes
+
+`train_epoch` hands `torch.nn.utils.clip_grad_norm_` the model's parameter tensors and
+nothing else; the latent `nn.Embedding` is a first-class optimizer param group and is
+never clipped. Verified by wrapping the clip call on a real epoch: called on the 21 model
+tensors only. A user setting a knob named `grad_clip` will reasonably assume it is
+global. Clipping the latents now would silently change the numerics of every run that
+sets `grad_clip`, so this is documented rather than fixed.
+
 ## `reconstruct/main.py`
 
 ### The early return drops keys the caller asked for
@@ -583,6 +592,11 @@ every model does reach the device despite the pointless rebinding. The defect is
 below it: the optimizer is built from the leaked loop variable rather than from `models`,
 so **only the last decoder in `models` ever receives gradient updates**. The others stay
 at initialization.
+
+It also cannot complete one epoch on the shipped `default_config.json`: a
+non-short-circuit `&` between two membership tests raises `KeyError:
+'surface_weighting'` before the epoch ends, so any run that would have hit the
+silent-training defect crashes first on the default config.
 
 The module now emits a `DeprecationWarning`. Use `NSM.train.train_deep_sdf` with
 `objects_per_decoder > 1` instead. Whether to repair or delete this file is a Phase 0
