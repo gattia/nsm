@@ -11,6 +11,440 @@
 > to that PR. It is transitional debt by its own rule, and its line numbers have drifted once
 > already — every anchor below is the ORIGINAL cited location, not a current one.
 
+# 0. Final disposition — 2026-08-21, awaiting maintainer approval
+
+Three earlier analyses proposed three different issue sets (17 / ~8 / 6) with different
+membership. This section supersedes all three. Where they disagreed, the disagreement was
+settled **by execution this session**, not by averaging. Nothing has been filed, closed,
+or edited on GitHub; that happens only after the maintainer approves this section, draft
+by draft.
+
+**Baseline at time of writing:** suite 356 passed / 1 skipped / 16 xfailed (64s);
+`make lint` clean. Branch **`quick-wins`** (six commits off `main`) holds the ride-along
+fixes — the `emd_{idx}` f-string key, the `(str,)` membership comma plus a tightened
+test, four leftover debug prints, the bound-method latent-norm print, the
+missing-schedulefree notice moved from stdout to `warnings`, and the `ARCHITECTURE.md`
+§7 row correction — and stays green at the same counts.
+
+## 0.1 Settled by execution this session
+
+The consolidation brief's six contested items (its §3), plus its three warnings that
+could be tested:
+
+| Claim | Verdict | Key evidence |
+|---|---|---|
+| `remove_overlapping_points` correct only at exactly 2 surfaces | **CONFIRMED** | Every sign pattern enumerated for n=2..5 through the real method: n=2 exact; n=3/5 remove **nothing**; n=4 removes only inside-3-of-4. Nothing is ever wrongly removed. |
+| `sum_sdf_features=False` trains one plane of three, silently | **CONFIRMED** | VAE emits (12,8,8); plane slices received xz=(12,8,8), yz=**(0,8,8)**, xy=**(0,8,8)**; forward raises nothing; output `torch.equal` to xz-alone. Reachable from `sum_conv_output_features` (`loader.get_model`). |
+| EMD never worked from `compute_recon_loss` | **CONFIRMED** | pykeops `Vi()` rejects **any** numpy array (both dtypes tested; torch accepted); the oldest version in git history already passed numpy. Plus the `result["emd_{idx}"]` missing-`f` at the NaN fallback (now fixed on `quick-wins`). |
+| Every `schedule_free_*` run dies at its first checkpoint | **CONFIRMED with the real package** (register had verified via stub only) | `schedulefree` 1.4.1 installed to an isolated dir; real CPU training run: epoch 1 trains, first checkpoint's eval warm-up hands `model(batch)` the raw dataloader list → `TypeError` in `TriplanarDecoder.forward`. |
+| `get_optimizer` drops `weight_decay` on the Adam branch | **CONFIRMED** | Direct read: `torch.optim.Adam(list_params)` bare; AdamW and schedule_free both pass it. |
+| `MultiSurfaceSDFSamples` declared defaults raise | **CONFIRMED** | Already execution-verified in group 3 below. |
+| "Unassigned (62)" heading | **WRONG — 45 + 16** | Titles compared mechanically against the grouped entries: 45 verbatim duplicates, 16 genuine. Heading corrected in place below. |
+| `ARCHITECTURE.md` §7 "each builds fine and raises on first use" | **WRONG for 2 of 5** | `TwoStageDecoder()` raises in `__init__`; `Decoder(norm_layers=...)` builds *and forwards* under the shipped contiguous default with weight-norm on. Corrected on `quick-wins`. |
+| Issue #6 vs group 10 | **Zero overlap; #6 already fixed** | The one deprecated call site now uses `n_faces_strict`; the sole remaining `n_faces` hit is a wandb dict-key name. Close #6 on its own merits. |
+
+Shipped-config values these dispositions rely on, re-verified against both
+`647_nsm_femur_v0.0.1` and `551_nsm_femur_bone_v0.0.1`: `optimizer: "AdamW"`,
+`weight_decay: 0.0001`, `l2reg_recon: false`, `get_rand_pts_recon: false`,
+`convergence_type_recon: "recon_loss"`, `scale_jointly: true`,
+`sum_conv_output_features: true`, `conv_pred_sdf: false`.
+
+## 0.2 Corrections to this register's own instructions
+
+1. **`weight_decay` and `get_latent_vecs` must not fold into #20** (§2's fold list says
+   to). #20's closure criterion — "does each parameter name appear in the body" — passes
+   green with both bugs intact, and #20's Trap 1 (delete the parameter) cannot apply to
+   either. They become drafts 15 and 16.
+2. **Do not close #6 against group 10** (group 10's header says to). See table above.
+3. **Group 14 is demoted from issue to `ARCHITECTURE.md` trap.** Its production-impact
+   claim was refuted (`l2reg_recon: false` in both shipped configs), and
+   `UniqueConsecutive` and `FastUnique` amplify identically — it is a long-standing
+   convention, and patching one path alone would desynchronise the two decoder
+   interfaces. Trap committed on this branch.
+4. **Group 5 files from its evidence, not its headline.** The wrong-ground-truth trigger
+   is *decoder* count (two or more multi-output decoders), not surface count; the
+   surface-count half is `remove_overlapping_points`. Draft 5 states both precisely.
+5. **Two of the sixteen genuine Unassigned entries were headed for the discard pile and
+   are instead the two best silent-wrong-results bugs of the audit** (drafts 6 and 8).
+   The brief's warning that grouping loses singleton bugs was correct.
+
+## 0.3 Issue drafts — file only after approval
+
+Twenty-three drafts. On the tracker they get no tiers — CLAUDE.md orders issues by
+`file:function`; the two-tier split below exists only to make this review faster.
+Every draft is self-contained (this register is deleted when the drafts land, so the
+evidence a closer needs is in the draft, not here).
+
+### Tier 1 — silent wrong results, or blocks a run someone would launch
+
+---
+**Draft 1 — `sdf_dataset.read_mesh_get_sampled_pts` / `read_meshes_get_sampled_pts`: the
+single- and multi-mesh samplers have diverged (uniform box, clipping, return types)**
+
+Three divergences between two nominally parallel functions. (a) In both copies, `mins` is
+rebound before `maxs` reads it, so a nonzero `uniform_pts_buffer` grows the sampling box
+more above than below and moves its centre — dormant only because the default is 0.0,
+and commit `48c5f60` added the parameter precisely so it could be nonzero. (b) The
+single-mesh function clips uniform samples (`np.clip`, one hit in the file); the
+multi-mesh one does not: with `uniform_pts_buffer=0.5, norm_pts=True`, single spans
+±1.2500, multi ±1.5626. (c) `pts_surface` is a `list` from the single-mesh function and
+an `int64 ndarray` from the multi — no in-repo consumer takes `.shape` of the single
+value today, so (c) is recorded here for the fix, not as its own defect.
+**Reachability:** training-data path; production reconstruction is gated off it
+(`get_rand_pts_recon: false` in both shipped configs).
+**Fixed means:** the span is captured once before rebinding so the box is symmetric;
+the two functions agree on clipping (decided, not accidental); return types match.
+Changes cached dataset content for nonzero buffers → `KNOWN_ISSUES.md` § History entry
+if any real run used one.
+
+---
+**Draft 2 — `sdf_dataset.sdf_pos_neg_idx`: divides by zero when a surface has no
+positive or no negative samples**
+
+`ZeroDivisionError` at both call sites (`SDFSamples`, `MultiSurfaceSDFSamples`), end to
+end via two realistic triggers: a `None` surface (the `fdfe902` feature) and one surface
+nested inside another. The regression harness's own fixtures are shaped to dodge it
+(`testing/NSM/regression/_harness.py` documents this) — the codebase already works
+around its own bug. **Fixed means:** an empty pos/neg set raises an error naming the
+surface (or is handled), and the harness fixture comment points at the fix instead of
+the dodge.
+
+---
+**Draft 3 — `train_deep_sdf`: every `schedule_free_*` run dies at its first checkpoint
+or validation epoch**
+
+The eval warm-up (`optimizer.eval()` then `for batch in itertools.islice(data_loader,
+50): model(batch)`) hands the decoder the raw dataloader item. Verified 2026-08-21 with
+the real `schedulefree` 1.4.1: epoch 1 trains, the first checkpoint epoch raises
+`TypeError: list indices must be integers or slices, not tuple` in
+`TriplanarDecoder.forward`. Every run reaches it: `checkpoint_epoch = epoch in
+config["checkpoints"] or epoch % config["save_frequency"] == 0`. Invisible until now
+because `schedulefree` is not installed in `nsm-dev` (`get_optimizer` raises
+`ImportError` first). **Fixed means:** the warm-up unpacks the batch the way
+`train_epoch` does, pinned by a test that trains a schedule_free run through one
+checkpoint. Note for the fix: KNOWN_ISSUES §1 records that schedule_free configs were
+tuned against the Adam path — this crash is why nobody noticed.
+
+---
+**Draft 4 — `MultiSurfaceSDFSamples`: the declared constructor surface does not work**
+
+(a) The documented default `subsample=None` cannot construct — `TypeError` in
+`get_samples_per_sign` (`float * NoneType`); on a warm cache it instead skips joint
+normalization and returns 600 unnormalised points with a different key set (absmax
+1.055 > 1). (b) `joint_scale_buffer` — which sets the normalization radius of every
+shipped multi-surface dataset (0.1 in production) — is not accepted or forwarded by the
+multi-surface constructor at all (`TypeError: unexpected keyword argument`).
+**Reachability:** multi-surface (bone+cartilage) is the production training
+configuration. **Fixed means:** `subsample` is required or validated at construction;
+`joint_scale_buffer` is accepted, forwarded, and lands in the cache key (#19's half).
+
+---
+**Draft 5 — multi-surface above the shipped two-surface configuration silently computes
+the wrong thing (`reconstruct.main` decoder indexing; `remove_overlapping_points`)**
+
+Two mechanisms, one class, both measured. (a) With **two or more multi-output
+decoders** (a configuration `reconstruct_mesh`'s own docstring advertises), the
+single-output branch indexes the flat `sdf_gt` by decoder index: with two 2-surface
+decoders and four ground-truth surfaces, setting surfaces 2 and 3 to all-NaN left the
+loss **bit-identical** — decoder 1 never reads its own ground truth. (b)
+`remove_overlapping_points` tests `total != -2`, a **sum**, not a count: correct at
+exactly 2 surfaces, removes nothing at 3 or 5, and at 4 removes only inside-3-of-4
+points (full n=2..5 enumeration, 2026-08-21; it never wrongly removes). CLAUDE.md
+documents 4-surface models (`bone/cart/med_men/lat_men`) as supported.
+**Fixed means:** (a) the flat `sdf_gt` is indexed by a running surface offset or the
+configuration is rejected at entry; (b) "inside two or more surfaces" is expressed as a
+count — `(sdf < 0).sum(1) >= 2`. **(b) changes what points a dataset keeps → maintainer
+decision D2 + `KNOWN_ISSUES.md` § History entry before it lands.**
+
+---
+**Draft 6 — `TriplanarDecoder`: `sum_sdf_features=False` silently trains on one plane
+of three**
+
+`__init__` sizes the VAE output by `sdf_latent_size` when `sum_sdf_features is False`,
+but `forward_with_plane_features` slices by `sdf_latent_size + conv_pred_sdf` per
+plane: the xz plane receives all 12 channels, yz and xy receive **(0, 8, 8)** —
+zero-channel slices. No error; forward output is `torch.equal` to using the full
+feature map as the xz plane alone; all VAE parameters still receive gradient (through
+xz geometry), so training proceeds and converges to a silently degraded model.
+**Reachability:** `loader.get_model` maps the config key `sum_conv_output_features`
+onto it; both shipped configs set `true`, so no shipped model is affected — this hits
+anyone exploring the documented option. (Ride-along: the assert message above the
+sizing branch says "if sum_sdf_features is True" while guarding the False branch.)
+**Fixed means:** the flag either produces three correctly-sized plane slices or is
+rejected at construction; pinned by a forward-shape test over both flag values.
+
+---
+**Draft 7 — `models`: configurations that construct successfully and crash on first
+forward (class issue)**
+
+Four instances, verified: `Decoder(progressive_add_depth=True)` propagates `None`
+through the layer stack in a window covering every realistic epoch range;
+`Decoder(norm_layers=...)` indexes `self.bn` by absolute layer index but appends only
+per norm layer (`IndexError` for any set not starting at 0, with weight-norm off;
+`norm_layers` is marked DEPRECATED, so the fix may be deletion); `activation='linear'`
+returns a bare `None` the forward then calls; `TwoStageDecoder()` raises in `__init__`
+(tuple + list concat) at any argument. **Closure criterion (what makes this class
+sweep able to fail):** a parameterised constructor-and-one-forward smoke test over the
+documented option values — each option either works or refuses at construction.
+
+---
+**Draft 8 — `utils.get_optimizer`: `weight_decay` is silently dropped on the Adam
+branch**
+
+`torch.optim.Adam(list_params)` — no `weight_decay` — while `AdamW` and
+`schedule_free_AdamW` both pass it. `train_deep_sdf` forwards
+`config["weight_decay"]` unconditionally, so every Adam config that sets it (the
+regression harness's own config: Adam + 1e-4) silently trains without decay.
+**Reachability:** both shipped configs use AdamW → **no shipped run affected**.
+**Fixed means:** the argument is passed (decision D3: honour vs reject) — honouring it
+moves the committed regression baselines, which is the proof it changes numerics, so
+the fix regenerates baselines and adds a `KNOWN_ISSUES.md` § History entry.
+
+---
+**Draft 9 — `train_deep_sdf` cannot be driven by the shipped `default_config.json`**
+
+Five unconditionally-read keys are missing and fatal in sequence, starting with
+`KeyError: 'prefetch_factor'` (verified by adding one key at a time on a real CPU run);
+`assd` is also read but unreachable from the shipped default. Related option values
+that cannot work, folded here rather than filed separately:
+`add_plain_lr_to_config` raises `KeyError: 'Initial'` on a Constant schedule that
+`get_learning_rate_schedules` itself accepts; `norm_penalty_type='barrier'` returns NaN
+for any latent outside `[min,max]` — the state at initialisation — so the option is
+broken for its whole intended use; `Regress.add_latent` is handed the whole result dict
+(`TypeError` for every user who enables the latent-to-factor validator).
+**Fixed means:** `default_config.json` defines every key the trainer reads
+unconditionally, pinned by a test that instantiates the trainer from the shipped file;
+the three option values either work or raise with a named message.
+
+---
+**Draft 10 — `train_deep_sdf`: `resume_epoch == 1` silently skips epoch 1 without
+resuming anything**
+
+Verified end to end on the CPU harness: `resume_epoch=0` runs epochs [1,2,3,4];
+`resume_epoch=1` runs [2,3,4] with **no checkpoint loaded** — the resume guard and the
+loop boundary disagree. **Fixed means:** `resume_epoch==1` either loads the epoch-1
+checkpoint or raises; both guards share one boundary; pinned by a resume test.
+
+---
+**Draft 11 — `save_model_params` silently refuses to overwrite and silently drops
+non-JSON config values**
+
+Called on every checkpoint, no-ops after the first: a resumed or re-configured run's
+`model_params_config.json` — the file every downstream consumer reads to rebuild the
+model — keeps the first run's hyperparameters and mesh list (verified: second call with
+`lr=0.9999` leaves `lr=0.001` on disk, no log). `filter_non_jsonable` drops keys with
+no log. **Fixed means:** overwrite or epoch-stamp, and log every key removed.
+
+---
+**Draft 12 — `train_deep_sdf_multi_head`: repair checklist (SCOPE §2.1: supported,
+broken, fix it)**
+
+KNOWN_ISSUES § History §2 owns the headline bug (only the last decoder trains). The
+repair checklist, each verified: latents are never moved to the device (runs only
+*because* they are left on CPU; `device="cpu"` and `"mps"` both crash); non-short-
+circuit `&` raises `KeyError: 'surface_weighting'` on the shipped default config
+(→ one-sentence addition to History §2, committed on this branch);
+`torch.mps.empty_cache()` on the CPU branch; per-surface L1 appended to a fixed-size
+list then discarded; a hardcoded 100-epoch warm-up ignores its config key. Fold in:
+multi-decoder checkpoints are written to `model_N/` subdirectories **no loader in the
+repo can read back** (`save_model` naming). **Fixed means:** one epoch trains on the
+shipped default on cpu and cuda, all decoders receive gradients, and a saved
+multi-head run can be loaded.
+
+---
+**Draft 13 — `utils.get_latent_vecs`: `variational: true` silently doubles
+`latent_size` and ignores `latent_bound`**
+
+Verified: `latent_size=8, latent_bound=1.0, variational=True` → embedding dim 16,
+`max_norm=1000`; `variational=False` → dim 8, `max_norm=1.0`. A variational user gets
+an effectively unbounded latent, and the `latent_size` recorded in
+`model_params_config.json` is half the real embedding width. Pulled out of #20 (the
+parameter *is* read on one branch, so #20's criterion cannot catch it).
+**Fixed means:** honour `latent_bound` or reject the combination; record the effective
+latent size.
+
+---
+**Draft 14 — `train_deep_sdf`: `mesh_names` is written to `model_params_config.json` as
+ground truth and can be silently wrong**
+
+The per-surface index ordering is a positional contract spanning four modules; training
+is self-consistent under a swap (the decoder learns whichever column it is given), so
+the harm is precisely that the persisted `mesh_names` — added to prevent downstream
+misidentification — can disagree with what each output channel actually learned.
+**Fixed means:** the dataset carries surface identity from mesh list to output channel,
+and `mesh_names` is validated against it (or derived from it) at save time.
+
+### Tier 2 — loud failures in supported paths, API hygiene, error quality
+
+---
+**Draft 15 — EMD is dead end to end; repair or delete (decision D1)**
+
+`compute_recon_loss(calc_emd=True)` has never returned a number from any caller in the
+function's history: the only caller passes numpy and pykeops rejects numpy at the
+boundary for every dtype. Behind that: `sinkhorn`'s default uniform weights cannot sum
+equal for unequal point counts (so real mesh pairs would fail next), `max_iters` is
+type-checked as `p`, `w_y`'s length is never validated (`w_x` is, twice), and
+`default_config.json` ships `emd: true` while the trainer reads the key
+unconditionally. The file is a vendored copy of `fwilliams/scalable-pytorch-sinkhorn`.
+**Repair** = numpy→torch conversion at the caller + weight normalisation + the two
+validation lines + a test on unequal-size meshes. **Delete** = remove `calc_emd`, the
+vendored file, and the config key, with a deprecation note. Either way the shipped
+default stops advertising a dead option.
+
+---
+**Draft 16 — unhandled inputs surface as `UnboundLocalError`/`NameError`/invented data
+instead of a named error (class issue, five sites)**
+
+All verified: `refine_mesh.get_target_cells` raises `UnboundLocalError` **on its own
+default arguments** (makes the whole module unusable; gates SCOPE §2.3's other
+conditions); `reconstruct_latent`'s `optimizer`/`loss_fn` binding has no else-raise
+(`optimizer_name='AdamW'` → `UnboundLocalError`); `reconstruct_latent` can return an
+unbound `latent_` — one trigger is NaN loss under `convergence="recon_loss"`, **the
+mode both shipped configs select**, so a diverged production fit reports
+`UnboundLocalError` instead of "the fit diverged", and the same block initialises
+`loss`/`recon_loss` to the literal `100`; `score_correspondence` fabricates a
+plausible roundtrip metric when `source_mesh` is missing where every sibling path
+returns `{'skipped': True, ...}`. **Fixed means:** explicit else-that-raises naming
+accepted values; `latent_` initialised before the loop; the `100` sentinel replaced
+with `inf`/`None`; the missing-input path skips with a reason. One shape, one PR.
+
+---
+**Draft 17 — functions that mutate a caller's object and also return it (PR #38's
+unswept siblings)**
+
+The class PR #38 just fixed in `get_pts_center_and_scale`, three more instances,
+verified: `reconstruct_latent` clamps and device-moves the caller's `sdf_gt` list in
+place through two undocumented helpers; `compute_recon_loss` downcasts the caller's
+meshes to float32 in place (aliases `meshes` and `result_['orig_mesh']`);
+`interpolate_mesh`'s `is_mesh` path returned the caller's own 82-point mesh at 28,002
+points. **Fixed means:** each site copies, or documents the mutation and stops
+returning the object; docstrings say which.
+
+---
+**Draft 18 — the same knob has a different default at each layer; adjacent metrics take
+their arguments in opposite order**
+
+Verified: `chamfer_norm` defaults to 2 in `reconstruct_mesh` and 1 in the two layers
+below it — it is a **power**, so the layers report chamfer in different units (0.3297
+vs 0.2179 on identical geometry), documented at the two lower layers and absent from
+`reconstruct_mesh`'s docstring; `sigma_rand_pts` differs 10× between `reconstruct_mesh`
+(0.001) and `get_mean_errors` (0.01), result-changing whenever `get_rand_pts=True`
+(both shipped configs: false); `conv_norm_type` defaults to `'batch'` at three of six
+construction sites and `'layer'` at the others while both shipped models use
+`'layer'`; `roundtrip_distance(A,B)` equals `roundtrip_distance(B,A)` exactly while
+its adjacent metric is sign-flipped under the same swap — a swap is invisible.
+**Fixed means:** one default per knob, sourced once; the metric pair keyword-only or
+signature-aligned so a swap is a `TypeError`.
+
+---
+**Draft 19 — face arrays are reshaped without validation; a quad or VTK-style array
+silently builds garbage (five sites, one helper)**
+
+Verified: pure-quad input raises a bare reshape `ValueError` in two metrics; a mixed
+quad/triangle mesh whose flat length happens to divide evenly **silently corrupts**;
+`build_mesh_laplacian` accepts pyvista's VTK-style `.faces` (384 % 3 == 0) and builds a
+different smoothing operator (nnz 373 vs 288, dense matrices unequal) — the
+interpolation output is wrong rather than absent. **Fixed means:** one shared accessor
+validates (or uses `regular_faces` and raises on non-triangular input); all five sites
+route through it. **Not** #6, which is closed separately as already-fixed.
+
+---
+**Draft 20 — library code prints to stdout ungated: route the reconstruction and
+sampling paths through `verbose`/logger (post-quick-wins remainder)**
+
+Measured: `get_sdfs` prints one line per batch with **no `verbose` parameter at all**
+while every sibling has one — 64 lines per `create_mesh_adaptive` call at the caller's
+own defaults; timing prints on the sampler path (five sites) and unconditional prints
+in `reconstruct_mesh`/`get_mean_errors` survive `verbose=False`. The four worst
+one-liners are already deleted on `quick-wins`; this issue is the systematic pass.
+**Fixed means:** every print on the reconstruction and sampling paths is gated on
+`verbose` or routed through the module logger; a capsys test pins silence at
+`verbose=False` for the production entry points.
+
+---
+**Draft 21 — `train_deep_sdf` logging: latent-norm stats are assigned, not accumulated;
+the LR fix's positional back door survives in the logging helper**
+
+Verified: `step_mean_vec_length`/`step_std_vec_length` use `=` where the surrounding
+accumulators use `+=`, so the logged latent-norm metrics are the last chunk over
+`n_batches` — wrong by a factor of `len(data_loader)` (real 2-epoch run: true mean
+0.0107, logged 0.0053, × n_batches matches). Gradients unaffected; wandb only. And
+`add_plain_lr_to_config` retains `idx_model`/`idx_latent` overrides whose only caller
+is a test asserting deliberately swapped labels — in the very function whose Aug-2026
+fix eliminated positional mapping. **Fixed means:** `+=`; delete the two parameters
+and their test.
+
+---
+**Draft 22 — `mesh.main`: `sdf_grid_to_mesh` crashes on numpy input while its VTK twin
+does not; the fallback grid origin can disagree with `search_bounds`**
+
+Two functions swapped by one unrelated boolean accept different inputs (unguarded
+`.cpu()` vs `hasattr` guard) and carry different `narrow_band` defaults; the
+no-`voxel_origin` fallback hands `create_mesh` the default origin `(-1,-1,-1)` while
+`voxel_size` is derived from `search_bounds` — a wrong-by-construction grid on a
+reachable branch. Production always passes torch + `use_vtk=True`, so severity is API
+hygiene. **Fixed means:** both twins guard the same way and share defaults; the
+fallback derives its origin from `search_bounds`.
+
+---
+**Draft 23 — `sdf_dataset`: the multi-surface reference-mesh path cannot run, and
+`combine_meshes` breaks its own return contract**
+
+`reference_mesh=int` with a list-valued `mesh_to_scale` raises `UnboundLocalError` one
+statement before the `AttributeError` the audit predicted; `combine_meshes` returns a
+pyvista `PolyData` (no `save_mesh`) whenever it actually combines two or more meshes,
+against its own "Returns: Mesh" docstring. `docs/MULTI_SURFACE_REGISTRATION.md`
+advertises the path as working. **Fixed means:** the path returns a usable combined
+pymskt Mesh, which requires `combine_meshes` to keep its declared type; pinned by a
+test exercising `reference_mesh=int` with two meshes.
+
+## 0.4 Decision items — a call, not a yes/no
+
+- **D1 (draft 15): EMD — repair or delete.** Recommendation: **delete**. It has never
+  worked from any caller, nothing downstream consumes it, and the vendored sinkhorn file
+  is maintenance surface; repair is a day of work for a metric nobody has ever seen.
+- **D2 (draft 5b): `remove_overlapping_points`.** The count-based fix changes what
+  points a dataset keeps for 3+ surfaces. Recommendation: fix it *with* the class-5
+  indexing fix, one History entry covering both, since 4-surface training is the
+  documented direction; do not fix as a drive-by.
+- **D3 (draft 8): `weight_decay` under Adam.** Honour (regenerate harness baselines +
+  History entry) or reject Adam+weight_decay with an error. Recommendation: **honour** —
+  the argument is documented, forwarded by the trainer, and unlike the two
+  accepted-and-ignored traps that were deleted (`padding`, `center`/`scale`), honouring
+  it makes the config mean what it says for future runs while no shipped run is
+  affected.
+- **D4 (group 14): latent-gradient N-amplification.** Recommendation: `ARCHITECTURE.md`
+  trap only (committed on this branch), no issue — the convention is shared by both
+  decoder interfaces and "fixing" one alone would rescale every training run.
+
+## 0.5 Non-issue dispositions
+
+- **§2 fold list stands**, minus the two pull-outs (0.2.1). #6 closes as fixed on its
+  own merits. #16 is absorbed by #20 as already noted there. The S3 findings
+  (`reconstruct_latent_S3` unguarded arithmetic, undefined name in its error path,
+  wandb-without-import) fold into **#35** as "the S3 copy of the main-path arithmetic
+  is unguarded".
+- **§3's 62 prose corrections**: land as Phase-2 commits, no tracker entries.
+- **§4's 13 SCOPE rulings**: accepted as written; land as one SCOPE.md PR. Add to it
+  the dead-public-symbol cluster from the Unassigned pile (`symmetric_chammfer` — an
+  empty stub returning `None` with a whitespace docstring; `sdf_gradients` — returns
+  98.8% fabricated zeros; `find_object_bounds_random_sampling`): rule dead, delete.
+- **§5's `grad_clip` entry**: committed to `KNOWN_ISSUES.md` § Open on this branch,
+  with the multi_head History sentence and the `ARCHITECTURE.md` latent-gradient trap.
+- **§6 deletions**: accepted. The refuted-entry evidence stays until this file goes.
+- **The 45 duplicated Unassigned entries** resolve with their groups. The 16 genuine
+  ones: drafts 3, 6, 10, 12 (×4 sites + `save_model` naming), 13, 14, 22; #35 fold;
+  SCOPE dead-symbol ruling (×2); `KNOWN_ISSUES` F401 entry (already on this branch,
+  covers the unused-import instance).
+
+## 0.6 Delete-when, updated
+
+This file is deleted by the PR that lands the last of: the approved drafts filed, the
+`quick-wins` branch merged, the SCOPE.md rulings PR, and the Phase-2 prose pass — that
+PR leaves a pointer here → tracker.
+
+---
+
 ## What the triage found
 
 240 entries, nine agents, each required to run something rather than read.
@@ -962,9 +1396,12 @@ constant are the same string, and …
 </details>
 
 
-### Unassigned (62) — bucketed ISSUE, not folded into any group
+### Unassigned — 45 duplicates + 16 genuine (heading previously said 62)
 
-Need a call: fold into one of the 17, or drop to DELETE.
+> Corrected 2026-08-21, measured by comparing entry titles mechanically against the
+> grouped entries above: 45 of the entries below are verbatim duplicates of entries
+> already folded into groups 1–17 and resolve with them; 16 are genuine and are
+> dispositioned in § 0.5. Anyone sizing the work from the old heading was off 3.6×.
 
 <details><summary>Show</summary>
 
