@@ -4,13 +4,18 @@
 
 ## State
 
-**Updated:** 2026-08-19 · **Status:** open
+**Updated:** 2026-08-21 · **Status:** open
 
-- **Next:** #23 and #24 — the remaining contained defects in `sdf_dataset.py`, one strict
-  xfail each. Then Phase 2's semantic pass on that file (7 contradicting docstrings), then
-  its decomposition. The order is deliberate: fixing before splitting gives the harness one
-  clean before/after, where fixing after spreads the same change over more files.
-- **Blocked on:** nothing.
+- **Next:** the maintainer reviews `docs/AUDIT_FINDINGS.md` § 0 (23 issue drafts, 4
+  decision items) and the `quick-wins` branch (6 commits, suite green at 356/1/16).
+  After approval: file the approved drafts, merge `quick-wins`, land the SCOPE.md
+  rulings PR and the Phase-2 prose pass, and delete `AUDIT_FINDINGS.md` in the PR that
+  lands the last of them. Then resume as before: #23 and #24 — the remaining contained
+  defects in `sdf_dataset.py`, one strict xfail each; Phase 2's semantic pass on that
+  file (7 contradicting docstrings); then its decomposition. The order is deliberate:
+  fixing before splitting gives the harness one clean before/after, where fixing after
+  spreads the same change over more files.
+- **Blocked on:** maintainer approval of `AUDIT_FINDINGS.md` § 0. Nothing else.
 - **Deliberately deferred:** #19 (cache key, 6 xfails) and #27 (checkpoint aliasing). Both
   force downstream regeneration or migration, so they land together as one release rather
   than making consumers migrate twice. This is the argument that grouped #19 in the first
