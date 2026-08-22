@@ -6,13 +6,25 @@
 
 **Updated:** 2026-08-22 · **Status:** open
 
-- **Next:** execute §8.0 slice A on branch `sdf-dataset-decomposition`: commit 2 is
-  the characterization tests (targets listed in §8.0), commit 3 the verbatim move,
-  commit 4 this State block. Per the maintainer (2026-08-22), work lands as
-  successive small commits for per-commit review, not one presented diff. Still
-  open from #48: the `barrier` norm-penalty NaN and `Regress.add_latent`. #69
-  (in-memory joint scaling, pinned strict-xfail) and #3 ride along with slice B
-  (reader-internals split), which needs its own §8.0-style statement first.
+- **Next:** maintainer reviews the `sdf-dataset-decomposition` branch (5 commits,
+  §8.0 slice A — plan statement, characterization tests, a docstring correction,
+  the move, this State update), then PR + admin merge. After that: slice B, the
+  reader-internals split (registration / frame computation / per-surface draws
+  inside `mesh_sampling.py`), which needs its own §8.0-style statement before any
+  code — #69 (in-memory joint scaling, pinned strict-xfail), #3 (sigma coordinate
+  space) and #17 (include_surf_in_pts, now pinned strict-xfail in
+  `test_sampled_pts_readers.py`) ride along there. Still open from #48: the
+  `barrier` norm-penalty NaN and `Regress.add_latent`.
+- **Slice A is on the branch, unreviewed (2026-08-22):** `sdf_dataset.py` is 1,744
+  lines (classes + permanent re-import block), the 13 leaf helpers live in
+  `NSM/datasets/utils.py`, the two readers in `NSM/datasets/mesh_sampling.py` —
+  verbatim moves, +49 lines net against the ~70 budget, full suite green with
+  identical collection (472 nodes). New tests: `test_dataset_helpers.py`,
+  `test_sampled_pts_readers.py` (characterization, one #17 strict-xfail),
+  `test_import_compat.py` (frozen name list on both import paths).
+  Characterization surprise, pinned and docstring-corrected: `unpack_numpy_data`
+  accepts a dict only with `list_additional_keys=[]` — the default reads
+  `data_.files`, NpzFile-only — despite its (now fixed) "NpzFile or dict" claim.
 - **Scale preservation is an idea, not a defect** (maintainer, 2026-08-22): similarity
   registration deliberately matching subjects to the reference's size is a valid
   design; keeping true size is an *additional mode* worth having. It therefore lives
