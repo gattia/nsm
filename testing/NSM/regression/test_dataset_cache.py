@@ -167,8 +167,8 @@ class TestHashedParametersChangeTheKey:
 class TestUnhashedParametersCollide:
     """
     ``mesh_to_scale``, ``uniform_pts_buffer`` and ``subsample`` all change what is written
-    into the cache and none of them are in ``get_hash_params``
-    (``sdf_dataset.py:1973-1999``). Two runs differing only in one of them therefore share
+    into the cache and none of them are in
+    ``MultiSurfaceSDFSamples.get_hash_params``. Two runs differing only in one of them share
     a key, and with ``load_cache=True`` -- the production setting -- the second silently
     trains on the first's data.
 
@@ -258,8 +258,8 @@ class TestUnhashedParametersCollide:
 
         ``sdf_pos_neg_idx`` repeats the negative-index array just far enough for the
         ``subsample`` in force when the cache was written. Reload with a larger one and
-        there are not enough entries: ``__getitem__`` takes what there is, then tops the
-        batch up with uniformly random points (``sdf_dataset.py:2122-2127``). The
+        there are not enough entries: ``MultiSurfaceSDFSamples.__getitem__`` takes what
+        there is, then tops the batch up with uniformly random points. The
         ``equal_pos_neg=True`` guarantee quietly stops holding, and the surface with the
         fewest interior samples -- the small one, i.e. cartilage in a real dataset -- loses
         the most.
@@ -271,9 +271,10 @@ class TestUnhashedParametersCollide:
         ellipsoid; near-surface sampling puts ~20% of them inside, which is both more
         realistic and a much softer landing for this bug.
 
-        The reload check that would have caught this compares ``len(data["pos_idx"])``
-        against the number of *meshes* (``sdf_dataset.py:1764-1771``), never against the
-        subsample the arrays were built for.
+        The reload check that would have caught this
+        (``MultiSurfaceSDFSamples.get_sample_data_dict``) compares ``len(data["pos_idx"])``
+        against the number of *meshes*, never against the subsample the arrays were
+        built for.
         """
         import torch
 
@@ -572,8 +573,8 @@ class TestSingleSurfaceSDFSamples:
 
     def test_the_scalar_n_pts_is_the_point_count_that_lands_in_the_cache(self, dataset):
         """
-        The parent preallocates ``data["xyz"]`` with the scalar ``self.n_pts``
-        (``sdf_dataset.py:1275``) where the subclass uses ``sum(self.n_pts)`` over its
+        The parent's ``get_sample_data_dict`` preallocates ``data["xyz"]`` with the
+        scalar ``self.n_pts`` where the subclass uses ``sum(self.n_pts)`` over its
         per-surface list. Both are right for their own class; this pins that the scalar
         one is, so a later attempt to unify the two cannot quietly truncate this path.
         """
