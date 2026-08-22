@@ -392,7 +392,7 @@ def get_optimizer(model, latent_vecs, lr_schedules, optimizer="Adam", weight_dec
         )
 
     if optimizer == "Adam":
-        optimizer = torch.optim.Adam(list_params)
+        optimizer = torch.optim.Adam(list_params, weight_decay=weight_decay)
     elif optimizer == "AdamW":
         optimizer = torch.optim.AdamW(list_params, weight_decay=weight_decay)
     elif optimizer == "schedule_free_AdamW":

@@ -105,6 +105,28 @@ class TestNamedParamGroups:
         ]
 
 
+class TestWeightDecayIsForwarded:
+    """#47: the Adam branch dropped ``weight_decay`` while AdamW passed it.
+
+    torch stamps the constructor's ``weight_decay`` into every param group, which is
+    where a silent drop is observable. ``schedule_free_AdamW`` always forwarded the
+    argument and is not constructible here (schedulefree is absent from the dev env).
+    """
+
+    @pytest.mark.parametrize("name", ["Adam", "AdamW"])
+    def test_every_group_carries_the_configured_decay(self, name):
+        config = make_config()
+        schedules = get_learning_rate_schedules(config)
+        optimizer = get_optimizer(
+            make_model(),
+            make_latents(),
+            lr_schedules=schedules,
+            optimizer=name,
+            weight_decay=0.123,
+        )
+        assert [g["weight_decay"] for g in optimizer.param_groups] == [0.123, 0.123]
+
+
 class TestScheduleMapping:
     """The core regression: mapping must be by name, never by position."""
 
