@@ -105,4 +105,46 @@ def test_reconstruct_latent_invalid_input(n_pts=100):
         )
 
 
+class TwoSurfaceDecoder(torch.nn.Module):
+    """Kwarg-form decoder with two output columns; output depends on ``latent``."""
+
+    def __init__(self, scale):
+        super().__init__()
+        self.scale = scale
+
+    def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+        base = xyz[:, :1] * 0.01 + latent.sum() * self.scale
+        return torch.cat([base, 2.0 * base], dim=1)
+
+
+def _two_decoder_fit_loss(gt_values, n_pts=50):
+    torch.manual_seed(0)
+    decoders = [TwoSurfaceDecoder(1.0), TwoSurfaceDecoder(-1.0)]
+    xyz = torch.rand(n_pts, 3)
+    sdf_gt = [torch.full((n_pts, 1), v) for v in gt_values]
+    loss, _ = reconstruct_latent(
+        decoders=decoders,
+        num_iterations=3,
+        latent_size=8,
+        xyz=xyz,
+        sdf_gt=sdf_gt,
+        pts_surface=[0] * n_pts,
+        device="cpu",
+    )
+    return float(loss)
+
+
+def test_second_decoder_reads_its_own_ground_truth():
+    """Each decoder is scored against its own slice of the flat ``sdf_gt``.
+
+    With the decoder-local indexing this replaces, the ground truth for surfaces 2 and
+    3 could be replaced wholesale without changing the loss — the second decoder
+    silently re-read surfaces 0 and 1 (demonstrated by execution during the Aug 2026
+    audit: all-NaN surfaces 2/3 left the loss bit-identical).
+    """
+    base = _two_decoder_fit_loss((0.1, 0.2, 0.3, 0.4))
+    surfaces_2_3_changed = _two_decoder_fit_loss((0.1, 0.2, 5.0, -5.0))
+    assert base != surfaces_2_3_changed
+
+
 # Additional tests can be added for different configurations and edge cases

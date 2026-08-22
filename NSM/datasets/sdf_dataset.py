@@ -2002,17 +2002,17 @@ class MultiSurfaceSDFSamples(SDFSamples):
         # Only process non-None columns for overlap detection
         sdf_filtered = sdf_[:, non_none_mask]
 
-        sdf_filtered[sdf_filtered < 0] = -1
-        sdf_filtered[sdf_filtered > 0] = 1
-        sdf_filtered[sdf_filtered == 0] = 0
-        total = torch.sum(sdf_filtered, axis=1)
+        # "Overlapping" means inside two or more surfaces, where inside is a strictly
+        # negative SDF. Count per point — a sign-sum test is equivalent to this count
+        # only at exactly two surfaces.
+        inside_count = torch.sum(sdf_filtered < 0, dim=1)
 
-        out_out = torch.sum(total == 2)
-        out_in = torch.sum(total == 0)
-        in_in = torch.sum(total == -2)
+        out_all = torch.sum(inside_count == 0)
+        in_one = torch.sum(inside_count == 1)
+        in_in = torch.sum(inside_count >= 2)
 
         # Create mask for points to keep (not overlapping)
-        keep_mask = total != -2
+        keep_mask = inside_count < 2
 
         # Apply the mask to remove overlapping points from the full dataset
         # This preserves the None columns while removing problematic points
@@ -2020,11 +2020,11 @@ class MultiSurfaceSDFSamples(SDFSamples):
         data["xyz"] = data["xyz"][keep_mask, :]
 
         if self.verbose is True:
-            print("total shape", total.shape)
-            print("total", total)
-            print("out_out", out_out)
-            print("out_in", out_in)
-            print("in_in", in_in)
+            print("inside_count shape", inside_count.shape)
+            print("inside_count", inside_count)
+            print("outside all surfaces", out_all)
+            print("inside exactly one", in_one)
+            print("inside two or more", in_in)
             print(f"Removed {in_in} overlapping points")
 
         return data, in_in
