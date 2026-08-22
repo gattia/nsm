@@ -452,17 +452,13 @@ test exercising `reference_mesh=int` with two meshes.
 - **D3 (draft 8): `weight_decay` under Adam — DECIDED: honour it.** Pass the argument;
   regenerate the harness baselines (the moved baselines are the proof it changes
   numerics) and add the History entry. No shipped run affected (both use AdamW).
-- **D4 (group 14): latent-gradient N-amplification — recommendation stands, awaiting
-  the maintainer's confirm after a plain-language explanation.** In one paragraph: when
-  a latent is optimized during reconstruction, the gradient it receives from the data
-  term is *summed* over the N query points rather than averaged, so doubling N doubles
-  that gradient; the latent-regularization term does not scale with N. Both decoder
-  interfaces (`UniqueConsecutive` and `FastUnique`) do this identically and always
-  have, so it is a convention, not a regression, and with `l2reg_recon: false` (both
-  shipped configs) the imbalance multiplies a term that is zero — no run is affected
-  today. "Fixing" it would rescale every training and reconstruction run, which is why
-  the recommendation is to document it as a trap (done, ARCHITECTURE §6) and not file
-  an issue.
+- **D4 (group 14): latent-gradient N-amplification — DECIDED (maintainer,
+  2026-08-22): keep the behaviour, document it twice, revisit deliberately.** No
+  tracker issue. The ARCHITECTURE §6 trap stands, and a `KNOWN_ISSUES.md` § Open
+  entry (committed on this branch) frames the revisit: the maintainer reports latent
+  regularization was historically a pain to tune and was abandoned — consistent with
+  the effective weight being silently divided by N, recorded there as a hypothesis
+  with the experiment that would test it.
 
 ## 0.5 Non-issue dispositions
 

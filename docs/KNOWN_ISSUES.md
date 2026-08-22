@@ -306,6 +306,28 @@ both names.
 both directions and needs a migration shim. *Pinned by:*
 `test_model_roundtrip.TestAliasedCheckpointEntries`.
 
+### Latent gradients are summed over query points, so the reg balance depends on N
+
+When a latent is optimized (reconstruction fitting, and the training embedding), the
+gradient it receives from the data term is **summed** over the N query points — 10× the
+points, 10× the pull — while the latent-regularization term does not scale with N.
+Measured: 10.00× at N=10, 1000.00× at N=1000, **identically** on both decoder
+interfaces (`triplanar.UniqueConsecutive` and `triplanar.FastUnique`), so it is a
+long-standing convention, not a regression. Details: ARCHITECTURE §6.
+
+No shipped run is affected — `l2reg_recon: false` in both production configs, so the
+imbalance multiplies a term that is zero.
+
+**Why this entry exists (maintainer, 2026-08-22): to be revisited, deliberately.** The
+maintainer reports latent regularization was historically a pain to tune and was
+abandoned — consistent with the effective weight being silently divided by N
+(thousands), so nominal weights would have felt inert. That is a hypothesis, not a
+finding. The experiment when someone picks this up: enable `l2reg` with the weight
+scaled by ~N versus nominal, compare fit quality and fitted-latent norms (see also
+`NSM_TRAINING_IDEAS.md` Idea 4, the norm-saturation gap). Any change to the convention
+rescales every training and reconstruction run and needs a § History entry plus a
+Phase-A-style migration.
+
 ## `models/deep_sdf.py`
 
 ### `xyz_in_all` is accepted and never read
@@ -359,6 +381,11 @@ never clipped. Verified by wrapping the clip call on a real epoch: called on the
 tensors only. A user setting a knob named `grad_clip` will reasonably assume it is
 global. Clipping the latents now would silently change the numerics of every run that
 sets `grad_clip`, so this is documented rather than fixed.
+
+**Revisit (maintainer, 2026-08-22):** worth an experiment rather than a permanent
+shrug — train with the clip applied to both groups (or one global clip) and compare
+stability and latent-norm trajectories against the current behaviour. If adopted, it
+changes numerics for every run that sets `grad_clip` → § History entry.
 
 ## `reconstruct/main.py`
 
