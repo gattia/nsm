@@ -470,7 +470,9 @@ def unpack_numpy_data(
     unpacked into a per-surface list (see ``unpack_pts``).
 
     Args:
-        data_ (np.lib.npyio.NpzFile or dict): Raw cached data.
+        data_ (np.lib.npyio.NpzFile): Raw cached data. A plain dict works only with
+            ``list_additional_keys=[]`` — unpacking a key group reads ``data_.files``,
+            which only an NpzFile has.
         point_cloud (bool, optional): Also convert ``point_cloud``. Defaults to False.
         list_additional_keys (list, optional): Key groups to unpack into per-surface
             lists; absent groups come back as empty lists.
