@@ -1,19 +1,11 @@
-import logging
-import time
-
-import torch
-from torch import nn
-from torch.nn.functional import grid_sample
-
-from .deep_sdf import Decoder
-
 """
 We will create a triplanar neural implicit representation model.
 First, we will create a VAE that takes a latent vector, reshapes it into
 a CX2x2 tensor, and then uses a 2D CNN to output a C2xHxH tensor that is a
 set of 2D planar feature maps. We will use the first 1/3 of the channels
-as features for the xy plane, the second 1/3 for the xz plane, and the last
-1/3 for the yz plane.
+as features for the xz plane, the second 1/3 for the yz plane, and the last
+1/3 for the xy plane — that order is baked into every trained checkpoint
+(see forward_with_plane_features).
 
 Then, we will train an MLP as a SDF decoder. Instead of only taking the xyz
 position of each point and a fixed latent code, we will sample the latent code
@@ -21,6 +13,12 @@ from the planar feature mapes outputted from the VAE. This will be done using
 summation of the latent codes from each plane using bilinear interpolation. This
 way, we get a specific latent code for each point in space.
 """
+
+import torch
+from torch import nn
+from torch.nn.functional import grid_sample
+
+from .deep_sdf import Decoder
 
 
 class VAEDecoder(nn.Module):
@@ -231,7 +229,7 @@ class TriplanarDecoder(nn.Module):
         if self.sum_sdf_features is False:
             assert (
                 self.sdf_latent_size % 3 == 0
-            ), "sdf_latent_size must be divisible by 3 if sum_sdf_features is True"
+            ), "sdf_latent_size must be divisible by 3 if sum_sdf_features is False"
             vae_out_features = self.sdf_latent_size
         elif self.sum_sdf_features is True:
             vae_out_features = self.sdf_latent_size * 3
@@ -356,6 +354,10 @@ class TriplanarDecoder(nn.Module):
         Note:
             - Use either x OR (latent + xyz), not both
             - Using (latent + xyz) is much faster for inference with single latent
+            - Legacy mode groups identical latents with a CONSECUTIVE unique: rows
+              sharing a latent must be contiguous in x. Interleaved latents still
+              produce correct output, but every run boundary becomes its own VAE
+              forward — a silent, severe slowdown.
         """
 
         # Handle different input modes
