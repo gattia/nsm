@@ -853,3 +853,66 @@ class TestUniformSamplingCube:
             assert isinstance(surface, np.ndarray), label
             assert surface.dtype == np.int64, label
             assert surface.shape == (200,), label
+
+
+class TestEmptySignedSamples:
+    """
+    ``sdf_pos_neg_idx`` divided by zero whenever a surface had no positive or no negative
+    samples (#41, fixed Aug 2026). Now: a surface nothing draws from -- missing (None), or
+    allotted no subsample share -- yields empty index lists and is handled; a drawn-from
+    surface missing a sign raises a ``ValueError`` naming the surface.
+    """
+
+    def test_a_nested_surface_raises_a_named_error(self, tmp_path_factory):
+        """
+        One surface inside another loses every interior point to
+        ``remove_overlapping_points``, leaving it with no negative samples. The harness's
+        synthetic subjects are built disjoint precisely to stay clear of this
+        (``_harness.SUBJECTS``); here the nesting is deliberate.
+        """
+        import pyvista as pv
+
+        directory = tmp_path_factory.mktemp("nested_meshes")
+        outer = pv.Sphere(radius=1.0, theta_resolution=24, phi_resolution=24).triangulate()
+        inner = pv.Sphere(radius=0.4, theta_resolution=24, phi_resolution=24).triangulate()
+        outer_path = os.path.join(str(directory), "outer.vtk")
+        inner_path = os.path.join(str(directory), "inner.vtk")
+        outer.save(outer_path)
+        inner.save(inner_path)
+
+        with pytest.raises(ValueError, match="Surface 1 has no negative"):
+            build_dataset(
+                [[outer_path, inner_path]], tmp_path_factory.mktemp("nested_cache"), **SMALL
+            )
+
+    def test_a_missing_surface_is_handled_as_empty(self, dataset):
+        """
+        An all-NaN SDF column is a missing (None) surface -- ``read_meshes`` fills the
+        column with NaN for a ``None`` path. Empty index lists are the contract:
+        ``__getitem__``'s ``randperm(0)`` draws nothing from them.
+
+        A direct method call, because the end-to-end None-surface path currently dies
+        earlier, at ``get_sample_data_dict``'s preallocated buffer write -- a separate
+        defect from this one (#67).
+        """
+        import torch
+
+        gt_sdf = torch.stack(
+            [torch.linspace(-1.0, 1.0, 10), torch.full((10,), float("nan"))], dim=1
+        )
+        pos, neg, surf = dataset.sdf_pos_neg_idx({"gt_sdf": gt_sdf, "xyz": torch.zeros(10, 3)})
+
+        assert pos[0].numel() > 0 and neg[0].numel() > 0
+        assert pos[1].numel() == 0 and neg[1].numel() == 0 and surf[1].numel() == 0
+
+    def test_the_single_surface_class_also_raises_by_name(self):
+        """``SDFSamples.sdf_pos_neg_idx`` is separate code with the same division."""
+        from types import SimpleNamespace
+
+        import torch
+
+        from NSM.datasets.sdf_dataset import SDFSamples
+
+        all_positive = {"gt_sdf": torch.linspace(0.1, 1.0, 10)}
+        with pytest.raises(ValueError, match="no negative SDF samples"):
+            SDFSamples.sdf_pos_neg_idx(SimpleNamespace(subsample=64), all_positive)

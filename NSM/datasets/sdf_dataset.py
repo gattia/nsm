@@ -1403,6 +1403,15 @@ class SDFSamples(torch.utils.data.Dataset):
         neg_idx = (data["gt_sdf"] < 0).nonzero(as_tuple=True)[0]
         surf_idx = (data["gt_sdf"] == 0).nonzero(as_tuple=True)[0]
 
+        for sign, idx_ in (("positive", pos_idx), ("negative", neg_idx)):
+            if idx_.numel() == 0:
+                # The repeat below would divide by zero (#41), and a mesh whose samples
+                # are all one sign has no interior/exterior to learn from.
+                raise ValueError(
+                    f"The mesh yielded no {sign} SDF samples, so equal positive/negative "
+                    f"batches cannot be drawn from it. Is the mesh degenerate or unclosed?"
+                )
+
         # Repeat +/- indices if either of them does not have enough for a full batch.
         samples_per_sign = int(self.subsample / 2)
         pos_idx = pos_idx.repeat(samples_per_sign // pos_idx.size(0) + 1)
@@ -1823,6 +1832,10 @@ class MultiSurfaceSDFSamples(SDFSamples):
             indices = data[name]
             max_idx = 0
             for tensor in indices:
+                if tensor.numel() == 0:
+                    # A missing (None) surface has empty index lists; torch.max
+                    # raises on an empty tensor, and empty is trivially in range.
+                    continue
                 max_idx = torch.max(tensor)
                 if max_idx >= n_pts:
                     return False
@@ -2145,16 +2158,30 @@ class MultiSurfaceSDFSamples(SDFSamples):
 
             samples_per_sign = self.samples_per_sign_[mesh_idx]
 
-            # BELOW NEEDS LOGIC TO UNPACK  1/2 pos/neg pts for each mesh
-            # mesh_sdfs = data['gt_sdf'][pts_idx_:pts_idx_ + n_pts_, mesh_idx]
             mesh_sdfs = data["gt_sdf"][:, mesh_idx].clone()
-            pos_idx_ = (mesh_sdfs > 0).nonzero(as_tuple=True)[0]  # + pts_idx_
-            neg_idx_ = (mesh_sdfs < 0).nonzero(as_tuple=True)[0]  # + pts_idx_
-            surf_idx_ = (mesh_sdfs == 0).nonzero(as_tuple=True)[0]  # + pts_idx_
+            pos_idx_ = (mesh_sdfs > 0).nonzero(as_tuple=True)[0]
+            neg_idx_ = (mesh_sdfs < 0).nonzero(as_tuple=True)[0]
+            surf_idx_ = (mesh_sdfs == 0).nonzero(as_tuple=True)[0]
 
-            # Repeat +/- indices if either of them does not have enough for a full batch.
-            pos_idx_ = pos_idx_.repeat(samples_per_sign // pos_idx_.size(0) + 1)
-            neg_idx_ = neg_idx_.repeat(samples_per_sign // neg_idx_.size(0) + 1)
+            # A surface nothing is drawn from may be empty: an all-NaN column is a
+            # missing (None) surface, and a zero subsample share means __getitem__ never
+            # samples it. Its empty index lists are handled -- randperm(0) draws nothing.
+            surface_is_drawn_from = samples_per_sign > 0 and not torch.isnan(mesh_sdfs).all()
+
+            if surface_is_drawn_from:
+                for sign, idx_ in (("positive", pos_idx_), ("negative", neg_idx_)):
+                    if idx_.numel() == 0:
+                        # The repeat below would divide by zero (#41), and a surface
+                        # with no interior samples trains to garbage.
+                        raise ValueError(
+                            f"Surface {mesh_idx} has no {sign} SDF samples, so its "
+                            f"equal positive/negative batch share cannot be drawn. A "
+                            f"surface nested inside another loses every interior point "
+                            f"to remove_overlapping_points."
+                        )
+                # Repeat +/- indices if either does not have enough for a full batch.
+                pos_idx_ = pos_idx_.repeat(samples_per_sign // pos_idx_.size(0) + 1)
+                neg_idx_ = neg_idx_.repeat(samples_per_sign // neg_idx_.size(0) + 1)
 
             pos_idx.append(pos_idx_)
             neg_idx.append(neg_idx_)

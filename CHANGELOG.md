@@ -102,6 +102,12 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Fixed
 
+- **A surface with no positive or no negative SDF samples raises a `ValueError` naming
+  the surface** (#41) instead of `ZeroDivisionError` — e.g. one surface nested inside
+  another loses every interior point to overlap removal. A surface nothing draws from (a
+  missing/`None` surface, or one allotted no subsample share) yields empty index lists
+  and is handled.
+
 - **`cyclic_anneal_linear` no longer NaNs runs shorter than its cycle count.**
   `floor(n_epochs / n_cycles)` was 0 for `n_epochs < 5`, so `epoch % 0` returned NaN and
   the NaN regularization weight silently NaN'd the entire training loss — the run

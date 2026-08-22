@@ -339,8 +339,9 @@ def headroom(store, key, observed, rtol=0.0, atol=0.0):
 #: Three "subjects", each a bone plus a cartilage surface. The two surfaces are disjoint
 #: solids -- a sphere, and a small oblate ellipsoid sitting above it -- rather than nested
 #: shells, because ``MultiSurfaceSDFSamples.remove_overlapping_points`` drops every point
-#: interior to two objects. Nesting them leaves the inner surface with no negative samples
-#: and ``sdf_pos_neg_idx`` then divides by zero.
+#: interior to two objects: a nested inner surface loses all its negative samples, which
+#: ``sdf_pos_neg_idx`` refuses with a ValueError naming the surface (#41; asserted by
+#: ``test_dataset_cache.TestEmptySignedSamples``).
 #:
 #: The offset also makes the surfaces individually identifiable by centroid, which is what
 #: lets ``test_reconstruction_regression`` assert the result ``mesh`` list ORDER rather
