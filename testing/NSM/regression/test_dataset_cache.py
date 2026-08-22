@@ -25,6 +25,7 @@ from _harness import (
     build_dataset,
     build_model,
     build_single_surface_dataset,
+    quiet,
     run_training,
     training_config,
     write_synthetic_meshes,
@@ -166,8 +167,8 @@ class TestHashedParametersChangeTheKey:
 class TestUnhashedParametersCollide:
     """
     ``mesh_to_scale``, ``uniform_pts_buffer`` and ``subsample`` all change what is written
-    into the cache and none of them are in ``get_hash_params``
-    (``sdf_dataset.py:1973-1999``). Two runs differing only in one of them therefore share
+    into the cache and none of them are in
+    ``MultiSurfaceSDFSamples.get_hash_params``. Two runs differing only in one of them share
     a key, and with ``load_cache=True`` -- the production setting -- the second silently
     trains on the first's data.
 
@@ -257,8 +258,8 @@ class TestUnhashedParametersCollide:
 
         ``sdf_pos_neg_idx`` repeats the negative-index array just far enough for the
         ``subsample`` in force when the cache was written. Reload with a larger one and
-        there are not enough entries: ``__getitem__`` takes what there is, then tops the
-        batch up with uniformly random points (``sdf_dataset.py:2122-2127``). The
+        there are not enough entries: ``MultiSurfaceSDFSamples.__getitem__`` takes what
+        there is, then tops the batch up with uniformly random points. The
         ``equal_pos_neg=True`` guarantee quietly stops holding, and the surface with the
         fewest interior samples -- the small one, i.e. cartilage in a real dataset -- loses
         the most.
@@ -270,9 +271,10 @@ class TestUnhashedParametersCollide:
         ellipsoid; near-surface sampling puts ~20% of them inside, which is both more
         realistic and a much softer landing for this bug.
 
-        The reload check that would have caught this compares ``len(data["pos_idx"])``
-        against the number of *meshes* (``sdf_dataset.py:1764-1771``), never against the
-        subsample the arrays were built for.
+        The reload check that would have caught this
+        (``MultiSurfaceSDFSamples.get_sample_data_dict``) compares ``len(data["pos_idx"])``
+        against the number of *meshes*, never against the subsample the arrays were
+        built for.
         """
         import torch
 
@@ -571,8 +573,8 @@ class TestSingleSurfaceSDFSamples:
 
     def test_the_scalar_n_pts_is_the_point_count_that_lands_in_the_cache(self, dataset):
         """
-        The parent preallocates ``data["xyz"]`` with the scalar ``self.n_pts``
-        (``sdf_dataset.py:1275``) where the subclass uses ``sum(self.n_pts)`` over its
+        The parent's ``get_sample_data_dict`` preallocates ``data["xyz"]`` with the
+        scalar ``self.n_pts`` where the subclass uses ``sum(self.n_pts)`` over its
         per-surface list. Both are right for their own class; this pins that the scalar
         one is, so a later attempt to unify the two cannot quietly truncate this path.
         """
@@ -620,20 +622,20 @@ class TestSingleSurfaceSDFSamples:
         )
 
 
-class TestConfigurationsThatDoNotRun:
+class TestFormerlyUncallableConfigurations:
     """
-    Constructible-but-uncallable settings: advertised constructor arguments that build fine
-    and raise on first use. Each asserts that the option *works*, and is expected to fail.
+    Advertised constructor arguments that used to build fine and crash on first use.
+    Each test asserts the option now works; the crashes they replace were #22 and #23,
+    fixed Aug 2026.
     """
 
-    @pytest.mark.xfail(
-        strict=True, reason="#23: a zero-count sampling combo is passed to pcu anyway"
-    )
-    def test_zero_sampling_probability_must_sample_nothing(self, meshes, tmp_path_factory):
+    def test_zero_sampling_probability_samples_nothing(self, meshes, tmp_path_factory):
         """
-        ``get_pt_sample_combos`` emits a ``[0, sigma]`` combo and ``get_sample_data_dict``
-        calls the sampler with it regardless (``sdf_dataset.py:1820``), so asking for no
-        near-surface points is a crash rather than a configuration.
+        ``get_pt_sample_combos`` emits a ``[0, sigma]`` combo when a probability is 0,
+        and ``get_sample_data_dict`` now skips it (#23) instead of handing
+        ``point_cloud_utils`` an empty point cloud to crash on. The remaining combos
+        still fill the whole preallocated buffer -- the random share absorbs what the
+        probabilities leave over, so nothing is silently left at zero.
         """
         dataset = build_dataset(
             meshes,
@@ -644,26 +646,41 @@ class TestConfigurationsThatDoNotRun:
             **SMALL,
         )
         assert len(dataset) == len(meshes)
+        arrays = cached_arrays(dataset)
+        # A skipped combo must not leave a hole of never-written rows in the buffer.
+        assert not np.any(np.all(arrays["pts"] == 0, axis=1))
+        item, _ = dataset[0]
+        assert {"xyz", "gt_sdf"} <= set(item)
 
-    @pytest.mark.xfail(
-        strict=True, reason="#22: store_data_in_memory=True raises UnboundLocalError"
-    )
-    def test_store_data_in_memory_must_yield_an_item(self, meshes, tmp_path_factory):
+    def test_zero_probability_on_the_single_surface_class(self, bone_meshes, tmp_path_factory):
+        """``SDFSamples.get_sample_data_dict`` is separate code from the subclass's."""
+        dataset = build_single_surface_dataset(
+            bone_meshes[:1],
+            tmp_path_factory.mktemp("p_zero_single"),
+            p_near_surface=0.0,
+            p_further_from_surface=0.5,
+            **SMALL_SINGLE,
+        )
+        item, _ = dataset[0]
+        assert {"xyz", "gt_sdf"} <= set(item)
+
+    def test_store_data_in_memory_yields_an_item(self, meshes, tmp_path_factory):
         """
-        ``MultiSurfaceSDFSamples.__getitem__:2158`` reads ``time_`` and ``size``, which are
-        only bound in the ``store_data_in_memory is False`` branch. The single-surface
-        ``SDFSamples.__getitem__:1563`` guards the same block correctly, so the two classes
-        disagree about the same option.
+        ``MultiSurfaceSDFSamples.__getitem__`` read ``time_`` and ``size``, which are only
+        bound when a disk load happened, so ``store_data_in_memory=True`` raised
+        ``UnboundLocalError`` (#22). It now carries the same guard as the single-surface
+        ``SDFSamples.__getitem__`` always did: timing keys are emitted only when a load
+        was actually timed.
         """
         dataset = build_dataset(
             meshes, tmp_path_factory.mktemp("in_memory"), store_data_in_memory=True, **SMALL
         )
         item, _ = dataset[0]
-        assert {"xyz", "gt_sdf"} <= set(item)
+        assert set(item) == {"xyz", "gt_sdf"}
 
     @pytest.fixture(scope="class")
     def timing_free_dataset(self, meshes, tmp_path_factory):
-        """The apparent workaround for #22: in memory, with load timing off."""
+        """In memory with load timing off -- formerly the half-workaround for #22."""
         return build_dataset(
             meshes,
             tmp_path_factory.mktemp("in_memory_ok"),
@@ -673,24 +690,27 @@ class TestConfigurationsThatDoNotRun:
         )
 
     def test_store_data_in_memory_works_with_load_timing_off(self, timing_free_dataset):
-        """The workaround, recorded so the pairing is documented somewhere."""
         item, index = timing_free_dataset[0]
         assert set(item) == {"xyz", "gt_sdf"} and index == 0
 
-    def test_train_epoch_needs_the_timing_keys(self, timing_free_dataset, tmp_path_factory):
+    def test_the_trainer_consumes_batches_without_timing_keys(
+        self, timing_free_dataset, tmp_path_factory
+    ):
         """
-        Why the pairing above is not a real workaround: ``train_epoch`` reads all four
-        timing keys unconditionally (``train_deep_sdf.py:589-592``), so the combination that
-        avoids the crash produces batches the trainer cannot consume.
+        ``train_epoch`` used to read all four load-timing keys unconditionally, which is
+        what made #22 unfixable by the dataset guard alone: the combination that avoided
+        the crash produced batches the trainer could not consume, so no combination of
+        the two flags both constructed and trained. The keys are now optional
+        diagnostics on both sides -- emitted only when a disk load was timed, accumulated
+        and logged only when present.
 
-        Asserted by running the trainer rather than by grepping its source, which is what
-        this used to do. A grep for ``sdf_data["size"]`` lies in both directions: it goes red
-        when the read is renamed or refactored without any behaviour changing, and it stays
-        green if the read is guarded -- the one edit that would actually fix this.
+        Asserted by running the trainer rather than by grepping its source: a grep for
+        ``sdf_data["size"]`` lies in both directions -- red on a harmless rename, green
+        on an unguarded read that crashes.
 
         ``samples_per_object_per_batch`` has to follow ``SMALL``'s ``subsample``: mismatch
-        them and the run dies at the batch concatenation instead, several steps before the
-        key read this is about.
+        them and the run dies at the batch concatenation, several steps before the reads
+        this is about.
         """
         config = training_config(tmp_path_factory.mktemp("in_memory_train"))
         config.update(
@@ -701,26 +721,41 @@ class TestConfigurationsThatDoNotRun:
                 "samples_per_object_per_batch": SMALL["subsample"],
             }
         )
-        with pytest.raises(KeyError, match="size"):
-            run_training(config, build_model(config), timing_free_dataset)
+        records, _ = run_training(config, build_model(config), timing_free_dataset)
+        assert len(records) == 1
+        assert "loss" in records[0]
 
 
 class TestCacheLocationDefault:
     """
-    ``loc_save``'s default is ``os.environ.get("LOC_SDF_CACHE", ...)`` evaluated as a
-    default argument, so it is bound once when ``sdf_dataset`` is imported. Setting the
-    env var afterwards has no effect, and a caller who believes it does writes into
-    ``~/.cache/nsm_sdf_cache``. The harness passes ``loc_save`` explicitly for this reason.
+    ``loc_save=None`` resolves ``LOC_SDF_CACHE`` when the dataset is CONSTRUCTED. Until
+    Aug 2026 the environment read was a default argument, evaluated once at import (#24),
+    so setting the variable afterwards had no effect and the cache silently went to
+    ``~/.cache/nsm_sdf_cache``. The harness still passes ``loc_save`` explicitly
+    everywhere else so its tests can never depend on the developer's environment.
     """
 
-    @pytest.mark.xfail(strict=True, reason="#24: LOC_SDF_CACHE is read once, at import time")
-    def test_setting_the_env_var_must_change_where_the_cache_goes(self, monkeypatch):
-        from NSM.datasets.sdf_dataset import MultiSurfaceSDFSamples
+    def test_setting_the_env_var_changes_where_the_cache_goes(
+        self, meshes, monkeypatch, tmp_path_factory
+    ):
+        cache_root = tmp_path_factory.mktemp("env_cache")
+        monkeypatch.setenv("LOC_SDF_CACHE", str(cache_root))
+        dataset = build_dataset(meshes, "ignored-by-override", loc_save=None, **SMALL)
+        assert dataset.loc_save == str(cache_root)
+        assert dataset.data[0].startswith(str(cache_root))
 
-        before = inspect.signature(MultiSurfaceSDFSamples.__init__).parameters["loc_save"].default
-        monkeypatch.setenv("LOC_SDF_CACHE", "/nowhere/that/exists")
-        after = inspect.signature(MultiSurfaceSDFSamples.__init__).parameters["loc_save"].default
-        assert after != before
+    def test_a_blank_env_var_counts_as_unset(self, meshes, monkeypatch, tmp_path_factory):
+        """
+        The downstream consumer blanks the variable rather than unsetting it
+        (``kneepipeline/steps/run_nsm.py``), and ``""`` must mean the home default: a
+        literally-empty ``loc_save`` would root the cache -- and ``find_hash``'s
+        recursive walk -- at the current working directory.
+        """
+        fake_home = tmp_path_factory.mktemp("fake_home")
+        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.setenv("LOC_SDF_CACHE", "")
+        dataset = build_dataset(meshes, "ignored-by-override", loc_save=None, **SMALL)
+        assert dataset.loc_save == os.path.join(str(fake_home), ".cache", "nsm_sdf_cache")
 
 
 class TestPointCenteringAndScaling:
@@ -742,8 +777,6 @@ class TestPointCenteringAndScaling:
         changes the coordinate frame of every dataset, checkpoint and reconstruction
         NSM has ever produced. See #20.
         """
-        import inspect
-
         from NSM.datasets.sdf_dataset import get_pts_center_and_scale
 
         taken = inspect.signature(get_pts_center_and_scale).parameters
@@ -778,3 +811,224 @@ class TestPointCenteringAndScaling:
         points = np.array([[1.0, 1.0, 1.0], [3.0, 3.0, 3.0]])
         get_pts_center_and_scale(points)
         assert np.allclose(points, [[1.0, 1.0, 1.0], [3.0, 3.0, 3.0]])
+
+
+class TestUniformSamplingCube:
+    """
+    The uniform-sampling cube the two samplers draw from when ``sigma`` is None.
+
+    The single- and multi-mesh samplers carried private copies of the cube arithmetic and
+    they had diverged (#40, fixed Aug 2026): in both, ``mins`` was rebound before ``maxs``
+    read it, so a nonzero ``uniform_pts_buffer`` grew the cube more above than below; and
+    only the single-mesh copy clipped its draws, to +/-(1 + buffer/2), piling the
+    truncated samples onto the clip faces. Both now share
+    ``get_buffered_cube_mins_maxs`` and neither clips.
+    """
+
+    def test_the_buffer_expands_the_cube_symmetrically(self):
+        from NSM.datasets.sdf_dataset import get_buffered_cube_mins_maxs, get_cube_mins_maxs
+
+        rng = np.random.default_rng(0)
+        pts = rng.normal(size=(500, 3)) + [5.0, -2.0, 0.5]
+        mins0, maxs0 = get_cube_mins_maxs(pts)
+        mins, maxs = get_buffered_cube_mins_maxs(pts, 0.5)
+
+        assert np.allclose((mins + maxs) / 2, (mins0 + maxs0) / 2), "the centre moved"
+        assert np.allclose(maxs - mins, 1.5 * (maxs0 - mins0)), "span must grow by 1+buffer"
+
+    def test_the_two_samplers_draw_from_the_same_cube(self, meshes):
+        """
+        Same mesh, same buffer, uniform path: a normalized mesh spans a +/-1 cube, and
+        ``uniform_pts_buffer=0.5`` widens it to +/-1.5 in both samplers. Before the fix
+        the single-mesh draw was clipped to +/-1.25 and the multi-mesh one spanned
+        -1.50/+1.56 -- so each bound assertion below fails against one of the two old
+        behaviours.
+        """
+        from NSM.datasets.sdf_dataset import (
+            read_mesh_get_sampled_pts,
+            read_meshes_get_sampled_pts,
+        )
+
+        path = meshes[0][0]
+        kwargs = dict(center_pts=True, norm_pts=True, fix_mesh=False, get_random=True)
+        with quiet():
+            single = read_mesh_get_sampled_pts(
+                path, sigma=None, n_pts=4000, uniform_pts_buffer=0.5, seed=0, **kwargs
+            )
+            multi = read_meshes_get_sampled_pts(
+                [path], sigma=[None], n_pts=[4000], uniform_pts_buffer=0.5, seed=0, **kwargs
+            )
+
+        for label, pts in (("single", single["xyz"]), ("multi", multi["pts"])):
+            assert pts.min() >= -1.5 and pts.max() <= 1.5, f"{label}: cube too large"
+            assert pts.max() > 1.4 and pts.min() < -1.4, f"{label}: cube did not reach its bounds"
+            assert abs(pts.max() + pts.min()) < 0.1, f"{label}: cube is asymmetric"
+
+    def test_pts_surface_return_types_match(self, meshes):
+        """
+        ``pts_surface`` was a Python list from the single-mesh sampler and an int64 array
+        from the multi-mesh one -- the last of #40's three divergences.
+        """
+        from NSM.datasets.sdf_dataset import (
+            read_mesh_get_sampled_pts,
+            read_meshes_get_sampled_pts,
+        )
+
+        path = meshes[0][0]
+        kwargs = dict(center_pts=True, norm_pts=True, fix_mesh=False, get_random=True)
+        with quiet():
+            single = read_mesh_get_sampled_pts(path, sigma=0.05, n_pts=200, seed=0, **kwargs)
+            multi = read_meshes_get_sampled_pts([path], sigma=[0.05], n_pts=[200], seed=0, **kwargs)
+
+        for label, result in (("single", single), ("multi", multi)):
+            surface = result["pts_surface"]
+            assert isinstance(surface, np.ndarray), label
+            assert surface.dtype == np.int64, label
+            assert surface.shape == (200,), label
+
+
+class TestEmptySignedSamples:
+    """
+    ``sdf_pos_neg_idx`` divided by zero whenever a surface had no positive or no negative
+    samples (#41, fixed Aug 2026). Now: a surface nothing draws from -- missing (None), or
+    allotted no subsample share -- yields empty index lists and is handled; a drawn-from
+    surface missing a sign raises a ``ValueError`` naming the surface.
+    """
+
+    def test_a_nested_surface_raises_a_named_error(self, tmp_path_factory):
+        """
+        One surface inside another loses every interior point to
+        ``remove_overlapping_points``, leaving it with no negative samples. The harness's
+        synthetic subjects are built disjoint precisely to stay clear of this
+        (``_harness.SUBJECTS``); here the nesting is deliberate.
+        """
+        import pyvista as pv
+
+        directory = tmp_path_factory.mktemp("nested_meshes")
+        outer = pv.Sphere(radius=1.0, theta_resolution=24, phi_resolution=24).triangulate()
+        inner = pv.Sphere(radius=0.4, theta_resolution=24, phi_resolution=24).triangulate()
+        outer_path = os.path.join(str(directory), "outer.vtk")
+        inner_path = os.path.join(str(directory), "inner.vtk")
+        outer.save(outer_path)
+        inner.save(inner_path)
+
+        with pytest.raises(ValueError, match="Surface 1 has no negative"):
+            build_dataset(
+                [[outer_path, inner_path]], tmp_path_factory.mktemp("nested_cache"), **SMALL
+            )
+
+    def test_a_missing_surface_is_handled_as_empty(self, dataset):
+        """
+        An all-NaN SDF column is a missing (None) surface -- ``read_meshes`` fills the
+        column with NaN for a ``None`` path. Empty index lists are the contract:
+        ``__getitem__``'s ``randperm(0)`` draws nothing from them.
+
+        A direct method call, because the end-to-end None-surface path currently dies
+        earlier, at ``get_sample_data_dict``'s preallocated buffer write -- a separate
+        defect from this one (#67).
+        """
+        import torch
+
+        gt_sdf = torch.stack(
+            [torch.linspace(-1.0, 1.0, 10), torch.full((10,), float("nan"))], dim=1
+        )
+        pos, neg, surf = dataset.sdf_pos_neg_idx({"gt_sdf": gt_sdf, "xyz": torch.zeros(10, 3)})
+
+        assert pos[0].numel() > 0 and neg[0].numel() > 0
+        assert pos[1].numel() == 0 and neg[1].numel() == 0 and surf[1].numel() == 0
+
+    @pytest.mark.xfail(
+        strict=True, reason="#67: a None surface dies at the preallocated buffer write"
+    )
+    def test_a_none_surface_subject_must_build(self, meshes, tmp_path_factory):
+        """
+        The fdfe902 feature: a subject may be missing a structure. The build currently
+        dies in ``get_sample_data_dict`` -- ``data["xyz"]`` expects ``sum(n_pts_)`` rows
+        per combo while the sampler returns only the non-None surfaces' points -- which
+        is why the NaN-column handling above is reachable only by direct call.
+        """
+        dataset = build_dataset(
+            [[meshes[0][0], None]],
+            tmp_path_factory.mktemp("none_surface"),
+            store_data_in_memory=True,
+            save_cache=False,
+            **SMALL,
+        )
+        item, _ = dataset[0]
+        assert {"xyz", "gt_sdf"} <= set(item)
+
+    def test_the_single_surface_class_also_raises_by_name(self):
+        """``SDFSamples.sdf_pos_neg_idx`` is separate code with the same division."""
+        from types import SimpleNamespace
+
+        import torch
+
+        from NSM.datasets.sdf_dataset import SDFSamples
+
+        all_positive = {"gt_sdf": torch.linspace(0.1, 1.0, 10)}
+        with pytest.raises(ValueError, match="no negative SDF samples"):
+            SDFSamples.sdf_pos_neg_idx(SimpleNamespace(subsample=64), all_positive)
+
+
+class TestConstructorContract:
+    """The declared constructor surface of ``MultiSurfaceSDFSamples`` (#43, fixed Aug 2026)."""
+
+    def test_subsample_none_is_refused_at_construction(self, meshes, tmp_path_factory):
+        """
+        ``None`` -- the documented default until Aug 2026 -- used to construct and then
+        crash in ``get_samples_per_sign`` on a cold cache, or skip joint normalization
+        and return unnormalized points on a warm one. There is no working default, so
+        construction refuses by name.
+        """
+        with pytest.raises(ValueError, match="subsample must be a positive int"):
+            build_dataset(
+                meshes, tmp_path_factory.mktemp("none_sub"), **dict(SMALL, subsample=None)
+            )
+
+    def test_joint_scale_buffer_is_accepted_and_reaches_normalization(
+        self, meshes, tmp_path_factory
+    ):
+        """
+        ``joint_scale_buffer`` sets the margin on the joint max radius -- 0.1 in every
+        shipped multi-surface dataset -- and the constructor refused it with a
+        ``TypeError`` until Aug 2026. The parent's default happens to equal the
+        production value, which is why nothing noticed. Whether it belongs in the cache
+        key is #19's business (it does not change cached bytes), deliberately not
+        asserted here.
+        """
+        joint = dict(SMALL, scale_jointly=True, center_pts=False, norm_pts=False)
+        cache = tmp_path_factory.mktemp("joint_buffer")
+        narrow = build_dataset(meshes, cache, joint_scale_buffer=0.1, **joint)
+        wide = build_dataset(meshes, cache, load_cache=True, joint_scale_buffer=0.25, **joint)
+
+        assert wide.max_radius / narrow.max_radius == pytest.approx(1.25 / 1.1, rel=1e-6)
+
+
+class TestReferenceMeshFromSubjectIndex:
+    """
+    ``reference_mesh=<int>`` names a subject to register everyone else to (#61, fixed
+    Aug 2026).
+    """
+
+    def test_an_integer_reference_with_combined_surfaces_builds(self, tmp_path_factory):
+        """
+        With ``mesh_to_scale=[0, 1]``, subject 0's two surfaces are combined into the
+        registration target. This path raised ``UnboundLocalError`` one statement before
+        the combine result -- a pyvista ``PolyData`` with no ``save_mesh`` -- would have
+        broken anyway; ``combine_meshes`` now keeps its declared ``Mesh`` return type.
+        """
+        from pymskt.mesh import Mesh
+
+        subjects = write_synthetic_meshes(tmp_path_factory.mktemp("ref_meshes"))[:2]
+        dataset = build_dataset(
+            subjects,
+            tmp_path_factory.mktemp("ref_cache"),
+            mesh_to_scale=[0, 1],
+            reference_mesh=0,
+            **SMALL,
+        )
+
+        assert isinstance(dataset.reference_mesh, Mesh)
+        assert len(dataset) == 2
+        item, _ = dataset[0]
+        assert {"xyz", "gt_sdf"} <= set(item)

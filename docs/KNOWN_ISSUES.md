@@ -42,15 +42,13 @@ queue.
 | `include_surf_in_pts` appends a leaked loop variable | **High** | [#17](https://github.com/gattia/nsm/issues/17) |
 | Parameters accepted and never read | Medium — **read the traps first** | [#20](https://github.com/gattia/nsm/issues/20) |
 | `xyz_in_all` accepted and never read | Medium — silent no-op | [#20](https://github.com/gattia/nsm/issues/20) |
-| `store_data_in_memory=True` raises | Medium — advertised option, unusable | [#22](https://github.com/gattia/nsm/issues/22) |
+| A `None` surface cannot build | Medium — advertised feature, unusable | [#67](https://github.com/gattia/nsm/issues/67) |
 | Every VAE layer stored twice | Medium — 1.92× checkpoints | [#27](https://github.com/gattia/nsm/issues/27) |
 | `reconstruct_mesh` early return drops requested keys | Medium | [#29](https://github.com/gattia/nsm/issues/29) |
 | `reconstruct_mesh` raises `KeyError: 'pts'` on one branch | Medium | [#15](https://github.com/gattia/nsm/issues/15) |
 | `n_pts_random` accepted and discarded | Medium | [#16](https://github.com/gattia/nsm/issues/16) |
 | `sample_difficulty_lx` shipped but unimplemented | Medium | [#18](https://github.com/gattia/nsm/issues/18) |
 | `enforce_minmax` clamps predictions | Medium — config semantics | *none — a docs/design call, see below* |
-| `p_near_surface=0` crashes | Low | [#23](https://github.com/gattia/nsm/issues/23) |
-| `LOC_SDF_CACHE` read at import time | Low | [#24](https://github.com/gattia/nsm/issues/24) |
 | `Pool` deadlocks after an in-process build | Low — hangs, does not corrupt | [#25](https://github.com/gattia/nsm/issues/25) |
 | `train_deep_sdf` returns nothing | Low — blocks observability | [#28](https://github.com/gattia/nsm/issues/28) |
 
@@ -136,29 +134,18 @@ coordinate space, with a migration guard of the same shape as History §1's. Wri
 `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §8. Tracked as
 [#3](https://github.com/gattia/nsm/issues/3), open since Sept 2025.
 
-### `store_data_in_memory=True` raises on the first item
+### A `None` surface cannot build
 
-`MultiSurfaceSDFSamples.__getitem__` reads `time_` and `size`, bound only in the
-`store_data_in_memory is False` branch of `MultiSurfaceSDFSamples.__getitem__`, so the
-first `__getitem__` raises
-`UnboundLocalError`. `SDFSamples.__getitem__` guards the identical block correctly —
-the two classes disagree about the same option.
+`MultiSurfaceSDFSamples` accepts `None` in a subject's path list — a missing structure,
+the fdfe902 feature — but `get_sample_data_dict` preallocates `data["xyz"]` with
+`sum(n_pts_)` rows per combo while `read_meshes_get_sampled_pts` returns points only for
+the non-None surfaces, so the first buffer write raises `RuntimeError` (expanded-size
+mismatch). The feature has never worked through the dataset class; the downstream
+NaN-column handling (`remove_overlapping_points`, `sdf_pos_neg_idx`) is reachable only by
+direct call.
 
-The apparent workaround, `test_load_times=False`, is not one: it yields items with only
-`{"xyz", "gt_sdf"}` and `train_epoch` reads all four timing keys unconditionally
-(`train_deep_sdf.train_epoch`). **No combination of the two flags both constructs and
-trains.**
-
-*Fix:* [#22](https://github.com/gattia/nsm/issues/22). *Pinned by:*
-`test_dataset_cache.TestConfigurationsThatDoNotRun` (3 tests).
-
-### `p_near_surface=0` crashes inside `point_cloud_utils`
-
-`get_pt_sample_combos` emits a `[0, sigma]` combo and `get_sample_data_dict` calls the
-sampler with it regardless, so asking for no near-surface points raises
-`ValueError: Invalid input point cloud with zero points`. Same for `p_further_from_surface=0`.
-*Fix:* [#23](https://github.com/gattia/nsm/issues/23). *Pinned by:*
-`test_dataset_cache...::test_zero_sampling_probability_must_sample_nothing`.
+*Fix:* [#67](https://github.com/gattia/nsm/issues/67). *Pinned by:*
+`test_dataset_cache.TestEmptySignedSamples::test_a_none_surface_subject_must_build`.
 
 ### `center_pts` and `norm_pts` do not select which normalization happens
 
@@ -178,20 +165,6 @@ the two config keys still read as independent switches and are not.
 that makes `norm_pts` authoritative changes the coordinate frame of every dataset and
 checkpoint ever produced, and needs a migration, not a patch. *Pinned by:*
 `test_dataset_cache.TestPointCenteringAndScaling::test_centering_and_scaling_still_happen_unconditionally`.
-
-### `LOC_SDF_CACHE` is read at import time
-
-It is read inside a **default argument** — `loc_save=os.environ.get("LOC_SDF_CACHE", ...)`
-in both dataset constructors — so it binds once when the module is imported. Setting it
-afterwards has no effect and the caller silently writes to `~/.cache/nsm_sdf_cache`.
-
-The downstream consumer does exactly this: `kneepipeline/steps/run_nsm.py` sets
-`os.environ["LOC_SDF_CACHE"] = ""` *after* importing `reconstruct_mesh` on the line above.
-Harmless there — `reconstruct_mesh` never constructs a dataset — but the line does not do
-what it looks like it does.
-
-*Fix:* [#24](https://github.com/gattia/nsm/issues/24). *Pinned by:*
-`test_dataset_cache.TestCacheLocationDefault`.
 
 ### `Pool` deadlocks after an in-process build
 
@@ -796,3 +769,59 @@ and the sign-pattern enumeration at n=2 agrees with the old test on every patter
 
 No compatibility switch — the old selection is a bookkeeping error with no meaning worth
 preserving. Check out a pre-fix commit if an affected run must be reproduced exactly.
+
+---
+
+## 6. The uniform sampling cube was asymmetric, and the single-mesh sampler clipped its draws
+
+| | |
+|---|---|
+| **Affects** | Uniform ("random") training samples: (a) any run with a nonzero `uniform_pts_buffer` — the parameter exists since Jan 2025 (`48c5f60`) and the shipped `default_config.json` sets `dataset_uniform_pts_buffer: 0.2`; (b) any **single-surface** run with `norm_pts=True` |
+| **Unaffected** | Multi-surface runs at buffer 0 (the arithmetic is exactly zero — the harness baselines did not move); every `norm_pts=False` run, which is what `scale_jointly` requires and **both shipped ShapeMedKnee configs use**; reconstruction unless `get_rand_pts=True` (`kneepipeline` leaves it off) |
+| **Severity** | Silent — the samples were drawn from a slightly different region than configured |
+| **Fixed in** | `sdf-dataset-fixes`, Aug 2026 ([#40](https://github.com/gattia/nsm/issues/40)) |
+
+### What was wrong
+
+The single- and multi-mesh samplers carried private copies of the buffered-cube
+arithmetic, and both rebound `mins` before `maxs` read it:
+
+```python
+mins = mins - uniform_pts_buffer / 2 * (maxs - mins)
+maxs = maxs + uniform_pts_buffer / 2 * (maxs - mins)   # (maxs - mins) has already grown
+```
+
+so a nonzero buffer grew the cube more above than below and moved its centre up. At the
+shipped `0.2` on a normalized object the cube was `[-1.200, +1.220]` per axis instead of
+`±1.200` — the top face 1% of the span too far out.
+
+Separately, only the single-mesh copy clipped its draws — to `±1` originally, widened to
+`±(1 + buffer/2)` by `48c5f60` — under `norm_pts=True`. The clip piled the truncated
+samples onto the cube faces, and it caught the *near-surface* Gaussian draws too:
+measured on a normalized synthetic bone, 0.6% of samples at `sigma=0.01` and 2.9% at
+`sigma=0.03` had a coordinate beyond `±1` and were moved onto the faces. The multi-mesh
+sampler never clipped, so with `uniform_pts_buffer=0.5, norm_pts=True` the two spanned
+`±1.25` (clipped) versus `-1.50/+1.56` (asymmetric).
+
+Both now share one helper, `get_buffered_cube_mins_maxs` — symmetric, centre preserved,
+no clipping in either sampler.
+
+### How to tell whether one of your runs is affected
+
+Check the run's dataset settings: a nonzero `uniform_pts_buffer`
+(`dataset_uniform_pts_buffer` in configs), or a single-surface dataset with
+`norm_pts: true`, built before the fix → the uniform samples (and, under the clip, some
+near-surface samples) came from the old region.
+
+**The cache will not tell you, and it will not heal itself:** `uniform_pts_buffer` is not
+in the cache key ([#19](https://github.com/gattia/nsm/issues/19)), so a post-fix run
+pointed at a pre-fix cache silently reuses the old points. Delete the affected `.npz`
+files to resample.
+
+### Reproducing old behaviour
+
+No compatibility switch — the asymmetry was a bookkeeping error, not a semantic option.
+Check out a pre-fix commit, or reuse the pre-fix cache files (see above), if an affected
+run must be reproduced exactly.
+
+*Pinned by:* `test_dataset_cache.TestUniformSamplingCube`.

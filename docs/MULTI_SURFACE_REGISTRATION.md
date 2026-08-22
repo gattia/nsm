@@ -79,13 +79,18 @@ else:
 
 ### 6. Updated Reference Mesh Loading
 
-The `load_reference_mesh()` method now supports creating reference meshes from multiple surfaces:
+The `load_reference_mesh()` method supports creating reference meshes from multiple
+surfaces. With `reference_mesh=<int>` naming a subject and `mesh_to_scale` a list, that
+subject's registration surfaces are combined into one reference `Mesh` (this path raised
+`UnboundLocalError` until Aug 2026 — [#61](https://github.com/gattia/nsm/issues/61)):
 
 ```python
+subject = self.list_mesh_paths[self.reference_mesh]
 if isinstance(self.mesh_to_scale, (list, tuple)):
-    # When mesh_to_scale is a list, create reference mesh by combining multiple surfaces
-    meshes = [Mesh(self.list_mesh_paths[self.reference_mesh][idx]) for idx in self.mesh_to_scale]
+    meshes = [Mesh(subject[idx]) for idx in self.mesh_to_scale]
     self.reference_mesh = combine_meshes(meshes, list(range(len(meshes))))
+else:
+    self.reference_mesh = Mesh(subject[self.mesh_to_scale])
 ```
 
 ## Usage Examples

@@ -216,6 +216,33 @@ def get_cube_mins_maxs(pts):
     return mins, maxs
 
 
+def get_buffered_cube_mins_maxs(pts, buffer):
+    """
+    The uniform-sampling cube around ``pts``, expanded symmetrically by ``buffer``.
+
+    Each side moves out by ``buffer / 2`` of the cube's span, so the span grows by a
+    factor of ``1 + buffer`` and the centre stays put. The buffer exists so the cube
+    still covers the model's full [-1, 1] domain when normalization leaves the object
+    smaller than it -- e.g. ``scale_jointly`` with a ``joint_scale_buffer`` (48c5f60).
+
+    One helper for both samplers on purpose: the two carried private copies of this
+    arithmetic until Aug 2026 and they diverged -- ``mins`` was defined first, and then
+    used when defining ``maxs``, so a nonzero buffer grew the cube more above than
+    below, and only the single-mesh copy clipped the result. See ``docs/KNOWN_ISSUES.md``
+    § History (#40).
+
+    Args:
+        pts (np.ndarray): (n_pts, 3) array of points
+        buffer (float): Fraction of the span added across each axis (half per side).
+
+    Returns:
+        tuple: (mins, maxs) of the expanded cube, each an np array of shape (3,)
+    """
+    mins, maxs = get_cube_mins_maxs(pts)
+    span = maxs - mins
+    return mins - buffer / 2 * span, maxs + buffer / 2 * span
+
+
 def read_mesh_get_sampled_pts(
     path,
     mean=[0, 0, 0],
@@ -254,6 +281,9 @@ def read_mesh_get_sampled_pts(
         return_point_cloud (bool, optional): Whether to return the point cloud. Defaults to False.
         fix_mesh (bool, optional): Whether to fix the mesh (using meshfix). Defaults to True.
         include_surf_in_pts (bool, optional): Whether to include the surface points in the random points. Defaults to False.
+        uniform_pts_buffer (float, optional): Expansion of the uniform sampling cube, as a
+            fraction of its span; see get_buffered_cube_mins_maxs. Only used when sigma is
+            None. Defaults to 0.0.
         seed (int, optional): Seed for the random draw. Defaults to None (unseeded).
 
     Returns:
@@ -353,27 +383,21 @@ def read_mesh_get_sampled_pts(
                 seed=seed,
             )
         else:
-            mins, maxs = get_cube_mins_maxs(new_pts)
-            mins = mins - uniform_pts_buffer / 2 * (maxs - mins)
-            maxs = maxs + uniform_pts_buffer / 2 * (maxs - mins)
+            mins, maxs = get_buffered_cube_mins_maxs(new_pts, uniform_pts_buffer)
             rand_pts = get_rand_uniform_pts(n_pts, mins=mins, maxs=maxs, seed=seed)
 
         if include_surf_in_pts is True:
             rand_pts = np.concatenate([rand_pts, new_pts], axis=0)
 
-        if norm_pts is True:
-            clip_val = 1.0 + uniform_pts_buffer / 2
-            rand_pts = np.clip(rand_pts, -clip_val, clip_val)
-
         rand_sdf = new_mesh.get_sdf_pts(pts=rand_pts, method="pcu")
 
         results["xyz"] = rand_pts
         results["sdf"] = rand_sdf
-        results["pts_surface"] = [0] * rand_pts.shape[0]
+        results["pts_surface"] = np.zeros(rand_pts.shape[0], dtype=np.int64)
     else:
         results["pts"] = new_pts
         results["sdf"] = np.zeros(new_pts.shape[0])
-        results["pts_surface"] = [0] * new_pts.shape[0]
+        results["pts_surface"] = np.zeros(new_pts.shape[0], dtype=np.int64)
 
     if return_point_cloud is True:
         results["point_cloud"] = new_pts
@@ -587,8 +611,7 @@ def read_meshes_get_sampled_pts(
             if isinstance(mesh_to_scale, (list, tuple)):
                 print(f"Registering to multiple surfaces: {mesh_to_scale}")
                 # Combine multiple meshes for registration
-                combined_mesh = combine_meshes(orig_meshes, mesh_to_scale)
-                registration_mesh = Mesh(combined_mesh)
+                registration_mesh = combine_meshes(orig_meshes, mesh_to_scale)
             else:
                 # Single mesh registration (original behavior)
                 registration_mesh = orig_meshes[mesh_to_scale]
@@ -701,9 +724,7 @@ def read_meshes_get_sampled_pts(
         if None in sigma:
             new_pts_ = [x for x in new_pts if x is not None]
             pts_cube = np.concatenate(new_pts_, axis=0)
-            mins, maxs = get_cube_mins_maxs(pts_cube)
-            mins = mins - uniform_pts_buffer / 2 * (maxs - mins)
-            maxs = maxs + uniform_pts_buffer / 2 * (maxs - mins)
+            mins, maxs = get_buffered_cube_mins_maxs(pts_cube, uniform_pts_buffer)
 
         for new_pts_idx, new_mesh_ in enumerate(new_meshes):
             if new_mesh_ is None:
@@ -727,10 +748,12 @@ def read_meshes_get_sampled_pts(
                     rand_pts_ = np.concatenate([rand_pts_, new_pts_], axis=0)
 
                 rand_pts.append(rand_pts_)
-                pts_surface.append([new_pts_idx] * rand_pts_.shape[0])
+                pts_surface.append(np.full(rand_pts_.shape[0], new_pts_idx, dtype=np.int64))
             else:
                 rand_pts.append(np.zeros((0, 3)))
-                pts_surface.append(np.zeros((0, 3)))
+                # 1-D like its siblings: a (0, 3) entry here makes the concatenate below
+                # raise as soon as any other surface contributed points.
+                pts_surface.append(np.zeros(0, dtype=np.int64))
 
         rand_pts = np.concatenate(rand_pts, axis=0)
         # NOTE: pts_surface indices correspond to original mesh positions in the input list,
@@ -793,7 +816,7 @@ def read_meshes_get_sampled_pts(
         for pts_idx, new_pts_ in enumerate(new_pts):
             if new_pts_ is None:
                 continue
-            pts_surface.append([pts_idx] * new_pts_.shape[0])
+            pts_surface.append(np.full(new_pts_.shape[0], pts_idx, dtype=np.int64))
         pts_surface = np.concatenate(pts_surface, axis=0)
 
         new_pts_filtered = [x for x in new_pts if x is not None]
@@ -833,7 +856,8 @@ class SDFSamples(torch.utils.data.Dataset):
 
     Args:
         list_mesh_paths (list): List of paths to meshes
-        subsample (int, optional): Number of points to subsample. Defaults to None.
+        subsample (int): Number of points each __getitem__ returns. Required, and must be
+            a positive int -- there is no working default (#43).
         n_pts (int, optional): Number of points to sample. Defaults to 500000.
         p_near_surface (float, optional): Proportion of points to sample near the surface. Defaults to 0.4.
         p_further_from_surface (float, optional): Proportion of points to sample further from the surface. Defaults to 0.4.
@@ -843,12 +867,15 @@ class SDFSamples(torch.utils.data.Dataset):
         center_pts (bool, optional): Whether to center the points. Defaults to True.
         norm_pts (bool, optional): Whether to normalize the points. Defaults to False.
         scale_method (str, optional): Method to scale the points. Defaults to 'max_rad'.
-        loc_save (str, optional): Location to save the cached files. Defaults to
-            os.environ['LOC_SDF_CACHE'].
-
-            KNOWN DEFECT, #24: this default is evaluated when the module is IMPORTED,
-            so setting LOC_SDF_CACHE afterwards has no effect and the caller silently
-            writes to ~/.cache/nsm_sdf_cache. Pass loc_save explicitly.
+        scale_jointly (bool, optional): Whether to center and scale all subjects together
+            after loading (norm_and_scale_all_meshes) instead of per subject; requires
+            center_pts=False and norm_pts=False. Defaults to False.
+        joint_scale_buffer (float, optional): Margin added to the joint max radius when
+            scale_jointly is True, so unseen subjects slightly larger than the training
+            set still fit inside the model's domain. Defaults to 0.1.
+        loc_save (str, optional): Directory for the cached files. Defaults to the
+            LOC_SDF_CACHE environment variable, read when the dataset is constructed
+            (an empty value counts as unset), else ~/.cache/nsm_sdf_cache.
         save_cache (bool, optional): Whether to save the cached files. Defaults to True.
         load_cache (bool, optional): Whether to load the cached files. Defaults to True.
         random_seed (int, optional): Seeds the sampling, and is part of the cache key.
@@ -885,9 +912,7 @@ class SDFSamples(torch.utils.data.Dataset):
         scale_method="max_rad",
         scale_jointly=False,
         joint_scale_buffer=0.1,
-        loc_save=os.environ.get(
-            "LOC_SDF_CACHE", os.path.join(os.path.expanduser("~"), ".cache", "nsm_sdf_cache")
-        ),
+        loc_save=None,
         save_cache=True,
         load_cache=True,
         random_seed=None,
@@ -903,6 +928,24 @@ class SDFSamples(torch.utils.data.Dataset):
         test_load_times=True,
         uniform_pts_buffer=0.0,
     ):
+
+        # subsample has no working default: every build path divides by it or
+        # multiplies with it, so None used to crash downstream in
+        # get_samples_per_sign / sdf_pos_neg_idx instead of here (#43).
+        if not isinstance(subsample, (int, np.integer)) or subsample <= 0:
+            raise ValueError(
+                f"subsample must be a positive int -- the number of points each "
+                f"__getitem__ returns -- got {subsample!r}."
+            )
+
+        # Resolved at call time so setting LOC_SDF_CACHE before construction works; it
+        # was frozen into the signature at import time until Aug 2026 (#24). An empty
+        # value counts as unset, so a caller blanking the variable gets the home-cache
+        # default rather than a cache rooted at the working directory.
+        if loc_save is None:
+            loc_save = os.environ.get("LOC_SDF_CACHE") or os.path.join(
+                os.path.expanduser("~"), ".cache", "nsm_sdf_cache"
+            )
 
         # p_near_surface & p_further_from_surface must be >=0, <=1
         # sum of p_near_surface & p_further_from_surface must be <=1
@@ -1294,6 +1337,12 @@ class SDFSamples(torch.utils.data.Dataset):
             content_key = mesh_content_key(loc_mesh) if self.random_seed is not None else None
 
             for idx_, (n_pts_, sigma_) in enumerate(self.pt_sample_combos):
+                # A zero-count combo (p_near_surface=0, p_further_from_surface=0, or the
+                # two summing to 1) samples nothing; passing it through would crash in
+                # point_cloud_utils on an empty point cloud (#23). The seed key stays
+                # idx_, so skipping one combo does not re-seed the others.
+                if n_pts_ == 0:
+                    continue
                 result_ = read_mesh_get_sampled_pts(
                     loc_mesh,
                     mean=[0, 0, 0],
@@ -1321,8 +1370,9 @@ class SDFSamples(torch.utils.data.Dataset):
                 data["gt_sdf"][pts_idx : pts_idx + n_pts_] = torch.from_numpy(sdfs_).float()
                 pts_idx += n_pts_
 
-                if idx_ == 0:
-                    # Convert list of arrays to tensors
+                if "orig_pts" not in data:
+                    # First combo that actually ran -- not necessarily combo 0, which a
+                    # zero count skips. Convert list of arrays to tensors.
                     data["orig_pts"] = [
                         torch.from_numpy(pts).float() for pts in result_["orig_pts"]
                     ]
@@ -1380,6 +1430,15 @@ class SDFSamples(torch.utils.data.Dataset):
         neg_idx = (data["gt_sdf"] < 0).nonzero(as_tuple=True)[0]
         surf_idx = (data["gt_sdf"] == 0).nonzero(as_tuple=True)[0]
 
+        for sign, idx_ in (("positive", pos_idx), ("negative", neg_idx)):
+            if idx_.numel() == 0:
+                # The repeat below would divide by zero (#41), and a mesh whose samples
+                # are all one sign has no interior/exterior to learn from.
+                raise ValueError(
+                    f"The mesh yielded no {sign} SDF samples, so equal positive/negative "
+                    f"batches cannot be drawn from it. Is the mesh degenerate or unclosed?"
+                )
+
         # Repeat +/- indices if either of them does not have enough for a full batch.
         samples_per_sign = int(self.subsample / 2)
         pos_idx = pos_idx.repeat(samples_per_sign // pos_idx.size(0) + 1)
@@ -1423,21 +1482,18 @@ class SDFSamples(torch.utils.data.Dataset):
             pass
         elif isinstance(self.reference_mesh, int):
             if isinstance(self.list_mesh_paths[0], (str, Mesh)):
-                mesh = self.list_mesh_paths[self.reference_mesh]
+                self.reference_mesh = Mesh(self.list_mesh_paths[self.reference_mesh])
             elif isinstance(self.list_mesh_paths[0], (list, tuple)):
-                # Support multi-surface reference mesh creation
+                # Multi-surface subject: the reference is the surface(s) that drive
+                # registration -- combined into one mesh when mesh_to_scale is a list.
+                subject = self.list_mesh_paths[self.reference_mesh]
                 if isinstance(self.mesh_to_scale, (list, tuple)):
-                    # When mesh_to_scale is a list, create reference mesh by combining multiple surfaces
-                    meshes = [
-                        Mesh(self.list_mesh_paths[self.reference_mesh][idx])
-                        for idx in self.mesh_to_scale
-                    ]
+                    meshes = [Mesh(subject[idx]) for idx in self.mesh_to_scale]
                     self.reference_mesh = combine_meshes(meshes, list(range(len(meshes))))
                 else:
-                    mesh = self.list_mesh_paths[self.reference_mesh][self.mesh_to_scale]
+                    self.reference_mesh = Mesh(subject[self.mesh_to_scale])
             else:
                 raise TypeError("provided list_meshes wrong type")
-            self.reference_mesh = Mesh(mesh)
         elif isinstance(self.reference_mesh, str):
             self.reference_mesh = Mesh(self.reference_mesh)
         elif isinstance(self.reference_mesh, list):
@@ -1688,7 +1744,7 @@ class MultiSurfaceSDFSamples(SDFSamples):
     def __init__(
         self,
         list_mesh_paths,
-        subsample=None,
+        subsample,
         n_pts=500000,
         p_near_surface=0.4,
         p_further_from_surface=0.4,
@@ -1699,9 +1755,8 @@ class MultiSurfaceSDFSamples(SDFSamples):
         norm_pts=False,
         scale_method="max_rad",
         scale_jointly=False,
-        loc_save=os.environ.get(
-            "LOC_SDF_CACHE", os.path.join(os.path.expanduser("~"), ".cache", "nsm_sdf_cache")
-        ),
+        joint_scale_buffer=0.1,
+        loc_save=None,
         save_cache=True,
         load_cache=True,
         random_seed=None,
@@ -1754,6 +1809,7 @@ class MultiSurfaceSDFSamples(SDFSamples):
             norm_pts=norm_pts,
             scale_method=scale_method,
             scale_jointly=scale_jointly,
+            joint_scale_buffer=joint_scale_buffer,
             loc_save=loc_save,
             save_cache=save_cache,
             load_cache=load_cache,
@@ -1800,6 +1856,10 @@ class MultiSurfaceSDFSamples(SDFSamples):
             indices = data[name]
             max_idx = 0
             for tensor in indices:
+                if tensor.numel() == 0:
+                    # A missing (None) surface has empty index lists; torch.max
+                    # raises on an empty tensor, and empty is trivially in range.
+                    continue
                 max_idx = torch.max(tensor)
                 if max_idx >= n_pts:
                     return False
@@ -1909,10 +1969,12 @@ class MultiSurfaceSDFSamples(SDFSamples):
 
             content_key = mesh_content_key(loc_meshes) if self.random_seed is not None else None
 
-            # KNOWN DEFECT, #23: a combo with n_pts_ == 0 is passed to the
-            # sampler regardless, so p_near_surface=0 (or p_further_from_surface=0) raises
-            # inside point_cloud_utils rather than sampling nothing.
             for idx_, (n_pts_, sigma_) in enumerate(self.pt_sample_combos):
+                # A combo asked to sample nothing anywhere would crash in
+                # point_cloud_utils on an empty point cloud (#23). The seed key stays
+                # idx_, so skipping one combo does not re-seed the others.
+                if sum(n_pts_) == 0:
+                    continue
                 tic = time.time()
                 result_ = read_meshes_get_sampled_pts(
                     loc_meshes,
@@ -1944,7 +2006,9 @@ class MultiSurfaceSDFSamples(SDFSamples):
                 toc = time.time()
                 print(f"{idx_} - {sigma_}: {toc - tic}s")
 
-                if idx_ == 0:
+                if "orig_pts" not in data:
+                    # First combo that actually ran -- not necessarily combo 0,
+                    # which a zero count skips.
                     data["orig_pts"] = result_["orig_pts"]
                     data["new_pts"] = result_["new_pts"]
 
@@ -2122,16 +2186,30 @@ class MultiSurfaceSDFSamples(SDFSamples):
 
             samples_per_sign = self.samples_per_sign_[mesh_idx]
 
-            # BELOW NEEDS LOGIC TO UNPACK  1/2 pos/neg pts for each mesh
-            # mesh_sdfs = data['gt_sdf'][pts_idx_:pts_idx_ + n_pts_, mesh_idx]
             mesh_sdfs = data["gt_sdf"][:, mesh_idx].clone()
-            pos_idx_ = (mesh_sdfs > 0).nonzero(as_tuple=True)[0]  # + pts_idx_
-            neg_idx_ = (mesh_sdfs < 0).nonzero(as_tuple=True)[0]  # + pts_idx_
-            surf_idx_ = (mesh_sdfs == 0).nonzero(as_tuple=True)[0]  # + pts_idx_
+            pos_idx_ = (mesh_sdfs > 0).nonzero(as_tuple=True)[0]
+            neg_idx_ = (mesh_sdfs < 0).nonzero(as_tuple=True)[0]
+            surf_idx_ = (mesh_sdfs == 0).nonzero(as_tuple=True)[0]
 
-            # Repeat +/- indices if either of them does not have enough for a full batch.
-            pos_idx_ = pos_idx_.repeat(samples_per_sign // pos_idx_.size(0) + 1)
-            neg_idx_ = neg_idx_.repeat(samples_per_sign // neg_idx_.size(0) + 1)
+            # A surface nothing is drawn from may be empty: an all-NaN column is a
+            # missing (None) surface, and a zero subsample share means __getitem__ never
+            # samples it. Its empty index lists are handled -- randperm(0) draws nothing.
+            surface_is_drawn_from = samples_per_sign > 0 and not torch.isnan(mesh_sdfs).all()
+
+            if surface_is_drawn_from:
+                for sign, idx_ in (("positive", pos_idx_), ("negative", neg_idx_)):
+                    if idx_.numel() == 0:
+                        # The repeat below would divide by zero (#41), and a surface
+                        # with no interior samples trains to garbage.
+                        raise ValueError(
+                            f"Surface {mesh_idx} has no {sign} SDF samples, so its "
+                            f"equal positive/negative batch share cannot be drawn. A "
+                            f"surface nested inside another loses every interior point "
+                            f"to remove_overlapping_points."
+                        )
+                # Repeat +/- indices if either does not have enough for a full batch.
+                pos_idx_ = pos_idx_.repeat(samples_per_sign // pos_idx_.size(0) + 1)
+                neg_idx_ = neg_idx_.repeat(samples_per_sign // neg_idx_.size(0) + 1)
 
             pos_idx.append(pos_idx_)
             neg_idx.append(neg_idx_)
@@ -2259,11 +2337,9 @@ class MultiSurfaceSDFSamples(SDFSamples):
 
             toc_whole_load = time.time()
 
-            # KNOWN DEFECT, #22: `time_` and `size` are only bound in the
-            # store_data_in_memory=False branch above, so store_data_in_memory=True raises
-            # UnboundLocalError here. SDFSamples.__getitem__ guards the same block with
-            # `and (self.store_data_in_memory is False)`; these two classes disagree.
-            if self.test_load_times is True:
+            # Same guard as SDFSamples.__getitem__: in-memory items have no disk load to
+            # time, so the timing keys are only emitted when one was measured (#22).
+            if (self.test_load_times is True) and (self.store_data_in_memory is False):
                 data_["time"] = time_
                 data_["size"] = size
                 data_["mb_per_sec"] = size / time_
@@ -2274,18 +2350,17 @@ class MultiSurfaceSDFSamples(SDFSamples):
 
 def combine_meshes(meshes, mesh_indices):
     """
-    Combine multiple meshes into a single mesh using Mesh addition operator.
+    Combine the selected meshes into a single pymskt Mesh.
 
     Args:
         meshes (list): List of Mesh objects
         mesh_indices (list or int): Indices of meshes to combine
 
     Returns:
-        Mesh: Combined mesh object
-
-    Notes:
-        Since Mesh objects support the + operator, we can simply add them together
-        to combine multiple surfaces into a single mesh for registration.
+        Mesh: The single selected mesh unchanged, or -- when two or more are combined --
+        a new Mesh wrapping their union. pymskt's ``+`` operator returns a pyvista
+        ``PolyData``, which has no ``save_mesh``, so the combined result is rewrapped
+        before returning (#61).
     """
     if isinstance(mesh_indices, int):
         return meshes[mesh_indices]
@@ -2300,4 +2375,4 @@ def combine_meshes(meshes, mesh_indices):
         if meshes[idx] is not None:
             combined_mesh = combined_mesh + meshes[idx]
 
-    return combined_mesh
+    return Mesh(combined_mesh)

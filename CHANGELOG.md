@@ -67,6 +67,12 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   unmoved. Delete the arguments from any call; centering and scaling were always
   unconditional and still are.
 
+- **`subsample` is required and validated on both dataset constructors** (#43).
+  `MultiSurfaceSDFSamples` documented `subsample=None` as its default, but `None` could
+  never construct — it crashed in `get_samples_per_sign` on a cold cache and skipped
+  joint normalization on a warm one — so construction now refuses anything but a
+  positive int, by name. No working call changes.
+
 ### Fixed — affects results
 
 - **`get_optimizer` now passes `weight_decay` to `Adam`** (#47). It always passed it to
@@ -87,7 +93,51 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   single-decoder runs — the shipped configuration — are bit-identical before and after
   (regression baselines unmoved). See `docs/KNOWN_ISSUES.md` § History §5.
 
+- **The uniform sampling cube is symmetric, and the single-mesh sampler no longer clips
+  its draws** (#40). Both samplers rebound `mins` before `maxs` read it, so a nonzero
+  `uniform_pts_buffer` grew the cube more above than below (at the shipped `0.2`:
+  `[-1.200, +1.220]` instead of `±1.200` on a normalized object); the single-mesh
+  sampler additionally clipped all random draws — near-surface Gaussians included — to
+  `±(1 + buffer/2)` under `norm_pts=True`. Both now share `get_buffered_cube_mins_maxs`
+  and neither clips. Cached datasets built with a nonzero buffer, or single-surface with
+  `norm_pts=True`, resample differently — **and the cache key does not know** (#19), so
+  delete old `.npz` files to pick up the fix. Multi-surface buffer-0 runs are
+  bit-identical (regression baselines unmoved). Also from #40: `read_mesh_get_sampled_pts`
+  returns `pts_surface` as an int64 array, matching the multi-mesh sampler, instead of a
+  Python list. See `docs/KNOWN_ISSUES.md` § History §6.
+
 ### Fixed
+
+- **`store_data_in_memory=True` constructs, yields items, and trains** (#22).
+  `MultiSurfaceSDFSamples.__getitem__` now guards the load-timing block the way
+  `SDFSamples` always did, and `train_epoch` treats the four timing keys as optional
+  diagnostics instead of reading them unconditionally — so in-memory datasets train, and
+  the keys appear (in batches and in the epoch log) only when a disk load was actually
+  timed.
+
+- **A zero sampling probability samples nothing instead of crashing** (#23).
+  `p_near_surface=0` / `p_further_from_surface=0` produced a zero-count combo that was
+  handed to `point_cloud_utils` anyway; both classes now skip empty combos.
+
+- **`LOC_SDF_CACHE` is read when a dataset is constructed, not when the module is
+  imported** (#24). Setting the variable before construction now works; an empty value
+  counts as unset. Pass `loc_save` explicitly to override either way.
+
+- **A surface with no positive or no negative SDF samples raises a `ValueError` naming
+  the surface** (#41) instead of `ZeroDivisionError` — e.g. one surface nested inside
+  another loses every interior point to overlap removal. A surface nothing draws from (a
+  missing/`None` surface, or one allotted no subsample share) yields empty index lists
+  and is handled.
+
+- **`MultiSurfaceSDFSamples` accepts `joint_scale_buffer`** (#43) and forwards it to
+  joint normalization. It was refused with `TypeError`; the parent's default (0.1)
+  happens to equal the production value, which is why nothing noticed. Not yet in the
+  cache key — that is #19's business (it does not change cached bytes).
+
+- **`reference_mesh=<int>` with multi-surface registration builds** (#61). The path
+  raised `UnboundLocalError`, and `combine_meshes` returned a pyvista `PolyData` (no
+  `save_mesh`) whenever it actually combined meshes; it now keeps its declared `Mesh`
+  return type.
 
 - **`cyclic_anneal_linear` no longer NaNs runs shorter than its cycle count.**
   `floor(n_epochs / n_cycles)` was 0 for `n_epochs < 5`, so `epoch % 0` returned NaN and
