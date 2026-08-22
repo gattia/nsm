@@ -67,13 +67,21 @@ Shipped-config values these dispositions rely on, re-verified against both
 5. **Two of the sixteen genuine Unassigned entries were headed for the discard pile and
    are instead the two best silent-wrong-results bugs of the audit** (drafts 6 and 8).
    The brief's warning that grouping loses singleton bugs was correct.
+6. **Execution verifies mechanisms, not intent.** Maintainer review of the drafts
+   caught one verdict that flips on design intent (draft 13: the variational doubling
+   is the standard VAE mean+logvar parameterisation, and KLD replaces the norm bound —
+   deliberate, undocumented). The drafts where intent could likewise change the fix —
+   not the existence of the finding — now carry an explicit intent-check flag
+   (drafts 11 and 18).
 
 ## 0.3 Issue drafts — file only after approval
 
-Twenty-three drafts. On the tracker they get no tiers — CLAUDE.md orders issues by
-`file:function`; the two-tier split below exists only to make this review faster.
-Every draft is self-contained (this register is deleted when the drafts land, so the
-evidence a closer needs is in the draft, not here).
+Twenty-two live drafts (draft 13 was withdrawn in maintainer review — kept in place
+below as the worked example of the intent-blind failure mode). On the tracker they get
+no tiers — CLAUDE.md orders issues by `file:function`; the two-tier split below exists
+only to make this review faster. Every draft is self-contained (this register is
+deleted when the drafts land, so the evidence a closer needs is in the draft, not
+here).
 
 ### Tier 1 — silent wrong results, or blocks a run someone would launch
 
@@ -170,6 +178,12 @@ xz geometry), so training proceeds and converges to a silently degraded model.
 onto it; both shipped configs set `true`, so no shipped model is affected — this hits
 anyone exploring the documented option. (Ride-along: the assert message above the
 sizing branch says "if sum_sdf_features is True" while guarding the False branch.)
+**Impact upgrade (maintainer, 2026-08-22):** the maintainer's own past experiments ran
+this option and concluded concatenation never improved results — those runs silently
+trained one plane of three, so that conclusion is untrustworthy and the comparison is
+queued for a re-run after the fix (`NSM_TRAINING_IDEAS.md`). The fix therefore needs a
+`KNOWN_ISSUES.md` § History entry ("affected: any run with
+`sum_conv_output_features: false`").
 **Fixed means:** the flag either produces three correctly-sized plane slices or is
 rejected at construction; pinned by a forward-shape test over both flag values.
 
@@ -212,9 +226,15 @@ that cannot work, folded here rather than filed separately:
 for any latent outside `[min,max]` — the state at initialisation — so the option is
 broken for its whole intended use; `Regress.add_latent` is handed the whole result dict
 (`TypeError` for every user who enables the latent-to-factor validator).
-**Fixed means:** `default_config.json` defines every key the trainer reads
-unconditionally, pinned by a test that instantiates the trainer from the shipped file;
-the three option values either work or raise with a named message.
+**Fixed means (decided by maintainer, 2026-08-22):** regenerate `default_config.json`
+**from the ShapeMedKnee `647` config** — the values that actually trained the shipped
+models — updated to the current contract: `Target`-annotated `LearningRateSchedule`
+entries, the `emd` key dropped (decision D1), and every key the trainer reads
+unconditionally present. Pinned by the existing generator-sync test plus a new test
+that instantiates the trainer from the shipped file. (This is the plan's §8.1 item
+"a default config per model type, derived from the ShapeMedKnee configs" — this draft
+delivers the first one.) The three option values either work or raise with a named
+message.
 
 ---
 **Draft 10 — `train_deep_sdf`: `resume_epoch == 1` silently skips epoch 1 without
@@ -233,7 +253,10 @@ Called on every checkpoint, no-ops after the first: a resumed or re-configured r
 `model_params_config.json` — the file every downstream consumer reads to rebuild the
 model — keeps the first run's hyperparameters and mesh list (verified: second call with
 `lr=0.9999` leaves `lr=0.001` on disk, no log). `filter_non_jsonable` drops keys with
-no log. **Fixed means:** overwrite or epoch-stamp, and log every key removed.
+no log. **Intent check for the maintainer:** write-once *could* be deliberate
+provenance protection — if so, the fix is to log the refusal and the dropped keys
+loudly rather than to overwrite. **Fixed means:** overwrite or epoch-stamp (or, if
+write-once is intended, warn loudly on divergence), and log every key removed.
 
 ---
 **Draft 12 — `train_deep_sdf_multi_head`: repair checklist (SCOPE §2.1: supported,
@@ -252,16 +275,23 @@ shipped default on cpu and cuda, all decoders receive gradients, and a saved
 multi-head run can be loaded.
 
 ---
-**Draft 13 — `utils.get_latent_vecs`: `variational: true` silently doubles
-`latent_size` and ignores `latent_bound`**
+**Draft 13 — WITHDRAWN (maintainer review, 2026-08-22): the variational behaviour is
+deliberate, not a defect**
 
-Verified: `latent_size=8, latent_bound=1.0, variational=True` → embedding dim 16,
-`max_norm=1000`; `variational=False` → dim 8, `max_norm=1.0`. A variational user gets
-an effectively unbounded latent, and the `latent_size` recorded in
-`model_params_config.json` is half the real embedding width. Pulled out of #20 (the
-parameter *is* read on one branch, so #20's criterion cannot catch it).
-**Fixed means:** honour `latent_bound` or reject the combination; record the effective
-latent size.
+The mechanism was verified but the intent was misread, in both halves. The doubling is
+the standard VAE parameterisation — the embedding stores mean and log-variance, so its
+width is `2 × latent_size` while the decoder's latent is still `latent_size` (the
+recorded value is therefore *correct* for consumers). And the bound is not "ignored":
+when `variational` is on, training swaps the regularizer to KLD
+(`train_deep_sdf.train_epoch`), which replaces the hard `max_norm` — the hardcoded
+1000 is "effectively unbounded" by design. What is actually missing is documentation:
+`get_latent_vecs` has no docstring, and nothing states that `latent_bound` is
+superseded under `variational`. **Routed to the Phase-2 prose pass**, not the tracker.
+
+Kept in place, numbering preserved, because this is the register's one confirmed case
+of the intent-blind failure mode: a mechanism verified by execution whose verdict flips
+on design intent only the maintainer holds. It is why every draft here waits for this
+review, and why drafts 11 and 18 now carry explicit intent-check flags.
 
 ---
 **Draft 14 — `train_deep_sdf`: `mesh_names` is written to `model_params_config.json` as
@@ -290,6 +320,10 @@ unconditionally. The file is a vendored copy of `fwilliams/scalable-pytorch-sink
 validation lines + a test on unequal-size meshes. **Delete** = remove `calc_emd`, the
 vendored file, and the config key, with a deprecation note. Either way the shipped
 default stops advertising a dead option.
+**DECIDED (maintainer, 2026-08-22): delete.** Two supporting facts: both ShapeMedKnee
+configs set `emd: false`, so even validation never attempted it on a real run (only
+`default_config.json` says `true`); and EMD appears nowhere in the training-loss path
+in this repo's history — if it was ever used as a loss, it was not through this code.
 
 ---
 **Draft 16 — unhandled inputs surface as `UnboundLocalError`/`NameError`/invented data
@@ -333,8 +367,12 @@ vs 0.2179 on identical geometry), documented at the two lower layers and absent 
 construction sites and `'layer'` at the others while both shipped models use
 `'layer'`; `roundtrip_distance(A,B)` equals `roundtrip_distance(B,A)` exactly while
 its adjacent metric is sign-flipped under the same swap — a swap is invisible.
-**Fixed means:** one default per knob, sourced once; the metric pair keyword-only or
-signature-aligned so a swap is a `TypeError`.
+**Intent check for the maintainer:** each default divergence *could* encode a
+deliberate per-layer choice (e.g. squared chamfer at the top layer); the defect that
+survives either way is that the divergence is undocumented and the knob shares one
+name. Which value wins is the maintainer's call per knob. **Fixed means:** one default
+per knob, sourced once (or the divergence documented as deliberate at both ends); the
+metric pair keyword-only or signature-aligned so a swap is a `TypeError`.
 
 ---
 **Draft 19 — face arrays are reshaped without validation; a quad or VTK-style array
@@ -357,9 +395,14 @@ while every sibling has one — 64 lines per `create_mesh_adaptive` call at the 
 own defaults; timing prints on the sampler path (five sites) and unconditional prints
 in `reconstruct_mesh`/`get_mean_errors` survive `verbose=False`. The four worst
 one-liners are already deleted on `quick-wins`; this issue is the systematic pass.
-**Fixed means:** every print on the reconstruction and sampling paths is gated on
-`verbose` or routed through the module logger; a capsys test pins silence at
-`verbose=False` for the production entry points.
+**Fixed means (direction decided by maintainer, 2026-08-22): loggers, not `verbose`
+flags.** Every print on the reconstruction and sampling paths moves to a module logger
+(`logging.getLogger(__name__)`) so output is controlled centrally; existing `verbose`
+parameters become sugar over the log level or are removed. Part of the same fix:
+`reconstruct/main.py` calls `logging.basicConfig` at import time — a library must not
+configure the root logger, so that call goes (it is one of ARCHITECTURE §4's
+import-time side effects). A capsys test pins stdout silence at defaults for the
+production entry points.
 
 ---
 **Draft 21 — `train_deep_sdf` logging: latent-norm stats are assigned, not accumulated;
@@ -398,24 +441,28 @@ advertises the path as working. **Fixed means:** the path returns a usable combi
 pymskt Mesh, which requires `combine_meshes` to keep its declared type; pinned by a
 test exercising `reference_mesh=int` with two meshes.
 
-## 0.4 Decision items — a call, not a yes/no
+## 0.4 Decision items — resolved by the maintainer 2026-08-22 except D4
 
-- **D1 (draft 15): EMD — repair or delete.** Recommendation: **delete**. It has never
-  worked from any caller, nothing downstream consumes it, and the vendored sinkhorn file
-  is maintenance surface; repair is a day of work for a metric nobody has ever seen.
-- **D2 (draft 5b): `remove_overlapping_points`.** The count-based fix changes what
-  points a dataset keeps for 3+ surfaces. Recommendation: fix it *with* the class-5
-  indexing fix, one History entry covering both, since 4-surface training is the
-  documented direction; do not fix as a drive-by.
-- **D3 (draft 8): `weight_decay` under Adam.** Honour (regenerate harness baselines +
-  History entry) or reject Adam+weight_decay with an error. Recommendation: **honour** —
-  the argument is documented, forwarded by the trainer, and unlike the two
-  accepted-and-ignored traps that were deleted (`padding`, `center`/`scale`), honouring
-  it makes the config mean what it says for future runs while no shipped run is
-  affected.
-- **D4 (group 14): latent-gradient N-amplification.** Recommendation: `ARCHITECTURE.md`
-  trap only (committed on this branch), no issue — the convention is shared by both
-  decoder interfaces and "fixing" one alone would rescale every training run.
+- **D1 (draft 15): EMD — DECIDED: delete.** Never worked from any caller, nothing
+  downstream consumes it, the maintainer does not use it, and the vendored sinkhorn
+  file is maintenance surface.
+- **D2 (draft 5b): `remove_overlapping_points` — DECIDED: fix it**, together with the
+  class-5 indexing fix, one `KNOWN_ISSUES.md` § History entry covering both. Changes
+  what points a dataset keeps for 3+ surfaces; not a drive-by.
+- **D3 (draft 8): `weight_decay` under Adam — DECIDED: honour it.** Pass the argument;
+  regenerate the harness baselines (the moved baselines are the proof it changes
+  numerics) and add the History entry. No shipped run affected (both use AdamW).
+- **D4 (group 14): latent-gradient N-amplification — recommendation stands, awaiting
+  the maintainer's confirm after a plain-language explanation.** In one paragraph: when
+  a latent is optimized during reconstruction, the gradient it receives from the data
+  term is *summed* over the N query points rather than averaged, so doubling N doubles
+  that gradient; the latent-regularization term does not scale with N. Both decoder
+  interfaces (`UniqueConsecutive` and `FastUnique`) do this identically and always
+  have, so it is a convention, not a regression, and with `l2reg_recon: false` (both
+  shipped configs) the imbalance multiplies a term that is zero — no run is affected
+  today. "Fixing" it would rescale every training and reconstruction run, which is why
+  the recommendation is to document it as a trap (done, ARCHITECTURE §6) and not file
+  an issue.
 
 ## 0.5 Non-issue dispositions
 
@@ -433,9 +480,11 @@ test exercising `reference_mesh=int` with two meshes.
   with the multi_head History sentence and the `ARCHITECTURE.md` latent-gradient trap.
 - **§6 deletions**: accepted. The refuted-entry evidence stays until this file goes.
 - **The 45 duplicated Unassigned entries** resolve with their groups. The 16 genuine
-  ones: drafts 3, 6, 10, 12 (×4 sites + `save_model` naming), 13, 14, 22; #35 fold;
-  SCOPE dead-symbol ruling (×2); `KNOWN_ISSUES` F401 entry (already on this branch,
-  covers the unused-import instance).
+  ones: drafts 3, 6, 10, 12 (×4 sites + `save_model` naming), 14, 22; the withdrawn
+  draft 13 → Phase-2 prose (document `get_latent_vecs`'s variational contract:
+  mean+logvar doubling, KLD supersedes `latent_bound`); #35 fold; SCOPE dead-symbol
+  ruling (×2); `KNOWN_ISSUES` F401 entry (already on this branch, covers the
+  unused-import instance).
 
 ## 0.6 Delete-when, updated
 
