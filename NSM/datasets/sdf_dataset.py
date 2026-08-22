@@ -226,9 +226,10 @@ def get_buffered_cube_mins_maxs(pts, buffer):
     smaller than it -- e.g. ``scale_jointly`` with a ``joint_scale_buffer`` (48c5f60).
 
     One helper for both samplers on purpose: the two carried private copies of this
-    arithmetic until Aug 2026 and they diverged -- ``mins`` was rebound before ``maxs``
-    read it, so a nonzero buffer grew the cube more above than below, and only the
-    single-mesh copy clipped the result. See ``docs/KNOWN_ISSUES.md`` § History (#40).
+    arithmetic until Aug 2026 and they diverged -- ``mins`` was defined first, and then
+    used when defining ``maxs``, so a nonzero buffer grew the cube more above than
+    below, and only the single-mesh copy clipped the result. See ``docs/KNOWN_ISSUES.md``
+    § History (#40).
 
     Args:
         pts (np.ndarray): (n_pts, 3) array of points

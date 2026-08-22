@@ -6,12 +6,19 @@
 
 **Updated:** 2026-08-22 · **Status:** open
 
-- **Next:** back to code, `sdf_dataset.py`: its issues in file:function order (#40,
-  #41, #43, #61, plus #22/#23/#24), its semantic docstring pass, then its
-  decomposition — fixing before splitting, deliberately. Still open from #48: the
-  `barrier` norm-penalty NaN and `Regress.add_latent`. (Both document passes are done
-  and the audit register is deleted — see Done.)
+- **Next:** `sdf_dataset.py`'s **semantic docstring pass** (its file:function fixes are
+  done — see Done), then its decomposition (§8). Still open from #48: the `barrier`
+  norm-penalty NaN and `Regress.add_latent`. (Both document passes are done and the
+  audit register is deleted — see Done.)
 - **Blocked on:** nothing.
+- **Context for whoever picks this up:** PR #68 carried one commit per concern, so
+  `git log NSM/datasets/sdf_dataset.py` explains each fix. Decisions of record are in
+  the PR body ("Of note"): the single-mesh clip was removed, not copied; the timing keys
+  are optional diagnostics, not batch contract; `subsample=None` is refused, not
+  resurrected; `joint_scale_buffer` deliberately stays out of the cache key until #19.
+  The one results-affecting change is `docs/KNOWN_ISSUES.md` § History 6 (sampling cube),
+  including the trap that pre-fix caches keep serving old points because the buffer is
+  not in the cache key.
 - **Deliberately deferred:** #19 (cache key, 6 xfails) and #27 (checkpoint aliasing). Both
   force downstream regeneration or migration, so they land together as one release rather
   than making consumers migrate twice. This is the argument that grouped #19 in the first
@@ -53,6 +60,14 @@
     from its § 0.3: 1→#40, 2→#41, 3→#42, 4→#43, 5→#44, 6→#45, 7→#46, 8→#47, 9→#48,
     10→#49, 11→#50, 12→#51, 14→#52, 15→#53, 16→#54, 17→#55, 18→#56, 19→#57, 20→#58,
     21→#59, 22→#60, 23→#61 (13 withdrawn — the variational behaviour is deliberate)
+  - `sdf_dataset.py` file:function fixes, maintainer-reviewed 2026-08-22: #40 (one
+    buffered-cube helper, symmetric and unclipped — History §6), #41 (empty pos/neg
+    raises by name; unused surfaces handled), #43 (`subsample` validated,
+    `joint_scale_buffer` accepted), #61 (integer-reference registration path;
+    `combine_meshes` keeps its Mesh contract), #22 (in-memory datasets train; timing
+    keys optional), #23 (zero-count combos skipped), #24 (`LOC_SDF_CACHE` at
+    construction) — one commit per concern, all closed by PR #68. Also filed and
+    pinned strict-xfail: #67 (the None-surface path has never built end to end)
 - **Surprises:**
   - **"Fixed seed" was not available.** NSM called no seeding function anywhere, and the
     near-surface sampler could not be seeded by any caller. Closed via pymskt 0.1.21 plus
@@ -93,6 +108,17 @@
     A downstream on positional entries cannot dodge the migration by pinning an older tag.
   - **Something in the suite resets the locale to ASCII.** A bare `read_text()` passes in
     isolation and raises `UnicodeDecodeError` under the full suite; cost 27 failures to find.
+  - **#41's None-surface trigger cannot reach `sdf_pos_neg_idx` end to end.** A `None`
+    surface dies earlier, in `MultiSurfaceSDFSamples.get_sample_data_dict`: the buffer is
+    preallocated `sum(n_pts_)` rows but the sampler returns only the non-None surfaces'
+    points. The fdfe902 feature has therefore never worked through the dataset class;
+    filed as #67, pinned strict-xfail, and the NaN-column handling is tested by direct
+    method call until it is fixed.
+  - **The shipped default config carries `dataset_uniform_pts_buffer: 0.2`**, so #40's
+    asymmetric-cube bug affected real training data, not just a dormant parameter — it
+    became History §6 rather than close-by-deletion. And because the buffer is absent
+    from the cache key (#19), the fix alone does not resample: pre-fix `.npz` caches
+    keep serving the old points until deleted.
 
 ---
 
