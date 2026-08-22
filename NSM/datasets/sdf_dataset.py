@@ -281,7 +281,8 @@ def read_mesh_get_sampled_pts(
         get_random (bool, optional): Sample random points around the surface (True), or
             return the surface vertices themselves with SDF 0 (False). Defaults to True.
         register_to_mean_first (bool, optional): Similarity-register the mesh to
-            ``mean_mesh`` before any normalization. Defaults to False.
+            ``mean_mesh`` before any normalization -- rigid + uniform scale, so the
+            mesh comes out at ``mean_mesh``'s size. Defaults to False.
         mean_mesh (vtkPolyData or mskt.mesh.Mesh, optional): Mean mesh to register to. Defaults to None.
         return_point_cloud (bool, optional): Also store the normalized surface points
             under ``"point_cloud"``. Defaults to False.
@@ -557,7 +558,8 @@ def read_meshes_get_sampled_pts(
         get_random (bool, optional): Sample random points around the surfaces (True), or
             use the surface vertices themselves as the points (False). Defaults to True.
         register_to_mean_first (bool, optional): Similarity-register to ``mean_mesh``
-            before any normalization. Defaults to False.
+            before any normalization -- rigid + uniform scale, so the surfaces come out
+            at ``mean_mesh``'s size. Defaults to False.
         mean_mesh (vtkPolyData or mskt.mesh.Mesh, optional): Mean mesh to register to. Defaults to None.
         fix_mesh (bool, optional): Whether to fix meshes (using meshfix). Defaults to True.
         include_surf_in_pts (bool, optional): Append each surface's vertices to its
@@ -961,7 +963,10 @@ class SDFSamples(torch.utils.data.Dataset):
         reference_mesh (Mesh, str, int or list, optional): What every subject is
             similarity-registered to before sampling; None skips registration. Accepts a
             loaded Mesh, a path, an index into list_mesh_paths, or a list of paths --
-            see load_reference_mesh for how each resolves. Defaults to None.
+            see load_reference_mesh for how each resolves. Similarity = rigid + uniform
+            scale, so each subject comes out at the reference's size: between-subject
+            size does not survive registration, under scale_jointly or otherwise.
+            Defaults to None.
         verbose (bool, optional): Whether to print verbose output. Defaults to False.
         equal_pos_neg (bool, optional): Draw half of every batch from positive-SDF
             samples and half from negative, instead of uniformly. Defaults to True.

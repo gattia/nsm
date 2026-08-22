@@ -134,36 +134,6 @@ coordinate space, with a migration guard of the same shape as History §1's. Wri
 `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §8. Tracked as
 [#3](https://github.com/gattia/nsm/issues/3), open since Sept 2025.
 
-### Similarity registration erases each subject's true size before joint scaling
-
-Both samplers hardcode `reg_mode="similarity"` when registering to a `reference_mesh`,
-so every subject is scaled to the reference's size before any sampling happens: a
-radius-1.3 sphere registered to a radius-1.0 reference comes out at radius 1.0000, ICP
-transform scale factor 0.7692 = 1/1.3 (verified 2026-08-22 with the exact
-`rigidly_register` call `read_meshes_get_sampled_pts` makes). There is no rigid-only
-option. `scale_jointly=True` then computes its shared frame from the *registered*
-meshes, so it preserves only the size variation registration left — none.
-
-Per-subject normalization (`center_pts`/`norm_pts`) erases size by construction
-(`max_rad` scaling to the unit sphere). So between-subject size reaches the model only
-when **no** `reference_mesh` is set *and* `scale_jointly=True`. Bone size carries
-disease signal, so a model trained on similarity-registered inputs cannot represent it —
-the maintainer's assessment (2026-08-22) is that removing scale entirely may be wrong.
-
-**How to tell whether a run is affected:** registration only runs when the dataset was
-constructed with `reference_mesh` set. If it was, subjects trained at the reference's
-size; if not, `scale_jointly` preserved true sizes (per-subject normalization erased
-them regardless).
-
-*Planned fix direction:* keep similarity registration for anatomical correspondence,
-then undo the transform's scale component so each subject sits rigidly aligned at its
-true size, and let `scale_jointly`'s shared max-radius-plus-buffer scale map everyone
-into the unit domain while preserving between-subject ratios. The reconstruction path
-(`reconstruct/main.py`, `register_similarity`) makes the same registration and must
-move in step, and the change alters the coordinate frame of any run that used a
-reference mesh — it needs a migration guard of the same shape as History §1's, and a
-History entry when it lands. Not yet filed as an issue.
-
 ### A `None` surface cannot build
 
 `MultiSurfaceSDFSamples` accepts `None` in a subject's path list — a missing structure,

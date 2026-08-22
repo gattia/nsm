@@ -7,27 +7,16 @@
 **Updated:** 2026-08-22 · **Status:** open
 
 - **Next:** (1) merge the `sdf-dataset-docstrings` PR (commits reviewed 2026-08-22,
-  maintainer approved; #69 filed with approved text and cited by the pin). (2) Decide
-  whether the scale-preservation entry (`KNOWN_ISSUES` § Open, "Similarity registration
-  erases each subject's true size") also gets a tracker issue — draft below awaits
-  approval. (3) Then `sdf_dataset.py` decomposition (§8), characterization tests first
-  (§7.3). Still open from #48: the `barrier` norm-penalty NaN and `Regress.add_latent`.
-- **Issue draft awaiting approval** (scale preservation; do not file without the
-  maintainer's OK):
-  - **Title:** Registration removes subject scale; preserve true size under
-    `scale_jointly`
-  - **Body:** Both samplers hardcode `reg_mode="similarity"`, so any dataset built
-    with `reference_mesh` scales every subject to the reference's size before
-    sampling — measured: a radius-1.3 sphere registered to a radius-1.0 reference
-    lands at radius 1.0000 (ICP scale factor 0.7692 = 1/1.3). `scale_jointly` then
-    preserves only what registration left. Bone size carries disease signal
-    (maintainer assessment, 2026-08-22). **Fixed means:** registration still uses
-    similarity for correspondence, but the transform's scale component is undone
-    before sampling, so subjects sit rigidly aligned at true size and the joint
-    max-radius-plus-buffer frame preserves between-subject ratios; the reconstruction
-    path (`reconstruct/main.py` `register_similarity`) moves in step; a migration
-    guard of History §1's shape covers reference-mesh runs, plus a History entry.
-    Full statement: `docs/KNOWN_ISSUES.md` § Open.
+  maintainer approved; #69 filed with approved text and cited by the pin). (2) Then
+  `sdf_dataset.py` decomposition (§8), characterization tests first (§7.3). Still open
+  from #48: the `barrier` norm-penalty NaN and `Regress.add_latent`.
+- **Scale preservation is an idea, not a defect** (maintainer, 2026-08-22): similarity
+  registration deliberately matching subjects to the reference's size is a valid
+  design; keeping true size is an *additional mode* worth having. It therefore lives
+  as `NSM_TRAINING_IDEAS.md` Idea 6 (with the measured evidence and design sketch),
+  not in `KNOWN_ISSUES.md` and not on the tracker; the durable fact — similarity =
+  rigid + uniform scale, size does not survive registration — is stated in the
+  `reference_mesh` / `register_to_mean_first` docstrings.
 - **Blocked on:** nothing.
 - **Context for whoever picks this up:** PR #68 carried one commit per concern, so
   `git log NSM/datasets/sdf_dataset.py` explains each fix. Decisions of record are in
@@ -94,9 +83,10 @@
     contracts, cache-key omissions), false text corrected; the in-memory
     joint-scaling defect pinned strict-xfail, filed as #69 with approved text and a
     `KNOWN_ISSUES` § Open entry; `_harness.py`'s stale import-time `LOC_SDF_CACHE`
-    claim fixed (stale since #24); the scale-erasure finding recorded in
-    `KNOWN_ISSUES` § Open with its measured evidence and fix direction (maintainer
-    call: scale carries disease signal)
+    claim fixed (stale since #24); the scale-erasure fact measured (ICP scale factor
+    exactly 1/1.3 on a 1.3-vs-1.0 sphere pair) and recorded as `NSM_TRAINING_IDEAS.md`
+    Idea 6 plus docstring clauses — initially misfiled as a KNOWN_ISSUES entry, moved
+    on the maintainer's call that it is a design alternative, not a defect
 - **Surprises:**
   - **"Fixed seed" was not available.** NSM called no seeding function anywhere, and the
     near-surface sampler could not be seeded by any caller. Closed via pymskt 0.1.21 plus
