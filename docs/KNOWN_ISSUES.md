@@ -179,7 +179,7 @@ by `1 + buffer`, the in-memory branch does not — so a fix for the `KeyError` a
 quietly put in-memory runs in a different coordinate frame than disk-backed ones. The pin
 asserts the buffered domain and `raises=KeyError`, forcing both halves to land together.
 
-*Fix:* #TBD (issue drafted, awaiting maintainer approval). *Pinned by:*
+*Fix:* [#69](https://github.com/gattia/nsm/issues/69). *Pinned by:*
 `test_dataset_cache.TestScaleJointlyInMemory::test_an_in_memory_dataset_lands_inside_the_buffered_domain`.
 
 ### `Pool` deadlocks after an in-process build

@@ -744,7 +744,7 @@ class TestScaleJointlyInMemory:
     @pytest.mark.xfail(
         strict=True,
         raises=KeyError,
-        reason="#TBD: norm_and_scale_all_meshes' in-memory branch reads .npz-layout keys",
+        reason="#69: norm_and_scale_all_meshes' in-memory branch reads .npz-layout keys",
     )
     def test_an_in_memory_dataset_lands_inside_the_buffered_domain(self, meshes, tmp_path_factory):
         """
