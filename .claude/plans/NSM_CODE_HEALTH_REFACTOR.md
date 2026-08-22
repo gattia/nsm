@@ -6,10 +6,14 @@
 
 **Updated:** 2026-08-22 · **Status:** open
 
-- **Next:** (1) merge the `sdf-dataset-docstrings` PR (commits reviewed 2026-08-22,
-  maintainer approved; #69 filed with approved text and cited by the pin). (2) Then
-  `sdf_dataset.py` decomposition (§8), characterization tests first (§7.3). Still open
-  from #48: the `barrier` norm-penalty NaN and `Regress.add_latent`.
+- **Next:** `sdf_dataset.py` decomposition (§8). Per § Plans it opens with a plan
+  statement before any code — permanent vs transitional split, size budget,
+  verification per claim — and per §7.3 the characterization tests come before any
+  extraction. `NSM/datasets/utils.py` is the 2-line stub waiting to receive the
+  pieces. Still open from #48: the `barrier` norm-penalty NaN and
+  `Regress.add_latent`. Also open here: #69 (in-memory joint scaling, pinned
+  strict-xfail) — a natural ride-along when decomposition touches
+  `norm_and_scale_all_meshes`.
 - **Scale preservation is an idea, not a defect** (maintainer, 2026-08-22): similarity
   registration deliberately matching subjects to the reference's size is a valid
   design; keeping true size is an *additional mode* worth having. It therefore lives
@@ -75,8 +79,8 @@
     keys optional), #23 (zero-count combos skipped), #24 (`LOC_SDF_CACHE` at
     construction) — one commit per concern, all closed by PR #68. Also filed and
     pinned strict-xfail: #67 (the None-surface path has never built end to end)
-  - `sdf_dataset.py` semantic docstring pass, branch `sdf-dataset-docstrings`
-    (commits maintainer-reviewed 2026-08-22): `mean` deleted from both samplers —
+  - `sdf_dataset.py` semantic docstring pass — landed in PR #70, merged 2026-08-22:
+    `mean` deleted from both samplers —
     the file's only accepted-and-never-read parameter left, by AST scan (#20 instance;
     CHANGELOG entry); every public function/method documented, silent conventions
     written down ("pts"/"xyz" key asymmetry, npz vs in-memory spelling, batch
