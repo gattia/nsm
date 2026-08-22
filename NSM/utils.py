@@ -1,15 +1,15 @@
 import json
 import math
 import os
+import warnings
 
 import torch
 
 try:
     import schedulefree
 except ImportError:
-    print("schedulefree not found, skipping import")
+    warnings.warn("schedulefree not found, skipping import")
     schedulefree = None
-import warnings
 
 # Human-readable labels for optimizer param groups. These are for logs and debugging
 # only -- nothing dispatches on them. Scheduling is driven by the group's "target"

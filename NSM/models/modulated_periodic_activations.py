@@ -242,7 +242,6 @@ class ImplicitDecoder(nn.Module):
         latent = input_[:, :-3]
 
         if self.mod_network is None:
-            print(xyz.shape)
             b, *spatial_dims, c = xyz.shape
             latent = latent.view(b, *((1,) * len(spatial_dims)), -1).repeat(1, *spatial_dims, 1)
             out = self.net(torch.cat([latent, xyz], dim=-1))

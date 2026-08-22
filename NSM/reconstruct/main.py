@@ -173,7 +173,7 @@ def reconstruct_latent_sdf_gt_type_check(sdf_gt, verbose=False):
         sdf_gt = [sdf_gt]
     elif type(sdf_gt) in (list, tuple):
         pass
-    elif type(sdf_gt) in (str):
+    elif type(sdf_gt) in (str,):
         raise Exception(
             "Must provided xyz/sdf from mesh - resconstruct latent will not load mesh"
             + "from file. Try reconstruct_mesh instead."
@@ -767,7 +767,7 @@ def reconstruct_latent(
                         else float(norm_penalty_loss_)
                     )
                     print(f"\tNorm penalty loss: {norm_penalty_val:.6f}")
-                print("\tLatent norm: ", latent.norm)
+                print("\tLatent norm: ", latent.norm().item())
 
         # Log to wandb as appropriate
         if (log_wandb is True) and (step % log_wandb_step == 0):
@@ -999,7 +999,7 @@ def reconstruct_mesh(
                     result[f"assd_{idx}"] = np.nan
             if calc_emd:
                 for idx in range(sum(objects_per_decoder)):
-                    result["emd_{idx}"] = np.nan
+                    result[f"emd_{idx}"] = np.nan
             if return_latent:
                 result["latent"] = mean_latent
             return result

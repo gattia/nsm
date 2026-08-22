@@ -308,7 +308,7 @@ instance" asks for. The LR bug's class is the largest group.
 | **Cache key omits a parameter that changes cached content** | 4 | `mesh_to_scale`, `uniform_pts_buffer`, `subsample` are all absent from `get_hash_params`. |
 | **Import-time side effect** | 10 | §4 above. |
 | **Constructed and discarded / leaked loop variable** | 3 | `train_deep_sdf_multi_head.train_deep_sdf` (only the last decoder trains), `read_meshes_get_sampled_pts`, `VAEDecoder.__init__` (the activation is built and never appended — the VAE decoder has no pointwise nonlinearity; see §7.1). |
-| **Constructible-but-uncallable configuration** | 5 | `Decoder(activation='linear')`, `Decoder(norm_layers=...)`, `progressive_add_depth=True`, `TwoStageDecoder()` with its own defaults, `refine_mesh.get_target_cells()` with its own defaults. Each builds fine and raises on first use. |
+| **Constructible-but-uncallable configuration** | 5 | `Decoder(activation='linear')`, `progressive_add_depth=True`, `refine_mesh.get_target_cells()` with its own defaults — each builds fine and raises on first use. Two entries deviate, verified by execution: `TwoStageDecoder()` with its own defaults raises in `__init__` (tuple + list concat), so it never builds; and `Decoder(norm_layers=...)` builds *and forwards without error* under the shipped contiguous default with weight-norm on (the norm layers are silently ignored) — it raises on first use only for a norm set not starting at layer 0 with weight-norm off. |
 
 **71 of the 216 are landmines** — wrong behaviour that raises nothing and returns a
 plausible number. This is the empirical argument for the plan's §7.1 ordering: a test that

@@ -743,9 +743,6 @@ def read_meshes_get_sampled_pts(
                 rand_sdf.append(None)
                 continue
             tic_ = time.time()
-            print(rand_pts.shape, new_mesh.point_coords.shape)
-            print(rand_pts.dtype, new_mesh.point_coords.dtype)
-            print(type(rand_pts))
             rand_sdf.append(new_mesh.get_sdf_pts(pts=rand_pts, method="pcu"))
             toc_ = time.time()
             print(f"Finished calculating SDFs in {toc_ - tic_:.3f}s")
