@@ -239,7 +239,13 @@ def reconstruct_latent_preprocess_sdf_gt(sdf_gt, clamp_dist, device="cuda", verb
 
 
 def project_latent(latent, latent_norm):
-    """Legacy explicit projection function - use latent_norm_penalty for smoother optimization"""
+    """Clamp the latent's L2 norm into [min, max] by rescaling it IN PLACE; returns None.
+
+    Not legacy: this is the live path whenever ``latent_norm`` is set and
+    ``use_soft_norm_constraint=False``, under any optimizer. With
+    ``use_soft_norm_constraint=True`` (the default) ``latent_norm_penalty`` is used
+    instead. Production never sets ``latent_norm``, so neither branch runs today.
+    """
     if isinstance(latent_norm, (list, tuple)):
         if len(latent_norm) != 2:
             raise ValueError("latent_norm must be a single value or a tuple/list of two values")
@@ -364,7 +370,21 @@ def reconstruct_latent(
     norm_penalty_type="quadratic",  # "quadratic", "huber", or "barrier"
     **kwargs,
 ):
+    """Optimize a latent code so the decoder(s) reproduce the observed SDF samples.
 
+    Positional surface contract (nothing validates this; violating it silently
+    changes the fit): surfaces are numbered 0..N-1 in the flat order the decoders
+    emit them — decoder 0's outputs first, then decoder 1's, and so on.
+    ``pts_surface[k]`` gives the surface number that sample ``xyz[k]`` /
+    ``sdf_gt`` entry belongs to, and ``sdf_gt``, when a list, must be ordered by
+    that same numbering. Swapping two ``sdf_gt`` entries relative to the
+    ``pts_surface`` labels raises nothing and fits every point against the wrong
+    surface. (This is the same positional-identity contract as
+    ``reconstruct_mesh``'s result ``mesh`` list — see ``docs/SCOPE.md`` §3.1.)
+
+    Returns:
+        (loss, latent): the final loss value and the fitted latent tensor.
+    """
     # Check for deprecated parameters
     if "max_batch_size" in kwargs:
         print(
@@ -850,7 +870,7 @@ def reconstruct_mesh(
     register_similarity=False,
     n_pts_per_axis_mean_mesh=128,
     scale_all_meshes=True,  # whether when scaling a model it should be on all points in all meshes or not
-    mesh_to_scale=0,  # PRETTY MUCH ASSUME ALWAYS SCALING FIRST MESH
+    mesh_to_scale=0,  # int index, or list of indices to combine for joint registration
     decoder_to_scale=0,  # PRETTY MUCH ASSUME ALWAYS SCALING FIRST DECODER
     scale_method="max_rad",
     verbose=False,
@@ -897,6 +917,14 @@ def reconstruct_mesh(
         path0_mesh = decoder0_mesh0
         path1_mesh = decoder0_mesh1 OR decoder1_mesh0
         etc.
+
+    Returns:
+        The return TYPE depends on the flags — a deliberate convenience switch:
+        - A dict whenever any of calc_symmetric_chamfer, calc_assd, return_latent,
+          func, return_registration_params or return_timing is set. Key "mesh" holds
+          the ordered mesh list (order = the surface-identity contract above); the
+          other keys appear per flag. Every first-party caller takes this branch.
+        - Otherwise, the bare list of meshes.
     """
 
     # warning batch_size_latent_recon is deprecated
@@ -1354,7 +1382,6 @@ def get_mean_errors(
             "lr_update_factor": lr_update_factor,
             "convergence": convergence,
             "convergence_patience": convergence_patience,
-            "register_similarity": register_similarity,
             "objects_per_decoder": objects_per_decoder,
             "batch_size_latent_recon": batch_size_latent_recon,
             "verbose": verbose,
@@ -1373,9 +1400,7 @@ def get_mean_errors(
 
         recon_fx = reconstruct_mesh
     else:
-        raise ValueError(
-            f'model_type must be either "deepsdf" or "diffusion"m received {model_type}'
-        )
+        raise ValueError(f'model_type must be "deepsdf", received {model_type}')
 
     reconstruct_inputs.update(reconstruct_inputs_)
 

@@ -39,8 +39,15 @@ def get_pt_cloud_distances(pts1, pts2, num_samples=None):
     - num_samples (int, optional): The number of points to randomly sample from each point cloud. If None, all points are used.
 
     Returns:
-    - d1 (numpy.ndarray): The distances from each point in pts1 to its nearest neighbor in pts2.
-    - d2 (numpy.ndarray): The distances from each point in pts2 to its nearest neighbor in pts1.
+    - d1 (numpy.ndarray): The distances from each point in pts2 to its nearest neighbor in pts1
+      (length = len(pts2)).
+    - d2 (numpy.ndarray): The distances from each point in pts1 to its nearest neighbor in pts2
+      (length = len(pts1)).
+
+    Note: compute_assd's denominator (len(pts1) + len(pts2)) is correct regardless of
+    which array is which, because the two lengths are only ever summed. Do not "fix"
+    the query order to match an older version of this docstring — the arrays swap, the
+    sum does not.
     """
 
     if num_samples is not None:
