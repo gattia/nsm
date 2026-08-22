@@ -310,6 +310,7 @@ def train_epoch(
     step_mean_load_time = 0
     step_mean_load_rate = 0
     step_whole_load_time = 0
+    timing_batches = 0
 
     for sdf_data, indices in data_loader:
         if config["verbose"] is True:
@@ -584,10 +585,15 @@ def train_epoch(
         if config["grad_clip"] is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), config["grad_clip"])
 
-        step_mean_size += torch.mean(sdf_data["size"]).item()
-        step_mean_load_time += torch.mean(sdf_data["time"]).item()
-        step_mean_load_rate += torch.mean(sdf_data["mb_per_sec"]).item()
-        step_whole_load_time += torch.mean(sdf_data["whole_load_time"]).item()
+        # Load-timing diagnostics are optional: the dataset emits them only when it
+        # actually loaded from disk (test_load_times=True and store_data_in_memory=False),
+        # so an in-memory dataset trains without them (#22).
+        if "size" in sdf_data:
+            step_mean_size += torch.mean(sdf_data["size"]).item()
+            step_mean_load_time += torch.mean(sdf_data["time"]).item()
+            step_mean_load_rate += torch.mean(sdf_data["mb_per_sec"]).item()
+            step_whole_load_time += torch.mean(sdf_data["whole_load_time"]).item()
+            timing_batches += 1
 
         optimizer.step()
     end = time.time()
@@ -602,10 +608,11 @@ def train_epoch(
     save_mean_vec_length = step_mean_vec_length / len(data_loader)
     save_std_vec_length = step_std_vec_length / len(data_loader)
 
-    save_mean_size = step_mean_size / len(data_loader)
-    save_mean_load_time = step_mean_load_time / len(data_loader)
-    save_mean_load_rate = step_mean_load_rate / len(data_loader)
-    save_whole_load_time = step_whole_load_time / len(data_loader)
+    if timing_batches > 0:
+        save_mean_size = step_mean_size / timing_batches
+        save_mean_load_time = step_mean_load_time / timing_batches
+        save_mean_load_rate = step_mean_load_rate / timing_batches
+        save_whole_load_time = step_whole_load_time / timing_batches
 
     print("save loss: ", save_loss)
     print("\t save l1 loss: ", save_l1_loss)
@@ -619,13 +626,14 @@ def train_epoch(
         "epoch_time_s": seconds_elapsed,
         "l1_loss": save_l1_loss,
         "latent_code_regularization_loss": save_code_reg_loss,
-        "mean_size": save_mean_size,
-        "mean_load_time": save_mean_load_time,
-        "mean_load_rate": save_mean_load_rate,
-        "whole_load_time": save_whole_load_time,
         "mean_vec_length": save_mean_vec_length,
         "std_vec_length": save_std_vec_length,
     }
+    if timing_batches > 0:
+        log_dict["mean_size"] = save_mean_size
+        log_dict["mean_load_time"] = save_mean_load_time
+        log_dict["mean_load_rate"] = save_mean_load_rate
+        log_dict["whole_load_time"] = save_whole_load_time
     if config.get("eikonal_weight", 0) > 0:
         log_dict["eikonal_loss"] = save_eikonal_loss
     for l1_idx, l1_loss_ in enumerate(save_l1_losses):

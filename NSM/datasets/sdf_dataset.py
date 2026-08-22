@@ -2323,11 +2323,9 @@ class MultiSurfaceSDFSamples(SDFSamples):
 
             toc_whole_load = time.time()
 
-            # KNOWN DEFECT, #22: `time_` and `size` are only bound in the
-            # store_data_in_memory=False branch above, so store_data_in_memory=True raises
-            # UnboundLocalError here. SDFSamples.__getitem__ guards the same block with
-            # `and (self.store_data_in_memory is False)`; these two classes disagree.
-            if self.test_load_times is True:
+            # Same guard as SDFSamples.__getitem__: in-memory items have no disk load to
+            # time, so the timing keys are only emitted when one was measured (#22).
+            if (self.test_load_times is True) and (self.store_data_in_memory is False):
                 data_["time"] = time_
                 data_["size"] = size
                 data_["mb_per_sec"] = size / time_

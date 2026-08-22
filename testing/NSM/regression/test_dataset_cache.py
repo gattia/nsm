@@ -621,10 +621,11 @@ class TestSingleSurfaceSDFSamples:
         )
 
 
-class TestConfigurationsThatDoNotRun:
+class TestFormerlyUncallableConfigurations:
     """
-    Constructible-but-uncallable settings: advertised constructor arguments that build fine
-    and raise on first use. Each asserts that the option *works*, and is expected to fail.
+    Advertised constructor arguments that used to build fine and crash on first use.
+    Each test asserts the option now works; the crashes they replace were #22 and #23,
+    fixed Aug 2026.
     """
 
     @pytest.mark.xfail(
@@ -646,25 +647,23 @@ class TestConfigurationsThatDoNotRun:
         )
         assert len(dataset) == len(meshes)
 
-    @pytest.mark.xfail(
-        strict=True, reason="#22: store_data_in_memory=True raises UnboundLocalError"
-    )
-    def test_store_data_in_memory_must_yield_an_item(self, meshes, tmp_path_factory):
+    def test_store_data_in_memory_yields_an_item(self, meshes, tmp_path_factory):
         """
-        ``MultiSurfaceSDFSamples.__getitem__:2158`` reads ``time_`` and ``size``, which are
-        only bound in the ``store_data_in_memory is False`` branch. The single-surface
-        ``SDFSamples.__getitem__:1563`` guards the same block correctly, so the two classes
-        disagree about the same option.
+        ``MultiSurfaceSDFSamples.__getitem__`` read ``time_`` and ``size``, which are only
+        bound when a disk load happened, so ``store_data_in_memory=True`` raised
+        ``UnboundLocalError`` (#22). It now carries the same guard as the single-surface
+        ``SDFSamples.__getitem__`` always did: timing keys are emitted only when a load
+        was actually timed.
         """
         dataset = build_dataset(
             meshes, tmp_path_factory.mktemp("in_memory"), store_data_in_memory=True, **SMALL
         )
         item, _ = dataset[0]
-        assert {"xyz", "gt_sdf"} <= set(item)
+        assert set(item) == {"xyz", "gt_sdf"}
 
     @pytest.fixture(scope="class")
     def timing_free_dataset(self, meshes, tmp_path_factory):
-        """The apparent workaround for #22: in memory, with load timing off."""
+        """In memory with load timing off -- formerly the half-workaround for #22."""
         return build_dataset(
             meshes,
             tmp_path_factory.mktemp("in_memory_ok"),
@@ -674,24 +673,27 @@ class TestConfigurationsThatDoNotRun:
         )
 
     def test_store_data_in_memory_works_with_load_timing_off(self, timing_free_dataset):
-        """The workaround, recorded so the pairing is documented somewhere."""
         item, index = timing_free_dataset[0]
         assert set(item) == {"xyz", "gt_sdf"} and index == 0
 
-    def test_train_epoch_needs_the_timing_keys(self, timing_free_dataset, tmp_path_factory):
+    def test_the_trainer_consumes_batches_without_timing_keys(
+        self, timing_free_dataset, tmp_path_factory
+    ):
         """
-        Why the pairing above is not a real workaround: ``train_epoch`` reads all four
-        timing keys unconditionally (``train_deep_sdf.py:589-592``), so the combination that
-        avoids the crash produces batches the trainer cannot consume.
+        ``train_epoch`` used to read all four load-timing keys unconditionally, which is
+        what made #22 unfixable by the dataset guard alone: the combination that avoided
+        the crash produced batches the trainer could not consume, so no combination of
+        the two flags both constructed and trained. The keys are now optional
+        diagnostics on both sides -- emitted only when a disk load was timed, accumulated
+        and logged only when present.
 
-        Asserted by running the trainer rather than by grepping its source, which is what
-        this used to do. A grep for ``sdf_data["size"]`` lies in both directions: it goes red
-        when the read is renamed or refactored without any behaviour changing, and it stays
-        green if the read is guarded -- the one edit that would actually fix this.
+        Asserted by running the trainer rather than by grepping its source: a grep for
+        ``sdf_data["size"]`` lies in both directions -- red on a harmless rename, green
+        on an unguarded read that crashes.
 
         ``samples_per_object_per_batch`` has to follow ``SMALL``'s ``subsample``: mismatch
-        them and the run dies at the batch concatenation instead, several steps before the
-        key read this is about.
+        them and the run dies at the batch concatenation, several steps before the reads
+        this is about.
         """
         config = training_config(tmp_path_factory.mktemp("in_memory_train"))
         config.update(
@@ -702,8 +704,9 @@ class TestConfigurationsThatDoNotRun:
                 "samples_per_object_per_batch": SMALL["subsample"],
             }
         )
-        with pytest.raises(KeyError, match="size"):
-            run_training(config, build_model(config), timing_free_dataset)
+        records, _ = run_training(config, build_model(config), timing_free_dataset)
+        assert len(records) == 1
+        assert "loss" in records[0]
 
 
 class TestCacheLocationDefault:

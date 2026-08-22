@@ -108,6 +108,13 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Fixed
 
+- **`store_data_in_memory=True` constructs, yields items, and trains** (#22).
+  `MultiSurfaceSDFSamples.__getitem__` now guards the load-timing block the way
+  `SDFSamples` always did, and `train_epoch` treats the four timing keys as optional
+  diagnostics instead of reading them unconditionally — so in-memory datasets train, and
+  the keys appear (in batches and in the epoch log) only when a disk load was actually
+  timed.
+
 - **A surface with no positive or no negative SDF samples raises a `ValueError` naming
   the surface** (#41) instead of `ZeroDivisionError` — e.g. one surface nested inside
   another loses every interior point to overlap removal. A surface nothing draws from (a

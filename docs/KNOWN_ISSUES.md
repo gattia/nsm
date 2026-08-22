@@ -42,7 +42,6 @@ queue.
 | `include_surf_in_pts` appends a leaked loop variable | **High** | [#17](https://github.com/gattia/nsm/issues/17) |
 | Parameters accepted and never read | Medium — **read the traps first** | [#20](https://github.com/gattia/nsm/issues/20) |
 | `xyz_in_all` accepted and never read | Medium — silent no-op | [#20](https://github.com/gattia/nsm/issues/20) |
-| `store_data_in_memory=True` raises | Medium — advertised option, unusable | [#22](https://github.com/gattia/nsm/issues/22) |
 | Every VAE layer stored twice | Medium — 1.92× checkpoints | [#27](https://github.com/gattia/nsm/issues/27) |
 | `reconstruct_mesh` early return drops requested keys | Medium | [#29](https://github.com/gattia/nsm/issues/29) |
 | `reconstruct_mesh` raises `KeyError: 'pts'` on one branch | Medium | [#15](https://github.com/gattia/nsm/issues/15) |
@@ -135,22 +134,6 @@ coordinate space, with a migration guard of the same shape as History §1's. Wri
 `.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md`, scheduled into
 `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §8. Tracked as
 [#3](https://github.com/gattia/nsm/issues/3), open since Sept 2025.
-
-### `store_data_in_memory=True` raises on the first item
-
-`MultiSurfaceSDFSamples.__getitem__` reads `time_` and `size`, bound only in the
-`store_data_in_memory is False` branch of `MultiSurfaceSDFSamples.__getitem__`, so the
-first `__getitem__` raises
-`UnboundLocalError`. `SDFSamples.__getitem__` guards the identical block correctly —
-the two classes disagree about the same option.
-
-The apparent workaround, `test_load_times=False`, is not one: it yields items with only
-`{"xyz", "gt_sdf"}` and `train_epoch` reads all four timing keys unconditionally
-(`train_deep_sdf.train_epoch`). **No combination of the two flags both constructs and
-trains.**
-
-*Fix:* [#22](https://github.com/gattia/nsm/issues/22). *Pinned by:*
-`test_dataset_cache.TestConfigurationsThatDoNotRun` (3 tests).
 
 ### `p_near_surface=0` crashes inside `point_cloud_utils`
 
