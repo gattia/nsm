@@ -67,6 +67,12 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   unmoved. Delete the arguments from any call; centering and scaling were always
   unconditional and still are.
 
+- **`subsample` is required and validated on both dataset constructors** (#43).
+  `MultiSurfaceSDFSamples` documented `subsample=None` as its default, but `None` could
+  never construct — it crashed in `get_samples_per_sign` on a cold cache and skipped
+  joint normalization on a warm one — so construction now refuses anything but a
+  positive int, by name. No working call changes.
+
 ### Fixed — affects results
 
 - **`get_optimizer` now passes `weight_decay` to `Adam`** (#47). It always passed it to
@@ -107,6 +113,11 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   another loses every interior point to overlap removal. A surface nothing draws from (a
   missing/`None` surface, or one allotted no subsample share) yields empty index lists
   and is handled.
+
+- **`MultiSurfaceSDFSamples` accepts `joint_scale_buffer`** (#43) and forwards it to
+  joint normalization. It was refused with `TypeError`; the parent's default (0.1)
+  happens to equal the production value, which is why nothing noticed. Not yet in the
+  cache key — that is #19's business (it does not change cached bytes).
 
 - **`cyclic_anneal_linear` no longer NaNs runs shorter than its cycle count.**
   `floor(n_epochs / n_cycles)` was 0 for `n_epochs < 5`, so `epoch % 0` returned NaN and

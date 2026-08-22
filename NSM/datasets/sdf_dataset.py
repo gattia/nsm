@@ -856,7 +856,8 @@ class SDFSamples(torch.utils.data.Dataset):
 
     Args:
         list_mesh_paths (list): List of paths to meshes
-        subsample (int, optional): Number of points to subsample. Defaults to None.
+        subsample (int): Number of points each __getitem__ returns. Required, and must be
+            a positive int -- there is no working default (#43).
         n_pts (int, optional): Number of points to sample. Defaults to 500000.
         p_near_surface (float, optional): Proportion of points to sample near the surface. Defaults to 0.4.
         p_further_from_surface (float, optional): Proportion of points to sample further from the surface. Defaults to 0.4.
@@ -866,6 +867,12 @@ class SDFSamples(torch.utils.data.Dataset):
         center_pts (bool, optional): Whether to center the points. Defaults to True.
         norm_pts (bool, optional): Whether to normalize the points. Defaults to False.
         scale_method (str, optional): Method to scale the points. Defaults to 'max_rad'.
+        scale_jointly (bool, optional): Whether to center and scale all subjects together
+            after loading (norm_and_scale_all_meshes) instead of per subject; requires
+            center_pts=False and norm_pts=False. Defaults to False.
+        joint_scale_buffer (float, optional): Margin added to the joint max radius when
+            scale_jointly is True, so unseen subjects slightly larger than the training
+            set still fit inside the model's domain. Defaults to 0.1.
         loc_save (str, optional): Location to save the cached files. Defaults to
             os.environ['LOC_SDF_CACHE'].
 
@@ -926,6 +933,15 @@ class SDFSamples(torch.utils.data.Dataset):
         test_load_times=True,
         uniform_pts_buffer=0.0,
     ):
+
+        # subsample has no working default: every build path divides by it or
+        # multiplies with it, so None used to crash downstream in
+        # get_samples_per_sign / sdf_pos_neg_idx instead of here (#43).
+        if not isinstance(subsample, (int, np.integer)) or subsample <= 0:
+            raise ValueError(
+                f"subsample must be a positive int -- the number of points each "
+                f"__getitem__ returns -- got {subsample!r}."
+            )
 
         # p_near_surface & p_further_from_surface must be >=0, <=1
         # sum of p_near_surface & p_further_from_surface must be <=1
@@ -1720,7 +1736,7 @@ class MultiSurfaceSDFSamples(SDFSamples):
     def __init__(
         self,
         list_mesh_paths,
-        subsample=None,
+        subsample,
         n_pts=500000,
         p_near_surface=0.4,
         p_further_from_surface=0.4,
@@ -1731,6 +1747,7 @@ class MultiSurfaceSDFSamples(SDFSamples):
         norm_pts=False,
         scale_method="max_rad",
         scale_jointly=False,
+        joint_scale_buffer=0.1,
         loc_save=os.environ.get(
             "LOC_SDF_CACHE", os.path.join(os.path.expanduser("~"), ".cache", "nsm_sdf_cache")
         ),
@@ -1786,6 +1803,7 @@ class MultiSurfaceSDFSamples(SDFSamples):
             norm_pts=norm_pts,
             scale_method=scale_method,
             scale_jointly=scale_jointly,
+            joint_scale_buffer=joint_scale_buffer,
             loc_save=loc_save,
             save_cache=save_cache,
             load_cache=load_cache,

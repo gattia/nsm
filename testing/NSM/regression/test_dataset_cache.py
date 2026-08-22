@@ -916,3 +916,37 @@ class TestEmptySignedSamples:
         all_positive = {"gt_sdf": torch.linspace(0.1, 1.0, 10)}
         with pytest.raises(ValueError, match="no negative SDF samples"):
             SDFSamples.sdf_pos_neg_idx(SimpleNamespace(subsample=64), all_positive)
+
+
+class TestConstructorContract:
+    """The declared constructor surface of ``MultiSurfaceSDFSamples`` (#43, fixed Aug 2026)."""
+
+    def test_subsample_none_is_refused_at_construction(self, meshes, tmp_path_factory):
+        """
+        ``None`` -- the documented default until Aug 2026 -- used to construct and then
+        crash in ``get_samples_per_sign`` on a cold cache, or skip joint normalization
+        and return unnormalized points on a warm one. There is no working default, so
+        construction refuses by name.
+        """
+        with pytest.raises(ValueError, match="subsample must be a positive int"):
+            build_dataset(
+                meshes, tmp_path_factory.mktemp("none_sub"), **dict(SMALL, subsample=None)
+            )
+
+    def test_joint_scale_buffer_is_accepted_and_reaches_normalization(
+        self, meshes, tmp_path_factory
+    ):
+        """
+        ``joint_scale_buffer`` sets the margin on the joint max radius -- 0.1 in every
+        shipped multi-surface dataset -- and the constructor refused it with a
+        ``TypeError`` until Aug 2026. The parent's default happens to equal the
+        production value, which is why nothing noticed. Whether it belongs in the cache
+        key is #19's business (it does not change cached bytes), deliberately not
+        asserted here.
+        """
+        joint = dict(SMALL, scale_jointly=True, center_pts=False, norm_pts=False)
+        cache = tmp_path_factory.mktemp("joint_buffer")
+        narrow = build_dataset(meshes, cache, joint_scale_buffer=0.1, **joint)
+        wide = build_dataset(meshes, cache, load_cache=True, joint_scale_buffer=0.25, **joint)
+
+        assert wide.max_radius / narrow.max_radius == pytest.approx(1.25 / 1.1, rel=1e-6)
