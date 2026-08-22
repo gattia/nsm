@@ -607,10 +607,7 @@ class TestShippedConfigs:
         latent_lr = schedules[LR_TARGET_LATENT].get_learning_rate(0)
         assert latent_lr > model_lr
 
-    def test_generated_default_config_annotates_targets(self, tmp_path, monkeypatch):
-        # NB: importing this module writes ./default_config.json as a side effect, so run
-        # the import from a tmp cwd rather than littering the repo root.
-        monkeypatch.chdir(tmp_path)
+    def test_generated_default_config_annotates_targets(self):
         from NSM.configs.generate_sdf_default_config import config
 
         targets = [entry["Target"] for entry in config["LearningRateSchedule"]]

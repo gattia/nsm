@@ -513,7 +513,8 @@ def read_meshes_get_sampled_pts(
 
     Notes:
         - When mesh_to_scale is a list (e.g., [0, 1]), multiple surfaces are combined
-          using VTK's vtkAppendPolyData for joint registration (e.g., medial + lateral menisci)
+          with the pymskt Mesh `+` operator (see combine_meshes) for joint registration
+          (e.g., medial + lateral menisci)
         - The same ICP transform is applied to all meshes regardless of registration method
         - Scaling and centering can be based on single or multiple reference surfaces
     """
@@ -961,7 +962,9 @@ class SDFSamples(torch.utils.data.Dataset):
             )
 
         # set defaults so can use same 'norm_and_scale_all_meshes' function
-        # for single and multiple meshes
+        # for single and multiple meshes. The hasattr guards are an initialization-order
+        # contract: a subclass that wants its own values (MultiSurfaceSDFSamples does)
+        # must set these attributes BEFORE calling super().__init__.
         if not hasattr(self, "reference_object"):
             self.reference_object = 0
         if not hasattr(self, "n_meshes"):
@@ -1440,7 +1443,7 @@ class SDFSamples(torch.utils.data.Dataset):
         elif isinstance(self.reference_mesh, list):
             # below will throw error in SDFSamples, but will work in MultiSurfaceSDFSamples
             # where self.mesh_to_scale is defined & a list/tuple type likely
-            # TODO: Why is reference_object different from mesh_to_scale?
+            # (reference_object vs mesh_to_scale: see the MultiSurfaceSDFSamples docstring)
             self.reference_mesh = Mesh(self.reference_mesh[self.reference_object])
         else:
             raise TypeError(
@@ -1666,10 +1669,17 @@ class MultiSurfaceSDFSamples(SDFSamples):
             - If list: Combines multiple meshes for joint registration
             Example: mesh_to_scale=[0, 1] for medial + lateral menisci registration
 
+        reference_object (int): Index of the surface whose sampled points anchor
+            centering, and which element of a list-valued reference_mesh is used.
+            A separate knob from mesh_to_scale (which surface(s) drive registration
+            and scaling); the two are not kept in sync, and why they are separate is
+            an open question inherited from the original implementation.
+
         Other args: Same as SDFSamples parent class
 
     Notes:
-        - When mesh_to_scale is a list, meshes are combined using VTK's vtkAppendPolyData
+        - When mesh_to_scale is a list, meshes are combined with the pymskt Mesh `+`
+          operator (see combine_meshes)
         - Joint registration improves alignment when multiple related surfaces should
           be considered together rather than individually
         - All other functionality (scaling, centering, caching) remains the same
@@ -1870,7 +1880,6 @@ class MultiSurfaceSDFSamples(SDFSamples):
                     )  # resave data to cache - overwriting original.
 
                 file_loaded = True
-                # TODO: crat
                 break
 
         if file_loaded is False:
@@ -2073,6 +2082,9 @@ class MultiSurfaceSDFSamples(SDFSamples):
             self.center_all_meshes,
             self.reference_mesh,
             self.reference_object,
+            # Unexplained literal: present since this list was written, origin unknown
+            # (git shows no removed parameter it could stand in for). Its fate is #19's,
+            # which rewrites this list; removing it now would invalidate every cache key.
             False,
             self.fix_mesh,
             self.scale_jointly,
