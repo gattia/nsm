@@ -245,7 +245,6 @@ def get_buffered_cube_mins_maxs(pts, buffer):
 
 def read_mesh_get_sampled_pts(
     path,
-    mean=[0, 0, 0],
     sigma=1,
     n_pts=200000,
     rand_function="normal",
@@ -268,7 +267,6 @@ def read_mesh_get_sampled_pts(
 
     Args:
         path (str): Path to mesh
-        mean (list, optional): Mean to apply for random sample(s). Defaults to [0,0,0].
         sigma (float, optional): Standard deviation/scale to apply for random sample(s). Defaults to 1.
         n_pts (int, optional): Number of points to sample. Defaults to 200000.
         rand_function (str, optional): Distribution to sample from. Defaults to 'normal'. Also supports 'laplace'.
@@ -303,6 +301,8 @@ def read_mesh_get_sampled_pts(
     # Accepted for backwards compatibility and ignored: each is now unconditionally on,
     # so passing False did not do what it said. They were documented as live parameters
     # defaulting to False until Aug 2026, which is the opposite of what this does.
+    # `mean` is different: no code path ever read it, so it was removed outright (Aug
+    # 2026) and lands in kwargs for old callers.
     list_deprecated = [
         "return_scale",
         "return_center",
@@ -313,6 +313,8 @@ def read_mesh_get_sampled_pts(
     for kwarg in kwargs:
         if kwarg in list_deprecated:
             print(f"{kwarg} is deprecated and not used in this function - always True")
+        elif kwarg == "mean":
+            print("mean is deprecated and not used in this function - it never had an effect")
 
     results = {}
 
@@ -483,7 +485,6 @@ def unpack_numpy_data(
 
 def read_meshes_get_sampled_pts(
     paths,
-    mean=[0, 0, 0],
     sigma=[1, 1],
     n_pts=[200000, 200000],
     rand_function="normal",
@@ -510,7 +511,6 @@ def read_meshes_get_sampled_pts(
 
     Args:
         paths (list): List of paths to meshes
-        mean (list, optional): Mean to apply for random sample(s). Defaults to [0,0,0].
         sigma (list, optional): Standard deviation/scale to apply for random sample(s). Defaults to [1, 1].
         n_pts (list, optional): Number of points to sample per mesh. Defaults to [200000, 200000].
         rand_function (str, optional): Distribution to sample from. Defaults to 'normal'. Also supports 'laplace'.
@@ -543,6 +543,8 @@ def read_meshes_get_sampled_pts(
         - Scaling and centering can be based on single or multiple reference surfaces
     """
     tic = time.time()
+    # Same contract as read_mesh_get_sampled_pts: the return_* flags are unconditionally
+    # on, and `mean` was removed outright (Aug 2026) because no code path ever read it.
     list_deprecated = [
         "return_scale",
         "return_center",
@@ -553,6 +555,8 @@ def read_meshes_get_sampled_pts(
     for kwarg in kwargs:
         if kwarg in list_deprecated:
             print(f"{kwarg} is deprecated and not used in this function - always True")
+        elif kwarg == "mean":
+            print("mean is deprecated and not used in this function - it never had an effect")
 
     # preallocate results dictionary
     results = {}
@@ -1345,7 +1349,6 @@ class SDFSamples(torch.utils.data.Dataset):
                     continue
                 result_ = read_mesh_get_sampled_pts(
                     loc_mesh,
-                    mean=[0, 0, 0],
                     sigma=sigma_,
                     n_pts=n_pts_,
                     rand_function=self.rand_function,
@@ -1978,7 +1981,6 @@ class MultiSurfaceSDFSamples(SDFSamples):
                 tic = time.time()
                 result_ = read_meshes_get_sampled_pts(
                     loc_meshes,
-                    mean=[0, 0, 0],
                     sigma=sigma_,
                     n_pts=n_pts_,
                     rand_function=self.rand_function,

@@ -1054,7 +1054,6 @@ def reconstruct_mesh(
     elif multi_object is True:
         result_ = read_meshes_get_sampled_pts(
             paths=path,
-            mean=[0, 0, 0],
             sigma=sigma_rand_pts,
             center_pts=not scale_jointly,
             norm_pts=not scale_jointly,
