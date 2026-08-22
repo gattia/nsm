@@ -16,7 +16,7 @@ There are many ways to contribute:
 Please do your best to follow these guidelines when opening an issue. It will make it signficantly easier to give useful feedback and resolve the issue faster.
 
 ### Found a bug?
-We would very much appreciate if you could **make sure the bug was not already reported** (use the search bar on Github under Issues). If you cannot find you bug, follow the instructions in the [Bug Report](https://github.com/gattia/cycpd/issues/new/choose) template.
+We would very much appreciate if you could **make sure the bug was not already reported** (use the search bar on Github under Issues). If you cannot find you bug, follow the instructions in the [Bug Report](https://github.com/gattia/NSM/issues/new/choose) template.
 
 ### Want a new feature ?
 
@@ -36,7 +36,7 @@ If your issue is well written we're already 80% of the way there by the time you
 ## Contributing
 Before writing code, we strongly advise you to search through the existing PRs or issues to make sure that nobody is already working on the same thing. If you are unsure, it is always a good idea to open an issue to get some feedback.
 
-You will need basic git proficiency to be able to contribute to cycpd. git is not the easiest tool to use but it has the greatest manual. Type git --help in a shell and enjoy. If you prefer books, [Pro Git](https://git-scm.com/book/en/v2) is a very good reference.
+You will need basic git proficiency to be able to contribute to NSM. git is not the easiest tool to use but it has the greatest manual. Type git --help in a shell and enjoy. If you prefer books, [Pro Git](https://git-scm.com/book/en/v2) is a very good reference.
 
 Follow these steps to start contributing:
 
@@ -50,20 +50,15 @@ Follow these steps to start contributing:
    $ git remote add upstream https://github.com/gattia/NSM.git
    ```
 
-3. Create a development branch - all changes should merged with the `NSM`-`development` branch:
+3. Create a topic branch named for the problem you are working on:
 
-   ```bash
-   $ git checkout -b development
-   ```
-
-   **Do not** work on the `main` branch.
-
-
-   You can also work on another branch that is named specifically for your problem e.g., 
-   
    ```bash
    $ git checkout -b fix_examples
    ```
+
+   **Do not** work on the `main` branch — it is protected (pull requests only, one
+   approving review plus passing status checks). Changes land by opening a PR from your
+   topic branch against `main`; there is no long-lived `development` integration branch.
 
    Once you are done with making changes, you can `add` and `commit` them: 
 
@@ -72,20 +67,10 @@ Follow these steps to start contributing:
    $ git commit
    ```
 
-   and then merge with development before pushing development to your repository:
-
-   ```bash
-   $ git checkout development
-   $ git merge fix_examples
-   ```
-
-   - pushing to remote is described below. 
-
 4. Before making changes etc. set up a development environment by running the following command in a virtual environment:
 
     ```bash
-    make dev
-    make requirements
+    make install-dev
     ```
 
 5. Develop features on your branch.
@@ -120,10 +105,10 @@ Follow these steps to start contributing:
    $ git rebase upstream/main
    ```
 
-   Push the changes to the development branch on your repository:
+   Push the changes to your topic branch on your repository:
 
    ```bash
-   $ git push origin development
+   $ git push origin fix_examples
    ```
 
 6. Once you are satisfied (**and the checklist below is happy too**), go to the

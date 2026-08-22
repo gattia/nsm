@@ -66,8 +66,11 @@ dataset = SDFSamples(sigma_near=0.74, sigma_far=2.35, scale_jointly=True/False)
 ## 🛠️ Implementation Plan
 
 ### Phase 1: Foundation (Non-Breaking)
-- [x] ✅ Add comprehensive documentation about current dual-mode behavior
-- [x] ✅ Implement warning system for potentially incorrect sigma values  
+- [ ] Add comprehensive documentation about current dual-mode behavior
+      *(unticked 2026-08-22: no such documentation exists — the `sigma_near` docstring is
+      one line and never mentions that its coordinate space flips with `scale_jointly`)*
+- [ ] Implement warning system for potentially incorrect sigma values
+      *(unticked 2026-08-22: no sigma warning exists anywhere in `sdf_dataset.py`)*
 - [ ] Add new parameter `sigma_coordinate_space` with options `["legacy", "original"]`
 - [ ] Default to `"legacy"` (maintains current behavior) with deprecation warning
 

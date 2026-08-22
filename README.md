@@ -7,11 +7,6 @@
 
 This pacakge is meant to develop generative deep learning models for creating human anatomy. The initial focus is on musculoskeletal tissues, particular of the knee. 
 
-Steps to update this package for new repository: 
-4. update `requirements.txt` and `dependencies` in `pyproject.toml`
-     - To do - can dependencies read/update from requirements.txt?
-
-
 # Installation
 
 ## Standard Installation
@@ -212,15 +207,16 @@ If you want to contribute, please read the documentation in `CONTRIBUTING.md` an
 
 Additional documentation can be found in the [`docs/`](docs/) folder:
 
+- [`docs/SCOPE.md`](docs/SCOPE.md) - What NSM supports, module status rulings, the public API contract
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - Structural map: invariants, traps, dependency graph
+- [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) - **If you have training runs on disk, read this** — which past bugs affect which results, with date ranges
 - [`docs/MULTI_SURFACE_REGISTRATION.md`](docs/MULTI_SURFACE_REGISTRATION.md) - Multi-surface registration functionality
 
-API documentation is planned for future development. Consider using `pdoc` for auto-generated docs:
-
-```bash
-# TODO: Set up documentation generation
-# pip install pdoc
-# pdoc --html --output-dir docs NSM
-```
+An API reference builds locally with `make docs` (pdoc, rendered into `site/`). The
+publishing workflow (`.github/workflows/docs.yml`) is written but deliberately not wired
+to `push` yet: it publishes when the Phase 2 docstring-accuracy pass lands, so the first
+published reference is not wrong on arrival. Until then it can be run by hand from the
+Actions tab.
 
 ## TODO
 
