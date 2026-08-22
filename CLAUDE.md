@@ -57,6 +57,14 @@ Operational facts that are not derivable from the code, and that cost time to re
 - **Reading files in tests needs `encoding="utf-8"` explicitly.** Something in the suite
   resets the locale to ASCII, so a bare `read_text()` passes in isolation and raises
   `UnicodeDecodeError` under the full suite.
+- **Nothing goes to the public tracker without the maintainer approving the exact text.**
+  Draft issues, closes and comments as a reviewable list (in a plan or on a branch); the
+  maintainer files, or says "file these". PRs that close issues on merge are fine.
+- **For code changes, the maintainer reviews the edits before they are committed.**
+  Work in the tree, present the diff, commit after approval — one commit per concern.
+- **Picking up mid-initiative:** read the relevant plan's **State** block
+  (`.claude/plans/`) and do its **Next**. That block is the only handoff mechanism —
+  do not write handoff files (see § Documents and work).
 
 ## Making Changes
 
