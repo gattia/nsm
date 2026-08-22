@@ -6,14 +6,11 @@
 
 **Updated:** 2026-08-22 · **Status:** open
 
-- **Next:** the Phase-2 prose pass: the 62 corrections in `AUDIT_FINDINGS.md` § 3, plus
-  the `get_latent_vecs` docstring (withdrawn draft 13: document that variational doubles
-  the embedding for mean+logvar and that KLD supersedes `latent_bound`). The PR that
-  lands it **deletes `AUDIT_FINDINGS.md`**, leaving a pointer — the SCOPE rulings pass
-  (PR #65) was the other gate and is done. Then back to code, `sdf_dataset.py`: its
-  issues in file:function order (#40, #41, #43, #61, plus #22/#23/#24), its semantic
-  docstring pass, then its decomposition — fixing before splitting, deliberately. Still
-  open from #48: the `barrier` norm-penalty NaN and `Regress.add_latent`.
+- **Next:** back to code, `sdf_dataset.py`: its issues in file:function order (#40,
+  #41, #43, #61, plus #22/#23/#24), its semantic docstring pass, then its
+  decomposition — fixing before splitting, deliberately. Still open from #48: the
+  `barrier` norm-penalty NaN and `Regress.add_latent`. (Both document passes are done
+  and the audit register is deleted — see Done.)
 - **Blocked on:** nothing.
 - **Deliberately deferred:** #19 (cache key, 6 xfails) and #27 (checkpoint aliasing). Both
   force downstream regeneration or migration, so they land together as one release rather
@@ -45,6 +42,17 @@
     (`symmetric_chammfer`, `sdf_gradients`, `find_object_bounds_random_sampling`,
     `NSM/configs/deep_sdf_config`), and the stale §1 default-config bullet corrected
     post-#64 — PR #65
+  - Phase-2 prose pass: all 62 § 3 corrections (two were already moot — sinkhorn left
+    with #64's EMD deletion, the modulated-activations print with #63 — and the
+    sdf_dataset unused-imports entry was a deliberate skip per its verdict), plus the
+    `get_latent_vecs` variational docstring, plus ride-alongs the corrections exposed
+    (Makefile `PDOC_ALLOW_EXEC` had lost its rationale to #64 and was removed after
+    re-verifying the build; the never-pushed mesh-interp archive branch/tag is now
+    recorded in the completed interpolation plan's Diverged) — and **the register
+    `docs/AUDIT_FINDINGS.md` is deleted**, PR #66. Draft→issue mapping, preserved
+    from its § 0.3: 1→#40, 2→#41, 3→#42, 4→#43, 5→#44, 6→#45, 7→#46, 8→#47, 9→#48,
+    10→#49, 11→#50, 12→#51, 14→#52, 15→#53, 16→#54, 17→#55, 18→#56, 19→#57, 20→#58,
+    21→#59, 22→#60, 23→#61 (13 withdrawn — the variational behaviour is deliberate)
 - **Surprises:**
   - **"Fixed seed" was not available.** NSM called no seeding function anywhere, and the
     near-surface sampler could not be seeded by any caller. Closed via pymskt 0.1.21 plus

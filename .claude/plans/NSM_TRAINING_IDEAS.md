@@ -158,7 +158,8 @@ in-place on forward), unlike a soft penalty the gradients can feel.
 training run per bound setting.
 
 **Status.** Idea — not started. Raised by the maintainer 2026-08-22 while reviewing
-the audit disposition (`docs/AUDIT_FINDINGS.md` § 0). Related trap: latent *gradients*
+the audit disposition (register since retired; the filed issues are #40–#61). Related
+trap: latent *gradients*
 scale with query-point count (ARCHITECTURE §6), which affects any soft-penalty
 balance chosen in (b).
 
@@ -168,7 +169,7 @@ balance chosen in (b).
 
 **What.** `sum_conv_output_features: false` (concatenate per-plane features instead of
 summing) silently trained on **one plane of three** — the yz and xy plane slices were
-zero-width (`docs/AUDIT_FINDINGS.md` § 0 draft 6). The maintainer's past experiments
+zero-width (issue #45). The maintainer's past experiments
 with this option concluded concatenation never improved results and sometimes hurt;
 those runs were degraded by the bug, so the comparison has never actually been run.
 After the fix lands: train matched pairs (sum vs concat, same data/seeds) and compare
