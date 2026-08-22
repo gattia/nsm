@@ -4,19 +4,39 @@
 
 ## State
 
-**Updated:** 2026-08-17 · **Status:** open
+**Updated:** 2026-08-21 · **Status:** open
 
-- **Next:** file the open defects as issues. They are in `docs/KNOWN_ISSUES.md` § Open,
-  merged there on 2026-08-17 from the defect work list that used to live in `planning/`.
-  Then §7.2 contract tests, or Phase 4.
-- **Blocked on:** nothing. Phase 0b (downstream consumer survey) gates only the physical
-  quarantine move, not the map.
+- **Next:** the maintainer merges the two open PRs (`audit-triage`, `quick-wins`),
+  then wave 1 — the decided, bounded fixes, one PR each with the maintainer in the
+  loop: EMD deletion (#53), `weight_decay` under Adam (#47, baselines regenerate +
+  History entry), the ShapeMedKnee-derived `default_config.json` (#48), and the
+  numerics-changing pair #44 (decoder indexing + `remove_overlapping_points`, one
+  History entry). Then the SCOPE.md rulings PR and the Phase-2 prose pass, and delete
+  `AUDIT_FINDINGS.md` in the PR that lands the last of them. Then resume as before:
+  #23 and #24 in `sdf_dataset.py`, its semantic docstring pass, then its
+  decomposition — fixing before splitting, deliberately.
+- **Blocked on:** nothing. (Audit disposition approved and filed 2026-08-22:
+  #40–#61, #6 closed, folds commented onto #20/#22/#23/#35.)
+- **Deliberately deferred:** #19 (cache key, 6 xfails) and #27 (checkpoint aliasing). Both
+  force downstream regeneration or migration, so they land together as one release rather
+  than making consumers migrate twice. This is the argument that grouped #19 in the first
+  place, applied one level up.
 - **Done:**
-  - Seeding fix + harness punch-list — `eaee68c`, `e432f9a`, `d2ba1c7`, `94b48f0`
-  - Phase 3 §7.1 numerical regression harness — PRs #13, #14
-  - Phase 1 map — `docs/ARCHITECTURE.md`, `docs/AUDIT_FINDINGS.md`
   - Phase 0 scope — `docs/SCOPE.md`
+  - Phase 1 map — `docs/ARCHITECTURE.md`, `docs/AUDIT_FINDINGS.md`
   - Phase A LR fix — PRs #9, #10, #11
+  - Phase 3 §7.1 numerical regression harness — PRs #13, #14, merged to `main` in #30
+  - Seeding fix + harness punch-list — `eaee68c`, `e432f9a`, `d2ba1c7`, `94b48f0`
+  - **Everything above reached `main` for the first time in PR #30.** `main` had seen none
+    of it before that.
+  - Docs cite code by symbol, not line number, with a test — PR #31
+  - flake8 to zero, CI gates it, tooling backlog closed, docs build set up — PR #32
+  - Retired `worklist #N` numbering repointed at issues; the inverted `normalize_coordinates`
+    test rewritten — PR #33
+  - `CHANGELOG.md` and `v0.2.0` — PR #36
+  - Phase 2, mechanical slice: docstrings that contradict their signatures — PR #37
+  - #21 closed and #20's function-level half — PR #38
+  - `main` protected: 1 review, four required status checks, admins exempt
 - **Surprises:**
   - **"Fixed seed" was not available.** NSM called no seeding function anywhere, and the
     near-surface sampler could not be seeded by any caller. Closed via pymskt 0.1.21 plus
@@ -28,11 +48,37 @@
     that way, ~20 tests passed *because* something was broken. They now assert the
     behaviour NSM should have, marked `xfail(strict=True)`.
   - **Quarantinable code was 882 lines, not ~1,800.** Every module the plan expected to
-    fall held a capability nothing else implements. Treat the 1,800 as a prediction that
-    was tested and failed.
+    fall held a capability nothing else implements.
   - **Both inferred audit claims that were later tested were wrong**, in the direction of
-    overstatement — the triplanar "affine map" claim and the eikonal "forward+backward
-    runs" claim. This is why `AUDIT_FINDINGS.md` entries are hypotheses, not findings.
+    overstatement. This is why `AUDIT_FINDINGS.md` entries are hypotheses, not findings.
+  - **The "obvious fix" has now been worse than the bug twice**, and the second was far
+    worse than the first. `normalize_coordinates`' `padding` would have shifted the SDF by
+    ~0.06 on a `tanh`-bounded output. `get_pts_center_and_scale`'s `center`/`scale` would
+    have switched scaling **off** on every default run, because every caller passes
+    `scale=norm_pts` and `norm_pts` defaults to `False` — a different coordinate frame for
+    every dataset and checkpoint ever produced. Both were deleted rather than honoured.
+    **Assume the next accepted-and-ignored argument is the same shape until measured.**
+  - **`norm_pts: false` has never done what it says.** `center_pts` and `norm_pts` decide
+    *whether* to normalize, not *which* operation runs, so the shipped config asks for
+    centering without scaling and gets both. No NSM run has ever been centered-but-unscaled.
+  - **Line numbers in prose do not survive editing the code they describe.** A seven-line
+    portability fix invalidated ~15 citations in the same sitting, and a `black` pass would
+    have moved them again. Citations are now symbols, checked by a test (#31). A checker for
+    line *numbers* was considered and rejected: it converts silent rot into recurring
+    transcription work.
+  - **The 439 flake8 violations were 302 formatting, 110 prose, 27 real.** The backlog that
+    justified `continue-on-error` for years was two commands and an afternoon.
+  - **CI's lint step never ran `black` or `isort`** despite being named for them. That is
+    how nine files drifted out of compliance unseen.
+  - **`TestAFreshlyTrainedDecoder` passes with the training discarded** — verified by
+    rebuilding the model after training and rerunning. An untrained decoder still yields a
+    surface. Filed as #34.
+  - **The `Target` requirement is already in `v0.1.0`**, so no released version predates it.
+    A downstream on positional entries cannot dodge the migration by pinning an older tag.
+  - **Something in the suite resets the locale to ASCII.** A bare `read_text()` passes in
+    isolation and raises `UnicodeDecodeError` under the full suite; cost 27 failures to find.
+
+---
 
 > Measurements: run `pytest testing/ --cov=NSM` rather than trusting any figure quoted
 > below — the numbers in §1.3, §5 and §7 are as-measured-then and are not maintained.

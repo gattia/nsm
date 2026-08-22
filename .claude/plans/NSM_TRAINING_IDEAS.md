@@ -134,6 +134,56 @@ it is a prerequisite diagnostic for Idea 1.
 
 ---
 
+## Idea 4 — Remove (or soften) the latent `max_norm` bound; close the train/recon norm gap
+
+**What.** Training embeds latents in `nn.Embedding(..., max_norm=latent_bound)` with
+`latent_bound: 10` in both shipped configs, and the maintainer observes the trained
+latents all sit **at** norm 10 — the clip is actively binding, so the training codes
+live on the radius-10 shell. Reconstruction fits the latent with no norm constraint
+(`l2reg_recon: false`) and lands at norm ~6–7, **even for subjects that are in the
+training set**. Experiment: (a) diagnostic first, no retrain — histogram the norms of
+the shipped checkpoints' latent codes to confirm saturation, and check whether recon
+error correlates with the fitted norm's distance from 10; (b) retrain with the bound
+removed or raised, and/or replaced by a soft penalty (the L2 code regularization
+already exists), and compare recon accuracy on training subjects, generalisation, and
+the maintainer's reconstruction artefacts.
+
+**Why.** If every training code has norm exactly 10 and every fitted code has norm
+6–7, reconstruction is decoding from a region of latent space the decoder never saw
+during training — a plausible cause of the observed recon artefacts. A hard
+`max_norm` renormalisation is also invisible to the optimizer (PyTorch applies it
+in-place on forward), unlike a soft penalty the gradients can feel.
+
+**Cost / retrain.** (a) is an afternoon with existing checkpoints. (b) is one
+training run per bound setting.
+
+**Status.** Idea — not started. Raised by the maintainer 2026-08-22 while reviewing
+the audit disposition (`docs/AUDIT_FINDINGS.md` § 0). Related trap: latent *gradients*
+scale with query-point count (ARCHITECTURE §6), which affects any soft-penalty
+balance chosen in (b).
+
+---
+
+## Idea 5 — Re-test concatenated vs summed triplanar features, after the draft-6 fix
+
+**What.** `sum_conv_output_features: false` (concatenate per-plane features instead of
+summing) silently trained on **one plane of three** — the yz and xy plane slices were
+zero-width (`docs/AUDIT_FINDINGS.md` § 0 draft 6). The maintainer's past experiments
+with this option concluded concatenation never improved results and sometimes hurt;
+those runs were degraded by the bug, so the comparison has never actually been run.
+After the fix lands: train matched pairs (sum vs concat, same data/seeds) and compare
+recon accuracy and training stability.
+
+**Why.** The original hypothesis — concatenation preserves per-plane information that
+summing destroys — was never tested, only a broken implementation of it. The prior
+negative result should be withdrawn rather than trusted.
+
+**Cost / retrain.** Two training runs plus the draft-6 fix as a prerequisite.
+
+**Status.** Idea — not started. Blocked on the draft-6 fix.
+
+---
+
 ## Related
 
 - `NSM_MESH_INTERPOLATION_IMPROVEMENTS.md` — inference-only numerical fixes;

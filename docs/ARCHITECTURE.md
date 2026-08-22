@@ -290,6 +290,7 @@ The plan flagged one. There are six.
 | **Two edge-ratio implementations** | `correspondence_metrics.triangle_health` and `triangle_metrics.py` | Divergent results from the same-named statistic. |
 | **`train_deep_sdf` defined twice** | `train/train_deep_sdf.py` and `train/train_deep_sdf_multi_head.py` | Same function name in two modules, second parameter is `model` in one and `models` in the other. Tests alias them to disambiguate. |
 | **`unpack_pts` / `unpack_numpy_data`** | `sdf_dataset.py` and duplicated verbatim in a testing script | Encodes the `.npz` cache layout in two places. |
+| **Latent gradients scale with the query-point count** | `triplanar.UniqueConsecutive` and `triplanar.FastUnique` | Both custom backward passes amplify the latent gradient by N — measured 10.00× at N=10 and 1000.00× at N=1000, **identically on both paths**. It is a long-standing library convention, not a `FastUnique` regression: inside `reconstruct_latent` the reconstruction term reaches the latent through this ×N path while the L2/norm-penalty terms reach the same leaf directly, so an enabled `latent_reg_weight` is effectively divided by the number of query points (`l2reg_recon` is `false` in both shipped configs, so no shipped run is affected). Patching one class alone desynchronises the two decoder interfaces; changing the convention rescales every training run and needs a § History entry. |
 
 ---
 

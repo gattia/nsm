@@ -1,1371 +1,3761 @@
-# Audit findings register
+# Audit findings — triaged
 
-> ## ⚠️ These are hypotheses, not findings. Do not cite an entry without re-running it.
+> ## ⚠️ A staging document, not a register of facts.
 >
-> **178 of the 216 entries below were produced by reading the code, not by executing it**,
-> and every inferred claim that has since been tested was **wrong, in the direction of
-> overstatement** — the triplanar "affine map" claim (`ARCHITECTURE.md` §7.1) and the
-> eikonal "forward+backward runs" claim. Treat any entry as *a line number and a
-> suspicion*.
+> Every entry was **re-verified by execution** against `main` in Aug 2026 and sorted into
+> what happens to it. The maintainer approved the § 0 disposition on 2026-08-22; the 22
+> approved drafts are filed as **#40–#61**, #6 is closed as already-fixed, and the § 2
+> folds are commented onto #20/#22/#23/#35. What remains before this file is deleted is
+> listed in § 0.6.
 >
-> The 38 executed entries are no safer to cite blind: they were run against `main` at
-> `73a0326`, and `sdf_dataset.py` alone has moved 104 lines since. **Executed once is not
-> true now.**
->
-> **Delete when:** every entry is either a GitHub issue, an entry in `KNOWN_ISSUES.md`, a
-> ruling in `SCOPE.md`, or deleted. Per `CLAUDE.md` § Four rules, inference is not a
-> finding and does not belong in `docs/` — this file is transitional and its continued
-> existence is a debt, not an asset. Anything that does not survive re-running goes in a
-> plan's **Next**, not into `KNOWN_ISSUES.md`. Git has the rest.
+> **Delete when:** the issues are filed, the prose corrections land, the `SCOPE` and
+> `KNOWN_ISSUES` edits are made, and this file goes with the last of them, leaving a pointer
+> to that PR. It is transitional debt by its own rule, and its line numbers have drifted once
+> already — every anchor below is the ORIGINAL cited location, not a current one.
 
-Raw output of the Phase 1 mapping pass. Every entry carries a `file:line`. Nothing here has
-been fixed.
+# 0. Final disposition — approved by the maintainer 2026-08-22, filed the same day
 
-**This is not a to-do list** — GitHub issues are. It is the pool that `KNOWN_ISSUES.md`
-entries were promoted out of, and an entry earns a History entry only if it silently
-changed numerical output for inputs that previously ran without error (the rule in
-`CLAUDE.md` § Numerical-behaviour changes).
+Three earlier analyses proposed three different issue sets (17 / ~8 / 6) with different
+membership. This section supersedes all three. Where they disagreed, the disagreement was
+settled **by execution**, not by averaging. The maintainer reviewed the drafts on
+2026-08-22 (withdrawing draft 13 and settling D1–D4); the 22 surviving drafts were then
+filed verbatim, extracted mechanically from § 0.3.
 
-## Severity vocabulary
+**Baseline at time of writing:** suite 356 passed / 1 skipped / 16 xfailed (64s);
+`make lint` clean. Branch **`quick-wins`** (six commits off `main`) holds the ride-along
+fixes — the `emd_{idx}` f-string key, the `(str,)` membership comma plus a tightened
+test, four leftover debug prints, the bound-method latent-norm print, the
+missing-schedulefree notice moved from stdout to `warnings`, and the `ARCHITECTURE.md`
+§7 row correction — and stays green at the same counts.
 
-| Severity | Count | Meaning |
+## 0.1 Settled by execution this session
+
+The consolidation brief's six contested items (its §3), plus its three warnings that
+could be tested:
+
+| Claim | Verdict | Key evidence |
 |---|---|---|
-| **landmine** | 71 | Wrong or surprising behaviour that produces no error. The reader gets a plausible number. |
-| **defect** | 58 | Broken behaviour that does raise, or is unambiguously incorrect. |
-| **rot** | 54 | Stale comment, false docstring, dead parameter, unused import. |
-| **note** | 33 | Observation worth recording; not itself a bug. |
-| | **216** | |
+| `remove_overlapping_points` correct only at exactly 2 surfaces | **CONFIRMED** | Every sign pattern enumerated for n=2..5 through the real method: n=2 exact; n=3/5 remove **nothing**; n=4 removes only inside-3-of-4. Nothing is ever wrongly removed. |
+| `sum_sdf_features=False` trains one plane of three, silently | **CONFIRMED** | VAE emits (12,8,8); plane slices received xz=(12,8,8), yz=**(0,8,8)**, xy=**(0,8,8)**; forward raises nothing; output `torch.equal` to xz-alone. Reachable from `sum_conv_output_features` (`loader.get_model`). |
+| EMD never worked from `compute_recon_loss` | **CONFIRMED** | pykeops `Vi()` rejects **any** numpy array (both dtypes tested; torch accepted); the oldest version in git history already passed numpy. Plus the `result["emd_{idx}"]` missing-`f` at the NaN fallback (now fixed on `quick-wins`). |
+| Every `schedule_free_*` run dies at its first checkpoint | **CONFIRMED with the real package** (register had verified via stub only) | `schedulefree` 1.4.1 installed to an isolated dir; real CPU training run: epoch 1 trains, first checkpoint's eval warm-up hands `model(batch)` the raw dataloader list → `TypeError` in `TriplanarDecoder.forward`. |
+| `get_optimizer` drops `weight_decay` on the Adam branch | **CONFIRMED** | Direct read: `torch.optim.Adam(list_params)` bare; AdamW and schedule_free both pass it. |
+| `MultiSurfaceSDFSamples` declared defaults raise | **CONFIRMED** | Already execution-verified in group 3 below. |
+| "Unassigned (62)" heading | **WRONG — 45 + 16** | Titles compared mechanically against the grouped entries: 45 verbatim duplicates, 16 genuine. Heading corrected in place below. |
+| `ARCHITECTURE.md` §7 "each builds fine and raises on first use" | **WRONG for 2 of 5** | `TwoStageDecoder()` raises in `__init__`; `Decoder(norm_layers=...)` builds *and forwards* under the shipped contiguous default with weight-norm on. Corrected on `quick-wins`. |
+| Issue #6 vs group 10 | **Zero overlap; #6 already fixed** | The one deprecated call site now uses `n_faces_strict`; the sole remaining `n_faces` hit is a wandb dict-key name. Close #6 on its own merits. |
 
-Landmines outnumber defects. That is the expected shape for this codebase and it is the
-reason Phase 3 leads with a numerical-regression harness rather than unit tests: almost
-nothing here would be caught by a test that only asserts "it ran".
+Shipped-config values these dispositions rely on, re-verified against both
+`647_nsm_femur_v0.0.1` and `551_nsm_femur_bone_v0.0.1`: `optimizer: "AdamW"`,
+`weight_decay: 0.0001`, `l2reg_recon: false`, `get_rand_pts_recon: false`,
+`convergence_type_recon: "recon_loss"`, `scale_jointly: true`,
+`sum_conv_output_features: true`, `conv_pred_sdf: false`.
 
-## How to read this document — and how much to trust it
+## 0.2 Corrections to this register's own instructions
 
-**Do not read it front to back.** It is an index for triage, not a report. Use it to answer
-"what is known about this file" when you are about to touch that file.
+1. **`weight_decay` and `get_latent_vecs` must not fold into #20** (§2's fold list says
+   to). #20's closure criterion — "does each parameter name appear in the body" — passes
+   green with both bugs intact, and #20's Trap 1 (delete the parameter) cannot apply to
+   either. They become drafts 15 and 16.
+2. **Do not close #6 against group 10** (group 10's header says to). See table above.
+3. **Group 14 is demoted from issue to `ARCHITECTURE.md` trap.** Its production-impact
+   claim was refuted (`l2reg_recon: false` in both shipped configs), and
+   `UniqueConsecutive` and `FastUnique` amplify identically — it is a long-standing
+   convention, and patching one path alone would desynchronise the two decoder
+   interfaces. Trap committed on this branch.
+4. **Group 5 files from its evidence, not its headline.** The wrong-ground-truth trigger
+   is *decoder* count (two or more multi-output decoders), not surface count; the
+   surface-count half is `remove_overlapping_points`. Draft 5 states both precisely.
+5. **Two of the sixteen genuine Unassigned entries were headed for the discard pile and
+   are instead the two best silent-wrong-results bugs of the audit** (drafts 6 and 8).
+   The brief's warning that grouping loses singleton bugs was correct.
+6. **Execution verifies mechanisms, not intent.** Maintainer review of the drafts
+   caught one verdict that flips on design intent (draft 13: the variational doubling
+   is the standard VAE mean+logvar parameterisation, and KLD replaces the norm bound —
+   deliberate, undocumented). The drafts where intent could likewise change the fix —
+   not the existence of the finding — now carry an explicit intent-check flag
+   (drafts 11 and 18).
 
-**Confidence is not uniform, and the difference matters more than the severity.**
+## 0.3 Issue drafts — file only after approval
 
-| | Executed — a script was run | Inferred — read only | Total |
-|---|---|---|---|
-| landmine | 19 | **52** | 71 |
-| defect | 11 | **47** | 58 |
-| rot | 3 | 51 | 54 |
-| note | 5 | 28 | 33 |
-| **Total** | **38** | **178** | 216 |
+Twenty-two live drafts (draft 13 was withdrawn in maintainer review — kept in place
+below as the worked example of the intent-blind failure mode). On the tracker they get
+no tiers — CLAUDE.md orders issues by `file:function`; the two-tier split below exists
+only to make this review faster. Every draft is self-contained (this register is
+deleted when the drafts land, so the evidence a closer needs is in the draft, not
+here).
 
-An inferred finding is a hypothesis with a line number attached. Two have already been
-tested and **both were wrong in the direction of overstatement**:
+**Filed 2026-08-22**, draft → issue: 1→#40, 2→#41, 3→#42, 4→#43, 5→#44, 6→#45, 7→#46,
+8→#47, 9→#48, 10→#49, 11→#50, 12→#51, 14→#52, 15→#53, 16→#54, 17→#55, 18→#56, 19→#57,
+20→#58, 21→#59, 22→#60, 23→#61. Alongside: #6 closed as already-fixed (`0aee8ad`), and
+the § 2 folds commented onto #20, #22, #23 and #35.
 
-- `triplanar.py:87` — claimed the VAE decoder is "an affine map." False for both shipped
-  models; LayerNorm supplies the missing nonlinearity. Corrected in place.
-- `losses.py` — the register claimed eikonal forward+backward "runs for 1, 2 and 3
-  surfaces." Re-run: it raises `RuntimeError` every time. It has never worked.
+### Tier 1 — silent wrong results, or blocks a run someone would launch
 
-Two for two against, on the only two that got tested. Treat the inferred set accordingly —
-and note that *both* corrections came from execution, neither from re-reading.
+---
+**Draft 1 — `sdf_dataset.read_mesh_get_sampled_pts` / `read_meshes_get_sampled_pts`: the
+single- and multi-mesh samplers have diverged (uniform box, clipping, return types)**
 
-**The policy going forward is not a separate verification pass.** Findings get settled as a
-by-product of Phase 3 building tests, so the effort leaves permanent tests behind instead of
-throwaway scripts. This register's job is to tell Phase 3 *where to point*. The 30 landmines
-that are (a) inferred, (b) on the production path — `sdf_dataset.py`, `reconstruct/main.py`,
-`mesh/main.py`, `models/` — are the highest-value targets, because being wrong about them is
-expensive in both directions: a false one wastes a fix, a true one is shipping today.
+Three divergences between two nominally parallel functions. (a) In both copies, `mins` is
+rebound before `maxs` reads it, so a nonzero `uniform_pts_buffer` grows the sampling box
+more above than below and moves its centre — dormant only because the default is 0.0,
+and commit `48c5f60` added the parameter precisely so it could be nonzero. (b) The
+single-mesh function clips uniform samples (`np.clip`, one hit in the file); the
+multi-mesh one does not: with `uniform_pts_buffer=0.5, norm_pts=True`, single spans
+±1.2500, multi ±1.5626. (c) `pts_surface` is a `list` from the single-mesh function and
+an `int64 ndarray` from the multi — no in-repo consumer takes `.shape` of the single
+value today, so (c) is recorded here for the fix, not as its own defect.
+**Reachability:** training-data path; production reconstruction is gated off it
+(`get_rand_pts_recon: false` in both shipped configs).
+**Fixed means:** the span is captured once before rebinding so the box is symmetric;
+the two functions agree on clipping (decided, not accidental); return types match.
+Changes cached dataset content for nonzero buffers → `KNOWN_ISSUES.md` § History entry
+if any real run used one.
+
+---
+**Draft 2 — `sdf_dataset.sdf_pos_neg_idx`: divides by zero when a surface has no
+positive or no negative samples**
+
+`ZeroDivisionError` at both call sites (`SDFSamples`, `MultiSurfaceSDFSamples`), end to
+end via two realistic triggers: a `None` surface (the `fdfe902` feature) and one surface
+nested inside another. The regression harness's own fixtures are shaped to dodge it
+(`testing/NSM/regression/_harness.py` documents this) — the codebase already works
+around its own bug. **Fixed means:** an empty pos/neg set raises an error naming the
+surface (or is handled), and the harness fixture comment points at the fix instead of
+the dodge.
+
+---
+**Draft 3 — `train_deep_sdf`: every `schedule_free_*` run dies at its first checkpoint
+or validation epoch**
+
+The eval warm-up (`optimizer.eval()` then `for batch in itertools.islice(data_loader,
+50): model(batch)`) hands the decoder the raw dataloader item. Verified 2026-08-21 with
+the real `schedulefree` 1.4.1: epoch 1 trains, the first checkpoint epoch raises
+`TypeError: list indices must be integers or slices, not tuple` in
+`TriplanarDecoder.forward`. Every run reaches it: `checkpoint_epoch = epoch in
+config["checkpoints"] or epoch % config["save_frequency"] == 0`. Invisible until now
+because `schedulefree` is not installed in `nsm-dev` (`get_optimizer` raises
+`ImportError` first). **Fixed means:** the warm-up unpacks the batch the way
+`train_epoch` does, pinned by a test that trains a schedule_free run through one
+checkpoint. Note for the fix: KNOWN_ISSUES §1 records that schedule_free configs were
+tuned against the Adam path — this crash is why nobody noticed.
+
+---
+**Draft 4 — `MultiSurfaceSDFSamples`: the declared constructor surface does not work**
+
+(a) The documented default `subsample=None` cannot construct — `TypeError` in
+`get_samples_per_sign` (`float * NoneType`); on a warm cache it instead skips joint
+normalization and returns 600 unnormalised points with a different key set (absmax
+1.055 > 1). (b) `joint_scale_buffer` — which sets the normalization radius of every
+shipped multi-surface dataset (0.1 in production) — is not accepted or forwarded by the
+multi-surface constructor at all (`TypeError: unexpected keyword argument`).
+**Reachability:** multi-surface (bone+cartilage) is the production training
+configuration. **Fixed means:** `subsample` is required or validated at construction;
+`joint_scale_buffer` is accepted, forwarded, and lands in the cache key (#19's half).
+
+---
+**Draft 5 — multi-surface above the shipped two-surface configuration silently computes
+the wrong thing (`reconstruct.main` decoder indexing; `remove_overlapping_points`)**
+
+Two mechanisms, one class, both measured. (a) With **two or more multi-output
+decoders** (a configuration `reconstruct_mesh`'s own docstring advertises), the
+single-output branch indexes the flat `sdf_gt` by decoder index: with two 2-surface
+decoders and four ground-truth surfaces, setting surfaces 2 and 3 to all-NaN left the
+loss **bit-identical** — decoder 1 never reads its own ground truth. (b)
+`remove_overlapping_points` tests `total != -2`, a **sum**, not a count: correct at
+exactly 2 surfaces, removes nothing at 3 or 5, and at 4 removes only inside-3-of-4
+points (full n=2..5 enumeration, 2026-08-21; it never wrongly removes). CLAUDE.md
+documents 4-surface models (`bone/cart/med_men/lat_men`) as supported.
+**Fixed means:** (a) the flat `sdf_gt` is indexed by a running surface offset or the
+configuration is rejected at entry; (b) "inside two or more surfaces" is expressed as a
+count — `(sdf < 0).sum(1) >= 2`. **(b) changes what points a dataset keeps → maintainer
+decision D2 + `KNOWN_ISSUES.md` § History entry before it lands.**
+
+---
+**Draft 6 — `TriplanarDecoder`: `sum_sdf_features=False` silently trains on one plane
+of three**
+
+`__init__` sizes the VAE output by `sdf_latent_size` when `sum_sdf_features is False`,
+but `forward_with_plane_features` slices by `sdf_latent_size + conv_pred_sdf` per
+plane: the xz plane receives all 12 channels, yz and xy receive **(0, 8, 8)** —
+zero-channel slices. No error; forward output is `torch.equal` to using the full
+feature map as the xz plane alone; all VAE parameters still receive gradient (through
+xz geometry), so training proceeds and converges to a silently degraded model.
+**Reachability:** `loader.get_model` maps the config key `sum_conv_output_features`
+onto it; both shipped configs set `true`, so no shipped model is affected — this hits
+anyone exploring the documented option. (Ride-along: the assert message above the
+sizing branch says "if sum_sdf_features is True" while guarding the False branch.)
+**Impact upgrade (maintainer, 2026-08-22):** the maintainer's own past experiments ran
+this option and concluded concatenation never improved results — those runs silently
+trained one plane of three, so that conclusion is untrustworthy and the comparison is
+queued for a re-run after the fix (`NSM_TRAINING_IDEAS.md`). The fix therefore needs a
+`KNOWN_ISSUES.md` § History entry ("affected: any run with
+`sum_conv_output_features: false`").
+**Fixed means:** the flag either produces three correctly-sized plane slices or is
+rejected at construction; pinned by a forward-shape test over both flag values.
+
+---
+**Draft 7 — `models`: configurations that construct successfully and crash on first
+forward (class issue)**
+
+Four instances, verified: `Decoder(progressive_add_depth=True)` propagates `None`
+through the layer stack in a window covering every realistic epoch range;
+`Decoder(norm_layers=...)` indexes `self.bn` by absolute layer index but appends only
+per norm layer (`IndexError` for any set not starting at 0, with weight-norm off;
+`norm_layers` is marked DEPRECATED, so the fix may be deletion); `activation='linear'`
+returns a bare `None` the forward then calls; `TwoStageDecoder()` raises in `__init__`
+(tuple + list concat) at any argument. **Closure criterion (what makes this class
+sweep able to fail):** a parameterised constructor-and-one-forward smoke test over the
+documented option values — each option either works or refuses at construction.
+
+---
+**Draft 8 — `utils.get_optimizer`: `weight_decay` is silently dropped on the Adam
+branch**
+
+`torch.optim.Adam(list_params)` — no `weight_decay` — while `AdamW` and
+`schedule_free_AdamW` both pass it. `train_deep_sdf` forwards
+`config["weight_decay"]` unconditionally, so every Adam config that sets it (the
+regression harness's own config: Adam + 1e-4) silently trains without decay.
+**Reachability:** both shipped configs use AdamW → **no shipped run affected**.
+**Fixed means:** the argument is passed (decision D3: honour vs reject) — honouring it
+moves the committed regression baselines, which is the proof it changes numerics, so
+the fix regenerates baselines and adds a `KNOWN_ISSUES.md` § History entry.
+
+---
+**Draft 9 — `train_deep_sdf` cannot be driven by the shipped `default_config.json`**
+
+Five unconditionally-read keys are missing and fatal in sequence, starting with
+`KeyError: 'prefetch_factor'` (verified by adding one key at a time on a real CPU run);
+`assd` is also read but unreachable from the shipped default. Related option values
+that cannot work, folded here rather than filed separately:
+`add_plain_lr_to_config` raises `KeyError: 'Initial'` on a Constant schedule that
+`get_learning_rate_schedules` itself accepts; `norm_penalty_type='barrier'` returns NaN
+for any latent outside `[min,max]` — the state at initialisation — so the option is
+broken for its whole intended use; `Regress.add_latent` is handed the whole result dict
+(`TypeError` for every user who enables the latent-to-factor validator).
+**Fixed means (decided by maintainer, 2026-08-22):** regenerate `default_config.json`
+**from the ShapeMedKnee `647` config** — the values that actually trained the shipped
+models — updated to the current contract: `Target`-annotated `LearningRateSchedule`
+entries, the `emd` key dropped (decision D1), and every key the trainer reads
+unconditionally present. Pinned by the existing generator-sync test plus a new test
+that instantiates the trainer from the shipped file. (This is the plan's §8.1 item
+"a default config per model type, derived from the ShapeMedKnee configs" — this draft
+delivers the first one.) The three option values either work or raise with a named
+message.
+
+---
+**Draft 10 — `train_deep_sdf`: `resume_epoch == 1` silently skips epoch 1 without
+resuming anything**
+
+Verified end to end on the CPU harness: `resume_epoch=0` runs epochs [1,2,3,4];
+`resume_epoch=1` runs [2,3,4] with **no checkpoint loaded** — the resume guard and the
+loop boundary disagree. **Fixed means:** `resume_epoch==1` either loads the epoch-1
+checkpoint or raises; both guards share one boundary; pinned by a resume test.
+
+---
+**Draft 11 — `save_model_params` silently refuses to overwrite and silently drops
+non-JSON config values**
+
+Called on every checkpoint, no-ops after the first: a resumed or re-configured run's
+`model_params_config.json` — the file every downstream consumer reads to rebuild the
+model — keeps the first run's hyperparameters and mesh list (verified: second call with
+`lr=0.9999` leaves `lr=0.001` on disk, no log). `filter_non_jsonable` drops keys with
+no log. **Intent check for the maintainer:** write-once *could* be deliberate
+provenance protection — if so, the fix is to log the refusal and the dropped keys
+loudly rather than to overwrite. **Fixed means:** overwrite or epoch-stamp (or, if
+write-once is intended, warn loudly on divergence), and log every key removed.
+
+---
+**Draft 12 — `train_deep_sdf_multi_head`: repair checklist (SCOPE §2.1: supported,
+broken, fix it)**
+
+KNOWN_ISSUES § History §2 owns the headline bug (only the last decoder trains). The
+repair checklist, each verified: latents are never moved to the device (runs only
+*because* they are left on CPU; `device="cpu"` and `"mps"` both crash); non-short-
+circuit `&` raises `KeyError: 'surface_weighting'` on the shipped default config
+(→ one-sentence addition to History §2, committed on this branch);
+`torch.mps.empty_cache()` on the CPU branch; per-surface L1 appended to a fixed-size
+list then discarded; a hardcoded 100-epoch warm-up ignores its config key. Fold in:
+multi-decoder checkpoints are written to `model_N/` subdirectories **no loader in the
+repo can read back** (`save_model` naming). **Fixed means:** one epoch trains on the
+shipped default on cpu and cuda, all decoders receive gradients, and a saved
+multi-head run can be loaded.
+
+---
+**Draft 13 — WITHDRAWN (maintainer review, 2026-08-22): the variational behaviour is
+deliberate, not a defect**
+
+The mechanism was verified but the intent was misread, in both halves. The doubling is
+the standard VAE parameterisation — the embedding stores mean and log-variance, so its
+width is `2 × latent_size` while the decoder's latent is still `latent_size` (the
+recorded value is therefore *correct* for consumers). And the bound is not "ignored":
+when `variational` is on, training swaps the regularizer to KLD
+(`train_deep_sdf.train_epoch`), which replaces the hard `max_norm` — the hardcoded
+1000 is "effectively unbounded" by design. What is actually missing is documentation:
+`get_latent_vecs` has no docstring, and nothing states that `latent_bound` is
+superseded under `variational`. **Routed to the Phase-2 prose pass**, not the tracker.
+
+Kept in place, numbering preserved, because this is the register's one confirmed case
+of the intent-blind failure mode: a mechanism verified by execution whose verdict flips
+on design intent only the maintainer holds. It is why every draft here waits for this
+review, and why drafts 11 and 18 now carry explicit intent-check flags.
+
+---
+**Draft 14 — `train_deep_sdf`: `mesh_names` is written to `model_params_config.json` as
+ground truth and can be silently wrong**
+
+The per-surface index ordering is a positional contract spanning four modules; training
+is self-consistent under a swap (the decoder learns whichever column it is given), so
+the harm is precisely that the persisted `mesh_names` — added to prevent downstream
+misidentification — can disagree with what each output channel actually learned.
+**Fixed means:** the dataset carries surface identity from mesh list to output channel,
+and `mesh_names` is validated against it (or derived from it) at save time.
+
+### Tier 2 — loud failures in supported paths, API hygiene, error quality
+
+---
+**Draft 15 — EMD is dead end to end; repair or delete (decision D1)**
+
+`compute_recon_loss(calc_emd=True)` has never returned a number from any caller in the
+function's history: the only caller passes numpy and pykeops rejects numpy at the
+boundary for every dtype. Behind that: `sinkhorn`'s default uniform weights cannot sum
+equal for unequal point counts (so real mesh pairs would fail next), `max_iters` is
+type-checked as `p`, `w_y`'s length is never validated (`w_x` is, twice), and
+`default_config.json` ships `emd: true` while the trainer reads the key
+unconditionally. The file is a vendored copy of `fwilliams/scalable-pytorch-sinkhorn`.
+**Repair** = numpy→torch conversion at the caller + weight normalisation + the two
+validation lines + a test on unequal-size meshes. **Delete** = remove `calc_emd`, the
+vendored file, and the config key, with a deprecation note. Either way the shipped
+default stops advertising a dead option.
+**DECIDED (maintainer, 2026-08-22): delete.** Two supporting facts: both ShapeMedKnee
+configs set `emd: false`, so even validation never attempted it on a real run (only
+`default_config.json` says `true`); and EMD appears nowhere in the training-loss path
+in this repo's history — if it was ever used as a loss, it was not through this code.
+
+---
+**Draft 16 — unhandled inputs surface as `UnboundLocalError`/`NameError`/invented data
+instead of a named error (class issue, five sites)**
+
+All verified: `refine_mesh.get_target_cells` raises `UnboundLocalError` **on its own
+default arguments** (makes the whole module unusable; gates SCOPE §2.3's other
+conditions); `reconstruct_latent`'s `optimizer`/`loss_fn` binding has no else-raise
+(`optimizer_name='AdamW'` → `UnboundLocalError`); `reconstruct_latent` can return an
+unbound `latent_` — one trigger is NaN loss under `convergence="recon_loss"`, **the
+mode both shipped configs select**, so a diverged production fit reports
+`UnboundLocalError` instead of "the fit diverged", and the same block initialises
+`loss`/`recon_loss` to the literal `100`; `score_correspondence` fabricates a
+plausible roundtrip metric when `source_mesh` is missing where every sibling path
+returns `{'skipped': True, ...}`. **Fixed means:** explicit else-that-raises naming
+accepted values; `latent_` initialised before the loop; the `100` sentinel replaced
+with `inf`/`None`; the missing-input path skips with a reason. One shape, one PR.
+
+---
+**Draft 17 — functions that mutate a caller's object and also return it (PR #38's
+unswept siblings)**
+
+The class PR #38 just fixed in `get_pts_center_and_scale`, three more instances,
+verified: `reconstruct_latent` clamps and device-moves the caller's `sdf_gt` list in
+place through two undocumented helpers; `compute_recon_loss` downcasts the caller's
+meshes to float32 in place (aliases `meshes` and `result_['orig_mesh']`);
+`interpolate_mesh`'s `is_mesh` path returned the caller's own 82-point mesh at 28,002
+points. **Fixed means:** each site copies, or documents the mutation and stops
+returning the object; docstrings say which.
+
+---
+**Draft 18 — the same knob has a different default at each layer; adjacent metrics take
+their arguments in opposite order**
+
+Verified: `chamfer_norm` defaults to 2 in `reconstruct_mesh` and 1 in the two layers
+below it — it is a **power**, so the layers report chamfer in different units (0.3297
+vs 0.2179 on identical geometry), documented at the two lower layers and absent from
+`reconstruct_mesh`'s docstring; `sigma_rand_pts` differs 10× between `reconstruct_mesh`
+(0.001) and `get_mean_errors` (0.01), result-changing whenever `get_rand_pts=True`
+(both shipped configs: false); `conv_norm_type` defaults to `'batch'` at three of six
+construction sites and `'layer'` at the others while both shipped models use
+`'layer'`; `roundtrip_distance(A,B)` equals `roundtrip_distance(B,A)` exactly while
+its adjacent metric is sign-flipped under the same swap — a swap is invisible.
+**Intent check for the maintainer:** each default divergence *could* encode a
+deliberate per-layer choice (e.g. squared chamfer at the top layer); the defect that
+survives either way is that the divergence is undocumented and the knob shares one
+name. Which value wins is the maintainer's call per knob. **Fixed means:** one default
+per knob, sourced once (or the divergence documented as deliberate at both ends); the
+metric pair keyword-only or signature-aligned so a swap is a `TypeError`.
+
+---
+**Draft 19 — face arrays are reshaped without validation; a quad or VTK-style array
+silently builds garbage (five sites, one helper)**
+
+Verified: pure-quad input raises a bare reshape `ValueError` in two metrics; a mixed
+quad/triangle mesh whose flat length happens to divide evenly **silently corrupts**;
+`build_mesh_laplacian` accepts pyvista's VTK-style `.faces` (384 % 3 == 0) and builds a
+different smoothing operator (nnz 373 vs 288, dense matrices unequal) — the
+interpolation output is wrong rather than absent. **Fixed means:** one shared accessor
+validates (or uses `regular_faces` and raises on non-triangular input); all five sites
+route through it. **Not** #6, which is closed separately as already-fixed.
+
+---
+**Draft 20 — library code prints to stdout ungated: route the reconstruction and
+sampling paths through `verbose`/logger (post-quick-wins remainder)**
+
+Measured: `get_sdfs` prints one line per batch with **no `verbose` parameter at all**
+while every sibling has one — 64 lines per `create_mesh_adaptive` call at the caller's
+own defaults; timing prints on the sampler path (five sites) and unconditional prints
+in `reconstruct_mesh`/`get_mean_errors` survive `verbose=False`. The four worst
+one-liners are already deleted on `quick-wins`; this issue is the systematic pass.
+**Fixed means (direction decided by maintainer, 2026-08-22): loggers, not `verbose`
+flags.** Every print on the reconstruction and sampling paths moves to a module logger
+(`logging.getLogger(__name__)`) so output is controlled centrally; existing `verbose`
+parameters become sugar over the log level or are removed. Part of the same fix:
+`reconstruct/main.py` calls `logging.basicConfig` at import time — a library must not
+configure the root logger, so that call goes (it is one of ARCHITECTURE §4's
+import-time side effects). A capsys test pins stdout silence at defaults for the
+production entry points.
+
+---
+**Draft 21 — `train_deep_sdf` logging: latent-norm stats are assigned, not accumulated;
+the LR fix's positional back door survives in the logging helper**
+
+Verified: `step_mean_vec_length`/`step_std_vec_length` use `=` where the surrounding
+accumulators use `+=`, so the logged latent-norm metrics are the last chunk over
+`n_batches` — wrong by a factor of `len(data_loader)` (real 2-epoch run: true mean
+0.0107, logged 0.0053, × n_batches matches). Gradients unaffected; wandb only. And
+`add_plain_lr_to_config` retains `idx_model`/`idx_latent` overrides whose only caller
+is a test asserting deliberately swapped labels — in the very function whose Aug-2026
+fix eliminated positional mapping. **Fixed means:** `+=`; delete the two parameters
+and their test.
+
+---
+**Draft 22 — `mesh.main`: `sdf_grid_to_mesh` crashes on numpy input while its VTK twin
+does not; the fallback grid origin can disagree with `search_bounds`**
+
+Two functions swapped by one unrelated boolean accept different inputs (unguarded
+`.cpu()` vs `hasattr` guard) and carry different `narrow_band` defaults; the
+no-`voxel_origin` fallback hands `create_mesh` the default origin `(-1,-1,-1)` while
+`voxel_size` is derived from `search_bounds` — a wrong-by-construction grid on a
+reachable branch. Production always passes torch + `use_vtk=True`, so severity is API
+hygiene. **Fixed means:** both twins guard the same way and share defaults; the
+fallback derives its origin from `search_bounds`.
+
+---
+**Draft 23 — `sdf_dataset`: the multi-surface reference-mesh path cannot run, and
+`combine_meshes` breaks its own return contract**
+
+`reference_mesh=int` with a list-valued `mesh_to_scale` raises `UnboundLocalError` one
+statement before the `AttributeError` the audit predicted; `combine_meshes` returns a
+pyvista `PolyData` (no `save_mesh`) whenever it actually combines two or more meshes,
+against its own "Returns: Mesh" docstring. `docs/MULTI_SURFACE_REGISTRATION.md`
+advertises the path as working. **Fixed means:** the path returns a usable combined
+pymskt Mesh, which requires `combine_meshes` to keep its declared type; pinned by a
+test exercising `reference_mesh=int` with two meshes.
+
+## 0.4 Decision items — resolved by the maintainer 2026-08-22 except D4
+
+- **D1 (draft 15): EMD — DECIDED: delete.** Never worked from any caller, nothing
+  downstream consumes it, the maintainer does not use it, and the vendored sinkhorn
+  file is maintenance surface.
+- **D2 (draft 5b): `remove_overlapping_points` — DECIDED: fix it**, together with the
+  class-5 indexing fix, one `KNOWN_ISSUES.md` § History entry covering both. Changes
+  what points a dataset keeps for 3+ surfaces; not a drive-by.
+- **D3 (draft 8): `weight_decay` under Adam — DECIDED: honour it.** Pass the argument;
+  regenerate the harness baselines (the moved baselines are the proof it changes
+  numerics) and add the History entry. No shipped run affected (both use AdamW).
+- **D4 (group 14): latent-gradient N-amplification — DECIDED (maintainer,
+  2026-08-22): keep the behaviour, document it twice, revisit deliberately.** No
+  tracker issue. The ARCHITECTURE §6 trap stands, and a `KNOWN_ISSUES.md` § Open
+  entry (committed on this branch) frames the revisit: the maintainer reports latent
+  regularization was historically a pain to tune and was abandoned — consistent with
+  the effective weight being silently divided by N, recorded there as a hypothesis
+  with the experiment that would test it.
+
+## 0.5 Non-issue dispositions
+
+- **§2 fold list stands**, minus the two pull-outs (0.2.1). #6 closes as fixed on its
+  own merits. #16 is absorbed by #20 as already noted there. The S3 findings
+  (`reconstruct_latent_S3` unguarded arithmetic, undefined name in its error path,
+  wandb-without-import) fold into **#35** as "the S3 copy of the main-path arithmetic
+  is unguarded".
+- **§3's 62 prose corrections**: land as Phase-2 commits, no tracker entries.
+- **§4's 13 SCOPE rulings**: accepted as written; land as one SCOPE.md PR. Add to it
+  the dead-public-symbol cluster from the Unassigned pile (`symmetric_chammfer` — an
+  empty stub returning `None` with a whitespace docstring; `sdf_gradients` — returns
+  98.8% fabricated zeros; `find_object_bounds_random_sampling`): rule dead, delete.
+- **§5's `grad_clip` entry**: committed to `KNOWN_ISSUES.md` § Open on this branch,
+  with the multi_head History sentence and the `ARCHITECTURE.md` latent-gradient trap.
+- **§6 deletions**: accepted. The refuted-entry evidence stays until this file goes.
+- **The 45 duplicated Unassigned entries** resolve with their groups. The 16 genuine
+  ones: drafts 3, 6, 10, 12 (×4 sites + `save_model` naming), 14, 22; the withdrawn
+  draft 13 → Phase-2 prose (document `get_latent_vecs`'s variational contract:
+  mean+logvar doubling, KLD supersedes `latent_bound`); #35 fold; SCOPE dead-symbol
+  ruling (×2); `KNOWN_ISSUES` F401 entry (already on this branch, covers the
+  unused-import instance).
+
+## 0.6 Delete-when, updated
+
+This file is deleted by the PR that lands the last of: the approved drafts filed, the
+`quick-wins` branch merged, the SCOPE.md rulings PR, and the Phase-2 prose pass — that
+PR leaves a pointer here → tracker.
 
 ---
 
-## Landmines (71)
-
-Silent wrong behaviour. Each of these returns a number rather than raising.
-
-### `NSM/_lr_migration.py`
-
-**NSM/_lr_migration.py:55 — migration_error decides the historical LR mapping by substring-sniffing the optimizer name**
-
-`schedule_free = "schedule_free" in str(optimizer)` picks between `_HISTORICAL_TARGETS_ADAM` and `_HISTORICAL_TARGETS_SCHEDULE_FREE` (lines 23-24, 56), which are OPPOSITE mappings. Anything not matching that substring — including a typo'd or future optimizer name — is silently told the Adam history. Given that the two answers are exact inverses, a wrong guess here tells a user to reproduce their run with the schedules swapped. The same substring test is duplicated in the train loop at NSM/train/train_deep_sdf.py:290 (`if not ("schedule_free" in config["optimizer"])`).
-
-### `NSM/configs/default_config.json`
-
-**NSM/configs/default_config.json:1 — No shipped config can construct a triplanar model faithfully**
-
-The 61 keys in default_config.json cover the deepsdf vocabulary (latent_size, layer_dimensions, weight_norm, activation, final_activation, xyz_in_all, layers_with_*, dropout_prob) but contain none of conv_hidden_dims, conv_deep_image_size, conv_norm, conv_norm_type, conv_start_with_mlp, sdf_latent_size, sdf_hidden_dims, sum_conv_output_features, conv_pred_sdf, padding, or objects_per_decoder. Loading a triplanar model from it would silently fall back to every default in _get_triplanar_params (loader.py:120-133), which is a different architecture from the production models. The production consumer avoids this by requiring all those keys explicitly from the model's own saved config (kneepipeline/steps/run_nsm.py:94-110) and raising KeyError if absent.
-
-### `NSM/configs/generate_sdf_default_config.py`
-
-**NSM/configs/generate_sdf_default_config.py:1 — NSM/configs is not a package and will not ship in a built distribution**
-
-`NSM/configs/` has no `__init__.py` (only `__pycache__`, `deep_sdf_config`, `default_config.json`, `generate_sdf_default_config.py`). Verified: `setuptools.find_packages(include=['NSM','NSM.*'])` returns ['NSM','NSM.datasets','NSM.dependencies','NSM.mesh','NSM.models','NSM.reconstruct','NSM.train'] — no NSM.configs. pyproject.toml:44-45 uses exactly that include list, and there is no `[tool.setuptools.package-data]`, no `include-package-data`, and no MANIFEST.in. So a wheel/sdist of NSM contains neither the generator nor `default_config.json`. It works today only because installs are editable (source dir on sys.path). Both `testing/NSM/configs/test_default_config_sync.py:15-18` and `testing/NSM/test_lr_schedules.py:547` would fail against a non-editable install.
-
-### `NSM/datasets/sdf_dataset.py`
-
-**NSM/datasets/sdf_dataset.py:87 — get_pts_center_and_scale ignores its center= and scale= flags (verified at runtime)**
-
-Both boolean parameters are dead: `center` is rebound to np.mean(pts) at line 88 (or 90) before it is ever read, and `pts -= center` at 91 is unconditional; `scale` is rebound at 94 and `pts /= scale` at 95 is unconditional whenever scale_method == 'max_rad'. Runtime check: get_pts_center_and_scale(pts, center=False, scale=False) returns a real center/scale and leaves the input normalized to max radius 1.0. Consequence at the call site: read_meshes_get_sampled_pts:609-616 passes center=center_pts, scale=norm_pts believing they select the operation, then line 621 applies BOTH unconditionally -- so SDFSamples' documented default of center_pts=True, norm_pts=False (lines 815-816) silently normalizes to the unit sphere anyway. There is no reachable configuration that centers without scaling.
-
-**NSM/datasets/sdf_dataset.py:91 — get_pts_center_and_scale mutates the caller's array in place, undocumented**
-
-Lines 91 and 95 do `pts -= center` / `pts /= scale` on the passed array. The docstring (59-85) never mentions it. All three in-repo callers pass np.copy() defensively (279, 610, NSM/reconstruct/reconstruct_latent_S3.py:131) -- the convention is real but exists only as a habit at the call sites, so any new caller that omits np.copy() silently destroys its source coordinates.
-
-**NSM/datasets/sdf_dataset.py:184 — n_pts_random is silently swallowed by **kwargs in both read_*_get_sampled_pts functions**
-
-Neither function has an `n_pts_random` parameter; the count parameter is `n_pts` (line 171, line 407). NSM/reconstruct/main.py:985 and :1002 pass `n_pts_random=n_pts_random`, which lands in **kwargs (184 / 425) and is discarded -- the deprecation loop at 229-231 / 469-471 only recognizes five other names, so not even a warning is printed. The consumer forwards a real value for this: /mnt/data/programming/kneepipeline/steps/run_nsm.py:201 passes n_pts_random=model_config['n_pts_random_recon'] (=100000 in both shipped configs). When get_rand_pts is enabled, sampling would silently use the 200000 default instead. This is the same class of bug as the param-group ordering bug that motivated the audit: a caller-supplied number that looks honoured and is not.
-
-**NSM/datasets/sdf_dataset.py:314 — read_mesh_get_sampled_pts returns 'xyz' or 'pts' depending on get_random; one consumer reads 'pts' unconditionally**
-
-get_random=True populates results['xyz'] (314); get_random=False populates results['pts'] (318). The multi-mesh function always uses 'pts' (692, 741). The internal callers hedge -- `result_['pts'] if 'pts' in result_ else result_['xyz']` at 1237 and 1855 -- but NSM/reconstruct/main.py:1009 reads result_['pts'] unconditionally after the single-object call at 976, so reconstruct_mesh(path=<str>, get_rand_pts=True) raises KeyError. Currently unreachable from the consumer only because steps/run_nsm.py always passes a list (making multi_object True) and get_rand_pts_recon is false. UNVERIFIED whether any out-of-repo caller passes a bare string with get_rand_pts=True.
-
-**NSM/datasets/sdf_dataset.py:820 — loc_save default is evaluated at import time, so setting LOC_SDF_CACHE later has no effect**
-
-`loc_save=os.environ.get('LOC_SDF_CACHE', ~/.cache/nsm_sdf_cache)` is a default ARGUMENT (820-822, and again 1609-1611), evaluated once when the class body executes at import. Any process that imports NSM.datasets (which NSM.reconstruct does transitively) and then sets LOC_SDF_CACHE gets the stale value. The consumer does exactly this ordering-sensitive thing at /mnt/data/programming/kneepipeline/steps/run_nsm.py:172, setting LOC_SDF_CACHE to the empty string after the import at line 170 -- and note os.environ.get returns '' rather than the fallback when the key exists but is empty, which would make cache_folder a relative path in the CWD if a dataset were ever constructed in that process.
-
-**NSM/datasets/sdf_dataset.py:900 — Undocumented subclass initialization-order contract enforced by hasattr**
-
-SDFSamples.__init__ does `if not hasattr(self, 'reference_object'): self.reference_object = 0` and the same for n_meshes (900-903). This is a load-bearing contract: a subclass MUST set those attributes before calling super().__init__, which MultiSurfaceSDFSamples does at 1645-1650. Nothing documents it, and getting it wrong silently reverts to reference_object=0 / n_meshes=1, which changes the centering reference in norm_and_scale_all_meshes (1024, 1061) rather than raising. Same shape of hazard as the param-group ordering bug: correctness carried by statement order, not by a name.
-
-**NSM/datasets/sdf_dataset.py:1097 — ISSUE #3 CONFIRMED: sigma_near/sigma_far change coordinate space with scale_jointly**
-
-Verified. preprocess_inputs (1092-1105) REQUIRES center_pts=False and norm_pts=False when scale_jointly=True (it raises ValueError otherwise). get_sample_data_dict then forwards those flags into read_mesh_get_sampled_pts (1223-1224) / read_meshes_get_sampled_pts (1828-1829). Inside those functions, normalization happens at lines 276-290 (single) / 565-634 (multi) and sigma is consumed AFTER it, at line 296-298 (single) / 654-660 (multi). So: scale_jointly=False -> the mesh is already centered+divided by max radius, sigma is in unit-sphere units; scale_jointly=True -> no normalization has happened, sigma is in raw mesh units (mm), and the joint normalization is instead deferred to __getitem__ at 1546-1550 / 2143-2146, i.e. after sampling. Empirically corroborated: the shipped production configs use scale_jointly=true with sigma_near=0.743, sigma_far=2.35 (/mnt/data/programming/kneepipeline/NSM_MODELS/647_nsm_femur_v0.0.1/model_params_config.json), roughly 100x the 0.01/0.1 defaults documented at lines 781-782 for the other mode. Note the mechanism is subtler than the issue text: because of the get_pts_center_and_scale flag bug above, it is scale_jointly alone (not norm_pts) that decides the space.
-
-**NSM/datasets/sdf_dataset.py:1305 — sdf_pos_neg_idx divides by zero when a surface has no positive or no negative samples**
-
-`pos_idx.repeat(samples_per_sign // pos_idx.size(0) + 1)` at 1305-1306 and the multi-surface copy at 2029-2030 both divide by the count of found indices. A degenerate/thin surface, an all-NaN column from a None mesh, or a get_random=False configuration where a surface's own SDFs are all exactly 0 (719) yields size(0)==0 -> ZeroDivisionError deep inside a multiprocessing worker.
-
-**NSM/datasets/sdf_dataset.py:1396 — uniform_pts_buffer and subsample also affect cached content but are not hashed**
-
-uniform_pts_buffer changes the sampling domain (301-303, 647-648, 309-310) and is in neither get_hash_params (1396-1409, 1973-1999). subsample determines samples_per_sign, which determines the repeat factor baked into the cached pos_idx/neg_idx (1304-1306, 2029-2030) -- also unhashed. On reload the presence check at 1181 / 1764-1771 accepts the stale arrays, and the shortfall is silently papered over by the random top-up at 1524-1529 / 2122-2127, so the positive/negative balance quietly stops matching the requested subsample.
-
-**NSM/datasets/sdf_dataset.py:1406 — reference_mesh is hashed by str(), so passing a Mesh object makes the cache key its memory address**
-
-get_hash_params puts self.reference_mesh into the list (1406, and 1981 for multi); create_hash stringifies everything at 1437. A str path hashes deterministically, an int index hashes deterministically, but a pymskt Mesh instance stringifies to '<...Mesh object at 0x...>' -- different every process -- so the cache never hits and a fresh .npz is written on every run. Note also the ordering: get_hash_params runs at line 911, BEFORE load_reference_mesh (924) converts/normalizes self.reference_mesh, so the hash sees the raw user input, and after construction self.reference_mesh has been set to None (1386) when multiprocessing is on.
-
-**NSM/datasets/sdf_dataset.py:1635 — n_meshes and n_pts are derived from len(list_mesh_paths[0]), which is a character count for a string path**
-
-Lines 1635-1638 build n_pts as [n_pts] * len(list_mesh_paths[0]) and 1649 sets self.n_meshes = len(list_mesh_paths[0]). If the caller passes a flat list of string paths (which preprocess_inputs at 1688-1689 explicitly anticipates), len() of a path string is its character count -- so total_n_pts (1646) is computed from a 40-element list. preprocess_inputs later repairs self.n_meshes but never recomputes self.total_n_pts, which then feeds get_samples_per_sign (1895).
-
-**NSM/datasets/sdf_dataset.py:1759 — Cache-upgrade path resaves stale pos/neg indices after removing overlapping points**
-
-On a cache hit, MultiSurfaceSDFSamples.get_sample_data_dict calls remove_overlapping_points at 1759, which DELETES rows from xyz and gt_sdf (1932-1933). The pos_idx/neg_idx/surf_idx already loaded from that cache still index the pre-deletion array. The recompute at 1773-1776 only fires if a key is missing or the list length != n_meshes -- neither of which a row deletion changes -- so resave_data=True at 1762 writes the STALE indices back to disk (1787). test_if_idx_in_range (1705-1716) catches only out-of-range indices; indices that remain in range but now point at different points pass silently and are baked into the cache for every subsequent run. The freshly-generated branch gets the order right (remove at 1873, then compute at 1876).
-
-**NSM/datasets/sdf_dataset.py:1973 — mesh_to_scale is not part of the multi-surface cache hash**
-
-MultiSurfaceSDFSamples.get_hash_params (1973-1999) lists center_pts, norm_pts, scale_method, rand_function, scale_all_meshes, center_all_meshes, reference_mesh, reference_object, a bare False, fix_mesh, scale_jointly, then the per-mesh n_pts/p_near/p_far/sigma_near/sigma_far. mesh_to_scale is absent -- yet it selects which surface(s) drive ICP registration (527-534) AND which drive centering/scaling (579-595). Two runs that differ only in mesh_to_scale produce the same hash and the second silently reuses the first's cache with the wrong alignment and the wrong normalization.
-
-**NSM/datasets/sdf_dataset.py:1983 — Unexplained bare `False` literal inside the multi-surface hash parameter list**
-
-get_hash_params builds a list of meaningful attributes and drops a bare `False` at position 9 (line 1983) with no comment. It is presumably a frozen placeholder for a removed parameter, kept so existing cache hashes still resolve. Anyone tidying this list will silently invalidate every cached .npz on disk; anyone reading it cannot tell what it stood for.
-
-### `NSM/losses.py`
-
-**NSM/losses.py:110 — losses.py builds model input as cat([latent, points]) — an undocumented latent-first ordering, the same bug class as the LR mapping**
-
-`model_input = torch.cat([latent, points], dim=-1)` at losses.py:110 (compute_sdf_gradients) and losses.py:213 (combined_sdf_loss). Neither docstring states that the decoder's legacy `x` interface expects the latent code first and xyz last (TriplanarDecoder.forward, NSM/models/triplanar.py:330-342, accepts either `x` or `latent`+`xyz`), and nothing validates that `latent.shape[-1] + 3` matches the decoder's expected width. Swap the two and the model consumes garbage silently. This is exactly the undocumented-positional-ordering pattern the audit was opened over.
-
-### `NSM/mesh/correspondence_metrics.py`
-
-**NSM/mesh/correspondence_metrics.py:333 — self_intersection_count's runtime guard does not guard against its actual runtime**
-
-`_aabb_broadphase` is a pure-Python nested loop over triangle ranks (:333-348) with an O(n^2) worst case, and the narrow phase (:312-317) is another Python loop calling `_tri_tri_intersect` per candidate pair. `max_triangles` defaults to 50_000 (:256) and the docstring frames it as the protection against 'excessive runtime' (:271-273) / 'rather than hanging' (:265) — but a 50k-triangle mesh under this implementation will not finish in a usable time. The tests only ever exercise small spheres/planes (testing/NSM/mesh/test_correspondence_metrics.py:250-288).
-
-**NSM/mesh/correspondence_metrics.py:537 — Adjacent metrics take the same two arrays in opposite positional order**
-
-`roundtrip_distance(original_points, roundtrip_points)` (:511) and `forward_backward_disagreement(roundtrip_points, original_points)` (:537) are defined 26 lines apart, both take two (N,3) float arrays, and their parameters are in REVERSED order. Swapping them is undetectable at the call site: roundtrip_distance is symmetric (norm of a difference) so it silently returns the identical number, and forward_backward_disagreement silently returns a sign-flipped `field` with identical `magnitude_percentiles`. Exactly the audited bug class.
-
-**NSM/mesh/correspondence_metrics.py:676 — score_correspondence fabricates an 'original' when source_mesh is missing**
-
-`original_pts = _mesh_points(source_mesh) if source_mesh is not None else _mesh_points(warped_mesh)`. If a caller supplies roundtrip_points but not source_mesh, roundtrip_distance and forward_backward_disagreement are computed against the WARPED points and return a plausible-looking but meaningless number instead of the `{"skipped": True}` the function uses everywhere else (:639, :657, :669, :690). The docstring (:596-600) says only that roundtrip_points is required.
-
-### `NSM/mesh/interpolate.py`
-
-**NSM/mesh/interpolate.py:116 — sdf_gradients returns a gradient array whose first D_lat columns are always zero**
-
-`grad_latent_zeros = torch.zeros(B, D_lat, ...); full_grad = torch.cat([grad_latent_zeros, grad_pos], dim=1)` (:116-117 and :130-131) — the returned (B, D_lat+3) array is 90%+ zero padding for a 256-dim latent. The docstring says only 'gradients for that surface only (B, latent_dim + 3)' (:67); a caller who slices `[:, :D_lat]` expecting dSDF/dz gets silent zeros, not an error. .claude/plans/completed/...md:806 and :1056 confirm the latent gradient was deliberately never wired in. The function has zero callers in the repo.
-
-**NSM/mesh/interpolate.py:307 — faces argument silently accepts pyvista's VTK-style face array and builds garbage**
-
-`build_mesh_laplacian` (:307) and `compute_feature_mask` (:349) both do `np.asarray(faces).reshape(-1, 3)` with no validation. pyvista's `mesh.faces` is the flat VTK form `[3, i, j, k, 3, i, j, k, ...]`; for a triangular mesh its length is 4*M, which is divisible by 3 whenever M is divisible by 3, so the reshape SUCCEEDS and produces nonsense connectivity (the leading 3s become vertex indices). The correct input is `mesh.regular_faces`, which the tests use (testing/NSM/mesh/test_interpolate.py:125, 155, 181) and which .claude/plans/completed/NSM_MESH_INTERPOLATION_IMPROVEMENTS_COMPLETED.md:240 instructs the nsosim consumer to pass — but nothing in the code enforces or documents it.
-
-**NSM/mesh/interpolate.py:519 — The is_mesh path mutates the caller's mesh in place and does not say so**
-
-`data.point_coords = points...` (:519), `data.mesh.subdivide_adaptive(..., inplace=True)` (:520-528), `data.mesh.smooth(inplace=True, ...)` (:531), `data.mesh.smooth_taubin(inplace=True, ...)` (:533), plus `add_cell_idx(data)` which adds a 'cell_idx' cell array (:38-44, called at :499). The function then also RETURNS `data` (:536), which reads as a pure function. interpolate_mesh's docstring (:657-662) never mentions the mutation.
-
-**NSM/mesh/interpolate.py:625 — interpolate_points / interpolate_mesh call interpolate_common with 8 positional args**
-
-`interpolate_common(model, latent1, latent2, n_steps, points1, surface_idx, verbose, spherical, is_mesh=False, ...)` at :625-634 and the parallel call at :664-671. `points1` / `mesh` bind to the parameter named `data`. interpolate_common's signature (:473-492) has 18 parameters; inserting one before `data` silently mis-binds the point set as the step count. Same class as the param-group-ordering bug.
-
-### `NSM/mesh/main.py`
-
-**NSM/mesh/main.py:126 — scale_mesh_ 's trailing underscore promises in-place semantics it only sometimes has**
-
-`if not issubclass(type(mesh), mskt.mesh.Mesh): mesh = mskt.mesh.Mesh(mesh)` (:127-128) — verified empirically that mskt.mesh.Mesh copies its input, so a pyvista/vtk/path argument is NOT mutated, while an mskt.mesh.Mesh argument IS mutated in place at :136. Two different aliasing contracts behind one name, with no docstring.
-
-**NSM/mesh/main.py:171 — scale_mesh silently overrides the caller's scale and offset**
-
-When `old_mesh is not None`, `offset = np.mean(old_pts, axis=0)` (:171) and `scale = np.max(...)` (:175) overwrite whatever the caller passed for those two named parameters, with no warning and no docstring (the function has none at all, :151-159). A caller supplying both old_mesh and an explicit scale gets the explicit value discarded.
-
-**NSM/mesh/main.py:690 — Fallback path passes 17 positional arguments to create_mesh**
-
-`return create_mesh(decoder, latent_vector, n_pts_per_axis, voxel_origin, voxel_size, batch_size, scale, offset, path_save, filename, path_original_mesh, scale_to_original_mesh, icp_transform, objects, verbose, device, use_vtk)` — all 17 positional. It currently matches create_mesh's signature (:185-203) exactly, but inserting or reordering a single parameter in create_mesh silently mis-binds every argument after it with no error (all trailing params are same-ish types: bools, floats, tuples). This is the same failure class as the param-group-ordering bug that motivated the audit.
-
-**NSM/mesh/main.py:711 — create_mesh_adaptive silently discards the caller's voxel_origin**
-
-`samples, grid_dims, voxel_origin = create_grid_samples_in_bounds(...)` rebinds the `voxel_origin` parameter. On the adaptive (non-fallback) path the caller's value is never read. NSM/reconstruct/main.py:1107 passes `voxel_origin=(-recon_grid_origin,)*3` in good faith and it is thrown away. The parameter is only honoured on the fallback branch (:690-695). The 33-line Args block (:600-627) does not say this.
-
-**NSM/mesh/main.py:836 — get_sdfs prints one unconditional line per batch in the production path**
-
-`print(f"Processed {current_idx} / {n_pts_total} points (batch {batch_num+1}: CNN+MLP, size={current_batch_size})")` has no `verbose` gate, and neither does the WARNING at :821-823. get_sdfs is on the live path kneepipeline/steps/run_nsm.py:170 -> NSM.reconstruct.reconstruct_mesh -> create_mesh_adaptive -> get_sdfs (:662, :722). Every subprocess NSM fit spams stdout; the kneepipeline orchestrator parses the LAST stdout line as JSON, so this is noise directly in a machine-read stream.
-
-**NSM/mesh/main.py:862 — decode_sdf's fast path passes an unbatched latent, the legacy path an expanded one**
-
-`return decoder(latent=latent_vector.squeeze(), xyz=queries)` (:862) hands the decoder a (D,) latent, while the legacy branch three lines later hands it `latent_vector.expand(num_samples, -1)` -> (N, D) (:865-867). Undocumented in the docstring (:843-850). `.squeeze()` is also a silent no-op for a (B, D) latent with B > 1, and it would squeeze a latent of dim 1 out of existence. Additionally, `inspect.signature(decoder.forward)` is re-evaluated on EVERY batch (:859).
-
-### `NSM/mesh/refine_mesh.py`
-
-**NSM/mesh/refine_mesh.py:239 — add_vertex_if_new returns a tuple, its docstring promises an int, and its index lives in a third array's space**
-
-Docstring Returns: 'The index of the vertex in the combined list' (:239-241). It actually returns `(new_vertices, index)` (:257, :261). Worse, the index is into the CONCATENATED `[mesh.points; new_vertices]` array built locally at :245 — an array that does not exist anywhere else until `update_mesh` reconstructs it in exactly the same order at :312. That cross-function index-space contract is stated nowhere. The `threshold=1e-10` parameter (:229) is also undocumented. This is precisely the audited bug class.
-
-**NSM/mesh/refine_mesh.py:278 — create_new_faces depends on an unstated midpoint ordering produced two functions away**
-
-`AB, BC, CA = midpoint_indices` (:278) requires the list to be in the edge order (0,1), (1,2), (2,0). That order is produced only as a side effect of the `for i in range(3)` loop in new_vertices_faces (:100-106) feeding `midpoint_indices.append(...)` (:120). Neither docstring names the required order. Reordering that loop silently produces an incorrectly triangulated mesh, not an error.
-
-**NSM/mesh/refine_mesh.py:399 — get_target_cells raises UnboundLocalError on its own default arguments**
-
-`max_length_binary = np.zeros_like(max_length_binary)` references the name it is assigning. When `max_length_threshold is None` (the default for every caller) this raises `UnboundLocalError: local variable 'max_length_binary' referenced before assignment`. Verified empirically: `get_target_cells(sphere, area_threshold=0.5)` -> UnboundLocalError; `get_target_cells(sphere, area_threshold=0.5, max_length_threshold=1.0)` -> OK. This makes BOTH public entry points of refine_mesh.py (`subdivide_large_triangles`:412, `subdivide_triangles_on_base_mesh`:438) unusable unless the caller explicitly passes max_length_threshold. Strong evidence the module has not been executed since the linting commit aa48fcc (2025-08-24).
-
-**NSM/mesh/refine_mesh.py:465 — subdivide_triangles_on_base_mesh assumes two meshes share cell indexing**
-
-`cells_to_divide = get_target_cells(mesh, ...)` (:465) then `mesh_ = subdivide_triangles(base_mesh, cells_to_divide)` (:471) — the cell indices computed on `mesh` are applied to `base_mesh`. This is only valid if the two meshes have identical connectivity and cell ordering. The docstring (:446-463) says only that 'The base mesh is usually the original mesh before it was interpolated' and never states the index-correspondence requirement. It also silently adds a 'cell_color' cell array (:473-478) that the docstring does not mention.
-
-### `NSM/mesh/triangle_metrics.py`
-
-**NSM/mesh/triangle_metrics.py:37 — Undocumented edge ordering shared by two modules with no cross-reference**
-
-`get_edge_lengths` returns [len(p0,p1), len(p1,p2), len(p2,p0)] (:37-42), so `TriangleProperties.edge_lengths[:, k]` means edge k of the (i, (i+1)%3) sequence (:63-70). refine_mesh.py:100-106 independently reproduces the identical ordering when building its `edges` dict, and create_new_faces (:264-284) depends on that order being [AB, BC, CA]. Nothing documents the convention or links the two implementations.
-
-**NSM/mesh/triangle_metrics.py:51 — TriangleProperties.areas returns a dimensionless deviation, not areas, by default**
-
-`def areas(self, norm=True)` returns `(self._areas - ref_area) / ref_area` (:56-57) unless norm=False. The name says areas; the default output is a mean-relative deviation centred on zero (verified: sphere gives -0.434 with norm=True, 0.0171 with norm=False). No docstring anywhere in the class. Consequence downstream: refine_mesh.py:380 calls `areas(norm=True)` and compares to `area_threshold`, whose docstring (refine_mesh.py:370, 419, 455) says 'The maximum area of a triangle before it is subdivided' — false; it is a relative deviation.
-
-### `NSM/models/deep_sdf.py`
-
-**NSM/models/deep_sdf.py:171 — progressive_add_depth path propagates None through the layer stack**
-
-When the current epoch precedes a progressive layer's start_epoch, forward_branch_ executes a bare `return` (line 171), yielding None. forward assigns that to x (line 216) and then `if x is None: continue` (lines 218-219) moves to the next layer with x still None. Verified: `Decoder(latent_size=8, dims=[16]*8, progressive_add_depth=True)` called with epoch=10 raises `TypeError: linear(): argument 'input' (position 1) must be Tensor, not NoneType`. The whole progressive-depth feature is non-functional as written.
-
-**NSM/models/deep_sdf.py:180 — Decoder indexes self.bn by absolute layer index but appends only for norm layers**
-
-`self.bn` is appended to only for layers listed in norm_layers (line 137), so bn[k] is the k-th NORM layer, while forward reads `self.bn[layer_idx]` (line 180) using the absolute layer index. Verified: `Decoder(latent_size=8, dims=[16,16,16], weight_norm=False, norm_layers=(2,))` builds with len(bn)==1 and raises `IndexError: index 2 is out of range` on the first forward. Unreachable whenever weight_norm=True (the elif at line 136 skips bn entirely), which is why it has survived.
-
-**NSM/models/deep_sdf.py:308 — activation='linear' builds a Decoder that crashes on first forward**
-
-get_activation returns None for 'linear'. Decoder guards for that on final_activation (line 224) but not on the hidden activation (line 181). Verified: `Decoder(latent_size=8, dims=[16,16], activation='linear')` constructs fine and then raises `TypeError: 'NoneType' object is not callable`. 'linear' is an advertised value — loader's template lists 'relu', 'leaky_relu', 'sin', etc. at loader.py:307 and 'linear' as a final_activation option at line 306.
-
-### `NSM/models/loader.py`
-
-**NSM/models/loader.py:119 — Decoder output column -> surface identity is nowhere in the models package**
-
-The loader reads `objects_per_decoder` into `n_objects` (lines 119, 153, 218) but never reads or attaches `mesh_names`. Grep confirms `mesh_names` appears zero times under NSM/models/. So the mapping from SDF output column index to anatomical surface (bone / cart / med_men / lat_men, per CLAUDE.md) exists only in the training config and in downstream convention. A model returned by load_model is indistinguishable from one with a different surface order. This is the same undocumented-positional-ordering hazard the audit was called to find.
-
-### `NSM/models/triplanar.py`
-
-**NSM/models/triplanar.py:87 — VAEDecoder builds no activation functions between its conv layers**
-
-`activation = activation_fn()` constructs an activation module and immediately discards it — it is never appended to self.layers (contrast lines 74 and 85, which do append). It also rebinds the loop-invariant `activation` string parameter to a module, so the name means two different things across iterations. Verified by printing a built VAEDecoder: the Sequential is (ConvTranspose2d -> norm) x N -> (Conv2d + Tanh), with **zero pointwise nonlinearities** between conv layers. The `activation` constructor argument (line 34) has no effect.
-
-**CORRECTION (2026-08-15).** This entry originally concluded "the entire feature-plane generator is therefore an affine map plus a final Tanh." That is FALSE for the shipped models and was falsified by ~20 lines of torch. Measured additivity error of the latent -> pre-Tanh map in eval mode: `conv_norm_type="layer"` (which BOTH shipped models, 647 and 551, use) gives 3.74e+00 against a value scale of 8.44e+00 -- **not affine**, because LayerNorm divides by a standard deviation computed from its own input and is nonlinear in its own right. It silently supplies the nonlinearity the missing activation was meant to provide. Only `conv_norm_type="batch"` (2.89e-07) and `conv_norm=False` (2.92e-07) are genuinely affine at eval. The production models work, and work by accident.
-
-The sharper hazard this exposes: with `norm_type="batch"` -- **the VAEDecoder constructor default** -- the model TRAINS nonlinear (batch statistics couple samples; additivity error 4.08) and EVALUATES affine. The function fit is not in the same expressive class as the function deployed. In all configurations the depth is still largely wasted: N stacked ConvTranspose2d with no activation between them buy far less than N layers of a normal decoder. Every shipped triplanar checkpoint was trained with this topology, so fixing it changes the architecture and invalidates existing weights. Related: if `activation` is neither 'leakyrelu' nor 'relu', `activation_fn` is never bound (lines 49-52) and line 87 raises NameError rather than a clear error.
-
-**NSM/models/triplanar.py:99 — VAEDecoder registers every submodule twice, doubling checkpoint keys**
-
-`self.layers` (nn.ModuleList) and `self.decoder = nn.Sequential(*self.layers)` both register the same modules. Verified on a small model: 16 state_dict keys under vae_decoder.layers.* and 16 identical-shaped duplicates under vae_decoder.decoder.*. The parameters are shared so training is unaffected, but every shipped .pth carries the VAE twice, and any cleanup that removes self.layers (the natural refactor) makes strict load_state_dict reject every existing checkpoint — including the production femur models the consumer loads at kneepipeline/steps/run_nsm.py:114.
-
-**NSM/models/triplanar.py:158 — Latent gradients are scaled by the number of query points**
-
-Both latent paths hand back N times the gradient of the mathematically equivalent single-use computation, where N is the number of query points. Verified at N=10: fast path and legacy path both give exactly 10x a manual reference that decodes the latent once. FastUnique.backward reaches that result by returning a (num_points, D) gradient for a (D,) input (lines 160-163) and relying on autograd's implicit sum-to-size reduction — a shape mismatch that torch tolerates rather than an intentional contract. The two paths agree, so this is not a regression, but it means the effective learning rate on latent codes scales with points-per-batch, and the docstring's claim that FastUnique "provides the same gradient expansion as unique_consecutive" (line 150) hides both facts.
-
-**NSM/models/triplanar.py:197 — The consumer's hand-rolled param mapping omits padding**
-
-kneepipeline/steps/run_nsm.py:94-111 reconstructs the config->constructor mapping by hand and passes 15 of TriplanarDecoder's 16 meaningful arguments — it never passes `padding`, so the model always uses 0.1. `padding` is not a learned parameter, so a checkpoint trained with a different value loads cleanly under strict load_state_dict and then samples the feature planes at the wrong scale, with no error. Nothing in NSM/ writes `padding` into a saved config today (grep finds it only in NSM/models/), so this is latent rather than active — but the duplicated mapping in the consumer is the reason a new constructor argument can be added here and silently ignored there.
-
-### `NSM/models/two_stage.py`
-
-**NSM/models/two_stage.py:65 — TwoStageDecoder permanently corrupts its own module-level default dicts**
-
-Lines 65-68 write latent_dim/n_objects/latent_size into the dicts passed as `triplanar_params`/`mlp_params`, which default to the module-level `default_triplanar_params` (line 7) and `default_mlp_params` (line 22). Verified: after a single `TwoStageDecoder(latent_size=8, n_objects=5)`, default_triplanar_params['latent_dim'] is 4 and ['n_objects'] is 5 process-wide, so a subsequent default-constructed model silently inherits the previous model's geometry. The mutation happens before construction, so it persists even when construction then fails.
-
-### `NSM/reconstruct/__init__.py`
-
-**NSM/reconstruct/__init__.py:1 — `from .main import *` with no __all__ leaks the entire main.py import namespace onto the package**
-
-`NSM.reconstruct` publicly exposes `os`, `sys`, `torch`, `np`, `wandb`, `copy`, `time`, `mskt`, `logging`, `logger`, `fnmatch`, `sinkhorn`, `create_mesh_adaptive`, `combine_meshes`, `eikonal_loss`, `read_mesh_get_sampled_pts`, `read_meshes_get_sampled_pts`, and `adjust_learning_rate` alongside the intended API (verified by `dir(NSM.reconstruct)`). Any of these can be shadowed or accidentally depended on by a downstream `from NSM.reconstruct import *`.
-
-### `NSM/reconstruct/cartilage_func.py`
-
-**NSM/reconstruct/cartilage_func.py:50 — cartilage_func's mesh slicing is a hardcoded positional layout with no validation**
-
-`compare_cart_thickness_whole_joint` assumes meshes arrive as exactly [femur_bone, femur_cart, tibia_bone, tibia_cart, patella_bone, patella_cart] via `[:2]`, `[2:4]`, `[4:6]` (lines 53-72), while the tibia/patella/femur single-joint variants all slice `[:2]` (lines 26, 35, 44) and differ only in the label set they look up. Nothing checks the length or identity of the incoming lists; a 4-surface model (bone, cart, med_men, lat_men -- the `mesh_names` example in CLAUDE.md) silently produces wrong numbers. Undocumented, no docstrings.
-
-### `NSM/reconstruct/main.py`
-
-**NSM/reconstruct/main.py:248 — sdf_gt is mutated in place through the type-check and preprocess helpers**
-
-`reconstruct_latent_preprocess_sdf_gt` writes `sdf_gt[sdf_idx] = sdf.to(device)` into the caller's list and returns it (line 248-249); `reconstruct_latent_sdf_gt_type_check` returns the caller's list unwrapped when it is already a list (line 176-177). reconstruct_mesh passes `result_['sdf']` straight through (line 1010, 1048) and separately mutates it at lines 1023 and 1026. Neither helper has a docstring, so a caller reusing the same sdf list for a second fit gets tensors already pinned to the first call's device. `pts_surface` is likewise re-typed and moved to device in place-ish fashion at lines 198-211.
-
-**NSM/reconstruct/main.py:253 — project_latent is labelled legacy but is still the only path honoured under LBFGS-with-hard-constraint**
-
-Docstring: 'Legacy explicit projection function - use latent_norm_penalty for smoother optimization'. It is still called at lines 709 and 736 whenever `use_soft_norm_constraint=False`. .claude/plans/HYBRID_OPTIMIZER_REPORT.md:78 records a sweep that set `latent_norm` and `norm_penalty_weight` but not `use_soft_norm_constraint`, and therefore silently took the soft path while the author believed otherwise -- i.e. the two mechanisms are already documented to have confused their own author. `project_latent` also mutates `latent` in place under `no_grad` (line 266) with no note that it does so.
-
-**NSM/reconstruct/main.py:536 — pts_surface encoding is an undocumented positional contract**
-
-`pts_surface` must be a per-point integer array whose values index into `sdf_gt` in the same order (`(pts_surface == surface_idx)` at lines 536 and 555, against `range(len(sdf_gt))`). Nothing documents this: `reconstruct_latent` has no docstring at all, and `reconstruct_latent_pts_surface_type_check` (line 198) only checks the container type. A caller who orders sdf_gt differently from the surface ids gets a silently wrong fit rather than an error.
-
-**NSM/reconstruct/main.py:605 — Single-object decoder branch indexes sdf_gt by decoder index**
-
-When `pred_sdf.shape[1] == 1` the loss uses `sdf_gt_[decoder_idx]` -- the *decoder* index used as a *surface* index. This is correct only under the unstated rule 'each decoder emits exactly one surface and decoder i owns surface i'. The multi-output branch below (line 612) correctly iterates `sdf_idx` over `pred_sdf.shape[1]` but then also indexes the flat `sdf_gt_` by it, so with two multi-output decoders the second decoder re-reads the first decoder's surfaces. The docstring on reconstruct_mesh (lines 864-869) gestures at the flattening rule but reconstruct_latent, which implements it, documents nothing.
-
-**NSM/reconstruct/main.py:794 — reconstruct_latent can return an unbound local `latent_`**
-
-`return loss, latent_` -- `latent_` is only bound inside the loop body (lines 771, 782, 792). With `convergence='overall_loss'` or `'recon_loss'`, binding happens only when the loss improves on the running best (initialised to the literal 100 at lines 464-465). If the very first steps produce NaN, `loss_ < loss` is False, `patience` increments, and once `patience > convergence_patience` the loop breaks at line 778/789 with `latent_` never assigned -> `UnboundLocalError`. Same failure if `actual_num_iterations` is 0. The production consumer sets convergence from `model_config['convergence_type_recon']` (kneepipeline/steps/run_nsm.py:205), so this path is reachable in production.
-
-**NSM/reconstruct/main.py:840 — `chamfer_norm` is a power, not a norm, and its default disagrees across the three layers**
-
-reconstruct_mesh defaults `chamfer_norm=2` (line 840) and get_mean_errors also defaults 2 (line 1281), but compute_recon_loss defaults `chamfer_norm=1` (recon_evaluation.py:26) and passes it straight through as `power=` to `compute_chamfer` (recon_evaluation.py:81, utils.py:100 `np.mean(d1**power) + np.mean(d2**power)`). With the shipped default the returned `chamfer_*` values are squared distances (mm^2), not distances -- undocumented anywhere, and the name suggests an Lp norm on the coordinate difference rather than an exponent on the resulting distance.
-
-**NSM/reconstruct/main.py:873 — The consumer's `batch_size_latent_recon` is a no-op absorbed by **kwargs, while the real `batch_size` is left at its default**
-
-`batch_size_latent_recon` was removed from the signature (commented out at line 804) and now only triggers a printed deprecation warning. kneepipeline/steps/run_nsm.py:199 still passes it from `model_config`, as do NSM_analysis.py, NSM_analysis_bone_only.py, and get_mean_errors at line 1326 (so the warning prints once per validation mesh per validation epoch during training). Meanwhile the live `batch_size=32**3` parameter (line 803) -- which controls the marching-cubes chunking in `create_mesh_adaptive` (lines 926, 1116) -- is a different knob that nobody sets. A reader tuning memory via config will change a value that does nothing.
-
-**NSM/reconstruct/main.py:1118 — Undocumented mesh-index ordering is the load-bearing contract between reconstruct_mesh and its consumer**
-
-`meshes` is flattened decoder-major then object-major (lines 1118-1123, comment 'append sequentially so they match the order of meshes at path'), and `compute_recon_loss` emits `chamfer_{i}` / `assd_{i}` / `emd_{i}` keyed by that same position (recon_evaluation.py:84, 103, 114). The consumer hardcodes index 0 = bone and index 1 = cartilage (kneepipeline/steps/run_nsm.py:216, 220, 232, 235). Nothing in the signature, the docstring, or the returned dict names the surfaces. The repo already has a `mesh_names` config field for exactly this (CLAUDE.md 'Multi-Surface Config'), saved into `model_params_config.json`, and reconstruct_mesh never reads or validates it. This is the same shape as the param-group ordering bug that motivated the audit.
-
-**NSM/reconstruct/main.py:1140 — reconstruct_mesh switches return type between a list and a dict based on seven unrelated flags**
-
-Lines 1140-1199: if any of `calc_emd`, `calc_symmetric_chamfer`, `calc_assd`, `return_latent`, `func is not None`, `return_registration_params`, `return_timing` is truthy the function returns a dict; otherwise it returns a bare list of meshes. The docstring (lines 861-870) does not mention the return value at all. Every first-party caller happens to trip the dict branch (get_mean_errors forces `return_latent=True` at line 1302; the consumer sets return_latent, calc_assd and return_registration_params), so the list branch is effectively untested.
-
-### `NSM/reconstruct/utils.py`
-
-**NSM/reconstruct/utils.py:104 — Two unrelated functions named adjust_learning_rate; the reconstruct one is re-exported from the NSM.reconstruct package namespace**
-
-NSM/reconstruct/utils.py:104 `adjust_learning_rate(initial_lr, optimizer, iteration, decreased_by, adjust_lr_every)` -- step-decay for the *latent-fit* loop, sets EVERY param_group to one lr, no docstring. NSM/utils.py:202 `adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False)` -- the *training* per-target scheduler, raises KeyError on any group missing `target`. Different arity, different semantics, same name. Because NSM/reconstruct/main.py:4 does `from .utils import adjust_learning_rate` and NSM/reconstruct/__init__.py:1 does `from .main import *` with no `__all__`, `NSM.reconstruct.adjust_learning_rate` resolves to the reconstruct/utils version -- verified by introspection. NSM/train/train_deep_sdf.py imports the NSM.utils one at line 3 and imports from NSM.reconstruct by explicit name at lines 13-20, so it is safe today. Change line 13 to a star import and `adjust_learning_rate(config['lr_schedules'], optimizer, epoch)` at train_deep_sdf.py:289 silently rebinds to the 5-arg version and fails with a confusing `missing 2 required positional arguments` instead of running the schedule. This is a live footgun in exactly the area docs/KNOWN_ISSUES.md was written about.
-
-**NSM/reconstruct/utils.py:104 — Two different `adjust_learning_rate` functions in the same package; the reconstruct one shadows via star-import**
-
-`NSM.utils.adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False)` (NSM/utils.py:202) and `NSM.reconstruct.utils.adjust_learning_rate(initial_lr, optimizer, iteration, decreased_by, adjust_lr_every)` (NSM/reconstruct/utils.py:104) are unrelated functions with incompatible signatures. `NSM/reconstruct/__init__.py:1` (`from .main import *`, and main.py:4 imports the reconstruct one) re-exports the reconstruct variant, so `from NSM.reconstruct import adjust_learning_rate` silently gives you the step-decay one. Verified by introspection: `adjust_learning_rate` appears in `dir(NSM.reconstruct)`. Anyone who reaches for the name after reading the Aug 2026 LR docs gets the wrong function with no error until the call fails on arity.
-
-### `NSM/train/train_deep_sdf.py`
-
-**NSM/train/train_deep_sdf.py:108 — The shipped default_config.json cannot drive train_deep_sdf — six unconditionally-read keys are missing**
-
-NSM/configs/default_config.json has 61 keys and is pinned to its generator by testing/NSM/configs/test_default_config_sync.py, but train_deep_sdf reads these unconditionally and they are absent from it: `prefetch_factor` (line 108, DataLoader construction), `profiler` (via get_profiler, NSM/train/utils.py:116, reached at line 162), `save_frequency` (line 183, every epoch), `verbose` (line 310, every batch), `code_regularization_warmup` (line 544 — reached because default_config sets `code_regularization: True`), and `assd` (line 230, on the first validation epoch). Anyone who starts from the shipped default hits a chain of KeyErrors. `config.setdefault` is applied to only 6 keys (lines 56-61) and none of these are among them.
-
-**NSM/train/train_deep_sdf.py:121 — resume_epoch == 1 silently skips epoch 1 without resuming anything**
-
-The resume block is guarded by `if config["resume_epoch"] > 1:` (line 121), but the epoch loop is `range(config["resume_epoch"] + 1, config["n_epochs"] + 1)` (line 164). With `resume_epoch=1` the loop starts at epoch 2 while no checkpoint is loaded — the run silently trains from random initialization one epoch short, with no warning. The two migration guards below (lines 138-156) also never run for that value.
-
-**NSM/train/train_deep_sdf.py:195 — schedule_free eval warm-up passes a (dict, tensor) dataloader tuple straight into the decoder**
-
-Lines 193-195: `with torch.no_grad(): for batch in itertools.islice(data_loader, 50): model(batch)`. The dataset's `__getitem__` returns `data_, idx` (NSM/datasets/sdf_dataset.py:1569, 2164), so `batch` is a 2-tuple of (dict-of-tensors, index tensor). Decoder forwards expect a single tensor: DeepSDF does `xyz = input_[:, -3:]` (NSM/models/deep_sdf.py:195) and TriplanarDecoder takes `x=None, latent=None, xyz=None` (NSM/models/triplanar.py:330). `model((dict, tensor))` raises TypeError. This block runs on the FIRST checkpoint or validation epoch for any `schedule_free_*` optimizer, so the whole schedule-free path fails as soon as it reaches a checkpoint. The commented-out `raise Exception('HOW TO IMPLEMENT BATCH NORM FIX? ...')` on line 192 shows the block was never finished. Also note it re-iterates the dataloader mid-epoch, re-paying data-loading cost for 50 batches.
-
-**NSM/train/train_deep_sdf.py:198 — save_model_params is called on every checkpoint but silently no-ops after the first**
-
-Line 198 calls `save_model_params(config=config, list_mesh_paths=...)` inside the per-checkpoint block, implying the recorded config is kept current. `save_model_params` returns immediately if the file already exists (NSM/utils.py:312-313). On a resumed run (lines 121-159) the config genuinely differs from the original — `resume_epoch` changes, and any hyperparameter the user edited before resuming is silently not recorded — yet model_params_config.json keeps the first run's values, and that file is exactly what downstream consumers read to reconstruct the model.
-
-**NSM/train/train_deep_sdf.py:333 — The per-surface index ordering is a fully undocumented positional contract spanning four modules**
-
-`surf_idx` is a bare integer that must mean the same thing in five independent places, with nothing cross-checking any of them: (a) `sdf_data["gt_sdf"][:, :, surf_idx]` (line 333) — axis 2 is the dataset's mesh order, set by `loc_meshes` enumeration at NSM/datasets/sdf_dataset.py:1803,1860; (b) `pred_sdf[:, surf_idx]` (line 416) — the decoder's output column order; (c) `config["surface_weighting"][l1_idx]` (lines 482-490) — a user-supplied list whose only validation is a length assert (line 478); (d) `config["mesh_names"][i]` — validated for LENGTH only (lines 64-70), never for correspondence; (e) the wandb metric names `l1_loss_{idx}` (line 620). Swapping two meshes in the dataset path list silently trains bone weights against cartilage targets and mislabels every logged metric. This is the same class of bug as the [0]=model/[1]=latent param-group ordering that was just fixed in NSM/utils.py — it survives untouched here.
-
-**NSM/train/train_deep_sdf.py:433 — surface_accuracy curriculum is inverted relative to sample_difficulty, so schedule='constant' disables it entirely**
-
-Line 433 computes `weight_schedule = 1 - calc_weight(...)` for the surface-accuracy epsilon, while line 449 uses `calc_weight(...)` directly for sample difficulty. Both read a user-supplied `*_schedule` string handled by the same `calc_weight` (NSM/train/utils.py:10-26). Consequence: `"surface_accuracy_schedule": "constant"` returns 1.0, so `weight_schedule` becomes 0 and the epsilon is never subtracted — 'constant' turns the feature OFF here but full ON at line 449. `calc_weight` has no docstring and nothing records the sign convention.
-
-**NSM/train/train_deep_sdf.py:575 — train_epoch hard-requires optional data-loading telemetry keys from the dataset**
-
-Lines 575-578 unconditionally read `sdf_data["size"]`, `["time"]`, `["mb_per_sec"]`, `["whole_load_time"]`. SDFSamples only populates them when `(self.test_load_times is True) and (self.store_data_in_memory is False)` (NSM/datasets/sdf_dataset.py:1563-1567). The defaults (store_data_in_memory=False at :834, test_load_times=True at :836) happen to satisfy this, but `store_data_in_memory=True` is a supported constructor option — turning it on silently converts training into a KeyError on the first batch. Nothing in train/ documents that the training loop depends on a profiling flag of the dataset. MultiSurfaceSDFSamples gates on `test_load_times` alone (:2158), a third variant of the same condition.
-
-### `NSM/train/utils.py`
-
-**NSM/train/utils.py:63 — add_plain_lr_to_config retains a positional back door that a test pins to mislabelled output**
-
-The Aug-2026 fix keyed schedules by their declared `Target` (NSM/utils.py:87-136), and the docstring at lines 65-70 says labels 'always carry the correct labels'. But the `idx_model` / `idx_latent` parameters survive as an explicit override (line 71: `if idx_model is None or idx_latent is None`), bypassing `resolve_schedule_targets` entirely. testing/NSM/test_lr_schedules.py:535-538 (`test_explicit_indices_still_override`) asserts that `add_plain_lr_to_config(make_config(), idx_model=1, idx_latent=0)` yields `config["model_lr_initial"] == LATENT_LR` — i.e. the suite now pins the swapped-label behaviour as intended for this path. No caller in the repo passes these arguments (train_deep_sdf.py:80, multi_head:54, and both deprecated files all call it with config alone).
-
-### `NSM/utils.py`
-
-**NSM/utils.py:283 — save_model's on-disk subdirectory naming is an undocumented contract**
-
-Lines 283-287: a single decoder is written to `<experiment_directory>/model/<epoch>.pth`, but a list of two or more is written to `model_0/`, `model_1/`, ... The docstring (lines 255-262) documents only the optimizer-target validation and says nothing about this. Any loader must reproduce the branch exactly, and the boundary case (a one-element list) silently takes the singular path.
-
-**NSM/utils.py:312 — save_model_params silently refuses to overwrite and silently drops non-JSON config values**
-
-Lines 312-313 `if os.path.exists(path_save): return` — a re-run or resumed experiment in the same directory keeps the FIRST run's config file, so the saved model_params_config.json can describe different hyperparameters than the run that produced the weights. Line 320 then runs `filter_non_jsonable`, dropping every config key whose value will not serialize, with no log of what was dropped. No docstring on the function.
-
-**NSM/utils.py:343 — get_latent_vecs silently ignores config['latent_bound'] and doubles latent_size when variational**
-
-Lines 343-348: when `config['variational']` is True the function uses `latent_size = config['latent_size'] * 2` and hard-codes `latent_bound = 1000`, discarding the configured `latent_bound` entirely. The function has no docstring, so a user who sets `latent_bound: 1.0` (the shipped default, default_config.json:109) and `variational: true` gets 1000 with no warning, and every downstream consumer of `latent_size` sees a different number than the config says.
-
-### `pyproject.toml`
-
-**pyproject.toml:95 — pytest testpaths points at a directory that does not exist**
-
-`testpaths = ["tests"]` but the tests live in `testing/` (CLAUDE.md: 'Tests live in testing/ directory (not tests/)', Makefile:33: `pytest testing/ -v`). A bare `pytest` in the repo root collects nothing and exits clean, which reads as a green run.
+## What the triage found
+
+240 entries, nine agents, each required to run something rather than read.
+
+| Verdict | Count | | Outcome | Entries |
+|---|---|---|---|---|
+| Still reproduces | 193 | | New issues (17 proposed) | 62 |
+| Already fixed | 19 | | Prose fix in Phase 2 | 62 |
+| Not a defect — overstated | 19 | | `SCOPE.md` ruling | 13 |
+| Does not reproduce | 9 | | `KNOWN_ISSUES.md` | 1 |
+| Could not verify | 0 | | Deleted | 102 |
+
+**The register was more accurate than its own banner claimed.** It warned that inference had
+been wrong "in the direction of overstatement" two times out of two. Measured: ~9% flatly
+wrong, plus a tail of ~30 where the mechanism was exactly where described but the stated
+consequence was not reachable. Every mechanism was found modulo line drift; nothing was
+fabricated.
+
+**Grouping is the result.** 58 entries that each looked like an issue collapse to 17, being
+instances of shared classes. Filing per entry would have produced tickets that each look
+trivial and none of which closes a class — the failure #19 and #20 exist to avoid.
 
 ---
 
-## Defects (58)
+# 1. Proposed new issues
+
+File the group, not the entries.
 
-Raises, or is unambiguously incorrect.
+> ### ⚠️ The mechanisms are verified. The *impact* claims are not.
+>
+> Every entry below was reproduced by execution, and in this triage no mechanism was
+> fabricated. But three rounds of agent work on this repo have now shown the same pattern:
+> **the mechanism is found exactly where described, and the stated consequence is
+> overstated.** The reconciler put ~30 entries in that category itself.
+>
+> So a sentence like "enabled in production" or "both shipped configs set this" is a
+> *hypothesis about blast radius*, separate from the defect, and has to be checked against
+> `kneepipeline/config.json` and the shipped `model_params_config.json` files before it is
+> repeated in an issue.
+>
+> **Two of seventeen have been checked so far.** They came out differently — one confirmed,
+> one refuted. The other fifteen carry their agent's impact claim unverified; they are
+> marked `IMPACT UNVERIFIED` below.
 
-### `NSM/datasets/sdf_dataset.py`
+### 1. The single- and multi-mesh samplers have diverged: uniform box, clipping and return types
+
+Arithmetic bug present in both copies (mins is rebound before maxs reads it, so the box grows
+1+buffer/2 times more above than below and its centre moves), plus a clip that exists in only
+one of the pair. Dormant only because uniform_pts_buffer defaults to 0.0, and 48c5f60 added it
+to be nonzero.
+
+<details><summary>Folds in 3 entries</summary>
 
-**NSM/datasets/sdf_dataset.py:301 — uniform_pts_buffer expands the max side more than the min side**
+**NSM/datasets/sdf_dataset.py:301 — uniform_pts_buffer expands the max side more than the min side**  
+`REPRODUCES`
 
-`mins = mins - uniform_pts_buffer/2*(maxs-mins)` then `maxs = maxs + uniform_pts_buffer/2*(maxs-mins)` -- the second line uses the ALREADY-SHRUNK mins, so the max side is expanded by a factor (1 + buffer/2) more than the min side, making the 'cube' asymmetric about the mesh. Identical copy-paste at 647-648. Harmless at the default 0.0; wrong for any nonzero buffer, which is exactly what commit 48c5f60 added the parameter for.
+Straightforward arithmetic bug in both copies, dormant only because the default is 0.0 — and
+commit 48c5f60 added the parameter precisely so it would be nonzero. "Fixed" means capturing
+the span once before rebinding mins, so the box grows symmetrically. Not covered by any open
+issue (#19 mentions uniform_pts_buffer only as a missing cache-key input).
 
-**NSM/datasets/sdf_dataset.py:308 — Uniform-sample clipping exists only in the single-mesh function**
+*Evidence:* Now at :357-358 (single) and :704-705 (multi), identical copy-paste. I exec'd the
+two lines pulled straight out of the module source rather than retyping them: mins = mins -
+uniform_pts_buffer / 2 * (maxs - mins) maxs = maxs + uniform_pts_buffer / 2 * (maxs - mins) #
+mins already rebound box …
+
+**NSM/datasets/sdf_dataset.py:308 — Uniform-sample clipping exists only in the single-mesh function**  
+`REPRODUCES`
 
-read_mesh_get_sampled_pts clips random points to +/-(1 + uniform_pts_buffer/2) when norm_pts is True (308-310). read_meshes_get_sampled_pts has no equivalent -- line 662 samples the cube and the clip never happens. Two functions that are otherwise parallel diverge silently on the bound of the sampled domain.
+Two nominally parallel samplers produce different sampling domains for the same request. Same
+root area as :301 so it should be one issue with it. "Fixed" means the two functions agree on
+the domain (either both clip or neither does, decided deliberately).
 
-**NSM/datasets/sdf_dataset.py:665 — include_surf_in_pts in the multi-mesh path concatenates a leaked loop variable**
+*Evidence:* grep 'np.clip' NSM/datasets/sdf_dataset.py -> one hit, :366, inside
+read_mesh_get_sampled_pts. read_meshes_get_sampled_pts has no equivalent after :704-705. Ran
+both with uniform_pts_buffer=0.5, norm_pts=True, sigma=None: SINGLE: min -1.2500 max 1.2500
+(== clip_val 1 + buffer/2) MULTI : min -1.5626 …
 
-Inside `for new_pts_idx, new_mesh_ in enumerate(new_meshes):` (line 650) the body does `rand_pts_ = np.concatenate([rand_pts_, new_pts_], axis=0)` at 665. `new_pts_` is not bound by that loop. It leaks from whichever earlier statement ran last: line 644 (`new_pts_ = [x for x in new_pts if x is not None]`, a LIST, when any sigma is None), or line 618's loop (the LAST mesh's pre-normalization array), or is unbound entirely (NameError) if neither centering nor uniform sampling ran. It is never the current surface's points, which is obviously the intent -- the single-mesh version does it correctly at line 306. Reachable from production config: NSM/reconstruct/main.py:1000 passes include_surf_in_pts=get_rand_pts. Currently dormant because both shipped model configs have get_rand_pts_recon=false; flipping that flag activates the bug.
+**NSM/datasets/sdf_dataset.py:316 — pts_surface return type differs between the single- and multi-mesh functions**  
+`REPRODUCES`
 
-**NSM/datasets/sdf_dataset.py:671 — pts_surface concatenation raises ValueError when any surface is allocated zero points**
+Reproduces, but no in-repo consumer takes .shape of the single-mesh value, so there is no
+defect today — it is one more face of the sampler-divergence class (with :308 and :314). Fold
+the observation into that class if it is fixed; do not file it.
 
-Line 668 appends a 1-D Python list `[new_pts_idx] * N`; line 671 appends a 2-D `np.zeros((0, 3))` for the n_pts == 0 case. np.concatenate at 678 then mixes 1-D and 2-D inputs. Runtime-verified: numpy raises 'all the input arrays must have same number of dimensions'. Reachable whenever a per-mesh n_pts entry is 0, which get_pt_sample_combos can produce for the random bucket (1952-1957) if p_near + p_far == 1.0 -- a combination that check_probabilities_sum explicitly permits (767).
+*Evidence:* Ran both on real meshes: read_mesh_get_sampled_pts -> type(results['pts_surface'])
+= list read_meshes_get_sampled_pts -> type = ndarray, dtype int64, shape (100,)
+r1['pts_surface'].shape -> AttributeError: 'list' object has no attribute 'shape' Current
+lines :367 / :372 (list) vs :738 (ndarray).
+
+</details>
 
-**NSM/datasets/sdf_dataset.py:849 — check_probabilities type gate rejects integer probabilities**
+### 2. sdf_pos_neg_idx divides by zero when a surface has no positive or no negative samples
 
-The elif at 849 is `isinstance(p_near_surface, float) & isinstance(p_further_from_surface, float)`. p_near_surface=0 or 1 (perfectly valid probabilities, and what a JSON config emits for whole numbers) is an int, matches neither branch, and falls through to the ValueError at 854-856 claiming the values 'must be floats or lists/tuples of floats'. Note also that both branches use bitwise `&` rather than `and` (842, 849).
+Two realistic triggers reproduced end to end: a None surface (the fdfe902 feature) and one
+surface nested inside another. testing/NSM/regression/_harness.py:341-343 documents the second
+and shapes its fixtures to dodge it — the codebase already works around this bug in its own
+tests.
 
-**NSM/datasets/sdf_dataset.py:989 — os.sched_setaffinity is called unguarded on a platform-conditional API that is guarded 55 lines earlier**
+<details><summary>Folds in 1 entries</summary>
 
-Line 933-936 wraps os.sched_getaffinity in try/except AttributeError with the comment that it is unavailable on mac/windows. Line 989 then calls os.sched_setaffinity(0, range(multiprocessing.cpu_count())) with no guard, inside every worker, whenever self.multiprocessing is True (the default). Same platform, opposite treatment.
+**NSM/datasets/sdf_dataset.py:1305 — sdf_pos_neg_idx divides by zero when a surface has no positive or no negative samples**  
+`REPRODUCES`
 
-**NSM/datasets/sdf_dataset.py:1046 — joint_scale_buffer is applied on the disk path and silently ignored on the in-memory path**
+Reproduces at both call sites and end-to-end via two realistic triggers (a None surface, and
+one surface nested inside another). Not tracked by any open issue, and the codebase's own test
+fixtures were shaped around it — that is evidence plus a fixable statement: guard the repeat
+so an empty pos/neg set raises something that names the surface, or is handled.
 
-The store_data_in_memory=False branch inflates the joint radius by (1 + self.joint_scale_buffer) at line 1046 with the comment that this lets the model generalize to unseen larger data. The store_data_in_memory=True branch (1074-1082) computes max_radii and divides by it at 1085-1090 with no buffer at all. The same dataset config therefore produces two different normalizations depending on a flag that is nominally about memory, not geometry.
+*Evidence:* Code now at NSM/datasets/sdf_dataset.py:1385-1386 (SDFSamples) and :2124-2125
+(MultiSurfaceSDFSamples). Unit probe (scratchpad/e1_zerodiv.py, e1b.py): single:
+ZeroDivisionError integer division or modulo by zero multi: ZeroDivisionError integer division
+or modulo by zero NaN column (None mesh): …
 
-**NSM/datasets/sdf_dataset.py:1061 — ISSUE #1 REFUTED AS STATED, AND INVERTED: norm_and_scale_all_meshes works on disk and crashes in memory**
+</details>
 
-Open issue #1 alleges norm_and_scale_all_meshes cannot work when NOT loading in memory. The code says the opposite. The store_data_in_memory=False branch (1017-1054) np.load()s each cached .npz and reads data_['new_pts_{i}'] -- those keys DO exist, because save_data_to_cache flattens the 'new_pts' list into new_pts_0, new_pts_1... via get_dict_pts (1107-1114, 1129). Runtime-verified against a synthetic npz: the branch completes and sets self.max_radius/self.center. The store_data_in_memory=True branch (1056-1090) reads data['new_pts_{i}'] from the IN-MEMORY dict, but nothing ever puts those keys in an in-memory dict -- get_sample_data_dict stores data['new_pts'] as a LIST (line 1249 for SDFSamples, line 1853 for MultiSurfaceSDFSamples) and unpack_numpy_data also returns it under the single key 'new_pts' (line 397-399). Runtime-verified: `SDFSamples.norm_and_scale_all_meshes(stub)` with a get_sample_data_dict-shaped in-memory dict raises KeyError: 'new_pts_0' at line 1061. So scale_jointly=True + store_data_in_memory=True is a hard crash at construction time. It survived because the shipped production models were all trained with store_data_in_memory=False (see /mnt/data/programming/kneepipeline/NSM_MODELS/*/model_params_config.json).
+### 3. MultiSurfaceSDFSamples' declared constructor surface does not work
 
-**NSM/datasets/sdf_dataset.py:1487 — Joint (scale_jointly) normalization is skipped entirely when subsample is None**
+The documented default subsample=None cannot construct (TypeError in get_samples_per_sign); on
+a warm cache subsample=None additionally skips joint normalization, returning 600 unnormalised
+points with a different key set (absmax 1.055 > 1); and joint_scale_buffer — which sets the
+normalization radius of every shipped multi-surface dataset — is not accepted or forwarded by
+the multi-surface constructor at all. One constructor, one PR.
 
-The `xyz = (xyz - self.center) / self.max_radius; sdf = sdf / self.max_radius` block sits inside `if self.subsample is not None` (1487 -> 1546-1550, and 2081 -> 2143-2146). With subsample=None the raw unnormalized cached data is returned as-is at 1569 / 2164, still carrying the orig_pts/new_pts lists, so the returned dict has a different shape AND a different coordinate space than the subsampled case. MultiSurfaceSDFSamples defaults subsample to None (1598).
+<details><summary>Folds in 3 entries</summary>
 
-**NSM/datasets/sdf_dataset.py:1595 — joint_scale_buffer cannot be set on MultiSurfaceSDFSamples**
+**NSM/datasets/sdf_dataset.py:1598 — MultiSurfaceSDFSamples default subsample=None is unusable**  
+`REPRODUCES`
 
-SDFSamples accepts joint_scale_buffer=0.1 (line 819) and uses it at 1046. MultiSurfaceSDFSamples.__init__ (1595-1632) neither accepts it nor forwards it in the super().__init__ call (1652-1681), so multi-surface datasets are permanently pinned to 0.1 and passing joint_scale_buffer=... raises TypeError. It is also absent from both get_hash_params implementations (1396-1409, 1973-1999).
+The documented default of a public constructor cannot construct. Reproduces both in isolation
+and end-to-end, and is not tracked. Fixed = subsample is required (or validated) rather than
+defaulting to a value nothing supports. Same class as the :1487 entry; file them together.
 
-**NSM/datasets/sdf_dataset.py:1598 — MultiSurfaceSDFSamples default subsample=None is unusable**
+*Evidence:* Default still `subsample=None` at :1684. End-to-end with the regression harness
+and real meshes (scratchpad/e10_real.py): CONSTRUCTION ERROR: TypeError unsupported operand
+type(s) for *: 'float' and 'NoneType' Path: __init__ -> run_before_loading_data (:1786) ->
+get_samples_per_sign (:1983), line …
 
-subsample defaults to None (1598), but run_before_loading_data (1702-1703) calls get_samples_per_sign, which does `int((n_pts_/self.total_n_pts) * self.subsample)` at 1895 -> TypeError on None. So the documented default cannot construct. SDFSamples by contrast makes subsample a required positional (808).
+**NSM/datasets/sdf_dataset.py:1487 — Joint (scale_jointly) normalization is skipped entirely when subsample is None**  
+`REPRODUCES`
 
-**NSM/datasets/sdf_dataset.py:1928 — remove_overlapping_points hard-codes a two-surface assumption**
+Reproduces, and the returned item differs from the subsampled case in shape, key set and
+coordinate space — the trainer reads timing keys unconditionally, so this cannot train either.
+Fixable statement: reject subsample=None at construction, or make it produce the same contract
+as a subsampled item. Groups with the :1598 entry.
 
-The function signs the SDF columns to -1/0/+1, sums across surfaces (1921), and drops points where the sum == -2 (1928). That identifies 'inside both' only when there are exactly two non-None surfaces. With three surfaces, inside-all-three sums to -3 and inside-exactly-two sums to -1, so neither is removed; the local names out_out/out_in/in_in (1923-1925) encode the same two-surface assumption. CLAUDE.md documents 4-surface models (bone/cart/med_men/lat_men) as a supported config, and objects_per_decoder=2 is already shipped in production, so this scales wrong exactly where the library is heading.
+*Evidence:* Code now at :1573 (`if self.subsample is not None:`) with the joint block at
+:1635, and :2176 / :2240 for the subclass. Cold construction with subsample=None raises before
+it matters (scratchpad/e8_real.py): TypeError: unsupported operand type(s) for /: 'NoneType'
+and 'int' at :1384 in …
 
-**NSM/datasets/sdf_dataset.py:2158 — MultiSurfaceSDFSamples.__getitem__ raises UnboundLocalError when store_data_in_memory=True (verified)**
+**NSM/datasets/sdf_dataset.py:1595 — joint_scale_buffer cannot be set on MultiSurfaceSDFSamples**  
+`REPRODUCES`
 
-`time_` and `size` are only assigned in the store_data_in_memory=False branch (2050-2057). Line 2158 does `if self.test_load_times is True:` -- with no store_data_in_memory guard -- and then reads time_ and size at 2159-2161. test_load_times defaults to True (1621). The parent class got this right and guards on both flags at line 1563. Runtime-verified: `MultiSurfaceSDFSamples.__getitem__(stub, 0)` with in-memory data raises UnboundLocalError: local variable 'time_' referenced before assignment.
+Reproduces exactly as written. Multi-surface is the production configuration (bone+cartilage),
+so the 10% joint-scaling buffer that sets the normalization radius of every shipped multi-
+surface dataset is unreachable from the public constructor. Fixed = the parameter is accepted
+and forwarded (and lands in the cache key, which is #19's half).
 
-**NSM/datasets/sdf_dataset.py:2193 — combine_meshes returns a pyvista PolyData, not a pymskt Mesh, whenever it actually combines (verified)**
+*Evidence:* scratchpad/e9_jsb.py, against real meshes: SDFSamples has joint_scale_buffer: True
+Multi has joint_scale_buffer: False passed joint_scale_buffer -> TypeError __init__() got an
+unexpected keyword argument 'joint_scale_buffer' multi dataset joint_scale_buffer attr: 0.1
+Current lines: declared …
 
-Runtime check: pymskt Mesh.__add__ is `return self.merge(dataset)` and yields <class 'pyvista.core.pointset.PolyData'> with no `save_mesh` and no `point_coords`. So combine_meshes returns a pymskt Mesh for an int (2183) or 1-element list (2186) and a bare PolyData for 2+ (2189-2193), contradicting its own 'Returns: Mesh' at 2175. Downstream: load_reference_mesh assigns the result straight to self.reference_mesh at line 1355 and then calls self.reference_mesh.save_mesh(...) at 1385 whenever multiprocessing=True (the default) -> AttributeError. read_meshes_get_sampled_pts avoids this only because it re-wraps with Mesh(combined_mesh) at 531. The repo's own test hides the inconsistency with a hasattr fallback (testing/NSM/datasets/test_multi_surface_registration.py:70-71).
+</details>
 
-### `NSM/dependencies/sinkhorn.py`
+### 4. The multi-surface reference-mesh path cannot run
 
-**NSM/dependencies/sinkhorn.py:49 — Unreachable duplicated type check in sinkhorn; max_iters is never type-checked**
+reference_mesh=int with a list-valued mesh_to_scale raises UnboundLocalError at :1440, one
+statement before the AttributeError the register predicted; combine_meshes also returns a
+pyvista PolyData whenever it actually combines, contradicting its own 'Returns: Mesh'. Found
+independently by two slices, one of them arriving via a documentation anchor. The doc
+advertises it as working.
 
-Lines 49-50 repeat `if not isinstance(p, int)` but raise a TypeError worded for max_iters. Line 41 already caught non-int `p`, so lines 49-50 can never fire, and `max_iters` gets no type validation at all.
+<details><summary>Folds in 1 entries</summary>
 
-**NSM/dependencies/sinkhorn.py:92 — sinkhorn validates w_x's length twice and never validates w_y's**
+**NSM/datasets/sdf_dataset.py:2193 — combine_meshes returns a pyvista PolyData, not a pymskt Mesh, whenever it actually combines (verified)**  
+`REPRODUCES`
 
-Inside the `if w_y is not None:` block, line 92 reads `if w_x.shape[0] != x.shape[0]` while the error message it raises (lines 93-96) talks about y and w_y. The intended `w_y.shape[0] != y.shape[0]` check does not exist, so a wrongly sized w_y passes validation and fails later inside keops with an opaque shape error.
+The type inconsistency is real and the docstring contradicts it, but the entry's failure story
+is wrong: the multi-surface reference-mesh path dies one statement earlier with
+UnboundLocalError. Worth one issue covering the whole path — fixed = reference_mesh=int with a
+list-valued mesh_to_scale returns a usable combined pymskt Mesh, which requires combine_meshes
+to keep its declared return type. (docs/MULTI_SURFACE_REGISTRATION.md:75 advertises this as
+working; that doc entry is in another slice — fold them.)
 
-**NSM/dependencies/sinkhorn.py:107 — sinkhorn's default uniform weights cannot sum equal when the two point clouds differ in size, so it always raises**
+*Evidence:* Type claim, run against pymskt (scratchpad/e13_combine.py); combine_meshes is now
+at :2266, docstring 'Returns: Mesh' at :2274: int index -> <class 'pymskt.mesh.meshes.Mesh'>
+1-elem list -> <class 'pymskt.mesh.meshes.Mesh'> 2-elem list -> <class
+'pyvista.core.pointset.PolyData'> has save_mesh: …
 
-With `w_x is None and w_y is None`, lines 108-110 set `w_x = ones(n)/n` (sum 1) and `w_y = ones(m)/m * (n/m)` (sum n/m). Lines 112-119 then raise ValueError whenever `|1 - n/m| > 1e-5`, i.e. whenever n != m. Verified numerically (n=5, m=7 -> sums 1.0 vs 0.714). `NSM/reconstruct/recon_evaluation.py:112` calls `sinkhorn(xyz_orig_, pts_recon_)` with no weights on an original mesh's points versus a marching-cubes reconstruction's points, which have no reason to match in count. Any EMD evaluation on unequal point clouds dies with a misleading 'weights do not sum to the same value' error.
+</details>
 
-### `NSM/losses.py`
+### 5. Multi-surface support silently computes the wrong thing above the shipped two-surface configuration
 
-**NSM/losses.py:13 — The eikonal loss is still untested, as CLAUDE.md says, while being wired into both live loss paths**
+Measured: with two 2-surface decoders and four ground-truth surfaces, setting surfaces 2 and 3
+to all-NaN left the loss bit-identical — decoder 1 never reads its own ground truth.
+remove_overlapping_points is a silent no-op for 3+ surfaces. CLAUDE.md documents 4-surface
+models as supported.
 
-CLAUDE.md:133-136 states 'NOTE - EIKONAL LOSS HAS NOT BEEN TESTED.' Verified still true: `grep -rn losses testing/` returns nothing — no test file imports NSM.losses, and testing/NSM/mesh/test_interpolate.py:86's `test_baseline_lands_on_target_non_eikonal_field` is about an SDF field, not this loss. Meanwhile NSM/train/train_deep_sdf.py:506-514 and NSM/reconstruct/main.py:665-677 both add it to the optimized loss whenever `eikonal_weight > 0`. It is off by default (generate_sdf_default_config.py:52 / default_config.json:70 set 0.0), so the untested path is one config edit away from a production run.
+<details><summary>Folds in 4 entries</summary>
 
-**CORRECTION (2026-08-15).** This entry originally added: "I hand-checked that eikonal_loss forward+backward runs for 1, 2 and 3 surfaces." **That is false and was the more damaging of the two overstatements in this register, because it was asserted as an executed check.** Re-run against the shipped function: it raises `RuntimeError: Trying to backward through the graph a second time` for 1, 2 AND 4 surfaces. `losses.py:54` sets `retain_graph=False` on the last (or only) surface, freeing the forward graph that the double-backward graph still needs. Beyond that one-line bug, the production triplanar architecture cannot support the loss at all — it requires a second derivative through `grid_sample`, unimplemented in PyTorch on CPU and CUDA — and even on MLP architectures the loss opposes NSM's clamped training regime. **`eikonal_weight > 0` is now gated with `NotImplementedError` at both entry points** (pinned by `testing/NSM/test_losses.py`); repair is tracked in `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §8.2.
+**NSM/reconstruct/main.py:605 — Single-object decoder branch indexes sdf_gt by decoder index**  
+`REPRODUCES`
 
-### `NSM/mesh/correspondence_metrics.py`
+Hard demonstration, not inference: with two multi-output decoders the second decoder silently
+scores against the first decoder's surfaces. reconstruct_mesh's own docstring advertises this
+configuration ("path1_mesh = decoder0_mesh1 OR decoder1_mesh0"). Fixed = the flat sdf_gt is
+indexed by a running surface offset, or the configuration is rejected.
 
-**NSM/mesh/correspondence_metrics.py:604 — score_correspondence's documented return shape omits its error branch**
+*Evidence:* Now at :610 `sdf_gt_[decoder_idx].squeeze()` (single-output branch) and :616 `for
+sdf_idx in range(pred_sdf.shape[1])` indexing the flat `sdf_gt_[sdf_idx]`. Ran
+scratchpad/t_sdfidx.py: TWO 2-surface TriplanarDecoders, four ground-truth surfaces,
+pts_surface labelled 0/1/2/3. Ground truth for …
 
-Returns is documented as 'either the metric result dict / scalar, or {"skipped": True, "reason": ...}'. There is a third shape the function emits on eight separate paths: `{"error": str(exc)}` at :615, :629, :630, :637, :648, :655, :667, :682, :688. A consumer branching on 'skipped' will treat an error dict as a successful result.
+**NSM/datasets/sdf_dataset.py:1928 — remove_overlapping_points hard-codes a two-surface assumption**  
+`REPRODUCES`
 
-### `NSM/mesh/interpolate.py`
+Reproduces exactly. CLAUDE.md documents 4-surface models (bone/cart/med_men/lat_men) as a
+supported configuration, and objects_per_decoder=2 already ships, so the function is silently
+a no-op for the direction the library is heading. Fixed = 'inside two or more surfaces'
+expressed as a count, not as a magic sum of -2.
 
-**NSM/mesh/interpolate.py:98 — Three divergent hand-rolled decoder invocation conventions in one subsystem**
+*Evidence:* Function now at :1996, the test at :2015/:2021 (`in_in = torch.sum(total == -2)` /
+`keep_mask = total != -2`). Ran it directly on hand-built sign patterns
+(scratchpad/e11_overlap.py): 2 surfaces in_both/in_one/out_both : rows 3 -> 2, in_in=1 3
+surfaces in3/in2/in1/out : rows 4 -> 4, in_in=0 4 …
 
-NSM/mesh/main.py:842 `decode_sdf` inspects `decoder.forward`'s signature and dispatches to the fast `decoder(latent=..., xyz=...)` interface when available (:858-862) — which it IS for TriplanarDecoder, the production model (NSM/models/triplanar.py:330). interpolate.py never does this: `sdf_gradients` (:98), `_sdf_step_eval` (:225) and `_sdf_only` (:249) all hard-code the legacy concatenated `model(torch.cat([latent, pos], dim=1))` form. Three copies of the same decision, two of which are already out of sync with the third. A decoder supporting only the fast interface would break half the subsystem.
+**NSM/reconstruct/main.py:616 — In-code TODO admits the multi-surface truncation is a hack that assumes surface 0 is the bone**  
+`REPRODUCES` · owned by Same class as docs/SCOPE.md §3.1's surface-ordering ruling
 
-**NSM/mesh/interpolate.py:473 — interpolate_common is public, 18 parameters, zero docstring**
+Reproduces exactly as the TODO admits. It is a deliberate, documented-in-code design
+compromise, and it is the same positional-surface-identity problem SCOPE.md §3.1 already owns
+— record it there alongside the ordering contract rather than filing it as a defect.
 
-The only undocumented public function in an otherwise thoroughly documented module. It is the shared implementation behind both documented wrappers, has two mutually exclusive execution paths selected by `is_mesh`, silently ignores `tangent_laplacian`/`faces` on the mesh path (inline comment only, :504-507), and raises a bare `Exception("Not implemented")` when `data is None` (:493-494) — which is the DEFAULT for both wrappers' `points1=None` (:581) and `mesh=None` (:647).
+*Evidence:* TODO now at :621-624; the `break` at :629. Ran scratchpad/t_trunc.py — the
+committed 2-surface decoder fit against a single ground-truth surface: ``` bone-only gt
+against a 2-surface decoder: loss = 0.08817599713802338 verbose log: 'sdf_idx (1) >=
+len(sdf_gt_) (1)... exiting' ``` No error, no …
 
-### `NSM/mesh/main.py`
+****NSM/reconstruct/cartilage_func.py:50 — cartilage_func's mesh slicing is a hardcoded positional layout with no validation****  
+`REPRODUCES`
+
+The structure reproduces, but "silently produces wrong numbers" does not — the whole-joint
+variant raises before returning anything. docs/SCOPE.md §2.5 already rules the module
+Production-and-clunky. Not worth an issue on the strength of a crash that is already loud.
 
-**NSM/mesh/main.py:280 — sdf_grid_to_mesh crashes on numpy input while its VTK twin does not**
+*Evidence:* Anchor moved to cartilage_func.py:50 (compare_cart_thickness_whole_joint, slices
+[:2]/[2:4]/[4:6] at lines 54-69). Executed with the 4-surface layout CLAUDE.md gives as the
+mesh_names example, spying on the inner compare_cart_thickness: whole_joint sub-call:
+(['b','c'], ['b','c'], (11,12,13,14,15)) …
 
-`sdf_values = sdf_values.cpu().numpy()` unconditionally (:280), versus `if hasattr(sdf_values, 'cpu'): sdf_values = sdf_values.cpu().numpy()` in sdf_grid_to_mesh_vtk (:398-399). The two are selected by the single `use_vtk` boolean at :241-244 and :750-753, so which input types are accepted depends on an unrelated flag.
+</details>
 
-**NSM/mesh/main.py:638 — Fallback grid origin can disagree with search_bounds**
+### 6. Library code prints to stdout ungated — route the reconstruction path through a logger
 
-create_mesh_adaptive derives `voxel_size` from `search_bounds` (:638-639) but the fallback (:690) hands `create_mesh` the untouched `voxel_origin`, whose default is (-1,-1,-1) (:559). NSM/reconstruct/main.py:919 calls with `search_bounds=(-recon_grid_origin, recon_grid_origin)` and NO voxel_origin, so if `recon_grid_origin != 1.0` the fallback grid is anchored at -1 while its spacing assumes an extent of 2*recon_grid_origin. Latent, not live: recon_grid_origin defaults to 1.0 (NSM/reconstruct/main.py:846).
+Measured 64 lines per create_mesh_adaptive call at n_pts_per_axis=128 and several hundred at
+reconstruct_mesh's default; get_sdfs has no verbose parameter while every sibling does.
+kneepipeline/steps/run_nsm.py:340-342 json-parses the last stdout line of the inner NSM-fit
+subprocess, so this survives on ordering alone.
 
-### `NSM/mesh/refine_mesh.py`
+<details><summary>Folds in 6 entries</summary>
 
-**NSM/mesh/refine_mesh.py:46 — find_all_faces_to_split: docstring promises a 2-tuple, mutates its loop target, dead counters**
+**NSM/mesh/main.py:836 — get_sdfs prints one unconditional line per batch in the production path**  
+`REPRODUCES`
 
-Docstring Returns lists two values, `cells_to_divide` and `list_adjacent` (:46-47); the function returns one array (:73). It appends to `cells_to_divide` at :68 while iterating over that same list at :59, so newly-appended faces are visited in the same pass and the result depends on traversal order. `unique` / `not_unique` (:54-55, :66, :69) are incremented and never read.
+Reproduces with a measured line count, on the live path, at the caller's own defaults, from a
+function whose siblings all gate on `verbose`. Fixed means get_sdfs takes `verbose` (or a
+logger) and is silent by default. The audit's framing of the downstream harm is fragile-not-
+broken; the noise itself is the finding.
 
-### `NSM/models/deep_sdf.py`
+*Evidence:* Print now at NSM/mesh/main.py:857, warning at :841-843. `get_sdfs` has no
+`verbose` parameter at all (t_main.py: `has 'verbose' param? False`). Ran t_spam.py —
+create_mesh_adaptive at reconstruct_mesh's own defaults (batch_size=32**3, n_pts_coarse=64),
+verbose=False, n_pts_per_axis=128: stdout …
 
-**NSM/models/deep_sdf.py:47 — xyz_in_all is accepted and documented but never used**
+**NSM/datasets/sdf_dataset.py:685 — Unconditional debug prints on the SDF hot path**  
+`REPRODUCES`
 
-The parameter appears only twice in the file: in the signature (line 47) and in the docstring that describes it as functional (line 66, "for deepSDF decoder, include XYZ at each layer"). It is never stored on self and never read. loader.py:159 dutifully forwards config['xyz_in_all'] into it, and the shipped NSM/configs/default_config.json contains an `xyz_in_all` key — so a user can set it, see it plumbed through two layers of config translation, and have it do nothing.
+The three shape/dtype/type prints are unmistakable leftover debugging on a per-mesh, per-
+sample path and are a one-line deletion; 'fixed' means they are removed or gated behind
+verbose. BUT the entry's justification is stale and should not be carried over: it cites the
+kneepipeline consumer parsing the JSON result from the last line of stdout, and that consumer
+now reads _step_result.json from disk precisely because stdout was unreliable. File it as
+library noise, not as an integration hazard.
+
+*Evidence:* Now at :746-748. Ran read_meshes_get_sampled_pts with verbose=False and
+n_pts=[10,10] and captured stdout — 16 lines for a 20-point request, including per-mesh: (20,
+3) (842, 3) float64 float32 <class 'numpy.ndarray'> plus timing prints at :559, :621, :685,
+:751, :808 and 'Fixed mesh...' at :182. …
 
-**NSM/models/deep_sdf.py:241 — NameError disguised as an error path in progressive_layer**
+**NSM/reconstruct/main.py:750 — Latent-norm progress print emits the bound method instead of the value**  
+`REPRODUCES`
+
+Reproduced by execution. One-line fix in two files. File it together with the unconditional-
+print entry as a single print-hygiene sweep of this module rather than two issues.
 
-`raise exception("Epoch is before start of progressive depth")` — `exception` (lowercase) is not a builtin and is not defined in the module. If this branch is ever reached the user gets `NameError: name 'exception' is not defined` instead of the intended message. Also note the branch below it uses a strict `start < self.epoch < end` (line 242), so epoch == start falls through to the else and applies the layer at full weight, skipping the warmup entirely.
+*Evidence:* Now at :770 `print("\tLatent norm: ", latent.norm)`. Ran
+scratchpad/t_norm_print.py with verbose=True, capturing stdout: ``` PRINTED: '\tLatent norm:
+<bound method Tensor.norm of tensor([[-2.8552e-02, 7.2031e-03, -1.6689e-02, 2.1267e-05,
+9.5957e-04,' ``` It prints the bound method AND dumps the …
+
+**NSM/reconstruct/main.py:1153 — Unconditional debug prints on the production reconstruction path**  
+`REPRODUCES`
 
-### `NSM/models/loader.py`
+Reproduced by execution, and the entry understates the scope — the noisiest offender is in
+NSM/mesh, not reconstruct. The consumer runs the NSM fit as a subprocess whose stdout the
+pipeline scans, so this is a real hygiene problem. Fixed = every print in the reconstruction
+path gated on verbose or routed through the module logger. One issue covering this and the
+:750 bound-method print.
+
+*Evidence:* Now :1197, :1198, :1209, :1234, and :1452 in get_mean_errors. Ran
+scratchpad/t_recon_full.py with verbose=False, capturing stdout: ``` '... length of meshes:
+2\nlength of orig_mesh: 2\nfinished computing recon loss\n' ``` Ran scratchpad/t_gme.py —
+get_mean_errors over 2 meshes, verbose unset: ``` …
 
-**NSM/models/loader.py:123 — conv_norm_type default differs depending on which code path builds the triplanar model**
+**NSM/models/modulated_periodic_activations.py:244 — Debug print left on ImplicitDecoder's forward path**  
+`REPRODUCES`
+
+Reproduces. One-line deletion — code, not prose, but it belongs in the same Phase 2 cleanup
+sweep rather than a GitHub issue. Nothing depends on the output; the passing suite merely
+tolerates it.
+
+*Evidence:* Now modulated_periodic_activations.py:245, inside `if self.mod_network is None:`
+(modulation=False is the constructor default at :210). Captured with
+contextlib.redirect_stdout: dec = ImplicitDecoder(latent_dim=4, out_dim=1, hidden_dim=8,
+num_layers=3, block_factory=LinearBlockFactory()) …
 
-_get_triplanar_params defaults conv_norm_type to 'batch' (line 123) and the triplanar template says 'batch' (line 301), while _get_two_stage_params defaults the inner triplanar to 'layer' (line 189), the two_stage template says 'layer' (line 346), and two_stage.py:13 says 'layer'. BatchNorm2d and LayerNorm produce different state_dict keys (running_mean/running_var vs weight/bias), so a config that omits the key loads under one path and fails under the other.
+**NSM/utils.py:9 — Importing NSM prints to stdout unconditionally when schedulefree is absent**  
+`REPRODUCES`
 
-**NSM/models/loader.py:228 — The 'implicit' config vocabulary is incompatible with real training configs**
+Reproduces exactly on current main. One caveat: the entry's stated consequence is stale — it
+says the consumer 'parses stdout (progress lines followed by a JSON result as the last line)',
+but kneepipeline now reads `_step_result.json` and its CLAUDE.md explicitly says the result is
+NOT the last line of stdout. The remaining, still-valid point is the plain one: a library must
+not write to stdout at import. Three-line fix (warnings.warn, move `import warnings` above the
+try).
 
-_get_implicit_params requires latent_dim / hidden_dim / num_layers, while the other three extractors require latent_size (and layer_dimensions). Every saved model_params_config.json derives from the training config, which uses `latent_size` (NSM/configs/default_config.json). So `load_model(config, path, model_type='implicit')` on any real experiment directory raises KeyError. Only the hand-written template at lines 369-382 satisfies it, which is why the tests pass.
+*Evidence:* RAN: `/mnt/data/conda-envs/nsm-dev/bin/python -c "import schedulefree"` ->
+ModuleNotFoundError: No module named 'schedulefree' (it is genuinely absent from nsm-dev).
+RAN: `/mnt/data/conda-envs/nsm-dev/bin/python -c "import NSM" 2>/dev/null` -> stdout:
+`schedulefree not found, skipping import`. Code …
 
-### `NSM/models/modulated_periodic_activations.py`
+</details>
 
-**NSM/models/modulated_periodic_activations.py:196 — ModulationNetwork concatenates in the opposite order from its docstring**
+### 7. Unhandled inputs surface as UnboundLocalError / NameError / invented data instead of a named error
 
-The __init__ docstring (lines 170-172) describes "the latent (in_dim) is concatenated with the output of the previous layer (mod_dims[i-1])" — latent first. forward does `torch.cat([out, input], dim=-1)` (line 196) — previous output first. The widths sum identically so nothing errors, but the learned weight columns are laid out opposite to the only written description of them.
+Five sites, one fix shape (explicit else that raises, or initialise the sentinel before the
+loop). refine_mesh:399 first — it fires on the module's own defaults and gates the module
+SCOPE §2.3 says to keep. The NaN trigger on :794 is a plausible production failure that
+reports itself as the wrong exception; the same block returns the literal sentinel 100 as its
+loss under convergence='recon_loss', which is what both shipped production configs set.
 
-**NSM/models/modulated_periodic_activations.py:211 — ImplicitDecoder defaults to a sigmoid output, which cannot represent a signed distance**
+> **IMPACT CHECKED — confirmed.** Both `647_nsm_femur_v0.0.1` and
+> `551_nsm_femur_bone_v0.0.1` set `convergence_type_recon: "recon_loss"`, so this is the
+> production reconstruction path, not a corner. `loss`/`recon_loss` are initialised to the
+> literal `100` at `reconstruct/main.py:468-469`; what still needs establishing is the exact
+> path on which that initial value is returned rather than overwritten.
 
-final_activation defaults to torch.sigmoid, range (0,1) — an SDF needs negative values inside the surface. loader.py:241 reinforces this by defaulting final_activation to 'sigmoid' for the implicit type, unlike every other type which defaults to 'tanh' (loader.py:128, 161, 194).
+<details><summary>Folds in 5 entries</summary>
 
-### `NSM/models/triplanar.py`
+**NSM/mesh/refine_mesh.py:399 — get_target_cells raises UnboundLocalError on its own default arguments**  
+`REPRODUCES` · owned by Not on GitHub. Already ruled in docs/SCOPE.md §2.3 condition 1, indexed in docs/ARCHITECTURE.md:210 and :310, and queued in .claude/plans/NSM_CODE_HEALTH_REFACTOR.md:360 — but the repo's stated rule is that issues are the only work queue, and there is no issue for it.
 
-**NSM/models/triplanar.py:12 — That same block documents the plane channel order backwards**
+Reproduces exactly as written, and it is the one entry in this slice that makes a whole module
+unusable. Fixed means `np.zeros_like(max_lengths)` plus a test that calls both public entry
+points with their own defaults. It gates SCOPE.md §2.3's other two conditions, which cannot be
+written against code nobody can run.
 
-Lines 12-15 state "the first 1/3 of the channels as features for the xy plane, the second 1/3 for the xz plane, and the last 1/3 for the yz plane". The code slices them as xz, yz, xy (lines 266-268). This is the same class of defect that motivated this audit: an index-ordering contract with no named constant, described incorrectly in the only place it is described. The ordering is baked into every trained checkpoint, so the comment is what must change, not the code.
+*Evidence:* Bug now at NSM/mesh/refine_mesh.py:400: `max_length_binary =
+np.zeros_like(max_length_binary)`. Ran t_refine.py sections A and B on a 240-cell pyvista
+Sphere: {'area_threshold': 0.5} -> UnboundLocalError: local variable 'max_length_binary'
+referenced before assignment {'length_threshold': 1.2} -> …
+
+**NSM/reconstruct/main.py:445 — `optimizer` / `loss_fn` can be referenced before assignment for unrecognised names**  
+`REPRODUCES`
 
-**NSM/models/triplanar.py:262 — sum_sdf_features=False silently produces two empty feature planes**
+Both reproduce by execution. The 'AdamW in the config' hazard the entry raises is one wiring
+change away, not live. Fixed = an explicit else that raises ValueError naming the accepted
+values. Same issue as :178.
 
-When sum_sdf_features is False the VAE is sized to emit `sdf_latent_size` channels total (line 220), but forward_with_plane_features slices the planes as [0:L], [L:2L], [2L:] where L = sdf_latent_size (+conv_pred_sdf) (lines 262-268). Verified with sdf_latent_size=6: the three slices are (6,8,8), (0,8,8) and (0,8,8) — the yz and xy planes are empty tensors. The concatenation at line 281 still yields the width the SDF decoder expects, so the model builds, runs and trains with no error while two thirds of the triplanar representation are structurally absent. The correct divisor for the non-summing case is sdf_latent_size//3.
+*Evidence:* Bind sites now :444-452 (optimizer) and :455-465 (loss_fn). Ran
+scratchpad/t_unbound.py against the committed regression decoder: ``` optimizer_name='AdamW'
+-> UnboundLocalError: local variable 'optimizer' referenced before assignment
+optimizer_name='adam' -> OK loss_type='huber' -> NameError: free …
+
+**NSM/reconstruct/main.py:794 — reconstruct_latent can return an unbound local `latent_`**  
+`REPRODUCES`
 
-### `NSM/models/two_stage.py`
+Reproduces on two independent triggers, one of which (NaN under a convergence mode production
+selects) is a plausible production failure that surfaces as UnboundLocalError instead of "the
+fit diverged". Fixed = latent_ initialised to the current latent before the loop, and the 100
+sentinel replaced with inf/None so the returned loss is never a magic number.
 
-**NSM/models/two_stage.py:24 — TwoStageDecoder cannot be constructed with its own defaults**
+*Evidence:* Now `return loss, latent_` at :824; sentinels `loss = 100` / `recon_loss = 100` at
+:468-469. Ran scratchpad/t_latent_unbound.py: ``` num_iterations=0 -> UnboundLocalError: local
+variable 'latent_' referenced before assignment nan sdf_gt + convergence='overall_loss',
+patience=2 -> UnboundLocalError: …
 
-`default_mlp_params['dims']` is a tuple, and deep_sdf.Decoder does `self.dims = [latent_size + 3] + dims` (deep_sdf.py:83). Verified: `TwoStageDecoder(latent_size=8, n_objects=5)` raises `TypeError: can only concatenate list (not "tuple") to list`. The loader's non-nested path dodges this by wrapping in list() (loader.py:204) and the template uses a list literal (loader.py:355), so the broken default is only reachable by a direct caller — and only after it has already corrupted the module-level dicts.
+**NSM/reconstruct/main.py:178 — The string branch of the sdf_gt type check is unreachable; it raises TypeError instead of its message**  
+`REPRODUCES`
 
-### `NSM/reconstruct/cartilage_func.py`
+One missing comma; reproduced by execution. Fixed = `(str,)` and the test tightened to
+`pytest.raises(Exception, match=...)`. File as one issue with the :445 UnboundLocalError entry
+— both are "bad input reaches an unhelpful exception instead of the written one".
 
-**NSM/reconstruct/cartilage_func.py:116 — compare_cart_thickness mutates the reconstructed meshes it is asked to evaluate**
+*Evidence:* `grep -n 'type(sdf_gt) in (str)'` -> :176 (still no trailing comma). Ran: ``` from
+NSM.reconstruct.main import reconstruct_latent_sdf_gt_type_check as f f('some/path.vtk') ->
+TypeError : argument of type 'type' is not iterable ``` The intended message at :177-180
+("Must provided xyz/sdf from mesh …
 
-Lines 116-121 copy the region scalars from `orig_bone` onto `recon_bone`, assign `recon_bone.list_cartilage_meshes = recon_cart`, and call `recon_bone.calc_cartilage_thickness()` -- which adds a 'thickness (mm)' array to the mesh. These are the same objects reconstruct_mesh returns in `result['mesh']` (main.py:1132 passes `meshes` directly). The comment at line 119 even says 'test to make sure doesnt cause issues', i.e. it was never checked. None of the five public functions in this module has a docstring.
+**NSM/mesh/correspondence_metrics.py:676 — score_correspondence fabricates an 'original' when source_mesh is missing**  
+`REPRODUCES`
 
-### `NSM/reconstruct/main.py`
+Reproduces: a plausible-looking number where every other missing-input path in the same
+function returns {'skipped': True, ...}. 'Fixed' = when roundtrip_points is given and
+source_mesh is None, skip both metrics with a reason (or raise), and add the test case that
+currently does not exist.
 
-**NSM/reconstruct/main.py:178 — The string branch of the sdf_gt type check is unreachable; it raises TypeError instead of its message**
+*Evidence:* RAN corr_check.py: `score_correspondence(warped, target, source_mesh=None,
+roundtrip_points=warped.points+0.01)`. Result: `foldover_count -> {'skipped': True, 'reason':
+'source_mesh not provided'}` but `roundtrip_distance -> {'min': 0.01732049, ..., 'mean':
+0.01732050, 'max': 0.01732051}` and `did …
 
-`elif type(sdf_gt) in (str):` -- `(str)` is not a tuple (no trailing comma), so this evaluates `type(sdf_gt) in str`, which raises `TypeError: argument of type 'type' is not iterable`. Verified in the nsm-dev env with `reconstruct_latent_sdf_gt_type_check('some/path.vtk')`. The intended, informative message at lines 179-182 ('Must provided xyz/sdf from mesh... Try reconstruct_mesh instead.') can never fire. testing/NSM/reconstruct/test_reconstruct_latent.py:92 uses `pytest.raises(Exception)`, so the test passes on the wrong exception and hides this.
+</details>
 
-**NSM/reconstruct/main.py:297 — latent_norm_penalty returns a Python float 0.0 inside the range, breaking .item() on the logged value**
+### 8. PR #38's unswept siblings: functions that mutate a caller's object and also return it
 
-Lines 297 and 312 set `penalty = 0.0` (a float) while every other branch returns a tensor; line 336 then returns `penalty_weight * penalty`. Downstream code guards with `hasattr(x, 'item')` at lines 748 and 764 -- so the guard exists precisely because the return type is inconsistent, and it is undocumented. The 'barrier' branch (line 316) can also return -inf/NaN when `current_norm` reaches a bound, with no clamping.
+Executed: reconstruct_latent clamps and device-moves the caller's list in place through two
+undocumented helpers; compute_recon_loss downcasts the caller's meshes to float32;
+interpolate_common returned the caller's own 82-point mesh at 28,002 points. Same class PR #38
+just closed in get_pts_center_and_scale, and CLAUDE.md says to fix the class.
 
-**NSM/reconstruct/main.py:393 — In hybrid-optimizer mode the LR decay interval is computed from the wrong iteration count**
+<details><summary>Folds in 4 entries</summary>
 
-`adjust_lr_every = reconstruct_latent_get_lr_update_freq(n_lr_updates, num_iterations)` is computed from `num_iterations`, but when `hybrid_optimizer=True` the loop runs `total_iterations = adam_iterations + lbfgs_iterations` (lines 431, 481-483) and `adam_iterations` itself defaults to `num_iterations` (line 427). So with any `lbfgs_iterations > 0` the requested `n_lr_updates` decays are spread over the wrong horizon. Also lines 500-516 duplicate the identical `adjust_learning_rate(...)` call in both arms of an if/else whose only difference is `current_optimizer` vs `optimizer`, which are the same object in the non-hybrid arm.
+**NSM/reconstruct/main.py:248 — sdf_gt is mutated in place through the type-check and preprocess helpers**  
+`REPRODUCES`
+
+Confirmed by execution: reconstruct_latent clamps and device-moves the caller's list in place,
+with no docstring on either helper (reconstruct_latent has no docstring at all). Not live in
+production because reconstruct_mesh builds sdf fresh each call, but it is the exact class PR
+#38 just fixed in sdf_dataset.get_pts_center_and_scale — this is an unswept instance of it.
 
-**NSM/reconstruct/main.py:445 — `optimizer` / `loss_fn` can be referenced before assignment for unrecognised names**
+*Evidence:* Symbol now at NSM/reconstruct/main.py:171 (type check) and :236 (preprocess); the
+write is at :246 `sdf_gt[sdf_idx] = sdf.to(device)`. Ran (scratchpad/t_mutate.py,
+python=/mnt/data/conda-envs/nsm-dev/bin/python): ``` orig = [torch.full((5,1), 5.0),
+torch.full((5,1), -5.0)] …
 
-Lines 445-451: `optimizer` is only bound when `optimizer_name` is exactly 'adam' or 'lbfgs'; anything else falls through and the first use at line 497/510 raises UnboundLocalError with no hint of the real cause. Same at lines 454-460 for `loss_fn` when `loss_type` is not 'l1'/'l1_log'/'l2'. .claude/plans/HYBRID_OPTIMIZER_REPORT.md:149 records that this has already bitten people: model configs store `"optimizer": "AdamW"` while reconstruct_latent expects lowercase 'adam'.
+****NSM/reconstruct/recon_evaluation.py:95 — compute_recon_loss mutates the caller's meshes to float32 in place****  
+`REPRODUCES`
+
+Executed and reproduces on both the recon mesh and the caller's original. Fixed = cast a local
+copy for the ASSD call, or document that calc_assd downcasts. Unlike the cartilage_func
+sibling this one really does alias the caller's objects, because it assigns to `.point_coords`
+rather than constructing a new mesh.
 
-**NSM/reconstruct/main.py:588 — Only TriplanarDecoder can actually be reconstructed; the other three loader targets cannot**
+*Evidence:* Now at recon_evaluation.py:103-106. Ran compute_recon_loss on float64 pymskt
+Meshes: ASSD before: float64 float64 ASSD after : float32 float32 {'assd_0':
+0.04966860369175949} Same call with calc_assd=False leaves both at float64. These are `meshes`
+and `result_['orig_mesh']`, the same objects …
 
-reconstruct's optimization loop calls `decoder(latent=latent.squeeze(0), xyz=xyz_input)` unconditionally (lines 588 and 671). Only TriplanarDecoder.forward accepts those keywords (triplanar.py:330); Decoder.forward (deep_sdf.py:191), TwoStageDecoder.forward (two_stage.py:76) and ImplicitDecoder.forward (modulated_periodic_activations.py:236) all take a single concatenated tensor and would raise TypeError. NSM/mesh/main.py:857-863 duck-types the signature before choosing an interface; reconstruct does not. So load_model advertises four architectures (loader.py:276, README.md:120-123) of which three cannot reach the reconstruction path.
+**NSM/mesh/interpolate.py:519 — The is_mesh path mutates the caller's mesh in place and does not say so**  
+`REPRODUCES` · owned by Same class as the get_pts_center_and_scale in-place mutation just fixed by PR #38 (issues #20/#21); that fix did not sweep this site.
 
-**NSM/reconstruct/main.py:588 — reconstruct_latent calls decoders with keyword-only interface that only TriplanarDecoder implements**
+Reproduces, and far more destructively than the entry conveys — a 341x point-count change to
+an object the caller still holds, from a function whose `return data` reads as pure. The repo
+has just fixed this exact class elsewhere (PR #38 on get_pts_center_and_scale), which is the
+argument for sweeping rather than leaving it. 'Fixed' = copy the mesh (or document the
+mutation and stop returning it).
 
-`pred_sdf = decoder(latent=latent.squeeze(0), xyz=xyz_input)` (also line 671 for the eikonal path). Only NSM/models/triplanar.py:330 `forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False)` accepts those kwargs. NSM/models/deep_sdf.py:191 `forward(self, input_, epoch=None)`, NSM/models/two_stage.py:76 `forward(self, input, epoch=None)`, and NSM/models/modulated_periodic_activations.py:236 `forward(self, input_, epoch=None)` do not. Verified empirically in the nsm-dev env: `Decoder(latent_size=8, dims=[16,16])(latent=..., xyz=...)` -> `TypeError: forward() got an unexpected keyword argument 'latent'`. Consequence: `reconstruct_latent` -> `reconstruct_mesh` -> `get_mean_errors` (the training validation path, NSM/train/train_deep_sdf.py:213) raises TypeError for every non-triplanar model. Introduced in fee37be (2025-08-30). The production consumer is unaffected because it only uses TriplanarDecoder (kneepipeline/steps/run_nsm.py:85).
+*Evidence:* RAN /tmp/claude-1000/.../scratchpad/interp_mesh_check.py: built a
+`pymskt.mesh.Mesh` from an 82-point sphere and called `interpolate_mesh(model, z1, z2,
+n_steps=2, mesh=m, adaptive=True, smooth=True)`. Result: `returned object IS the argument:
+True`; **the caller's own mesh went from 82 to 28,002 …
 
-**NSM/reconstruct/main.py:919 — Mean-mesh generation and final-mesh generation call create_mesh_adaptive with different grid parameters**
+**NSM/train/utils.py:87 — add_plain_lr_to_config mutates the caller's config in place while also returning it**  
+`REPRODUCES`
 
-The mean mesh (lines 919-928) passes only `search_bounds`, leaving `voxel_origin=(-1,-1,-1)` and `voxel_size=None` at their NSM/mesh/main.py:555-556 defaults, while the reconstruction (lines 1102-1117) explicitly derives `voxel_origin` and `voxel_size` from `recon_grid_origin`. If `recon_grid_origin != 1.0` the registration target and the reconstruction live on inconsistent grids. Nothing documents `recon_grid_origin` or this asymmetry.
+Both halves reproduce. The behaviour is arguably fine — all four call sites use `config =
+f(config)` and testing/NSM/test_lr_schedules.py:520 already deepcopies defensively — but the
+docstring says nothing about mutation. Prose fix: say it mutates and returns the same object.
+No issue.
 
-**NSM/reconstruct/main.py:960 — Missing f-string prefix silently collapses per-mesh EMD results to one literal key**
+*Evidence:* scratchpad/e7_lrutils.py: returned is the same object as the input: True new keys
+written into caller's dict: ['latent_lr_initial','latent_lr_type','latent_lr_update_factor','l
+atent_lr_update_interval','model_lr_initial','model_lr_type','model_lr_update_factor','model_l
+r_update_interval'] Second …
 
-`result["emd_{idx}"] = np.nan` inside `for idx in range(sum(objects_per_decoder))`. Every iteration writes the same literal key `emd_{idx}`; the neighbouring chamfer (line 954) and assd (line 957) branches correctly use f-strings. Downstream `get_mean_errors` reads `result_[f"emd_{mesh_idx}"]` (line 1382) and would KeyError. Only on the `mean_mesh is None` early-return path.
+</details>
 
-**NSM/reconstruct/main.py:1002 — mean_mesh is passed to the multi-object reader even when register_similarity is False**
+### 9. The same knob has a different default at each layer, and adjacent metrics take their arguments in opposite order
 
-The single-object call guards it (`mean_mesh=mean_mesh if register_similarity else None`, line 984) but the multi-object call at line 1002 passes `mean_mesh=mean_mesh` unconditionally, while still passing `register_to_mean_first=True if register_similarity else False`. Since the mean mesh is also built when `scale_jointly` is true (line 913), the two code paths hand `read_meshes_get_sampled_pts` different arguments for the same configuration.
+chamfer_norm is a power, so the three layers report chamfer in different units (0.3297 vs
+0.2179 on identical geometry); sigma_rand_pts differs 10x and is result-changing whenever
+get_rand_pts=True. One default per knob, one docstring line, one PR.
 
-**NSM/reconstruct/main.py:1372 — Regress.add_latent is handed the whole result dict, not a latent vector**
+<details><summary>Folds in 4 entries</summary>
 
-`reg.add_latent(result_)` passes the full reconstruct_mesh result dict. `Regress.add_latent` documents 'latent: list of floats' (predictive_validation_class.py:29-30) and appends it verbatim; `calc_r2` then does `np.array(self.list_latents)` (line 45) producing an object array of dicts, which `LinearRegression().fit` (line 66) cannot consume. Reachable from NSM/train/train_deep_sdf.py:250 whenever `predict_val_variables` is in the config. Also note the latent itself lives at `result_['latent']` as a torch tensor with grad, not a list of floats.
+**NSM/reconstruct/main.py:840 — `chamfer_norm` is a power, not a norm, and its default disagrees across the three layers**  
+`REPRODUCES`
 
-### `NSM/reconstruct/recon_evaluation.py`
+The default disagreement and the squared units are real and measured. The entry overstates on
+documentation — the power semantics ARE documented at the two lower layers; what is missing is
+any mention in reconstruct_mesh's 8-line docstring. Fixed = one default across the three
+layers, plus a docstring line at reconstruct_mesh. File jointly with the sigma_rand_pts entry
+as one class.
 
-**NSM/reconstruct/recon_evaluation.py:95 — compute_recon_loss mutates the caller's meshes to float32 in place**
+*Evidence:* Ran scratchpad/t_chamfer.py: ``` reconstruct_mesh chamfer_norm default: 2 (:871)
+compute_recon_loss chamfer_norm default: 1 (recon_evaluation.py:25) compute_chamfer power
+default: 1 (utils.py:83) chamfer power=1: 0.32892286960623585 chamfer power=2:
+0.05514394868235056 ``` End-to-end through …
 
-`mesh.point_coords = mesh.point_coords.astype(np.float32)` and the same for `orig_meshes[mesh_idx]` on line 96, inside the `calc_assd` branch only. These are the same mesh objects reconstruct_mesh returns to the caller in `result['mesh']` and `result['orig_mesh']` (main.py:1149-1150) and that the consumer then writes to disk (kneepipeline/steps/run_nsm.py:216-221). So passing `calc_assd=True` -- which the consumer does by default -- silently downcasts the saved output meshes, and passing `calc_assd=False` does not. Nothing documents this.
+**NSM/reconstruct/main.py:834 — `sigma_rand_pts` default differs by 10x between reconstruct_mesh and get_mean_errors**  
+`REPRODUCES`
 
-### `NSM/reconstruct/reconstruct_latent_S3.py`
+The 10x default disagreement reproduces and is result-changing, but only when
+get_rand_pts=True — both shipped configs set get_rand_pts_recon=false, so it is latent in
+production. Fixed = one default, documented. File as one issue with the chamfer_norm entry;
+drop the n_pts_per_axis sentence, which is not the same pattern.
 
-**NSM/reconstruct/reconstruct_latent_S3.py:127 — reconstruct_latent_S3 references an undefined name in its own error path and calls wandb without importing it**
+*Evidence:* reconstruct_mesh `sigma_rand_pts=0.001` at :864; get_mean_errors
+`sigma_rand_pts=0.01` at :1320, forwarded unconditionally at :1373. Ran scratchpad/t_sigma.py
+(get_rand_pts=False, the shipped setting): ``` sigma 0.001 assd_0 0.21913301750054126 sigma
+0.01 assd_0 0.21913301750054126 identical …
 
-Line 127: `raise ValueError(f"Inputted SDF must have shape Nx3 or Nx4 got: {new_s}")` -- `new_s` is undefined (the parameter is `new_sdf`), so the error path raises NameError. Line 316 calls `wandb.log(...)` but the module never imports wandb -> NameError whenever `log_wandb=True`. Line 320 reads `latent_loss_.item()` which is only bound when `l2reg is True` (line 246). Line 97 `adjust_lr_every = num_iterations // n_lr_updates` divides by zero if `n_lr_updates=0` (the main-path helper `reconstruct_latent_get_lr_update_freq` guards this; this copy does not). Line 313 prints `latent.norm` (the bound method).
+**NSM/models/loader.py:123 — conv_norm_type default differs depending on which code path builds the triplanar model**  
+`REPRODUCES`
 
-### `NSM/train/train_deep_sdf.py`
+The divergence is real, undocumented, and duplicated six ways; both shipped models use 'layer'
+while three of the six sites default to 'batch'. Low severity because the mismatch fails
+loudly. 'Fixed' means one constant, sourced once, and a stated reason for whichever value
+wins.
 
-**NSM/train/train_deep_sdf.py:152 — The param-group target key is duplicated as a bare string literal in the train loop**
+*Evidence:* Five sites on current main, executed via loader:
+_get_triplanar_params({'latent_size':16})['conv_norm_type'] -> 'batch' (loader.py:124)
+_get_two_stage_params({'latent_size':16})['triplanar_params']['conv_norm_type'] -> 'layer'
+(loader.py:190) get_model_config_template('triplanar')['conv_norm_type'] …
 
-`if any(group.get("target") is None for group in optimizer.param_groups)` hardcodes "target" instead of importing `NSM.utils.PARAM_GROUP_TARGET_KEY` (NSM/utils.py:23), which every other site uses (utils.py:228, 273, 379, 388). This is the last place the key is spelled out by hand; changing the constant would leave this checkpoint guard silently rejecting every checkpoint.
+**NSM/mesh/correspondence_metrics.py:537 — Adjacent metrics take the same two arrays in opposite positional order**  
+`REPRODUCES` · owned by docs/ARCHITECTURE.md:304 already tracks this class with a count of ~12 instances, but names other sites, not this one.
 
-**NSM/train/train_deep_sdf.py:569 — step_mean_vec_length / step_std_vec_length are assigned, not accumulated — logged latent-norm metrics are wrong by a factor of len(data_loader)**
+Reproduces exactly as described, and both failure modes are silent. Mitigation: the module has
+no non-test importer, and the only in-repo caller (score_correspondence) passes them
+correctly. Fix is free and lossless — make the two signatures agree, or make both keyword-
+only. 'Fixed' = a caller cannot swap them without a TypeError.
 
-Lines 298-299 initialize `step_mean_vec_length = 0` / `step_std_vec_length = 0` as accumulators. Lines 569-570 use `=` rather than `+=`: `step_mean_vec_length = mean_vec_length.item()`. `mean_vec_length` is itself a leaked variable from the inner split loop (line 555), so it holds the last chunk of the last batch. Lines 590-591 then divide by `len(data_loader)`. Net effect: wandb's `mean_vec_length` and `std_vec_length` are (last chunk's value) / (number of batches) — an arbitrary number that shrinks as the dataset grows. Every other accumulator in the same function (step_losses:562, step_l1_loss:563, step_mean_size:575) correctly uses `+=`. The identical bug is present at deprecated/train_deep_sdf_multi_surface_orig.py:507-508.
+*Evidence:* RAN /tmp/claude-1000/.../scratchpad/corr_check.py: `roundtrip_distance(A,B)` and
+`roundtrip_distance(B,A)` return identical per_vertex arrays and identical mean
+0.11065713875408247 — a swap is completely invisible. `forward_backward_disagreement(B,A)` vs
+`(A,B)`: `field` is exactly sign-flipped …
 
-### `NSM/train/train_deep_sdf_multi_head.py`
+</details>
 
-**NSM/train/train_deep_sdf_multi_head.py:83 — multi_head never moves latent vectors to the device and hardcodes .cuda()**
+### 10. Face arrays are reshaped without validation, so a quad or a VTK-style array silently builds garbage
 
-Line 83: `latent_vecs = get_latent_vecs(len(data_loader.dataset), config)` — no `.to(config["device"])`, unlike train_deep_sdf.py:112. The latent Embedding therefore stays on CPU while models go to `config["device"]` (line 60). Combined with line 256 (`sdf_gt[surf_idx][split_idx].cuda()`) and 298-299 (`.cuda()` again), the module ignores `config["device"]` for tensors and cannot run on mps or cpu at all, while simultaneously claiming device-configurability at lines 60/120-123.
+Five to six sites, one shared validation helper. Supersedes existing issue #6, which states
+the same class as a one-line note — close #6 with a pointer.
 
-**NSM/train/train_deep_sdf_multi_head.py:85 — train_deep_sdf_multi_head builds the optimizer from a leaked loop variable — only the last decoder is trained**
+<details><summary>Folds in 2 entries</summary>
 
-CONFIRMED. Lines 59-60: `for model in models:` / `    model = model.to(config["device"])`. The loop leaks `model` bound to `models[-1]`. Line 85-91: `optimizer = get_optimizer(model, latent_vecs, lr_schedules=..., ...)` passes that leaked single module, not `models`. `get_optimizer` (NSM/utils.py:373-374) wraps a non-list into `[model]`, so exactly one `model_0` param group is created, holding only the last decoder's parameters. Every other decoder in `models` stays at initialization forever while `train_epoch` still runs `model(inputs)` on all of them (line 241-245) and backprops through them (line 392). The same leaked variable is reused at line 403 (`torch.nn.utils.clip_grad_norm_(model.parameters(), ...)`), so grad clipping also only touches the last model. Documented in docs/KNOWN_ISSUES.md:226-250; module now warns (lines 27-33) but is not fixed.
+**NSM/mesh/correspondence_metrics.py:291 — faces.reshape(-1, 4) assumes an all-triangle mesh in three places**  
+`REPRODUCES`
 
-**NSM/train/train_deep_sdf_multi_head.py:118 — Non-short-circuit `&` on membership tests raises KeyError instead of skipping**
+Reproduces, including the dangerous mixed-mesh case, which I had to construct deliberately
+(the entry's own numbers did not include a worked example). Same class as the interpolate.py
+`reshape(-1, 3)` entry, so one issue should cover all five sites. 'Fixed' = the face accessor
+validates (or uses `regular_faces` and raises on non-triangular input) in one shared helper.
 
-Line 118: `if ("val_paths" in config) & (config["val_paths"] is not None):`. `&` is the bitwise operator and does NOT short-circuit, so `config["val_paths"]` is evaluated even when the key is absent — the guard raises the exact KeyError it was written to prevent. Same construct at lines 329-331 for `surface_weighting`. train_deep_sdf.py fixed this by using `and` (line 179-181) and `config.get(...)` (line 477), so this is a divergence, not a shared idiom.
+*Evidence:* RAN corr_check.py + corr_check2.py. Pure-quad PolyData (2 quads, flat length 10):
+`self_intersection_count` and `foldover_count` both raise `ValueError: cannot reshape array of
+size 10 into shape (4)`. MIXED mesh of 4 quads + 3 triangles (flat length 4*3+5*4 = 32, 32 % 4
+== 0, mesh.n_cells == 7): …
 
-**NSM/train/train_deep_sdf_multi_head.py:123 — torch.mps.empty_cache() is called on the CPU branch**
+**NSM/mesh/interpolate.py:307 — faces argument silently accepts pyvista's VTK-style face array and builds garbage**  
+`REPRODUCES`
 
-Lines 120-123: `if config["device"] == "cuda": torch.cuda.empty_cache()` / `elif config["device"] == "cpu": torch.mps.empty_cache()`. The mps cache clear is reached only when the device is CPU. NSM/utils.py:439-443 has the correct version (`clear_gpu_cache`), which train_deep_sdf.py uses at lines 208 and 267; multi_head never adopted it. Also `== "cuda"` fails to match the shipped default device string `"cuda:0"` (NSM/configs/default_config.json), so the CUDA branch is dead for the default config and the CPU/mps branch is what gets tested against.
+Reproduces, with numbers the entry did not have. This is the highest-consequence instance of
+the face-array class: the wrong input silently changes the smoothing operator and the pinned-
+vertex set, so the interpolation output is wrong rather than absent. One issue with the
+correspondence_metrics/refine_mesh sites.
 
-**NSM/train/train_deep_sdf_multi_head.py:359 — multi_head accumulates per-surface L1 with .append() into a fixed-size list, then discards it**
+*Evidence:* RAN interp_check.py. `pv.Sphere(theta_resolution=8,
+phi_resolution=8).triangulate()`: 96 triangles, flat `.faces` length 384, 384 % 3 == 0.
+`build_mesh_laplacian(mesh.faces, ...)` **did not raise**: nnz 373 (flat) vs 288
+(regular_faces), and `torch.equal(dense_bad, dense_good)` is False. …
 
-Line 227 initializes `batch_l1_losses = [0.0 for _ in range(n_surfaces)]`. Line 358-359 then does `batch_l1_losses.append(l1_loss_.sum().item())` instead of `batch_l1_losses[l1_idx] += ...`, so the list grows by n_surfaces entries per split and the leading zeros are never updated. It is then never read. Lines 399-400 instead accumulate `step_l1_losses` from `l1_losses` — the loop variable leaked out of the `split_idx` loop — so the reported per-surface losses come from the last split only, not the batch. train_deep_sdf.py has the correct form at lines 500-501 and 566-567.
+</details>
 
-**NSM/train/train_deep_sdf_multi_head.py:382 — multi_head hardcodes a 100-epoch code-regularization warm-up instead of reading the config key**
+### 11. Model configurations that construct successfully and then crash on the first forward
 
-Line 382: `config["code_regularization_weight"] * min(1, epoch / 100) * l2_size_loss`. train_deep_sdf.py:544 uses `min(1, epoch / config["code_regularization_warmup"])`. Setting `code_regularization_warmup` in a config has no effect through the multi_head entry point — the knob silently does nothing. Both deprecated files use the config key (orig:277, multi_surface_orig:483), so multi_head is the odd one out.
+docs/ARCHITECTURE.md:310 names the class with five instances and no issue owns it. The close
+condition is a parameterised constructor-and-one-forward smoke test over the documented option
+values, which also stops the class reopening.
 
-### `NSM/train/utils.py`
+<details><summary>Folds in 4 entries</summary>
 
-**NSM/train/utils.py:90 — add_plain_lr_to_config raises KeyError on a Constant learning-rate schedule**
+**NSM/models/deep_sdf.py:171 — progressive_add_depth path propagates None through the layer stack**  
+`REPRODUCES`
 
-Line 90 unconditionally reads `schedule_["Initial"]`. But `get_learning_rate_schedules` builds a ConstantLearningRateSchedule from `schedule_spec["Value"]` (NSM/utils.py:183) — a Constant entry has no `Initial` key. Since `add_plain_lr_to_config` is the FIRST thing every train entry point calls (train_deep_sdf.py:80, multi_head:54, both deprecated files), configuring either schedule as `{"Type": "Constant", "Value": ...}` crashes training before the model is even moved to the device — with a bare KeyError('Initial') from a logging helper. Line 89 (`schedule_["Type"]`) is safe; only line 90 is fatal. The docstring (64-70) documents neither this nor any Raises.
+Reproduces exactly, and the failure window covers every realistic training run.
+ARCHITECTURE.md §7 names the class ('constructible-but-uncallable configuration', 5 instances)
+but there is no GitHub issue for it. File one class issue covering this, deep_sdf:180,
+deep_sdf:308 and two_stage:24; 'fixed' means each of those constructor options either works or
+refuses at construction time.
 
-### `NSM/utils.py`
+*Evidence:* Code now at NSM/models/deep_sdf.py:172 (bare `return` in forward_branch_) and
+:218-219 (`if x is None: continue`). Ran /tmp/.../scratchpad/v3.py: for ep in
+(1,199,200,1010,1209,1500): Decoder(latent_size=8, dims=[16]*8,
+progressive_add_depth=True)(torch.randn(4,11), epoch=ep) Output: epoch=1: …
 
-**NSM/utils.py:26 — LearningRateSchedule base class returns None instead of raising**
+**NSM/models/deep_sdf.py:180 — Decoder indexes self.bn by absolute layer index but appends only for norm layers**  
+`REPRODUCES`
 
-`class LearningRateSchedule: def get_learning_rate(self, epoch): pass` (lines 26-28). A subclass that forgets to override yields `param_group['lr'] = None` at utils.py:237, which torch will not reject until the optimizer step produces a TypeError far from the cause. `raise NotImplementedError` costs nothing here.
+Reproduces. Same class as the two entries above; group them into one issue rather than filing
+three. Note norm_layers is marked DEPRECATED at deep_sdf.py:44 and loader.py:324, so the fix
+may be deletion rather than repair.
 
-**NSM/utils.py:394 — get_optimizer silently drops weight_decay for the default 'Adam' optimizer**
+*Evidence:* Code now at NSM/models/deep_sdf.py:138 (`self.bn.append(...)` only inside the
+`elif ... layer in self.norm_layers` branch) and :181 (`x = self.bn[layer_idx](x)`). Ran: d =
+Decoder(latent_size=8, dims=[16,16,16], weight_norm=False, norm_layers=(2,)) print(len(d.bn),
+len(d.layers)) -> 1 4 …
 
-`weight_decay=0.0001` is a parameter of `get_optimizer` (line 362) and `weight_decay` is a shipped config key (default_config.json:82), but line 395 constructs `torch.optim.Adam(list_params)` without it. Only the AdamW (line 397) and schedule_free_AdamW (line 401) branches pass it. With the shipped default `optimizer: "Adam"`, the configured weight decay is silently inert. The docstring (lines 363-372) does not mention this.
+**NSM/models/deep_sdf.py:308 — activation='linear' builds a Decoder that crashes on first forward**  
+`REPRODUCES`
 
-**NSM/utils.py:410 — symmetric_chammfer is an empty stub with an empty docstring**
+The crash reproduces; the 'advertised' framing is mildly overstated. Still worth fixing as
+part of the class issue — get_activation returning a bare None for a value the caller cannot
+distinguish from a mistake is the defect.
 
-`def symmetric_chammfer(p1, p2, n_pts): """ """; pass` — returns None, has a whitespace-only docstring (so it passes a naive has-docstring check), is misspelled ('chammfer'), and has zero callers anywhere in NSM/ or testing/. Anyone who calls it gets None with no error.
+*Evidence:* get_activation now at NSM/models/deep_sdf.py:288-310; `elif activation ==
+"linear": return None` at :307-308. Ran: Decoder(latent_size=8, dims=[16,16],
+activation='linear')(torch.randn(4,11)) -> TypeError: 'NoneType' object is not callable (from
+:182, `x = self.activation(x)`) Control, showing the …
+
+**NSM/models/two_stage.py:24 — TwoStageDecoder cannot be constructed with its own defaults**  
+`REPRODUCES`
+
+Reproduces — the class is unconstructible by any direct caller, at any argument. Same class as
+the three deep_sdf entries; one issue, four instances. ARCHITECTURE.md §7 already names it in
+the class table but no issue owns it.
+
+*Evidence:* default_mlp_params['dims'] is still a tuple at two_stage.py:24; deep_sdf.py:84
+does `self.dims = [latent_size + 3] + dims`. In a fresh process: TwoStageDecoder() ->
+TypeError: can only concatenate list (not "tuple") to list TwoStageDecoder(latent_size=8,
+n_objects=5) -> TypeError: can only …
+
+</details>
+
+### 12. compute_recon_loss(calc_emd=True) is dead on arrival and default_config.json ships emd: True
+
+pykeops rejects numpy for every dtype, so the failure is at the boundary and no input reaches
+the point-count check the register blamed. Verified with a 4-cell torch/numpy x f32/f64
+matrix. train_deep_sdf.py:233 reads the key unconditionally, so the shipped default cannot be
+used.
+
+<details><summary>Folds in 3 entries</summary>
+
+****NSM/dependencies/sinkhorn.py:107 — sinkhorn's default uniform weights cannot sum equal when the two point clouds differ in size, so it always raises****  
+`REPRODUCES`
+
+The sinkhorn defect is real and executed. But the register attributes the EMD failure to
+unequal sizes when in fact `calc_emd=True` NEVER works from compute_recon_loss for any input,
+because the only caller passes numpy. That is the bigger, unrecorded finding and it should be
+the issue: fixed = compute_recon_loss(calc_emd=True) returns a number for meshes of unequal
+point count, which needs both the numpy->torch conversion and the sinkhorn weight
+normalisation.
+
+*Evidence:* Ran: `sinkhorn(torch.rand(5,3), torch.rand(7,3))` -> `ValueError: Weights w_x and
+w_y do not sum to the same value, got w_x.sum() = 1.0 and w_y.sum() = 0.7142857313156128`.
+Code at sinkhorn.py:106-118 unchanged. BUT the stated caller impact is wrong.
+recon_evaluation.py:122 calls …
+
+****NSM/dependencies/sinkhorn.py:49 — Unreachable duplicated type check in sinkhorn; max_iters is never type-checked****  
+`REPRODUCES`
+
+Executed and reproduces. Fixed = line 48 tests max_iters, not p; the message it already
+carries then becomes true. Group with the other three sinkhorn validation findings — one
+issue, four sites. Note the file is a vendored copy of fwilliams/scalable-pytorch-sinkhorn
+(cited in requirements.txt), so the fix is a local-fork decision.
+
+*Evidence:* Lines unchanged: sinkhorn.py:40 `if not isinstance(p, int)` and :48-49 `if not
+isinstance(p, int): raise TypeError(f"max_iters must be an integer > 0, got {max_iters}")`.
+Ran: `sinkhorn(torch.rand(5,3), torch.rand(5,3), max_iters="banana")` -> `TypeError: '<=' not
+supported between instances of …
+
+****NSM/dependencies/sinkhorn.py:92 — sinkhorn validates w_x's length twice and never validates w_y's****  
+`REPRODUCES`
+
+Executed and reproduces. Fixed = line 91 reads `w_y.shape[0] != y.shape[0]`. Same one-issue
+group as the other sinkhorn validation defects.
+
+*Evidence:* sinkhorn.py:76 and :91 both read `if w_x.shape[0] != x.shape[0]`; the message at
+:93-96 talks about w_y and y. Ran: `sinkhorn(x(5,3), y(5,3), w_x=ones(5)/5, w_y=ones(9)/9)` ->
+passed validation and died inside keops with `ValueError: Incompatible values for attribute
+nj: 9 and 5.` — exactly the …
+
+</details>
+
+### 13. train_deep_sdf_multi_head repair checklist
+
+SCOPE.md §2.1 already rules the module 'supported, broken, fix it' and KNOWN_ISSUES §2 owns
+the optimizer bug (:85). What is missing is the checklist the repair works from: latents never
+moved to the device, non-short-circuit & raising KeyError, torch.mps.empty_cache on the CPU
+branch (unreachable today because the CPU path dies earlier at :256), per-surface L1 appended
+to a fixed-size list then discarded, and a hardcoded 100-epoch warm-up ignoring its config
+key. Five entries, one repair.
+
+<details><summary>Folds in 1 entries</summary>
+
+**NSM/train/train_deep_sdf_multi_head.py:83 — multi_head never moves latent vectors to the device and hardcodes .cuda()**  
+`REPRODUCES`
+
+Confirmed three ways: the module only runs at all because the latents are LEFT on CPU, it
+cannot run on cpu/mps despite advertising config["device"], and the naive fix breaks it.
+Should be one issue with the other multi_head divergences (:118, :123, :359, :382), since
+SCOPE.md 2.1 already rules the module must be repaired.
+
+*Evidence:* scratchpad/e9_multihead.py — ran multi_head on the T4 with device="cuda", spying
+on get_optimizer: latent_device: 'cpu' (config["device"] was "cuda") scratchpad/e11_mh3.py —
+same module with device="cpu": RuntimeError: Expected all tensors to be on the same device,
+but found at least two devices, …
+
+</details>
+
+### 14. FastUnique scales latent gradients by the number of query points, diluting latent_reg_weight
+
+Measured exactly 10.00x at N=10 and 1000.00x at N=1000 on both paths. The amplification is
+asymmetric inside reconstruct_latent: the reconstruction term reaches the latent through
+FastUnique and is scaled by N, while latent_loss reaches the same leaf directly and is not, so
+the configured latent_reg_weight is silently divided by the number of query points.
+kneepipeline/steps/run_nsm.py:190-191 enables it in production. Not a regression, so the fix
+needs a KNOWN_ISSUES.md § History entry.
+
+> **IMPACT CHECKED — the production claim is wrong.** `run_nsm.py:190-191` passes
+> `l2reg=model_config["l2reg_recon"]`, and both shipped configs set it to `false`. The code
+> is `if l2reg is True: latent_loss = latent_reg_weight * ... else: latent_loss = 0`, so the
+> term this dilutes is **zero in production**. The 1000x measurement stands; "enabled in
+> production" does not. File it as a defect for anyone who turns `l2reg` on, not as a live
+> production bug, and it needs no `History` entry because no shipped run was affected.
+
+<details><summary>Folds in 1 entries</summary>
+
+**NSM/models/triplanar.py:158 — Latent gradients are scaled by the number of query points**  
+`REPRODUCES`
+
+Reproduces exactly, and I sharpened it past the entry: the amplification is asymmetric between
+the reconstruction term and the L2/norm-penalty terms, so the configured latent regularization
+is silently diluted by the number of query points on the production reconstruction path. Not a
+regression (the legacy path always did this), so any fix needs a KNOWN_ISSUES.md §History
+entry per CLAUDE.md § Numerical-behaviour changes. 'Fixed' means the recon and regularization
+gradients on the latent are on the same scale, with the chosen convention stated.
+
+*Evidence:* FastUnique is now triplanar.py:153-171; `expanded_grad =
+grad_output.repeat(ctx.num_points, 1)` at :170 returns (N,D) for a (D,) input and relies on
+autograd's sum-to-size. Ran v5.py — fast path, legacy path, and a manual decode-once
+reference, N=10: fast/ref ratio : [10.0, 10.0, 10.0, 10.0, 10.0] …
+
+</details>
+
+### 15. Sweep: declared config keys and option values that raise, no-op, or silently disable the feature
+
+The #20 pattern applied to configuration: the first task is the enumeration — for every key
+the code reads and every value a docstring advertises, set it and record what happens. Eleven
+entries, and the shipped default_config.json cannot drive train_deep_sdf at all.
+
+<details><summary>Folds in 7 entries</summary>
+
+**NSM/train/train_deep_sdf.py:108 — The shipped default_config.json cannot drive train_deep_sdf — six unconditionally-read keys are missing**  
+`REPRODUCES`
+
+Five of the six named keys are genuinely fatal on the shipped default; `assd` is not reachable
+from it, so the entry is right in substance and slightly overstated in count. Real, fixable,
+untracked: "fixed" = default_config.json defines the keys the trainer reads unconditionally,
+pinned by a test that instantiates the trainer from it.
+
+*Evidence:* Ran the real trainer on the shipped default config (tiny triplanar architecture
+substituted so a model exists; CPU; synthetic meshes from testing/NSM/regression/_harness.py),
+adding one missing key at a time. Script: scratchpad/e1_defaultcfg.py + e1b.py.
+KeyError('prefetch_factor') at …
+
+****NSM/configs/default_config.json:1 — No shipped config can construct a triplanar model faithfully****  
+`REPRODUCES`
+
+Factually correct and executed, but it is already ruled on in docs/SCOPE.md §1 as a Phase 4
+work item ("ship a default config per model type, derived from the ShapeMedKnee configs").
+Keeping it here duplicates a doc that already owns it.
+
+*Evidence:* Ran: python -c "import json; c=json.load(open('NSM/configs/default_config.json'));
+..." Output: n keys: 61 / missing triplanar keys: …
+
+****NSM/configs/default_config.json:1 — Nothing in the library ever loads default_config.json****  
+`REPRODUCES`
+
+Reproduces, and it is an observation rather than a defect — docs/SCOPE.md §2.6 already rules
+generate_sdf_default_config.py "supported: it owns the shipped default_config.json and is
+pinned by test_default_config_sync.py", which says the same thing.
+
+*Evidence:* `grep -rn 'default_config' --include=*.py NSM/ testing/ examples/`: inside NSM/
+the only hits are generate_sdf_default_config.py's own DEFAULT_CONFIG_PATH constant (:95) and
+write path (:99-107), plus a prose comment in train_deep_sdf.py:407. Readers are
+testing/NSM/test_lr_schedules.py:547 and …
+
+**NSM/train/train_deep_sdf.py:422 — multi_object_overlap is a config key whose only implementation is an unconditional raise**  
+`REPRODUCES`
+
+Reproduces, but it is a status question, not a defect: the key names an unimplemented feature.
+It belongs in SCOPE.md alongside the eikonal ruling — 'accepted by config, not implemented,
+crashes mid-epoch if enabled' — rather than as an issue.
+
+*Evidence:* scratchpad/e13_misc.py — set config["multi_object_overlap"]=True on an otherwise
+working run: Exception: Not implemented yet | raised at line 435 (inside train_epoch, after
+data loading and the first forward pass) Same construct at multi_head:259-266.
+
+**NSM/train/utils.py:90 — add_plain_lr_to_config raises KeyError on a Constant learning-rate schedule**  
+`REPRODUCES`
+
+Reproduces, and the asymmetry (Constant supported by get_learning_rate_schedules, fatal in the
+logging helper) is the whole point. "Fixed" = read Initial defensively (fall back to Value, or
+skip absent keys) and add a Raises note; pinned by a test that trains one epoch on a Constant
+schedule.
+
+*Evidence:* scratchpad/e7_lrutils.py, with {"Type":"Constant","Value":...} entries carrying
+proper Targets: get_learning_rate_schedules OK? yes -> {'model': 0.005, 'latent': 0.001}
+add_plain_lr_to_config -> KeyError('Initial') at NSM/train/utils.py:87 mixed (one Constant,
+one Step) -> KeyError('Initial') as …
+
+**NSM/reconstruct/main.py:297 — latent_norm_penalty returns a Python float 0.0 inside the range, breaking .item() on the logged value**  
+`NOT_A_DEFECT`
+
+The entry as titled is disproved: the float return is harmless and the hasattr guards handle
+it. Blunt version — this is the alarm-direction overstatement the banner warns about. But a
+real defect sits in the same function: norm_penalty_type='barrier' returns NaN for any latent
+outside [min,max], which is the state at initialisation, so the option is broken for its whole
+intended use. Fixed = clamp the log arguments (or reject the option). File the barrier bug;
+drop the float claim.
+
+*Evidence:* Floats at :295 and :306; return at :330. Ran scratchpad (t_latent_norm): ``` in-
+range penalty: 0.0 <class 'float'> has item: False out-of-range: tensor(1.,
+grad_fn=<MulBackward0>) ``` The headline claim is FALSE: every consumer is guarded (:759,
+:766, :783, :788 all `hasattr(x, 'item')`), and a run …
+
+**NSM/reconstruct/main.py:1372 — Regress.add_latent is handed the whole result dict, not a latent vector**  
+`REPRODUCES` · owned by Noted in docs/SCOPE.md §2.5 as "a live defect ... worth pinning down", but not on the GitHub tracker
+
+Reproduced by execution. The latent-to-factor regression validator raises for every user who
+enables it, which means it has been dead since whenever the reconstruct_mesh return shape
+changed. Fixed = pass `result_['latent'].detach().cpu().numpy().ravel()`, plus a regression
+test. SCOPE.md records the observation but nothing owns the fix.
+
+*Evidence:* Now at :1416 `reg.add_latent(result_)`; `result_` is reconstruct_mesh's full
+result dict (:1410). Ran scratchpad/t_regress.py — Regress subclassed only to stub
+get_all_factors (which reads filenames), three dict latents added: ``` reg.calc_r2() ->
+TypeError : float() argument must be a string or a …
+
+</details>
+
+### 16. save_model_params silently refuses to overwrite and silently drops non-JSON config values
+
+Two slices found the same bug from opposite ends. model_params_config.json is the only record
+of what a run was configured with; it is written from the first checkpoint and never
+corrected, so a run whose config changes or carries a non-JSON value leaves a persisted file
+that disagrees with it.
+
+<details><summary>Folds in 2 entries</summary>
+
+**NSM/train/train_deep_sdf.py:198 — save_model_params is called on every checkpoint but silently no-ops after the first**  
+`REPRODUCES`
+
+Reproduces, and the resume case is real: a resumed run's model_params_config.json keeps the
+first run's hyperparameters and mesh list, and that file is what downstream consumers read.
+Should be filed once, jointly with the NSM/utils.py:312 entry from the utils slice, not twice.
+
+*Evidence:* scratchpad/e4_smp.py — two calls with different configs into one
+experiment_directory: first : {'resume_epoch': 0, 'n_epochs': 10, 'lr': 0.001,
+'list_mesh_paths': ['a.vtk']} second: {'resume_epoch': 0, 'n_epochs': 10, 'lr': 0.001,
+'list_mesh_paths': ['a.vtk']} file changed on 2nd call: False The …
+
+**NSM/utils.py:312 — save_model_params silently refuses to overwrite and silently drops non-JSON config values**  
+`REPRODUCES`
+
+Reproduces exactly and it is user-visible: model_params_config.json is what every downstream
+consumer reads to rebuild a model, and on a resumed or re-run experiment it silently describes
+different hyperparameters than the weights beside it. 'Fixed' = overwrite (or epoch-stamp) and
+log the keys filter_non_jsonable removes.
+
+*Evidence:* RAN utils_check.py: first call with `{lr:0.001, resume_epoch:0, bad:<object>}`
+writes the file, and `'bad' key present? False` (filter_non_jsonable dropped it with no log).
+Second call with `{lr:0.9999, resume_epoch:500}` and `list_mesh_paths=['b.vtk']` -> on disk
+still `lr= 0.001 resume_epoch= 0 …
+
+</details>
+
+### 17. The LR fix's leftovers: positional indexing in the logging helper, and latent-norm stats assigned rather than accumulated
+
+CLAUDE.md's LR section exists because positional coupling here swapped two schedules for three
+years, and its rule is to enumerate every place the shape occurs. These are the survivors,
+plus the latent-norm metric that is wrong by a factor of n_batches and a test that currently
+pins mislabelled output.
+
+<details><summary>Folds in 4 entries</summary>
+
+**NSM/train/train_deep_sdf.py:569 — step_mean_vec_length / step_std_vec_length are assigned, not accumulated — logged latent-norm metrics are wrong by a factor of len(data_loader)**  
+`REPRODUCES`
+
+Confirmed numerically: the reported value is (last chunk of last batch) / n_batches, so it
+shrinks as the dataset grows. "Fixed" = `+=` at 582-583, matching the surrounding
+accumulators. Only affects wandb logging, not gradients — worth an issue, not a KNOWN_ISSUES
+History entry.
+
+*Evidence:* scratchpad/e5_run.py — real 2-epoch CPU run, reading the latent embedding directly
+after the epoch: n_batches (len(data_loader)): 2 true mean latent norm over whole embedding:
+0.01071708 logged mean_vec_length: 0.00526427 logged std_vec_length : 0.0 logged * n_batches :
+0.01052855 <- the LAST …
+
+**NSM/train/utils.py:76 — The positional indexing the LR fix removed still survives in the logging helper**  
+`NOT_A_DEFECT`
+
+The entry itself concedes "It is correct today". targets.index() is an internal implementation
+detail of a lookup that is keyed by Target, not a surviving positional contract. The only
+substantive half — the idx_model/idx_latent override — is the :63 entry. Duplicate.
+
+*Evidence:* scratchpad/e7_lrutils.py — both entry orders through the target-keyed path:
+('model','latent') -> model_lr_initial 0.005 latent_lr_initial 0.001 ('latent','model') ->
+model_lr_initial 0.005 latent_lr_initial 0.001 Correct in both. Pinned by …
+
+**NSM/train/utils.py:63 — add_plain_lr_to_config retains a positional back door that a test pins to mislabelled output**  
+`REPRODUCES` · owned by #20 is the adjacent class sweep ("parameters accepted and never read"); these are read, but by no caller
+
+The parameters exist solely so a test can assert deliberately swapped labels, in the very
+function whose Aug-2026 fix was about eliminating positional mapping. "Fixed" = delete
+idx_model/idx_latent and delete test_explicit_indices_still_override. Absorbs the :76 entry.
+
+*Evidence:* scratchpad/e7_lrutils.py: add_plain_lr_to_config(cfg, idx_model=1, idx_latent=0)
+-> model_lr_initial = 0.001 (the LATENT entry's Initial) -> latent_lr_initial = 0.005 Only
+caller in the entire repo (grep -rn 'idx_model|idx_latent' NSM/ testing/, excluding the
+definition): …
+
+**NSM/train/train_deep_sdf.py:152 — The param-group target key is duplicated as a bare string literal in the train loop**  
+`NOT_A_DEFECT`
+
+Not a defect — a one-line style coupling with no observable failure. Filed under "Defects" it
+is overstated. Fold into whatever edit next touches the resume block; nothing to track.
+
+*Evidence:* scratchpad/e13_misc.py: constant imported into train_deep_sdf? False literal used:
+['if any(group.get("target") is None for group in optimizer.param_groups):'] (line 152)
+NSM.utils.PARAM_GROUP_TARGET_KEY = 'target' Behaviour is correct today: the literal and the
+constant are the same string, and …
+
+</details>
+
+
+### Unassigned — 45 duplicates + 16 genuine (heading previously said 62)
+
+> Corrected 2026-08-21, measured by comparing entry titles mechanically against the
+> grouped entries above: 45 of the entries below are verbatim duplicates of entries
+> already folded into groups 1–17 and resolve with them; 16 are genuine and are
+> dispositioned in § 0.5. Anyone sizing the work from the old heading was off 3.6×.
+
+<details><summary>Show</summary>
+
+**NSM/datasets/sdf_dataset.py:301 — uniform_pts_buffer expands the max side more than the min side**  
+`REPRODUCES`
+
+Straightforward arithmetic bug in both copies, dormant only because the default is 0.0 — and
+commit 48c5f60 added the parameter precisely so it would be nonzero. "Fixed" means capturing
+the span once before rebinding mins, so the box grows symmetrically. Not covered by any open
+issue (#19 mentions uniform_pts_buffer only as a missing cache-key input).
+
+*Evidence:* Now at :357-358 (single) and :704-705 (multi), identical copy-paste. I exec'd the
+two lines pulled straight out of the module source rather than retyping them: mins = mins -
+uniform_pts_buffer / 2 * (maxs - mins) maxs = maxs + uniform_pts_buffer / 2 * (maxs - …
+
+**NSM/datasets/sdf_dataset.py:308 — Uniform-sample clipping exists only in the single-mesh function**  
+`REPRODUCES`
+
+Two nominally parallel samplers produce different sampling domains for the same request. Same
+root area as :301 so it should be one issue with it. "Fixed" means the two functions agree on
+the domain (either both clip or neither does, decided deliberately).
+
+*Evidence:* grep 'np.clip' NSM/datasets/sdf_dataset.py -> one hit, :366, inside
+read_mesh_get_sampled_pts. read_meshes_get_sampled_pts has no equivalent after :704-705. Ran
+both with uniform_pts_buffer=0.5, norm_pts=True, sigma=None: SINGLE: min -1.2500 max 1.2500
+(== …
+
+**NSM/datasets/sdf_dataset.py:685 — Unconditional debug prints on the SDF hot path**  
+`REPRODUCES`
+
+The three shape/dtype/type prints are unmistakable leftover debugging on a per-mesh, per-
+sample path and are a one-line deletion; 'fixed' means they are removed or gated behind
+verbose. BUT the entry's justification is stale and should not be carried over: it cites the
+kneepipeline consumer parsing the JSON result from the last line of stdout, and that consumer
+now reads _step_result.json from disk precisely because stdout was unreliable. File it as
+library noise, not as an integration hazard.
+
+*Evidence:* Now at :746-748. Ran read_meshes_get_sampled_pts with verbose=False and
+n_pts=[10,10] and captured stdout — 16 lines for a 20-point request, including per-mesh: (20,
+3) (842, 3) float64 float32 <class 'numpy.ndarray'> plus timing prints at :559, :621, :685, …
+
+**NSM/datasets/sdf_dataset.py:1305 — sdf_pos_neg_idx divides by zero when a surface has no positive or no negative samples**  
+`REPRODUCES`
+
+Reproduces at both call sites and end-to-end via two realistic triggers (a None surface, and
+one surface nested inside another). Not tracked by any open issue, and the codebase's own test
+fixtures were shaped around it — that is evidence plus a fixable statement: guard the repeat
+so an empty pos/neg set raises something that names the surface, or is handled.
+
+*Evidence:* Code now at NSM/datasets/sdf_dataset.py:1385-1386 (SDFSamples) and :2124-2125
+(MultiSurfaceSDFSamples). Unit probe (scratchpad/e1_zerodiv.py, e1b.py): single:
+ZeroDivisionError integer division or modulo by zero multi: ZeroDivisionError integer division
+or …
+
+**NSM/datasets/sdf_dataset.py:1487 — Joint (scale_jointly) normalization is skipped entirely when subsample is None**  
+`REPRODUCES`
+
+Reproduces, and the returned item differs from the subsampled case in shape, key set and
+coordinate space — the trainer reads timing keys unconditionally, so this cannot train either.
+Fixable statement: reject subsample=None at construction, or make it produce the same contract
+as a subsampled item. Groups with the :1598 entry.
+
+*Evidence:* Code now at :1573 (`if self.subsample is not None:`) with the joint block at
+:1635, and :2176 / :2240 for the subclass. Cold construction with subsample=None raises before
+it matters (scratchpad/e8_real.py): TypeError: unsupported operand type(s) for /: …
+
+**NSM/datasets/sdf_dataset.py:1595 — joint_scale_buffer cannot be set on MultiSurfaceSDFSamples**  
+`REPRODUCES`
+
+Reproduces exactly as written. Multi-surface is the production configuration (bone+cartilage),
+so the 10% joint-scaling buffer that sets the normalization radius of every shipped multi-
+surface dataset is unreachable from the public constructor. Fixed = the parameter is accepted
+and forwarded (and lands in the cache key, which is #19's half).
+
+*Evidence:* scratchpad/e9_jsb.py, against real meshes: SDFSamples has joint_scale_buffer: True
+Multi has joint_scale_buffer: False passed joint_scale_buffer -> TypeError __init__() got an
+unexpected keyword argument 'joint_scale_buffer' multi dataset joint_scale_buffer …
+
+**NSM/datasets/sdf_dataset.py:1598 — MultiSurfaceSDFSamples default subsample=None is unusable**  
+`REPRODUCES`
+
+The documented default of a public constructor cannot construct. Reproduces both in isolation
+and end-to-end, and is not tracked. Fixed = subsample is required (or validated) rather than
+defaulting to a value nothing supports. Same class as the :1487 entry; file them together.
+
+*Evidence:* Default still `subsample=None` at :1684. End-to-end with the regression harness
+and real meshes (scratchpad/e10_real.py): CONSTRUCTION ERROR: TypeError unsupported operand
+type(s) for *: 'float' and 'NoneType' Path: __init__ -> run_before_loading_data (:1786) …
+
+**NSM/datasets/sdf_dataset.py:1928 — remove_overlapping_points hard-codes a two-surface assumption**  
+`REPRODUCES`
+
+Reproduces exactly. CLAUDE.md documents 4-surface models (bone/cart/med_men/lat_men) as a
+supported configuration, and objects_per_decoder=2 already ships, so the function is silently
+a no-op for the direction the library is heading. Fixed = 'inside two or more surfaces'
+expressed as a count, not as a magic sum of -2.
+
+*Evidence:* Function now at :1996, the test at :2015/:2021 (`in_in = torch.sum(total == -2)` /
+`keep_mask = total != -2`). Ran it directly on hand-built sign patterns
+(scratchpad/e11_overlap.py): 2 surfaces in_both/in_one/out_both : rows 3 -> 2, in_in=1 3
+surfaces …
+
+**NSM/datasets/sdf_dataset.py:2193 — combine_meshes returns a pyvista PolyData, not a pymskt Mesh, whenever it actually combines (verified)**  
+`REPRODUCES`
+
+The type inconsistency is real and the docstring contradicts it, but the entry's failure story
+is wrong: the multi-surface reference-mesh path dies one statement earlier with
+UnboundLocalError. Worth one issue covering the whole path — fixed = reference_mesh=int with a
+list-valued mesh_to_scale returns a usable combined pymskt Mesh, which requires combine_meshes
+to keep its declared return type. (docs/MULTI_SURFACE_REGISTRATION.md:75 advertises this as
+working; that doc entry is in another slice — fold them.)
+
+*Evidence:* Type claim, run against pymskt (scratchpad/e13_combine.py); combine_meshes is now
+at :2266, docstring 'Returns: Mesh' at :2274: int index -> <class 'pymskt.mesh.meshes.Mesh'>
+1-elem list -> <class 'pymskt.mesh.meshes.Mesh'> 2-elem list -> <class …
+
+**NSM/reconstruct/main.py:248 — sdf_gt is mutated in place through the type-check and preprocess helpers**  
+`REPRODUCES`
+
+Confirmed by execution: reconstruct_latent clamps and device-moves the caller's list in place,
+with no docstring on either helper (reconstruct_latent has no docstring at all). Not live in
+production because reconstruct_mesh builds sdf fresh each call, but it is the exact class PR
+#38 just fixed in sdf_dataset.get_pts_center_and_scale — this is an unswept instance of it.
+
+*Evidence:* Symbol now at NSM/reconstruct/main.py:171 (type check) and :236 (preprocess); the
+write is at :246 `sdf_gt[sdf_idx] = sdf.to(device)`. Ran (scratchpad/t_mutate.py,
+python=/mnt/data/conda-envs/nsm-dev/bin/python): ``` orig = [torch.full((5,1), 5.0), …
+
+**NSM/reconstruct/main.py:605 — Single-object decoder branch indexes sdf_gt by decoder index**  
+`REPRODUCES`
+
+Hard demonstration, not inference: with two multi-output decoders the second decoder silently
+scores against the first decoder's surfaces. reconstruct_mesh's own docstring advertises this
+configuration ("path1_mesh = decoder0_mesh1 OR decoder1_mesh0"). Fixed = the flat sdf_gt is
+indexed by a running surface offset, or the configuration is rejected.
+
+*Evidence:* Now at :610 `sdf_gt_[decoder_idx].squeeze()` (single-output branch) and :616 `for
+sdf_idx in range(pred_sdf.shape[1])` indexing the flat `sdf_gt_[sdf_idx]`. Ran
+scratchpad/t_sdfidx.py: TWO 2-surface TriplanarDecoders, four ground-truth surfaces,
+pts_surface …
+
+**NSM/reconstruct/main.py:794 — reconstruct_latent can return an unbound local `latent_`**  
+`REPRODUCES`
+
+Reproduces on two independent triggers, one of which (NaN under a convergence mode production
+selects) is a plausible production failure that surfaces as UnboundLocalError instead of "the
+fit diverged". Fixed = latent_ initialised to the current latent before the loop, and the 100
+sentinel replaced with inf/None so the returned loss is never a magic number.
+
+*Evidence:* Now `return loss, latent_` at :824; sentinels `loss = 100` / `recon_loss = 100` at
+:468-469. Ran scratchpad/t_latent_unbound.py: ``` num_iterations=0 -> UnboundLocalError: local
+variable 'latent_' referenced before assignment nan sdf_gt + …
+
+**NSM/reconstruct/main.py:840 — `chamfer_norm` is a power, not a norm, and its default disagrees across the three layers**  
+`REPRODUCES`
+
+The default disagreement and the squared units are real and measured. The entry overstates on
+documentation — the power semantics ARE documented at the two lower layers; what is missing is
+any mention in reconstruct_mesh's 8-line docstring. Fixed = one default across the three
+layers, plus a docstring line at reconstruct_mesh. File jointly with the sigma_rand_pts entry
+as one class.
+
+*Evidence:* Ran scratchpad/t_chamfer.py: ``` reconstruct_mesh chamfer_norm default: 2 (:871)
+compute_recon_loss chamfer_norm default: 1 (recon_evaluation.py:25) compute_chamfer power
+default: 1 (utils.py:83) chamfer power=1: 0.32892286960623585 chamfer power=2: …
+
+**NSM/reconstruct/main.py:178 — The string branch of the sdf_gt type check is unreachable; it raises TypeError instead of its message**  
+`REPRODUCES`
+
+One missing comma; reproduced by execution. Fixed = `(str,)` and the test tightened to
+`pytest.raises(Exception, match=...)`. File as one issue with the :445 UnboundLocalError entry
+— both are "bad input reaches an unhelpful exception instead of the written one".
+
+*Evidence:* `grep -n 'type(sdf_gt) in (str)'` -> :176 (still no trailing comma). Ran: ``` from
+NSM.reconstruct.main import reconstruct_latent_sdf_gt_type_check as f f('some/path.vtk') ->
+TypeError : argument of type 'type' is not iterable ``` The intended message at …
+
+**NSM/reconstruct/main.py:297 — latent_norm_penalty returns a Python float 0.0 inside the range, breaking .item() on the logged value**  
+`NOT_A_DEFECT` · folded into the declared-config-options sweep, barrier half only
+
+The entry as titled is disproved: the float return is harmless and the hasattr guards handle
+it. Blunt version — this is the alarm-direction overstatement the banner warns about. But a
+real defect sits in the same function: norm_penalty_type='barrier' returns NaN for any latent
+outside [min,max], which is the state at initialisation, so the option is broken for its whole
+intended use. Fixed = clamp the log arguments (or reject the option). File the barrier bug;
+drop the float claim.
+
+*Evidence:* Floats at :295 and :306; return at :330. Ran scratchpad (t_latent_norm): ``` in-
+range penalty: 0.0 <class 'float'> has item: False out-of-range: tensor(1.,
+grad_fn=<MulBackward0>) ``` The headline claim is FALSE: every consumer is guarded (:759,
+:766, :783, …
+
+**NSM/reconstruct/main.py:445 — `optimizer` / `loss_fn` can be referenced before assignment for unrecognised names**  
+`REPRODUCES`
+
+Both reproduce by execution. The 'AdamW in the config' hazard the entry raises is one wiring
+change away, not live. Fixed = an explicit else that raises ValueError naming the accepted
+values. Same issue as :178.
+
+*Evidence:* Bind sites now :444-452 (optimizer) and :455-465 (loss_fn). Ran
+scratchpad/t_unbound.py against the committed regression decoder: ``` optimizer_name='AdamW'
+-> UnboundLocalError: local variable 'optimizer' referenced before assignment
+optimizer_name='adam' -> …
+
+**NSM/reconstruct/main.py:1372 — Regress.add_latent is handed the whole result dict, not a latent vector**  
+`REPRODUCES` · owned by Noted in docs/SCOPE.md §2.5 as "a live defect ... worth pinning down", but not on the GitHub tracker
+
+Reproduced by execution. The latent-to-factor regression validator raises for every user who
+enables it, which means it has been dead since whenever the reconstruct_mesh return shape
+changed. Fixed = pass `result_['latent'].detach().cpu().numpy().ravel()`, plus a regression
+test. SCOPE.md records the observation but nothing owns the fix.
+
+*Evidence:* Now at :1416 `reg.add_latent(result_)`; `result_` is reconstruct_mesh's full
+result dict (:1410). Ran scratchpad/t_regress.py — Regress subclassed only to stub
+get_all_factors (which reads filenames), three dict latents added: ``` reg.calc_r2() ->
+TypeError : …
+
+**NSM/reconstruct/main.py:750 — Latent-norm progress print emits the bound method instead of the value**  
+`REPRODUCES`
+
+Reproduced by execution. One-line fix in two files. File it together with the unconditional-
+print entry as a single print-hygiene sweep of this module rather than two issues.
+
+*Evidence:* Now at :770 `print("\tLatent norm: ", latent.norm)`. Ran
+scratchpad/t_norm_print.py with verbose=True, capturing stdout: ``` PRINTED: '\tLatent norm:
+<bound method Tensor.norm of tensor([[-2.8552e-02, 7.2031e-03, -1.6689e-02, 2.1267e-05,
+9.5957e-04,' ``` It …
+
+**NSM/reconstruct/main.py:834 — `sigma_rand_pts` default differs by 10x between reconstruct_mesh and get_mean_errors**  
+`REPRODUCES`
+
+The 10x default disagreement reproduces and is result-changing, but only when
+get_rand_pts=True — both shipped configs set get_rand_pts_recon=false, so it is latent in
+production. Fixed = one default, documented. File as one issue with the chamfer_norm entry;
+drop the n_pts_per_axis sentence, which is not the same pattern.
+
+*Evidence:* reconstruct_mesh `sigma_rand_pts=0.001` at :864; get_mean_errors
+`sigma_rand_pts=0.01` at :1320, forwarded unconditionally at :1373. Ran scratchpad/t_sigma.py
+(get_rand_pts=False, the shipped setting): ``` sigma 0.001 assd_0 0.21913301750054126 sigma
+0.01 …
+
+**NSM/reconstruct/main.py:1153 — Unconditional debug prints on the production reconstruction path**  
+`REPRODUCES`
+
+Reproduced by execution, and the entry understates the scope — the noisiest offender is in
+NSM/mesh, not reconstruct. The consumer runs the NSM fit as a subprocess whose stdout the
+pipeline scans, so this is a real hygiene problem. Fixed = every print in the reconstruction
+path gated on verbose or routed through the module logger. One issue covering this and the
+:750 bound-method print.
+
+*Evidence:* Now :1197, :1198, :1209, :1234, and :1452 in get_mean_errors. Ran
+scratchpad/t_recon_full.py with verbose=False, capturing stdout: ``` '... length of meshes:
+2\nlength of orig_mesh: 2\nfinished computing recon loss\n' ``` Ran scratchpad/t_gme.py — …
+
+**NSM/mesh/main.py:836 — get_sdfs prints one unconditional line per batch in the production path**  
+`REPRODUCES`
+
+Reproduces with a measured line count, on the live path, at the caller's own defaults, from a
+function whose siblings all gate on `verbose`. Fixed means get_sdfs takes `verbose` (or a
+logger) and is silent by default. The audit's framing of the downstream harm is fragile-not-
+broken; the noise itself is the finding.
+
+*Evidence:* Print now at NSM/mesh/main.py:857, warning at :841-843. `get_sdfs` has no
+`verbose` parameter at all (t_main.py: `has 'verbose' param? False`). Ran t_spam.py —
+create_mesh_adaptive at reconstruct_mesh's own defaults (batch_size=32**3, n_pts_coarse=64), …
+
+**NSM/mesh/refine_mesh.py:399 — get_target_cells raises UnboundLocalError on its own default arguments**  
+`REPRODUCES` · owned by Not on GitHub. Already ruled in docs/SCOPE.md §2.3 condition 1, indexed in docs/ARCHITECTURE.md:210 and :310, and queued in .claude/plans/NSM_CODE_HEALTH_REFACTOR.md:360 — but the repo's stated rule is that issues are the only work queue, and there is no issue for it. · folded, listed first
+
+Reproduces exactly as written, and it is the one entry in this slice that makes a whole module
+unusable. Fixed means `np.zeros_like(max_lengths)` plus a test that calls both public entry
+points with their own defaults. It gates SCOPE.md §2.3's other two conditions, which cannot be
+written against code nobody can run.
+
+*Evidence:* Bug now at NSM/mesh/refine_mesh.py:400: `max_length_binary =
+np.zeros_like(max_length_binary)`. Ran t_refine.py sections A and B on a 240-cell pyvista
+Sphere: {'area_threshold': 0.5} -> UnboundLocalError: local variable 'max_length_binary'
+referenced before …
+
+**NSM/mesh/main.py:280 — sdf_grid_to_mesh crashes on numpy input while its VTK twin does not**  
+`REPRODUCES`
+
+Two functions swapped by a single unrelated boolean must accept the same inputs. Fixed means
+both guard with `hasattr(sdf_values, 'cpu')` and both carry the same narrow_band default —
+file it together with the :277 asymmetry as one small issue, not two. Production always feeds
+a torch tensor with use_vtk=True, so the severity is API hygiene, not a live crash.
+
+*Evidence:* Unguarded conversion now at NSM/mesh/main.py:282; the guarded twin at :402-403.
+Ran t_main.py section C with a float32 numpy sphere SDF: numpy into sdf_grid_to_mesh RAISED:
+AttributeError 'numpy.ndarray' object has no attribute 'cpu' numpy into …
+
+**NSM/mesh/main.py:638 — Fallback grid origin can disagree with search_bounds**  
+`REPRODUCES`
+
+A reproducible, wrong-by-construction grid on a reachable branch, with a one-line fix (derive
+voxel_origin from search_bounds when the caller did not supply one). Fixed means the fallback
+grid covers exactly search_bounds. Unreachable at today's defaults, so no KNOWN_ISSUES History
+entry is owed — nobody has affected runs.
+
+*Evidence:* voxel_size derived from search_bounds at NSM/mesh/main.py:644-645; the fallback
+hands create_mesh the untouched voxel_origin at :693-696 (default (-1,-1,-1) at :561). Ran
+t_aabb.py, calling create_grid_samples exactly as the fallback does: …
+
+**NSM/train/train_deep_sdf.py:108 — The shipped default_config.json cannot drive train_deep_sdf — six unconditionally-read keys are missing**  
+`REPRODUCES`
+
+Five of the six named keys are genuinely fatal on the shipped default; `assd` is not reachable
+from it, so the entry is right in substance and slightly overstated in count. Real, fixable,
+untracked: "fixed" = default_config.json defines the keys the trainer reads unconditionally,
+pinned by a test that instantiates the trainer from it.
+
+*Evidence:* Ran the real trainer on the shipped default config (tiny triplanar architecture
+substituted so a model exists; CPU; synthetic meshes from testing/NSM/regression/_harness.py),
+adding one missing key at a time. Script: scratchpad/e1_defaultcfg.py + e1b.py. …
+
+**NSM/train/train_deep_sdf.py:121 — resume_epoch == 1 silently skips epoch 1 without resuming anything**  
+`REPRODUCES`
+
+Exactly as described, demonstrated end to end. "Fixed" = resume_epoch==1 either loads the
+epoch-1 checkpoint or raises; the two guards must use the same boundary.
+
+*Evidence:* Ran train_deep_sdf three times on the CPU harness with n_epochs=4, recording which
+epochs train_epoch was actually called for (scratchpad/e2_resume.py): resume_epoch=0: epochs
+run [1, 2, 3, 4] resume_epoch=1: epochs run [2, 3, 4] <- no checkpoint loaded, no …
+
+**NSM/train/train_deep_sdf.py:195 — schedule_free eval warm-up passes a (dict, tensor) dataloader tuple straight into the decoder**  
+`REPRODUCES`
+
+Crashes at the first checkpoint or validation epoch for every schedule_free_* run, so that
+whole optimizer family is unusable. "Fixed" = the warm-up unpacks the batch and builds decoder
+inputs the way train_epoch does, or the unfinished block is deleted.
+
+*Evidence:* `schedulefree` is not installed in nsm-dev, so I stubbed NSM.utils.schedulefree
+with an AdamWScheduleFree that subclasses torch.optim.Adam and adds no-op train()/eval() — the
+only methods train_deep_sdf's schedule_free branch touches — then ran the real …
+
+**NSM/train/train_deep_sdf.py:198 — save_model_params is called on every checkpoint but silently no-ops after the first**  
+`REPRODUCES`
+
+Reproduces, and the resume case is real: a resumed run's model_params_config.json keeps the
+first run's hyperparameters and mesh list, and that file is what downstream consumers read.
+Should be filed once, jointly with the NSM/utils.py:312 entry from the utils slice, not twice.
+
+*Evidence:* scratchpad/e4_smp.py — two calls with different configs into one
+experiment_directory: first : {'resume_epoch': 0, 'n_epochs': 10, 'lr': 0.001,
+'list_mesh_paths': ['a.vtk']} second: {'resume_epoch': 0, 'n_epochs': 10, 'lr': 0.001,
+'list_mesh_paths': …
+
+**NSM/train/train_deep_sdf.py:333 — The per-surface index ordering is a fully undocumented positional contract spanning four modules**  
+`REPRODUCES`
+
+The mechanism reproduces but the entry OVERSTATES the consequence: swapping meshes does not
+"train bone weights against cartilage targets" — training is self-consistent, the decoder
+simply learns whichever column it is given. The real harm is that mesh_names is written into
+model_params_config.json as ground truth for downstream consumers and can be silently wrong,
+which is precisely what CLAUDE.md added mesh_names to prevent. File that, not the broader
+four-module framing. Absorbs the :620 entry.
+
+*Evidence:* scratchpad/e16_surfidx.py — built the dataset from the SAME meshes with the pair
+order reversed, kept mesh_names=['bone','cart'], ran a full epoch: normal order :
+['subject0_bone.vtk', 'subject0_cart.vtk'] swapped order : ['subject0_cart.vtk', …
+
+**NSM/train/utils.py:63 — add_plain_lr_to_config retains a positional back door that a test pins to mislabelled output**  
+`REPRODUCES` · owned by #20 is the adjacent class sweep ("parameters accepted and never read"); these are read, but by no caller
+
+The parameters exist solely so a test can assert deliberately swapped labels, in the very
+function whose Aug-2026 fix was about eliminating positional mapping. "Fixed" = delete
+idx_model/idx_latent and delete test_explicit_indices_still_override. Absorbs the :76 entry.
+
+*Evidence:* scratchpad/e7_lrutils.py: add_plain_lr_to_config(cfg, idx_model=1, idx_latent=0)
+-> model_lr_initial = 0.001 (the LATENT entry's Initial) -> latent_lr_initial = 0.005 Only
+caller in the entire repo (grep -rn 'idx_model|idx_latent' NSM/ testing/, excluding the …
+
+**NSM/train/train_deep_sdf.py:569 — step_mean_vec_length / step_std_vec_length are assigned, not accumulated — logged latent-norm metrics are wrong by a factor of len(data_loader)**  
+`REPRODUCES`
+
+Confirmed numerically: the reported value is (last chunk of last batch) / n_batches, so it
+shrinks as the dataset grows. "Fixed" = `+=` at 582-583, matching the surrounding
+accumulators. Only affects wandb logging, not gradients — worth an issue, not a KNOWN_ISSUES
+History entry.
+
+*Evidence:* scratchpad/e5_run.py — real 2-epoch CPU run, reading the latent embedding directly
+after the epoch: n_batches (len(data_loader)): 2 true mean latent norm over whole embedding:
+0.01071708 logged mean_vec_length: 0.00526427 logged std_vec_length : 0.0 logged * …
+
+**NSM/train/train_deep_sdf_multi_head.py:83 — multi_head never moves latent vectors to the device and hardcodes .cuda()**  
+`REPRODUCES`
+
+Confirmed three ways: the module only runs at all because the latents are LEFT on CPU, it
+cannot run on cpu/mps despite advertising config["device"], and the naive fix breaks it.
+Should be one issue with the other multi_head divergences (:118, :123, :359, :382), since
+SCOPE.md 2.1 already rules the module must be repaired.
+
+*Evidence:* scratchpad/e9_multihead.py — ran multi_head on the T4 with device="cuda", spying
+on get_optimizer: latent_device: 'cpu' (config["device"] was "cuda") scratchpad/e11_mh3.py —
+same module with device="cpu": RuntimeError: Expected all tensors to be on the same …
+
+**NSM/train/train_deep_sdf_multi_head.py:118 — Non-short-circuit `&` on membership tests raises KeyError instead of skipping**  
+`REPRODUCES`
+
+Executed, not inferred, at both sites. "Fixed" = `and` / `config.get`, matching
+train_deep_sdf. Group with the other multi_head divergences.
+
+*Evidence:* Both sites hit at runtime while walking a real multi_head run forward
+(scratchpad/e9_multihead.py, successive runs): KeyError : 'surface_weighting' | multi_head
+line 330: isinstance(config["surface_weighting"], (list, tuple)) KeyError : 'val_paths' | …
+
+**NSM/train/train_deep_sdf_multi_head.py:123 — torch.mps.empty_cache() is called on the CPU branch**  
+`REPRODUCES`
+
+The code is wrong as written and the shipped "cuda:0" never matches "cuda", both confirmed.
+But the entry implies line 123 fires in practice; it cannot, because the cpu path dies
+earlier. Mildly overstated. Real, trivial, and belongs in the same multi_head repair (use
+NSM.utils.clear_gpu_cache, as train_deep_sdf does).
+
+*Evidence:* scratchpad/e10_mh2.py: 120: if config["device"] == "cuda": 121:
+torch.cuda.empty_cache() 122: elif config["device"] == "cpu": 123: torch.mps.empty_cache()
+shipped default device string: cuda:0 -> == 'cuda' ? False torch.mps.empty_cache() ->
+RuntimeError: …
+
+**NSM/train/train_deep_sdf_multi_head.py:359 — multi_head accumulates per-surface L1 with .append() into a fixed-size list, then discards it**  
+`REPRODUCES`
+
+Both halves confirmed, with train_deep_sdf as the controlled contrast. "Fixed" = index-assign
+into batch_l1_losses inside the split loop and accumulate that, as
+train_deep_sdf.py:513-514/579-580 does. Group with the other multi_head divergences.
+
+*Evidence:* AST scan of MH.train_epoch (scratchpad/e10_mh2.py): batch_l1_losses appears
+exactly twice — batch_l1_losses = [0.0 for _ in range(n_surfaces)]
+batch_l1_losses.append(l1_loss_.sum().item()) never read. Second half — per-surface losses
+come from the last split …
+
+**NSM/train/train_deep_sdf_multi_head.py:382 — multi_head hardcodes a 100-epoch code-regularization warm-up instead of reading the config key**  
+`REPRODUCES`
+
+Confirmed by execution and by whole-file search: the config key literally does not appear in
+the module, so setting it through this entry point does nothing. "Fixed" = read the config
+key. Group with the other multi_head divergences.
+
+*Evidence:* scratchpad/e10_mh2.py: 382: config["code_regularization_weight"] * min(1, epoch /
+100) * l2_size_loss code_regularization_warmup present in multi_head source: False
+train_deep_sdf.py:557 uses min(1, epoch / config["code_regularization_warmup"]).
+
+**NSM/train/utils.py:90 — add_plain_lr_to_config raises KeyError on a Constant learning-rate schedule**  
+`REPRODUCES`
+
+Reproduces, and the asymmetry (Constant supported by get_learning_rate_schedules, fatal in the
+logging helper) is the whole point. "Fixed" = read Initial defensively (fall back to Value, or
+skip absent keys) and add a Raises note; pinned by a test that trains one epoch on a Constant
+schedule.
+
+*Evidence:* scratchpad/e7_lrutils.py, with {"Type":"Constant","Value":...} entries carrying
+proper Targets: get_learning_rate_schedules OK? yes -> {'model': 0.005, 'latent': 0.001}
+add_plain_lr_to_config -> KeyError('Initial') at NSM/train/utils.py:87 mixed (one …
+
+**NSM/models/deep_sdf.py:171 — progressive_add_depth path propagates None through the layer stack**  
+`REPRODUCES`
+
+Reproduces exactly, and the failure window covers every realistic training run.
+ARCHITECTURE.md §7 names the class ('constructible-but-uncallable configuration', 5 instances)
+but there is no GitHub issue for it. File one class issue covering this, deep_sdf:180,
+deep_sdf:308 and two_stage:24; 'fixed' means each of those constructor options either works or
+refuses at construction time.
+
+*Evidence:* Code now at NSM/models/deep_sdf.py:172 (bare `return` in forward_branch_) and
+:218-219 (`if x is None: continue`). Ran /tmp/.../scratchpad/v3.py: for ep in
+(1,199,200,1010,1209,1500): Decoder(latent_size=8, dims=[16]*8, …
+
+**NSM/models/deep_sdf.py:180 — Decoder indexes self.bn by absolute layer index but appends only for norm layers**  
+`REPRODUCES`
+
+Reproduces. Same class as the two entries above; group them into one issue rather than filing
+three. Note norm_layers is marked DEPRECATED at deep_sdf.py:44 and loader.py:324, so the fix
+may be deletion rather than repair.
+
+*Evidence:* Code now at NSM/models/deep_sdf.py:138 (`self.bn.append(...)` only inside the
+`elif ... layer in self.norm_layers` branch) and :181 (`x = self.bn[layer_idx](x)`). Ran: d =
+Decoder(latent_size=8, dims=[16,16,16], weight_norm=False, norm_layers=(2,)) …
+
+**NSM/models/deep_sdf.py:308 — activation='linear' builds a Decoder that crashes on first forward**  
+`REPRODUCES`
+
+The crash reproduces; the 'advertised' framing is mildly overstated. Still worth fixing as
+part of the class issue — get_activation returning a bare None for a value the caller cannot
+distinguish from a mistake is the defect.
+
+*Evidence:* get_activation now at NSM/models/deep_sdf.py:288-310; `elif activation ==
+"linear": return None` at :307-308. Ran: Decoder(latent_size=8, dims=[16,16],
+activation='linear')(torch.randn(4,11)) -> TypeError: 'NoneType' object is not callable (from
+:182, `x = …
+
+**NSM/models/triplanar.py:158 — Latent gradients are scaled by the number of query points**  
+`REPRODUCES`
+
+Reproduces exactly, and I sharpened it past the entry: the amplification is asymmetric between
+the reconstruction term and the L2/norm-penalty terms, so the configured latent regularization
+is silently diluted by the number of query points on the production reconstruction path. Not a
+regression (the legacy path always did this), so any fix needs a KNOWN_ISSUES.md §History
+entry per CLAUDE.md § Numerical-behaviour changes. 'Fixed' means the recon and regularization
+gradients on the latent are on the same scale, with the chosen convention stated.
+
+*Evidence:* FastUnique is now triplanar.py:153-171; `expanded_grad =
+grad_output.repeat(ctx.num_points, 1)` at :170 returns (N,D) for a (D,) input and relies on
+autograd's sum-to-size. Ran v5.py — fast path, legacy path, and a manual decode-once
+reference, N=10: fast/ref …
+
+**NSM/models/loader.py:123 — conv_norm_type default differs depending on which code path builds the triplanar model**  
+`REPRODUCES`
+
+The divergence is real, undocumented, and duplicated six ways; both shipped models use 'layer'
+while three of the six sites default to 'batch'. Low severity because the mismatch fails
+loudly. 'Fixed' means one constant, sourced once, and a stated reason for whichever value
+wins.
+
+*Evidence:* Five sites on current main, executed via loader:
+_get_triplanar_params({'latent_size':16})['conv_norm_type'] -> 'batch' (loader.py:124)
+_get_two_stage_params({'latent_size':16})['triplanar_params']['conv_norm_type'] -> 'layer'
+(loader.py:190) …
+
+**NSM/models/triplanar.py:262 — sum_sdf_features=False silently produces two empty feature planes**  
+`REPRODUCES`
+
+Reproduces and produces a plausible number with two thirds of the representation structurally
+absent — the definition of a landmine. Untracked. 'Fixed' means either slicing by
+sdf_latent_size//3 in the non-summing case, or refusing the configuration at construction; the
+correct divisor is stated in the entry and I confirmed the arithmetic.
+
+*Evidence:* Sizing at triplanar.py:231-237 (`vae_out_features = self.sdf_latent_size` when not
+summing), slicing at :275-281 (`latent_size = self.sdf_latent_size + self.conv_pred_sdf`).
+Executed: m = TriplanarDecoder(latent_dim=16, sdf_latent_size=6, …
+
+**NSM/models/two_stage.py:24 — TwoStageDecoder cannot be constructed with its own defaults**  
+`REPRODUCES`
+
+Reproduces — the class is unconstructible by any direct caller, at any argument. Same class as
+the three deep_sdf entries; one issue, four instances. ARCHITECTURE.md §7 already names it in
+the class table but no issue owns it.
+
+*Evidence:* default_mlp_params['dims'] is still a tuple at two_stage.py:24; deep_sdf.py:84
+does `self.dims = [latent_size + 3] + dims`. In a fresh process: TwoStageDecoder() ->
+TypeError: can only concatenate list (not "tuple") to list TwoStageDecoder(latent_size=8, …
+
+**NSM/utils.py:9 — Importing NSM prints to stdout unconditionally when schedulefree is absent**  
+`REPRODUCES`
+
+Reproduces exactly on current main. One caveat: the entry's stated consequence is stale — it
+says the consumer 'parses stdout (progress lines followed by a JSON result as the last line)',
+but kneepipeline now reads `_step_result.json` and its CLAUDE.md explicitly says the result is
+NOT the last line of stdout. The remaining, still-valid point is the plain one: a library must
+not write to stdout at import. Three-line fix (warnings.warn, move `import warnings` above the
+try).
+
+*Evidence:* RAN: `/mnt/data/conda-envs/nsm-dev/bin/python -c "import schedulefree"` ->
+ModuleNotFoundError: No module named 'schedulefree' (it is genuinely absent from nsm-dev).
+RAN: `/mnt/data/conda-envs/nsm-dev/bin/python -c "import NSM" 2>/dev/null` -> stdout: …
+
+**NSM/utils.py:283 — save_model's on-disk subdirectory naming is an undocumented contract**  
+`REPRODUCES` · owned by Adjacent to KNOWN_ISSUES.md §2 / SCOPE.md §2.1 (train_deep_sdf_multi_head), but the loader gap is not stated in either.
+
+Stronger than the entry states. It is not merely undocumented — nothing in the repo can read a
+`model_N/` checkpoint back. Multi-decoder runs (train_deep_sdf_multi_head, the only producer)
+write checkpoints no loader in NSM/ or examples/ can consume. 'Fixed' means: one documented
+naming rule plus a loader that handles both shapes, or drop the branch.
+
+*Evidence:* RAN utils_check.py: list of 1 decoder -> `['model']`; list of 2 ->
+`['model_0','model_1']`; list of 3 -> `['model_0','model_1','model_2']`; bare decoder ->
+`['model']`. Docstring (NSM/utils.py:255-262) documents only the optimizer-target validation.
+Then RAN …
+
+**NSM/utils.py:312 — save_model_params silently refuses to overwrite and silently drops non-JSON config values**  
+`REPRODUCES`
+
+Reproduces exactly and it is user-visible: model_params_config.json is what every downstream
+consumer reads to rebuild a model, and on a resumed or re-run experiment it silently describes
+different hyperparameters than the weights beside it. 'Fixed' = overwrite (or epoch-stamp) and
+log the keys filter_non_jsonable removes.
+
+*Evidence:* RAN utils_check.py: first call with `{lr:0.001, resume_epoch:0, bad:<object>}`
+writes the file, and `'bad' key present? False` (filter_non_jsonable dropped it with no log).
+Second call with `{lr:0.9999, resume_epoch:500}` and `list_mesh_paths=['b.vtk']` -> on …
+
+**NSM/utils.py:343 — get_latent_vecs silently ignores config['latent_bound'] and doubles latent_size when variational**  
+`REPRODUCES` · owned by Same class as #20 ('parameters accepted and never read'); could be swept there rather than filed alone.
+
+Reproduces exactly. A user who sets `variational: true` alongside the shipped `latent_bound:
+1.0` silently gets an effectively unbounded latent, and the `latent_size` recorded in
+model_params_config.json is half the real embedding width. 'Fixed' = honour latent_bound (or
+reject the combination) and record the effective latent_size.
+
+*Evidence:* RAN utils_check.py: `get_latent_vecs(10, {latent_size:8, latent_bound:1.0,
+variational:True})` -> `embedding dim 16, max_norm 1000`; with `variational:False` ->
+`embedding dim 8, max_norm 1.0`. `get_latent_vecs.__doc__ = None`. RAN `grep -rn variational …
+
+**NSM/utils.py:410 — symmetric_chammfer is an empty stub with an empty docstring**  
+`REPRODUCES`
+
+Reproduces; three dead lines in a public module namespace that hand any caller None. On its
+own this is a deletion, not an issue — I have bucketed it ISSUE only so it can carry the dead-
+public-symbol class alongside sdf_gradients and CLASSIFICATION_HEADS_GROUP_NAME. If the parent
+files one sweep issue for that class, these three are its instances; if not, just delete the
+function.
+
+*Evidence:* RAN utils_check.py: `utils.symmetric_chammfer(1, 2, 3)` -> `None`; `__doc__` -> `'
+'` (whitespace only, so it passes a naive has-docstring check). RAN `grep -rn
+symmetric_chammfer --include=*.py NSM/ testing/` -> only NSM/utils.py:410, the definition.
+Still …
+
+**NSM/mesh/correspondence_metrics.py:537 — Adjacent metrics take the same two arrays in opposite positional order**  
+`REPRODUCES` · owned by docs/ARCHITECTURE.md:304 already tracks this class with a count of ~12 instances, but names other sites, not this one. · folded into the sibling-API disagreement issue
+
+Reproduces exactly as described, and both failure modes are silent. Mitigation: the module has
+no non-test importer, and the only in-repo caller (score_correspondence) passes them
+correctly. Fix is free and lossless — make the two signatures agree, or make both keyword-
+only. 'Fixed' = a caller cannot swap them without a TypeError.
+
+*Evidence:* RAN /tmp/claude-1000/.../scratchpad/corr_check.py: `roundtrip_distance(A,B)` and
+`roundtrip_distance(B,A)` return identical per_vertex arrays and identical mean
+0.11065713875408247 — a swap is completely invisible. `forward_backward_disagreement(B,A)` vs
+…
+
+**NSM/mesh/correspondence_metrics.py:676 — score_correspondence fabricates an 'original' when source_mesh is missing**  
+`REPRODUCES` · folded into the missing-input-validation issue
+
+Reproduces: a plausible-looking number where every other missing-input path in the same
+function returns {'skipped': True, ...}. 'Fixed' = when roundtrip_points is given and
+source_mesh is None, skip both metrics with a reason (or raise), and add the test case that
+currently does not exist.
+
+*Evidence:* RAN corr_check.py: `score_correspondence(warped, target, source_mesh=None,
+roundtrip_points=warped.points+0.01)`. Result: `foldover_count -> {'skipped': True, 'reason':
+'source_mesh not provided'}` but `roundtrip_distance -> {'min': 0.01732049, ..., 'mean': …
+
+**NSM/mesh/correspondence_metrics.py:30 — Unused import, masked by a project-wide flake8 ignore**  
+`REPRODUCES`
+
+Reproduces, and contradicts the task brief's 'flake8 is at zero; unused imports are gone' —
+they are not gone, they are invisible, because F401 is ignored package-wide. The single import
+is a one-line deletion, but the durable item is the class: 43 masked F401s and a `make lint`
+that cannot see any of them. 'Fixed' = drop F401 from extend-ignore, annotate the deliberate
+re-exports, delete the rest.
+
+*Evidence:* RAN `flake8 --isolated --select=F401,F811,F841 NSM/mesh/correspondence_metrics.py`
+-> `NSM/mesh/correspondence_metrics.py:30:1: F401 'NSM.mesh.triangle_metrics.get_edge_lengths'
+imported but unused` (exit 1). RAN `flake8 NSM/mesh/correspondence_metrics.py` …
+
+**NSM/mesh/correspondence_metrics.py:291 — faces.reshape(-1, 4) assumes an all-triangle mesh in three places**  
+`REPRODUCES`
+
+Reproduces, including the dangerous mixed-mesh case, which I had to construct deliberately
+(the entry's own numbers did not include a worked example). Same class as the interpolate.py
+`reshape(-1, 3)` entry, so one issue should cover all five sites. 'Fixed' = the face accessor
+validates (or uses `regular_faces` and raises on non-triangular input) in one shared helper.
+
+*Evidence:* RAN corr_check.py + corr_check2.py. Pure-quad PolyData (2 quads, flat length 10):
+`self_intersection_count` and `foldover_count` both raise `ValueError: cannot reshape array of
+size 10 into shape (4)`. MIXED mesh of 4 quads + 3 triangles (flat length 4*3+5*4 …
+
+**NSM/mesh/interpolate.py:116 — sdf_gradients returns a gradient array whose first D_lat columns are always zero**  
+`REPRODUCES`
+
+Reproduces exactly. With a 256-dim production latent the returned array is 98.8% zero padding
+presented as a gradient, and a caller slicing `[:, :D_lat]` gets silent zeros. Given zero
+callers, the cheap fix is to return `grad_pos` (B,3) or delete the function — same sweep as
+symmetric_chammfer. 'Fixed' = the returned shape contains no fabricated zeros.
+
+*Evidence:* RAN /tmp/claude-1000/.../scratchpad/interp_check.py with a 2-surface decoder and
+D_lat=8: `sdf_gradients(model, pts(5,3), z, surface_idx=0)` -> shape `(5, 11)`, `first D_lat
+cols all zero: True`, `last 3 cols nonzero: True`. With `surface_idx=None` -> list of …
+
+**NSM/mesh/interpolate.py:307 — faces argument silently accepts pyvista's VTK-style face array and builds garbage**  
+`REPRODUCES`
+
+Reproduces, with numbers the entry did not have. This is the highest-consequence instance of
+the face-array class: the wrong input silently changes the smoothing operator and the pinned-
+vertex set, so the interpolation output is wrong rather than absent. One issue with the
+correspondence_metrics/refine_mesh sites.
+
+*Evidence:* RAN interp_check.py. `pv.Sphere(theta_resolution=8,
+phi_resolution=8).triangulate()`: 96 triangles, flat `.faces` length 384, 384 % 3 == 0.
+`build_mesh_laplacian(mesh.faces, ...)` **did not raise**: nnz 373 (flat) vs 288
+(regular_faces), and …
+
+**NSM/mesh/interpolate.py:519 — The is_mesh path mutates the caller's mesh in place and does not say so**  
+`REPRODUCES` · owned by Same class as the get_pts_center_and_scale in-place mutation just fixed by PR #38 (issues #20/#21); that fix did not sweep this site.
+
+Reproduces, and far more destructively than the entry conveys — a 341x point-count change to
+an object the caller still holds, from a function whose `return data` reads as pure. The repo
+has just fixed this exact class elsewhere (PR #38 on get_pts_center_and_scale), which is the
+argument for sweeping rather than leaving it. 'Fixed' = copy the mesh (or document the
+mutation and stop returning it).
+
+*Evidence:* RAN /tmp/claude-1000/.../scratchpad/interp_mesh_check.py: built a
+`pymskt.mesh.Mesh` from an 82-point sphere and called `interpolate_mesh(model, z1, z2,
+n_steps=2, mesh=m, adaptive=True, smooth=True)`. Result: `returned object IS the argument:
+True`; **the …
+
+****NSM/dependencies/sinkhorn.py:49 — Unreachable duplicated type check in sinkhorn; max_iters is never type-checked****  
+`REPRODUCES`
+
+Executed and reproduces. Fixed = line 48 tests max_iters, not p; the message it already
+carries then becomes true. Group with the other three sinkhorn validation findings — one
+issue, four sites. Note the file is a vendored copy of fwilliams/scalable-pytorch-sinkhorn
+(cited in requirements.txt), so the fix is a local-fork decision.
+
+*Evidence:* Lines unchanged: sinkhorn.py:40 `if not isinstance(p, int)` and :48-49 `if not
+isinstance(p, int): raise TypeError(f"max_iters must be an integer > 0, got {max_iters}")`.
+Ran: `sinkhorn(torch.rand(5,3), torch.rand(5,3), max_iters="banana")` -> `TypeError: …
+
+****NSM/dependencies/sinkhorn.py:92 — sinkhorn validates w_x's length twice and never validates w_y's****  
+`REPRODUCES`
+
+Executed and reproduces. Fixed = line 91 reads `w_y.shape[0] != y.shape[0]`. Same one-issue
+group as the other sinkhorn validation defects.
+
+*Evidence:* sinkhorn.py:76 and :91 both read `if w_x.shape[0] != x.shape[0]`; the message at
+:93-96 talks about w_y and y. Ran: `sinkhorn(x(5,3), y(5,3), w_x=ones(5)/5, w_y=ones(9)/9)` ->
+passed validation and died inside keops with `ValueError: Incompatible values for …
+
+****NSM/dependencies/sinkhorn.py:107 — sinkhorn's default uniform weights cannot sum equal when the two point clouds differ in size, so it always raises****  
+`REPRODUCES`
+
+The sinkhorn defect is real and executed. But the register attributes the EMD failure to
+unequal sizes when in fact `calc_emd=True` NEVER works from compute_recon_loss for any input,
+because the only caller passes numpy. That is the bigger, unrecorded finding and it should be
+the issue: fixed = compute_recon_loss(calc_emd=True) returns a number for meshes of unequal
+point count, which needs both the numpy->torch conversion and the sinkhorn weight
+normalisation.
+
+*Evidence:* Ran: `sinkhorn(torch.rand(5,3), torch.rand(7,3))` -> `ValueError: Weights w_x and
+w_y do not sum to the same value, got w_x.sum() = 1.0 and w_y.sum() = 0.7142857313156128`.
+Code at sinkhorn.py:106-118 unchanged. BUT the stated caller impact is wrong. …
+
+****NSM/reconstruct/recon_evaluation.py:95 — compute_recon_loss mutates the caller's meshes to float32 in place****  
+`REPRODUCES`
+
+Executed and reproduces on both the recon mesh and the caller's original. Fixed = cast a local
+copy for the ASSD call, or document that calc_assd downcasts. Unlike the cartilage_func
+sibling this one really does alias the caller's objects, because it assigns to `.point_coords`
+rather than constructing a new mesh.
+
+*Evidence:* Now at recon_evaluation.py:103-106. Ran compute_recon_loss on float64 pymskt
+Meshes: ASSD before: float64 float64 ASSD after : float32 float32 {'assd_0':
+0.04966860369175949} Same call with calc_assd=False leaves both at float64. These are `meshes`
+and …
+
+****NSM/reconstruct/reconstruct_latent_S3.py:127 — reconstruct_latent_S3 references an undefined name in its own error path and calls wandb without importing it****  
+`REPRODUCES` · owned by #35 (covers only the latent_loss_ half)
+
+Two of the five sub-claims are fixed; three reproduce. The div-by-zero is unrecorded and is
+strictly broader than described (it fires on any num_iterations < n_lr_updates, defaults
+included). Fixed = S3 uses reconstruct_latent_get_lr_update_freq instead of its own division,
+and latent.norm is called. Best folded into #35 as "the S3 copy of the main-path arithmetic is
+unguarded".
+
+*Evidence:* Ran reconstruct_latent_S3 on CPU with an 8-latent MLP decoder and a 32x4 SDF
+tensor: - bad shape -> `ValueError: Inputted SDF must have shape Nx3 or Nx4 got:
+torch.Size([32, 5])` == FIXED (d2ba1c7; line 129 now reads new_sdf.shape). `import wandb` is
+present …
+
+**### [misleading] `docs/MULTI_SURFACE_REGISTRATION.md:75`**  
+`REPRODUCES`
+
+Executed and reproduces on current main. This is the one entry in my slice that is a genuine
+untracked code defect wearing a documentation anchor. Fixed = MultiSurfaceSDFSamples with a
+list-valued mesh_to_scale returns the combined reference mesh instead of raising; the
+`Mesh(mesh)` at :1440 has to move into the branches that bind `mesh`.
+
+*Evidence:* Code moved to NSM/datasets/sdf_dataset.py:1424-1440. Line 1435 sets
+`self.reference_mesh = combine_meshes(...)` without binding `mesh`; line 1440 unconditionally
+runs `self.reference_mesh = Mesh(mesh)`. Reproduced by subclassing MultiSurfaceSDFSamples to
+skip …
+
+</details>
+
 
 ---
 
-## Rot (54)
+# 2. Fold into existing issues
 
-False documentation, dead parameters, stale comments.
+**parameter accepted and never read / silently rebound before it is read** → No new issue — append to #20 (Sweep: parameters accepted and never read)
 
-### `NSM/configs/deep_sdf_config`
+- `NSM/datasets/sdf_dataset.py:184 (n_pts_random)`
+- `NSM/datasets/sdf_dataset.py:169 (mean — the only unread param in either sampler)`
+- `NSM/mesh/main.py:171 (scale_mesh rebinds scale/offset before reading them)`
+- `NSM/models/deep_sdf.py:47 (xyz_in_all)`
+- `NSM/models/deep_sdf.py:87 (latent_noise_sigma)`
+- `NSM/models/triplanar.py:312 (normalize_coordinates ignores padding)`
+- `NSM/utils.py:394 (get_optimizer drops weight_decay for Adam)`
+- `NSM/utils.py:343 (get_latent_vecs ignores latent_bound)`
+- `NSM/reconstruct/main.py:873 (batch_size_latent_recon absorbed by **kwargs)`
+- `NSM/train/train_deep_sdf.py:279 (train_epoch return_loss / verbose)`
+- `NSM/datasets/sdf_dataset.py:87 and :91 — already fixed by b0c8bf5 / PR #38`
 
-**NSM/configs/deep_sdf_config:25 — A scratch notes file ships inside the package and preserves the obsolete two-positional-entry LR shape**
+**cache key does not cover what changes cached content** → No new issue — all four are #19, already annotated in-source and pinned by strict xfails
 
-`NSM/configs/deep_sdf_config` is a 404-byte extensionless ASCII file — neither valid JSON nor valid Python, just an outline of config keys — untouched since the initial commit 5188417 'Updating to NSM (neural shape model)'. Lines 25-29 sketch `'LearningRateSchedule': [{}, {}]`, i.e. the anonymous two-positional-entry shape that the Aug 2026 `Target` work exists to eliminate. It sits next to the real default config where a new reader will find it.
+- `NSM/datasets/sdf_dataset.py:1396 (uniform_pts_buffer, subsample)`
+- `NSM/datasets/sdf_dataset.py:1406 (reference_mesh hashed by str())`
+- `NSM/datasets/sdf_dataset.py:1973 (mesh_to_scale)`
+- `NSM/datasets/sdf_dataset.py:1310 (find_hash matches across date folders)`
+- `NSM/datasets/sdf_dataset.py:1595 (joint_scale_buffer is also unhashed — but its own issue is that it is unreachable)`
 
-### `NSM/datasets/sdf_dataset.py`
+**store_data_in_memory=True / save_cache=False is unusable end to end** → No new issue — widen #22's fix statement to cover the whole configuration, then close #1
 
-**NSM/datasets/sdf_dataset.py:2 — Seven unused imports at module top**
+- `NSM/datasets/sdf_dataset.py:2158 (UnboundLocalError 'time_' in __getitem__ — #22 verbatim)`
+- `NSM/datasets/sdf_dataset.py:1061 (KeyError 'new_pts_0' at construction with scale_jointly=True)`
+- `NSM/datasets/sdf_dataset.py:1726 (FileNotFoundError writing list_meshes_started_loading.log when save_cache=False)`
+- `NSM/datasets/sdf_dataset.py:1046 (joint_scale_buffer asymmetry — unobservable, the branch crashes first)`
 
-pymskt as mskt (2), vtk (5), numpy_to_vtk and vtk_to_numpy (6), warnings (10), point_cloud_utils as pcu (12) and pympler's muppy (19) are never referenced in executable code -- 'vtk'/'mskt' appear only inside docstrings and a filename literal (1383), 'pcu' only as the string argument method='pcu' (312, 688, 722), 'muppy' only in commented-out code (964, 971, 973). Because __init__.py does `import *` with no __all__, all of them are also re-exported as NSM.datasets.vtk, NSM.datasets.pcu, etc.
+**zero-count / degenerate probability allocation dies deep inside the sampler** → No new issue — widen #23 to cover the whole degenerate-probability path
 
-**NSM/datasets/sdf_dataset.py:169 — `mean` parameter is documented and accepted by both sampling functions but never used**
+- `NSM/datasets/sdf_dataset.py:671 (mixed zero allocation → ValueError at the concat, a second crash site)`
+- `NSM/datasets/sdf_dataset.py:849 (check_probabilities rejects scalar int 0 or 1 with a message that is wrong about what it accepts; the list branch has no float check at all)`
+- `#23's own trigger: uniform p_near=p_far=0 → ValueError inside point_cloud_utils`
 
-read_mesh_get_sampled_pts(mean=[0,0,0]) at 169 documented at 191; read_meshes_get_sampled_pts(mean=[0,0,0]) at 407 documented at 432. The identifier `mean` appears nowhere in either body. Three call sites dutifully pass mean=[0,0,0] (1219, 1824, NSM/reconstruct/main.py:992), which reads as meaningful configuration and is not.
+**two calling conventions for decoders in one library** → No new issue — SCOPE.md §1 already rules it a Phase 4 work item
 
-**NSM/datasets/sdf_dataset.py:457 — False comment: 'vtkAppendPolyData' is claimed in three places and used nowhere**
+- `NSM/reconstruct/main.py:588 (two verbatim-duplicate entries under different titles — dedupe)`
+- `NSM/mesh/interpolate.py:98 (three divergent hand-rolled invocation conventions)`
+- `NSM/mesh/main.py:862 (refuted — the two latent shapes are each interface's correct contract, and both named edge cases raise ValueError rather than going silent)`
 
-read_meshes_get_sampled_pts Notes (457) and the MultiSurfaceSDFSamples docstring (1589) both state that surfaces are combined 'using VTK's vtkAppendPolyData'. docs/MULTI_SURFACE_REGISTRATION.md repeats the multi-surface story. The string vtkAppendPolyData does not occur in the file; the actual mechanism is combine_meshes -> Mesh.__add__ -> pyvista merge (2193). A reader debugging combine ordering or point-data merging will look for the wrong API.
-
-**NSM/datasets/sdf_dataset.py:1131 — save_data_to_cache serializes three keys that nothing ever produces**
-
-additional_keys at 1131-1138 includes 'center', 'max_radius', 'max_radius_xyz'. No code path anywhere in the file writes data['center'], data['max_radius'] or data['max_radius_xyz'] into a sample dict (self.center / self.max_radius are dataset attributes, set at 1049-1050, never per-sample). The `if key in data` guard at 1139 means these three are permanently dead. A commented-out alternative implementation sits at 1142.
-
-**NSM/datasets/sdf_dataset.py:1146 — Cache key names are renamed on write and triple-guessed on read**
-
-np.savez writes coordinates as 'pts' and SDFs as 'sdfs' (1146), while everything in memory calls them 'xyz' and 'gt_sdf'. unpack_numpy_data then accepts 'pts' or 'xyz' (376-379) and 'sdfs' or 'gt_sdf' or 'sdf' (384-391). The three-way fallback is archaeology of at least two past cache formats, undocumented, with no version field to tell them apart.
-
-**NSM/datasets/sdf_dataset.py:1366 — Stale TODOs that name work the refactor plan should absorb**
-
-Line 1366: 'TODO: Why is reference_object different from mesh_to_scale?' -- the two indices genuinely select different things (reference_object drives centering in norm_and_scale_all_meshes at 1024/1061; mesh_to_scale drives ICP and per-sample scaling at 530/588) and nothing documents the split. Line 1792: 'TODO: crat' -- truncated to meaninglessness. Lines 2039-2043: a TODO asserting that storing pts and sdfs separately is 'something that we are constantly undoing/re-doing elsewhere in the code'. Lines 211-218: a Notes block that is really a TODO about read_mesh_get_sampled_pts being over 100 lines. NSM/datasets/utils.py:1-2 is itself a TODO proposing the function/class split. Five separate notes all describing the same decomposition.
-
-### `NSM/dependencies/sinkhorn.py`
-
-**NSM/dependencies/sinkhorn.py:12 — sinkhorn's `p` is annotated float but rejected unless it is an int**
-
-Signature declares `p: float = 2` (line 12) while line 41 raises TypeError for any non-int and the docstring (line 28) says 'Must be an integer greater than 0'. Calling `sinkhorn(x, y, p=1.5)` — which the annotation invites — raises TypeError.
-
-**NSM/dependencies/sinkhorn.py:31 — sinkhorn docstring calls eps the 'reciprocal' of the regularization parameter**
-
-The code uses eps as the divisor in the Gibbs kernel (`(-M_ij + v_j) / eps`, lines 140-146, 155), i.e. larger eps = more entropic smoothing, so eps IS the regularization parameter, not its reciprocal. A reader tuning eps from the docstring will move it the wrong way.
-
-### `NSM/losses.py`
-
-**NSM/losses.py:1 — losses.py is the one file in the subsystem that fails the repo's own Black check**
-
-`black --check --line-length 100` over the seven subsystem files reports 'would reformat NSM/losses.py'; the other five .py files pass. CLAUDE.md mandates Black at 100 chars and Makefile exposes `make format-check`, so `make format-check` fails on a clean checkout of main.
-
-**NSM/losses.py:82 — Three of losses.py's five public functions have never been called by anything**
-
-`compute_sdf_gradients` (line 82) and `combined_sdf_loss` (line 156) have zero call sites in NSM/ and testing/ (grep for the names returns only their definitions). `l1_loss` (line 224) and `l2_loss` (line 229) are labelled 'Legacy function aliases for backward compatibility' (line 223), but `git log --follow NSM/losses.py` shows exactly one commit (468d687 'Add eikonal loss') — there is no earlier version for them to be backward-compatible with, and nothing imports them. Only `eikonal_loss` is imported (NSM/train/train_deep_sdf.py:12, NSM/reconstruct/main.py:13).
-
-### `NSM/mesh/__init__.py`
-
-**NSM/mesh/__init__.py:1 — Package __init__ star-exports main.py's third-party imports and hides four modules**
-
-`from .main import *` with no `__all__` in main.py, so `NSM.mesh.os`, `.torch`, `.np`, `.pv`, `.mskt`, `.vtk`, `.inspect` and `.marching_cubes` are all part of the public surface (main.py:16-23). Meanwhile interpolate, correspondence_metrics, refine_mesh and triangle_metrics are NOT re-exported and must be reached by full dotted path (as NSM/reconstruct/main.py:12 does for create_mesh_adaptive and testing/NSM/mesh/* do for the rest). Inconsistent package surface.
-
-### `NSM/mesh/correspondence_metrics.py`
-
-**NSM/mesh/correspondence_metrics.py:1 — Plan and lint config point at an experiments/ tree that does not exist on main**
-
-.flake8:26 excludes `experiments`, and .claude/plans/completed/NSM_MESH_INTERPOLATION_IMPROVEMENTS_COMPLETED.md:316, :496-501 references `experiments/mesh_interpolation/config.py`, `subjects.py`, `fit_cache.py`, `compare_mesh_path.py` — no `experiments/` directory exists in the repo. Those scripts were correspondence_metrics.py's only non-test consumers. The same plan claims 'Interpolate tests (31 tests)' (:496) while testing/NSM/mesh/test_interpolate.py now defines 9 (trimmed by commit fa862aa, 'Trim mesh interpolation to production config'). Correspondence-metrics' claimed 39 tests is accurate.
-
-**NSM/mesh/correspondence_metrics.py:30 — Unused import, masked by a project-wide flake8 ignore**
-
-`get_edge_lengths` is imported and never used. flake8 --isolated reports F401 here, but .flake8:20 sets `extend-ignore = ..., F401` ('unused imports (several scratch / timing scripts)'), so `make lint` is silent on it repo-wide.
-
-**NSM/mesh/correspondence_metrics.py:224 — Two divergent implementations of the edge-ratio statistic**
-
-triangle_health recomputes min/max edge and the ratio by hand (:224-237) rather than calling `TriangleProperties.edge_ratio()` (triangle_metrics.py:72-85), which it already has an instance of (:215). The reason is a behaviour difference: edge_ratio RAISES on a zero-length edge (triangle_metrics.py:79-81) while triangle_health deliberately degrades (degenerate mask + nan handling). Two policies for degenerate triangles now coexist in one subsystem.
-
-### `NSM/mesh/interpolate.py`
-
-**NSM/mesh/interpolate.py:291 — build_mesh_laplacian does not return a Laplacian**
-
-The name and the docstring's first line say 'graph Laplacian'; the function returns the row-normalised ADJACENCY matrix (:318-321, and the Returns line at :305 says so). The actual Laplacian displacement is formed at the single use site as `torch.sparse.mm(laplacian, points) - points` (:404). A reader who takes the name at face value and applies the returned matrix as a Laplacian gets neighbour-averaged positions instead of a displacement, with no error.
-
-### `NSM/mesh/main.py`
-
-**NSM/mesh/main.py:169 — Dead local and formatting drift against the project's own stated standard**
-
-`new_pts = new_mesh.point_coords` assigned and never used (flake8 F841). Separately, CLAUDE.md mandates Black at 100 chars but `black --check --line-length 100 NSM/mesh/` reformats main.py and interpolate.py, and flake8 --isolated reports E501 at main.py:74, 95, 318, 470, 822, 836 and refine_mesh.py:89, 126, 151, 273, 447, 448, 449, 461.
-
-**NSM/mesh/main.py:185 — Five public functions in main.py have no docstring at all**
-
-`create_mesh` (:185, 17 params), `scale_mesh` (:151), `scale_mesh_` (:126), `sdf_grid_to_mesh` (:271), `create_grid_samples` (:779). Their direct siblings in the same file (`create_mesh_adaptive`:551, `sdf_grid_to_mesh_vtk`:373, `create_grid_samples_in_bounds`:497) each carry a full Args/Returns block, so the file reads as documented until you hit one of the five.
-
-**NSM/mesh/main.py:323 — band_width documented as world units, used as a voxel multiplier**
-
-Docstring: 'band_width: Width of narrow band in world units (multiplier of voxel_size)' (:323, repeated at :391 for sdf_grid_to_mesh_vtk). The two halves contradict each other; the code (:339) is `band = band_width * voxel_size`, i.e. a pure voxel multiplier.
-
-**NSM/mesh/main.py:341 — crop_sdf_to_narrow_band names every index variable for the wrong axis**
-
-`z, y, x = np.where(mask)` (:341) — but the module docstring (:6-10) declares these arrays are (X, Y, Z), so `z` indexes X. The shape unpack is `orig_nx, orig_ny, orig_nz = sdf_values.shape` (:333) yet the clamp is `xe = min(x.max() + pad_voxels + 1, orig_nz)` (:350), pairing `x` with `orig_nz`. The code is FUNCTIONALLY CORRECT (crop_origin at :360-364 maps axis0->origin[0]), but every name is inverted relative to the convention the module docstring establishes 330 lines above.
-
-**NSM/mesh/main.py:603 — create_mesh_adaptive docstring understates what n_pts_per_axis controls**
-
-'n_pts_per_axis: Dense grid resolution (for fallback only)'. It is also what sets the FINE voxel size on the main adaptive path when voxel_size is None: `voxel_size = original_extent / (n_pts_per_axis - 1)` (:638-639), and NSM/reconstruct/main.py:919-923 relies on exactly that (it passes n_pts_per_axis_mean_mesh and no voxel_size).
-
-### `NSM/mesh/refine_mesh.py`
-
-**NSM/mesh/refine_mesh.py:142 — Stale 'Implement this' comment on already-implemented code**
-
-`new_faces = create_new_faces(faces[face_idx], midpoint_indices)  # Implement this` — create_new_faces is fully implemented at :264. A second instance at :355-357 (`# Implement mesh update logic` on a line calling the implemented `update_mesh`:287).
-
-**NSM/mesh/refine_mesh.py:438 — Plan claims a symbol that exists nowhere, leaving refine_mesh.py orphaned**
-
-.claude/plans/completed/NSM_MESH_INTERPOLATION_IMPROVEMENTS_COMPLETED.md:111 says the rejected Fix 8 'hand-built code is still available as `interpolate_points_refined`', and :495 tabulates 'Hand-built subdivision (used by Fix 8) | NSM/mesh/refine_mesh.py::subdivide_triangles_on_base_mesh'. `interpolate_points_refined` is grep-absent from the entire repo. refine_mesh.py is therefore the remnant of a wrapper that was removed — the only stated reason for keeping it no longer exists on main.
-
-### `NSM/mesh/triangle_metrics.py`
-
-**NSM/mesh/triangle_metrics.py:1 — triangle_metrics.py has zero docstrings on every public symbol**
-
-No module docstring; `get_triangle_area` (:5), `calculate_triangle_areas` (:19), `length` (:28), `get_edge_lengths` (:32), class `TriangleProperties` (:45) and all five of its public methods (`areas`:51, `compute_edge_lengths`:63, `edge_ratio`:72, `edge_sd`:87, `edge_length_max`:93) are undocumented. `length` is a maximally generic module-level public name. This file is a transitive dependency of correspondence_metrics.py, which is otherwise the best-documented module in the subsystem.
-
-### `NSM/models/deep_sdf.py`
-
-**NSM/models/deep_sdf.py:27 — Sine.__init__ is misspelled and never runs**
-
-`def __init(self)` — missing the trailing double underscore. The method is unreachable; nn.Module.__init__ runs instead, which happens to be exactly what the body would have done, so the typo is harmless today and invisible to tests.
-
-**NSM/models/deep_sdf.py:87 — latent_noise_sigma is stored and never read**
-
-Assigned to self at line 87 from the constructor arg at line 53, then never referenced anywhere in the file or repo. loader.py:165 forwards it from config. Same dead-option shape as xyz_in_all.
-
-### `NSM/models/loader.py`
-
-**NSM/models/loader.py:147 — Two contradictory deprecation messages for latent_dropout, and the shipped config triggers one**
-
-loader.py:145-148 warns "latent_dropout is deprecated in config. Use dropout_prob instead"; deep_sdf.py:71-72 warns "latent_dropout is deprecated. Use dropout instead". `dropout` and `dropout_prob` are different parameters (indices vs probability), so one of the two messages sends the user to the wrong option. NSM/configs/default_config.json contains a `latent_dropout` key, so every deepsdf load from the shipped default emits the loader warning.
-
-### `NSM/models/modulated_periodic_activations.py`
-
-**NSM/models/modulated_periodic_activations.py:43 — Two different Sine classes in one package, with incompatible defaults**
-
-deep_sdf.py:26 defines Sine with w0 hardcoded to 30 inside forward; this file defines a Sine with w0 as a constructor argument defaulting to 1.0. Because __init__.py:1 wildcard-imports deep_sdf first and line 2 imports only three explicit names, `NSM.models.Sine` resolves to the hardcoded-30 variant (verified). A reader who imports Sine from the package and passes w0 gets a TypeError.
-
-**NSM/models/modulated_periodic_activations.py:244 — Debug print left on ImplicitDecoder's forward path**
-
-`print(xyz.shape)` executes on every forward whenever modulation is disabled (the default). It is exercised by the passing test suite (testing/NSM/models/test_loader.py:269).
-
-### `NSM/models/triplanar.py`
-
-**NSM/models/triplanar.py:5 — Unused imports**
-
-triplanar.py imports `time` (line 5) and `logging` (line 6); neither is referenced anywhere in the file. modulated_periodic_activations.py imports `pi` (line 5) from math; only `sqrt` is used (line 76). Leftovers from the removed caching work (commit fee37be).
-
-**NSM/models/triplanar.py:9 — triplanar.py's apparent module docstring is a no-op string literal**
-
-The 14-line architecture description at lines 9-22 sits after the import block, so it is an expression statement, not a docstring. Verified: `NSM.models.triplanar.__doc__` is None. It is invisible to help(), pydoc, and any doc tooling.
-
-**NSM/models/triplanar.py:219 — Assertion message states the opposite of the branch it guards**
-
-Inside `if self.sum_sdf_features is False:` the assertion message reads "sdf_latent_size must be divisible by 3 if sum_sdf_features is True". Anyone who hits this assertion is told to change the flag to the value it already is not.
-
-**NSM/models/triplanar.py:312 — normalize_coordinates ignores its own padding parameter**
-
-The signature declares `padding=0.1` (line 312) but the body uses `self.padding` (line 322); the sole call site passes no padding at all (line 296). A caller who passes padding= gets silently ignored. The same line uses the literal `10e-6` (= 1e-5), which reads like an intended 1e-6.
-
-### `NSM/reconstruct/cartilage_func.py`
-
-**NSM/reconstruct/cartilage_func.py:141 — Dead locals left behind by a commented-out KL-divergence metric**
-
-`orig_array = orig_bone.get_scalar('thickness (mm)')` and `recon_array = ...` (lines 141-142) are computed and never used; the only consumer was the `thickness_kld` block commented out at lines 144-147. `from scipy.stats import entropy` (line 3) is now an unused import kept alive only by that dead code. Similarly `CART_REGIONS` (lines 5-14) still carries three commented-out tibial/patellar entries.
-
-### `NSM/reconstruct/main.py`
-
-**NSM/reconstruct/main.py:420 — `latent_input` is computed and never used**
-
-`latent_input = latent.expand(n_samples, -1)` -- dead since the decoder call moved to the `latent=/xyz=` kwargs form at line 588. It is a leftover from the concatenated-input interface still used by reconstruct_latent_S3.py:235-236, and it makes a reader believe `n_samples` fixes the latent broadcast width when it does not.
-
-**NSM/reconstruct/main.py:750 — Latent-norm progress print emits the bound method instead of the value**
-
-`print("\tLatent norm: ", latent.norm)` prints `<built-in method norm of Tensor object at ...>`. Lines 728, 759, and 494 all correctly use `latent.norm().item()`. Duplicated in NSM/reconstruct/reconstruct_latent_S3.py:313.
-
-**NSM/reconstruct/main.py:826 — `mesh_to_scale` inline comment is stale since multi-surface registration landed**
-
-`mesh_to_scale=0,  # PRETTY MUCH ASSUME ALWAYS SCALING FIRST MESH` and line 827 `decoder_to_scale=0,  # PRETTY MUCH ASSUME ALWAYS SCALING FIRST DECODER`. Lines 934-941 now explicitly accept a list/tuple for `mesh_to_scale` and combine the mean meshes via `combine_meshes` -- the documented behaviour is in docs/MULTI_SURFACE_REGISTRATION.md:61. The comment tells a new reader the opposite of what the code supports.
-
-**NSM/reconstruct/main.py:1167 — time_calc_recon_loss is measured and thrown away while return_timing claims to report timings**
-
-`time_calc_recon_loss = toc - tic` is computed inside the metrics block but never added to `result`; the `return_timing` block at lines 1179-1184 reports the other five timings only. Since ASSD/chamfer over full point clouds is usually the most expensive part of a validation pass, the one timing a tuner would want is the one dropped.
-
-**NSM/reconstruct/main.py:1202 — tune_reconstruction is uncalled and passes a parameter get_mean_errors no longer honours**
-
-Zero callers anywhere in the repo, testing/, or the consumer checkout. It reads 24 required keys off `config` with no `.get` defaults, hard-requires `os.environ['WANDB_KEY']` (line 1207), passes `batch_size_latent_recon` (line 1233) which now only produces a deprecation print, and discards the return value of `get_mean_errors`. `compute_correlation_coefficient` (line 1437) is likewise uncalled.
-
-**NSM/reconstruct/main.py:1299 — get_mean_errors sets register_similarity twice and its error message contains a typo**
-
-`register_similarity` is written into `reconstruct_inputs` at line 1299 and again into `reconstruct_inputs_` at line 1324, which then overwrites it at line 1347. Harmless but confusing. Line 1343-1345 raises `f'model_type must be either "deepsdf" or "diffusion"m received {model_type}'` -- stray 'm', and 'diffusion' is not actually accepted by any branch.
-
-### `NSM/reconstruct/recon_evaluation.py`
-
-**NSM/reconstruct/recon_evaluation.py:34 — compute_recon_loss docstring documents a parameter that no longer exists and omits three that do**
-
-The docstring documents `orig_pts (list): A list of pts from ground truth meshes.` The actual parameter is `orig_meshes` (line 21); `orig_pts` was commented out at line 20 and remains commented at the call site (main.py:1158). Also undocumented: `orig_meshes`, `n_samples_assd` (line 24 -- and it is dead: the only ASSD call at line 97 delegates to `mesh.get_assd_mesh` and never uses it), and `calc_assd` (line 26). The assertion message at line 55 also still says 'number of original points'.
-
-### `NSM/reconstruct/utils.py`
-
-**NSM/reconstruct/utils.py:42 — get_pt_cloud_distances docstring has d1 and d2 swapped**
-
-Docstring lines 42-43 claim 'd1: distances from each point in pts1 to its nearest neighbor in pts2' and the mirror for d2. The code at lines 49-53 builds `kd1` on pts1 and `kd2` on pts2, then does `d1, _ = kd1.query(pts2)` and `d2, _ = kd2.query(pts1)` -- so d1 has len(pts2) entries measured against pts1, exactly the reverse of the docstring. compute_assd (line 76) divides by `pts1.shape[0] + pts2.shape[0]`, which happens to be correct only because len(d1)+len(d2) equals that sum; anyone who reads the docstring and 'fixes' the denominator will introduce a bug.
-
-**NSM/reconstruct/utils.py:58 — compute_assd is defined but its only import is commented out**
-
-`from .utils import compute_chamfer  # , compute_assd` (recon_evaluation.py:12). ASSD is instead computed by delegating to `mesh.get_assd_mesh(...)` (recon_evaluation.py:97), a pymskt method with different semantics from this numpy implementation. Two ASSD implementations now exist and the one in this repo is unreachable; the `n_samples_assd` parameter that used to feed it is still in compute_recon_loss's signature (line 24) doing nothing.
-
-### `NSM/train/deprecated/train_deep_sdf_multi_surface_orig.py`
-
-**NSM/train/deprecated/train_deep_sdf_multi_surface_orig.py:47 — deprecated/train_deep_sdf_multi_surface_orig.py is an 85%-identical stale fork of the live training loop**
-
-difflib SequenceMatcher ratio against NSM/train/train_deep_sdf.py is 0.853 (562 vs 629 lines). It predates every recent fix: it loads the same checkpoint file twice (lines 93-108, fixed at train_deep_sdf.py:124-131), has no optimizer-state or param-group-target migration guards (train_deep_sdf.py:138-156), hardcodes `objects_per_decoder=2` in the validation call (line 194, now `config["objects_per_decoder"]` at train_deep_sdf.py:236), hardcodes `torch.cuda.empty_cache()` (lines 166, 224) and `.cuda()` throughout instead of honouring `config["device"]`, and lacks the mesh_names validation entirely. It carries the same `step_mean_vec_length =` accumulator bug (lines 507-508). Any future edit to the live loop has an 85%-similar decoy sitting next to it.
-
-### `NSM/train/deprecated/train_deep_sdf_orig.py`
-
-**NSM/train/deprecated/train_deep_sdf_orig.py:125 — deprecated/train_deep_sdf_orig.py returns an undefined name**
-
-`return loss` — `loss` is never bound anywhere in `train_deep_sdf` (the epoch loop assigns `log_dict` at line 68). Any successful run of this function ends in `NameError: name 'loss' is not defined`. Independent confirmation that this file is unreachable: it has zero importers and zero callers in the repo, and the current train_deep_sdf.py:269 ends with a bare `return`.
-
-### `NSM/train/train_deep_sdf.py`
-
-**NSM/train/train_deep_sdf.py:84 — Dead duplicate of the resume_epoch default**
-
-Lines 84-85 (`if "resume_epoch" not in config: config["resume_epoch"] = 0`) can never fire: line 58 already ran `config.setdefault("resume_epoch", 0)`. Leftover from the merge of train_deep_sdf_multi_surface into train_deep_sdf that the comment at lines 54-55 describes.
-
-**NSM/train/train_deep_sdf.py:279 — train_epoch accepts return_loss and verbose parameters that are never read**
-
-`return_loss=True` (line 279) and `verbose=False` (line 280) appear in the signature but neither name occurs in the body; verbosity is taken from `config["verbose"]` (lines 310, 339, 355, ...) and the function always returns `log_dict`. Callers pass `return_loss=True` anyway (line 174), which reads as if it were load-bearing. Identical dead parameters in multi_head:166-167 and both deprecated files.
-
-### `NSM/train/train_deep_sdf_multi_head.py`
-
-**NSM/train/train_deep_sdf_multi_head.py:27 — CLAUDE.md still advertises train_deep_sdf_multi_head as a supported training pipeline**
-
-The repo's CLAUDE.md line 120 reads '`train_deep_sdf_multi_head.py`: Multi-head training for multiple surfaces' with no qualification, under a heading describing NSM/train/ as 'Training pipelines'. The module itself raises a DeprecationWarning calling itself 'DEPRECATED and known to be broken' (lines 27-33), and docs/KNOWN_ISSUES.md:226-250 documents that all runs through it are affected. A reader following CLAUDE.md picks the broken entry point.
-
-### `NSM/train/utils.py`
-
-**NSM/train/utils.py:4 — Unused imports and a duplicated import in train/utils.py**
-
-`import torch` appears twice (lines 2 and 4). Line 5 imports `profile` from torch.profiler but it is never used — line 117 calls the fully-qualified `torch.profiler.profile` instead. Only `tensorboard_trace_handler` from that import is used (line 119).
-
-**NSM/train/utils.py:41 — cyclic_anneal_linear computes an unused `cycle` local**
-
-Line 41 `cycle = epoch // cycle_length` is assigned and never read; only `cycle_progress` (line 42) is used. The docstring (37-39) is a bare URL and documents none of the six parameters, the return type (a numpy float64, not a Python float, because of `np.min` on line 45), or the behaviour when `n_epochs` is not divisible by `n_cycles` (the final partial cycle uses a `cycle_length` that no longer divides the remaining epochs).
-
-**NSM/train/utils.py:51 — get_kld's docstring describes a different computation than the code performs**
-
-The docstring (lines 51-55) shows `kld_loss = -0.5 * torch.sum(1 + log_var - mu**2 - log_var.exp(), dim=1)` — the per-sample KLD of a network-predicted diagonal Gaussian, reduced over dim=1, returning one value per sample. The body (56-58) instead computes the EMPIRICAL mean and variance of the batch along `samples_dim` and returns a single scalar summed over all remaining dims. These are different estimators: the docstring's uses per-sample predicted parameters; the code's measures how far the batch's aggregate distribution is from N(0,1). The `samples_dim` argument is undocumented, and `torch.var` applies Bessel's correction by default (undocumented, and it makes the value depend on batch size). Used as a code-regularization prior at train_deep_sdf.py:535 and multi_head:374.
-
-### `NSM/utils.py`
-
-**NSM/utils.py:19 — CLASSIFICATION_HEADS_GROUP_NAME is documented as a real param group but nothing ever creates one**
-
-`CLASSIFICATION_HEADS_GROUP_NAME = "classification_heads"` has zero references anywhere in NSM/ or testing/ (grep for the identifier returns only its definition). The docs around it assert the group exists: utils.py:77-78 says LR_TARGET_MODEL drives 'when present, ``classification_heads``', and utils.py:213-214 says 'every decoder and the classification heads all take the model schedule'. `get_optimizer` (utils.py:376-392) builds only a `latent` group and `model_{idx}` groups. The only classification_heads group in the repo is hand-built inside testing/NSM/test_lr_schedules.py:150. A reader will look for the code that adds this group and find none.
-
-### `testing/NSM/test_lr_schedules.py`
-
-**testing/NSM/test_lr_schedules.py:569 — Stale comment claims the config generator still writes on import**
-
-The comment reads 'NB: importing this module writes ./default_config.json as a side effect, so run the import from a tmp cwd rather than littering the repo root', and the test still monkeypatches chdir for that reason. Commit d1fd05f moved the write behind the `if __name__ == "__main__"` guard (NSM/configs/generate_sdf_default_config.py:106-112), and testing/NSM/configs/test_default_config_sync.py:43-56 now asserts the import writes nothing. The comment is false and directly contradicts a sibling test.
-
-### `testing/testing_h5_vs_np_loading/save_and_load_h5_vs_np.py`
-
-**testing/testing_h5_vs_np_loading/save_and_load_h5_vs_np.py:74 — unpack_pts/unpack_numpy_data are duplicated verbatim in a testing script**
-
-testing/testing_h5_vs_np_loading/save_and_load_h5_vs_np.py:74 and :84 define their own unpack_pts and unpack_numpy_data rather than importing NSM/datasets/sdf_dataset.py:335 and :367. A change to the cache key fallbacks has to be made twice, and this copy is where the h5-vs-npy caching decision is being benchmarked -- exactly the seam the plan will want to touch.
 
 ---
 
-## Notes (33)
+# 3. Prose corrections (Phase 2)
 
-Observations. Not bugs.
+False or missing docstrings and comments, corrected in the same commit as the code they
+describe. No issue is filed for any of them.
 
-### `NSM/__init__.py`
+<details><summary>62 entries</summary>
 
-**NSM/__init__.py:1 — NSM/__init__.py leaks `os` into the public namespace for the sake of commented-out code**
+**### [cosmetic] `CLAUDE.md:152`**  
+`REPRODUCES`
 
-`import os` at line 1 exists only to support lines 3-6, which are four commented-out `os.environ[...] = "1"` thread-limit settings. Verified: `sorted(n for n in vars(NSM) if not n.startswith('__'))` == ['os', 'utils']. So `NSM.os` is part of the de-facto API surface, and the entire deliberate surface is `utils` plus `__version__`. There is no `__all__` anywhere under NSM/ (grep returns nothing), which is why the four star-importing subpackage __init__ files re-export their modules' incidental imports too.
+Executed and reproduces exactly as written. One clause: "...if `objects_per_decoder > 1` and
+`mesh_names` is not provided".
 
-### `NSM/_lr_migration.py`
+**### [cosmetic] `CLAUDE.md:193`**  
+`REPRODUCES`
 
-**NSM/_lr_migration.py:7 — _lr_migration.py states its own delete-when condition and it is not yet met**
+Executed and reproduces, and is stronger than recorded: nothing anywhere constructs the group.
+The code's docstring hedges correctly; CLAUDE.md should adopt the same hedge.
 
-Quoted verbatim from the module docstring: 'DELETE THIS FILE once no config still in use predates the ``Target`` key. The only caller is ``resolve_schedule_targets`` in ``NSM/utils.py``, which imports it lazily and needs a plain one-line ValueError in its place.' docs/KNOWN_ISSUES.md:189-190 repeats it. The lazy import sits at NSM/utils.py:116 with a comment (lines 113-115) explaining that placement is what keeps the removal a one-liner. Nothing tracks when the condition is satisfied, so the deletion depends on someone remembering to check.
+**### [cosmetic] `CONTRIBUTING.md:19`**  
+`REPRODUCES`
 
-### `NSM/configs/default_config.json`
+Reproduces. Two-word find-and-replace.
 
-**NSM/configs/default_config.json:1 — Nothing in the library ever loads default_config.json**
+**### [cosmetic] `DEVELOPMENT.md:131`**  
+`REPRODUCES`
 
-Grepping NSM/ for 'default_config' finds only NSM/configs/generate_sdf_default_config.py's own path constant and write path. No training, reconstruction, or loader code reads the shipped JSON; its only readers are testing/NSM/test_lr_schedules.py:547 and testing/NSM/configs/test_default_config_sync.py:23. It is a copy-paste template that the Aug 2026 sync test now pins, not a runtime default.
+Reproduces and is understated by one line. Prose fix.
 
-### `NSM/datasets/sdf_dataset.py`
+**### [cosmetic] `Makefile:20`**  
+`REPRODUCES`
 
-**NSM/datasets/sdf_dataset.py:316 — pts_surface return type differs between the single- and multi-mesh functions**
+Reproduces in a changed and more damaging form — the help text now names targets that were
+deleted, so following it errors immediately. Fix the help block, CLAUDE.md:22/:25 and
+requirements-dev.txt:10 in one pass.
 
-read_mesh_get_sampled_pts sets results['pts_surface'] to a plain Python list `[0] * n` (316, 320); read_meshes_get_sampled_pts sets it to an np.ndarray (678, 738). Callers that np.concatenate, index, or .shape the value behave differently depending on which function produced the dict, and neither docstring states the type.
+**### [cosmetic] `README.md:11`**  
+`REPRODUCES`
 
-**NSM/datasets/sdf_dataset.py:685 — Unconditional debug prints on the SDF hot path**
+Reproduces. Cookiecutter leftover in the Introduction; delete it, or promote the dependency
+TODO somewhere real.
 
-Lines 685-687 print rand_pts.shape, dtypes and type(rand_pts) for every mesh of every sample, outside any verbose guard, alongside per-stage timing prints at 500, 562, 628, 690, 747 and 'Fixed mesh...' at 126. There is no logger in the module; multiprocessing workers interleave all of it on stdout. Note the consumer parses subprocess stdout for its result JSON (kneepipeline CLAUDE.md: 'stdout: progress lines followed by a JSON result as the last line'), so library-level unconditional printing is an integration hazard, not just noise.
+**### [cosmetic] `docs/KNOWN_ISSUES.md:25`**  
+`REPRODUCES`
 
-**NSM/datasets/sdf_dataset.py:832 — `multiprocessing` is simultaneously a module, a constructor parameter, and an instance attribute**
+Reproduces at a new line number. This matters more than "cosmetic" suggests, because
+KNOWN_ISSUES.md's stated purpose is letting a 2031 reader date a checkout against the fix —
+and it names the branch that shipped only half of it.
 
-The stdlib module is imported at 14; the constructor takes multiprocessing=True at 832 (shadowing the module inside __init__, where line 939's `Pool` comes from the separate line-13 import); self.multiprocessing is the bool at 881; and load_mesh_step at 989 calls multiprocessing.cpu_count() on the module in a different scope. Reading line 988-989 (`if self.multiprocessing is True: os.sched_setaffinity(0, range(multiprocessing.cpu_count()))`) requires knowing which of the three is meant on each line.
+**### [misleading] `.claude/plans/BREAKING_CHANGE_PROPOSAL.md:50`**  
+`REPRODUCES`
 
-**NSM/datasets/sdf_dataset.py:1021 — norm_and_scale_all_meshes reads every cache file twice from disk**
+Reproduces. Same one-character fix as its sibling; group them.
 
-The disk branch loops over self.data np.load-ing each .npz to accumulate centers (1021-1024), then loops over all of them a second time np.load-ing each again to accumulate max radii (1032-1042). The second pass needs the global center, but the per-file new_pts could be retained from the first pass. On a large training set this is a full extra pass over the cache at startup.
+**### [misleading] `.claude/plans/BREAKING_CHANGE_PROPOSAL.md:51`**  
+`REPRODUCES`
 
-**NSM/datasets/sdf_dataset.py:1310 — find_hash returns the first match anywhere under loc_save, across all date folders**
+Reproduces. A ticked box for work that does not exist survives the State block, because the
+State block does not contradict it. Untick it — that is the whole fix.
 
-find_hash os.walks the entire loc_save tree and returns on the first filename match (1321-1327), so a cache written on any previous date is reused, while writes always go to today's folder (914). Combined with the hash gaps above (mesh_to_scale, uniform_pts_buffer, subsample), the reuse window is wide and silent. os.walk order is also filesystem-dependent, so which duplicate wins is not deterministic.
+**### [misleading] `CLAUDE.md:120`**  
+`REPRODUCES`
 
-**NSM/datasets/sdf_dataset.py:1726 — get_sample_data_dict writes an unconditional append-only log into the cache root**
+Reproduces. CLAUDE.md contradicts the module's own DeprecationWarning and SCOPE.md. One clause
+fixes it.
 
-Every multi-surface sample load opens os.path.join(self.loc_save, 'list_meshes_started_loading.log') in append mode and writes the mesh paths (1726-1727). It is unconditional (not behind self.verbose), never truncated, written concurrently from multiprocessing workers, and targets self.loc_save rather than self.cache_folder -- so it raises FileNotFoundError in the save_cache=False + store_data_in_memory=True configuration, where nothing has created that directory (the makedirs at 913-915 is inside `if save_cache is True`).
+**### [misleading] `CONTRIBUTING.md:87`**  
+`REPRODUCES`
 
-### `NSM/mesh/correspondence_metrics.py`
+Half reproduces (the CONTRIBUTING commands), half is fixed (the CI wiring). Prose fix: point
+the reader at `make install-dev`.
 
-**NSM/mesh/correspondence_metrics.py:291 — faces.reshape(-1, 4) assumes an all-triangle mesh in three places**
+**### [misleading] `DEVELOPMENT.md:18`**  
+`REPRODUCES`
 
-`mesh.faces.reshape(-1, 4)[:, 1:]` at correspondence_metrics.py:291 (self_intersection_count) and :484 (foldover_count), and refine_mesh.py:31 (get_faces). Verified: a pure-quad PolyData raises ValueError, but a MIXED mesh whose flat face-array length happens to be divisible by 4 reshapes without error into wrong connectivity. The module docstring says 'Meshes are accepted as pyvista.PolyData (triangular)' (:6) — nothing validates it. Related to the audit question: `polydata._faces` (the private attribute in open issue #6) appears NOWHERE in the repo; only the public `.faces` is used, and pyvista 0.46.5 emits no deprecation warning for it.
+Reproduces on everything I could execute or read. Prose fix: add the requirements.txt line to
+both recipes, or point at `make install-dev`.
 
-### `NSM/mesh/main.py`
+**### [stale] `CONTRIBUTING.md:53`**  
+`REPRODUCES`
 
-**NSM/mesh/main.py:76 — coarse_bounds_from_sign_change returns None for two different reasons, one undocumented**
+Reproduces, and now contradicts CLAUDE.md as well as practice. Prose fix in CONTRIBUTING.md;
+the true policy is already written down elsewhere.
 
-`if min(Z, Y, X) < 2: return None` (:76-77) — a degenerate grid — is indistinguishable from `if idx.size == 0: return None` (:106-107) — no surface. The docstring documents only 'or None if no surface found' (:72), and the caller (:684-697) responds to both by silently falling back to a full-resolution grid, so a misconfigured coarse resolution manifests as an unexplained slowdown rather than an error.
+**### [stale] `DEVELOPMENT.md:202`**  
+`REPRODUCES`
 
-**NSM/mesh/main.py:277 — narrow_band default flips with the use_vtk flag**
+Reproduces. Point it at testing/testing_sdf_calculation_times/ or delete the block.
 
-`sdf_grid_to_mesh(..., narrow_band=False, ...)` (:277) vs `sdf_grid_to_mesh_vtk(..., narrow_band=True, ...)` (:378). Both are called with three positional args only (:242/:244 and :751/:753), so toggling `use_vtk` also silently toggles whether the volume is cropped. Neither docstring notes the asymmetry.
+**### [stale] `README.md:215`**  
+`REPRODUCES`
 
-**NSM/mesh/main.py:440 — find_object_bounds_random_sampling is dead and was explicitly superseded**
+Reproduces and has got worse since the entry was written (three more unlisted files). Prose
+fix.
 
-Zero call sites anywhere in the repo (grep over all .py/.md excluding build/), zero tests, absent from the consumer. It is the random-sampling bounds finder that the deterministic coarse pass replaced — create_mesh_adaptive's own docstring advertises 'avoids the randomness/clumping of point sampling' (:597-598). It is also non-deterministic (`torch.rand` at :470, unseeded), which the docstring does not mention. Still re-exported to the world by `from .main import *`.
+**### [stale] `README.md:217`**  
+`REPRODUCES`
 
-**NSM/mesh/main.py:525 — create_grid_samples_in_bounds silently requires numpy arrays, not the tuples its docstring implies**
+Still inaccurate, but for the opposite reason to the one recorded: the README now UNDERSTATES
+the state (it says planned/TODO when `make docs` works and the workflow is written). Rewrite
+the paragraph to say the site builds and is gated on Phase 2.
 
-`padded_min = bounds_min - pad_world` (:525-526) is elementwise scalar arithmetic; a tuple raises TypeError. The docstring calls the parameters '(x, y, z) minimum bounds' (:508-509), which reads as a tuple. Only ever reached with the numpy output of coarse_bounds_from_sign_change (:699, :711).
+**### [stale] `docs/MULTI_SURFACE_REGISTRATION.md:170`**  
+`REPRODUCES`
 
-**NSM/mesh/main.py:667 — Multi-object adaptive meshing shares one AABB across all surfaces**
+Reproduces. It is the same defect as the sdf_dataset.py entry at docs/AUDIT_FINDINGS.md:716
+(other slice) seen from the documentation side — file one prose fix covering both sites and
+this doc's claim, not two.
 
-`coarse_sdf_flat = torch.min(coarse_sdf_values_flat, dim=1)[0]` — the bounds are the union over all decoder outputs, so a small cartilage surface is meshed on the grid sized for the femur, losing the resolution benefit the function exists to provide. Stated only as the inline comment 'Union across objects' (:667); the Args/Returns block (:600-631) is silent. NSM/reconstruct/main.py:1102-1114 calls this with objects_per_decoder up to 4.
+****NSM/dependencies/sinkhorn.py:12 — sinkhorn's `p` is annotated float but rejected unless it is an int****  
+`REPRODUCES`
 
-### `NSM/models/__init__.py`
+Executed and reproduces. It is an annotation that contradicts the code one line later — a
+prose/signature correction (`p: int = 2`), not an issue.
 
-**NSM/models/__init__.py:1 — Public API surface is polluted by a wildcard import**
+****NSM/dependencies/sinkhorn.py:31 — sinkhorn docstring calls eps the 'reciprocal' of the regularization parameter****  
+`REPRODUCES`
 
-`from .deep_sdf import *` with no __all__ in deep_sdf.py binds torch, nn, np, F and warnings as attributes of NSM.models (verified). `from NSM.models import *` therefore shadows a caller's own torch/nn/np. It also determines which of the two Sine classes wins (see separate finding).
+Executed against the code rather than reasoned about. Docstring correction. Note it is
+inherited from the vendored upstream, so fixing it forks the file's docstring.
 
-### `NSM/models/triplanar.py`
+****NSM/reconstruct/utils.py:42 — get_pt_cloud_distances docstring has d1 and d2 swapped****  
+`REPRODUCES`
 
-**NSM/models/triplanar.py:384 — Legacy triplanar path has a silent performance cliff on ungrouped latents**
+Executed and reproduces exactly, including the trap: the ASSD denominator is right only by
+coincidence, so a reader who "fixes" it from the docstring introduces a bug. Pure docstring
+correction — swap the two lines and say why the denominator is what it is.
 
-torch.unique_consecutive only collapses adjacent duplicate rows. Point ordering is preserved either way (groups are contiguous runs by construction, so the cat at line 398 reproduces the input order — no misalignment), but if a batch interleaves latents rather than grouping them, the VAE decoder is invoked once per point (line 391) instead of once per object. Nothing documents that callers must group rows by latent.
+****testing/NSM/test_lr_schedules.py:569 — Stale comment claims the config generator still writes on import****  
+`REPRODUCES`
 
-### `NSM/reconstruct/__init__.py`
+Executed and reproduces. A false comment in a test, contradicted by a sibling test — delete
+the comment and the now-pointless chdir. Prose fix.
 
-**NSM/reconstruct/__init__.py:1 — Star-import __init__ files re-export third-party modules as part of the package API**
+**NSM/datasets/sdf_dataset.py:1366 — Stale TODOs that name work the refactor plan should absorb**  
+`REPRODUCES`
 
-With no `__all__` anywhere, `from .main import *` exports every non-underscore module-level name. Measured by importing each subpackage: NSM.reconstruct exposes 44 names including `torch`, `np`, `os`, `sys`, `copy`, `time`, `wandb`, `mskt`, `fnmatch`, `logging`, `logger`, plus `sinkhorn` and `eikonal_loss`; NSM.datasets (`from .sdf_dataset import *`) exposes 33 including `torch`, `np`, `vtk`, `pcu`, `meshfix`, `hashlib`, `zipfile`, `gc`; NSM.models (`from .deep_sdf import *`) exposes 24 including `torch`, `nn`, `F`, `np`, `warnings`; NSM.mesh (`from .main import *`) exposes 22 including `torch`, `vtk`, `pv`, `inspect`. Every one is a name a consumer can bind to and that the library cannot rename or drop without a breaking change. By contrast NSM.dependencies (explicit single import) exposes exactly 1 and NSM.train exactly 3.
+Comment rot, exactly as described. 'TODO: crat' is meaningless and should go; the
+reference_object vs mesh_to_scale question is a real documentation gap that belongs in the
+class docstring or ARCHITECTURE.md, not in a five-year-old inline TODO. Prose fix, no issue.
 
-### `NSM/reconstruct/main.py`
+**NSM/datasets/sdf_dataset.py:1983 — Unexplained bare `False` literal inside the multi-surface hash parameter list**  
+`REPRODUCES`
 
-**NSM/reconstruct/main.py:616 — In-code TODO admits the multi-surface truncation is a hack that assumes surface 0 is the bone**
+The literal reproduces; the entry's rationale for it ('presumably a frozen placeholder for a
+removed parameter, kept so existing cache hashes still resolve') is falsified by git. This is
+a missing-comment item, not a defect: annotate or drop the literal when #19 rewrites
+get_hash_params, and do not repeat the compatibility story.
 
-Lines 613-624: when the decoder emits more surfaces than the caller supplied ground truth for, the loop `break`s. The comment says 'this is a bit of a hack, should be handled better / right now it assumes the first surface is the bone / only of interest'. This is the mechanism by which a bone+cart decoder is fit to a bone-only target, and it silently depends on the bone being decoder output 0. Work the plan should absorb.
+**NSM/datasets/sdf_dataset.py:2 — Seven unused imports at module top**  
+`REPRODUCES`
 
-**NSM/reconstruct/main.py:834 — `sigma_rand_pts` default differs by 10x between reconstruct_mesh and get_mean_errors**
+Worth correcting the prompt's premise: the 'flake8 is at zero, unused imports are gone' item
+is true for the linter, not the code. F401 was silenced globally with the rationale 'several
+scratch / timing scripts', which also silences it for this production module. Still only
+cosmetic plus a slightly wider star-export surface, so the entry itself has no fixable
+statement beyond 'delete seven lines' — DELETE the entry, but do not record it as fixed.
 
-reconstruct_mesh:834 `sigma_rand_pts=0.001`; get_mean_errors:1276 `sigma_rand_pts=0.01`. get_mean_errors always forwards its own value (line 1331), so calling reconstruct_mesh directly versus through get_mean_errors samples random points at a different noise scale by default. Neither default is documented. Same pattern with `n_pts_per_axis_mean_mesh=128` (line 824) vs `n_pts_per_axis=256` (line 817).
+**NSM/datasets/sdf_dataset.py:457 — False comment: 'vtkAppendPolyData' is claimed in three places and used nowhere**  
+`REPRODUCES`
 
-**NSM/reconstruct/main.py:1153 — Unconditional debug prints on the production reconstruction path**
+Wrong prose, correct code — exactly the Phase-2 shape. Minor correction to the entry: two
+sites in this file, not three (the third is docs/MULTI_SURFACE_REGISTRATION.md, which the
+Documentation-inaccuracies section already tracks separately at AUDIT_FINDINGS.md:1283).
 
-Lines 1153-1154 (`print('length of meshes: ', ...)`, `print('length of orig_mesh: ', ...)`), line 1165 (`print('finished computing recon loss')`), line 1190 (`print('done wandb stuff')`), and line 1408 (`print(key, item)` in get_mean_errors) are not gated on `verbose`. Everything else in these functions is. Since the pipeline parses step stdout as `[PROGRESS]` lines plus a trailing JSON blob (kneepipeline CLAUDE.md), stray stdout from a library is a hazard -- the NSM fit is run in a subprocess by steps/run_nsm.py.
+**NSM/datasets/sdf_dataset.py:900 — Undocumented subclass initialization-order contract enforced by hasattr**  
+`REPRODUCES`
 
-### `NSM/reconstruct/reconstruct_latent_S3.py`
+The mechanism is real and executable, but nothing in-repo gets it wrong and there is no user-
+visible defect today. What is actually missing is a comment at the hasattr block saying
+subclasses must set these before super().__init__ — prose, not code.
 
-**NSM/reconstruct/reconstruct_latent_S3.py:58 — reconstruct_latent_S3 is exported as public API but has never been exercised**
+**NSM/mesh/correspondence_metrics.py:1 — Plan and lint config point at an experiments/ tree that does not exist on main**  
+`REPRODUCES`
 
-Exported at NSM/reconstruct/__init__.py:2 yet called from nowhere in the repo, testing/, or the kneepipeline consumer. It carries the NameError at line 127, the missing wandb import at line 316, the `latent_loss_` unbound at line 320, and the div-by-zero at line 97 -- all of which mean any real run would have surfaced at least one. The module-level TODO at lines 10-14 describes the feature (Sim(3) pose+scale optimisation, arXiv 2004.09048) as still unimplemented in the main path.
+Every sub-claim checks out, including the entry's own concession that the 39 is accurate.
+Cheap prose fixes: drop the inert `experiments` line from `.flake8`, and either correct the
+plan's 31 or (better, since CLAUDE.md says a completed plan keeps its body) add it to that
+plan's Diverged section — a hand-transcribed count is exactly what CLAUDE.md § Four rules #1
+forbids. No issue.
 
-### `NSM/train/train_deep_sdf.py`
+**NSM/mesh/correspondence_metrics.py:604 — score_correspondence's documented return shape omits its error branch**  
+`REPRODUCES`
 
-**NSM/train/train_deep_sdf.py:210 — TODO in the validation block describes work the refactor should absorb**
+Reproduces. It is a docstring omission, not a behaviour bug — the error dicts are a deliberate
+don't-crash design. Correct the Returns block to name the third shape; no issue needed.
 
-Lines 210-212: '# TODO: Change this to just accept the config? / or... update all parameters to be the same in the config and the function call? / this will just allow unpacking of the config dict.' The block below it is a single 46-line call to `get_mean_errors` with ~30 keyword arguments (lines 213-258), six of which are commented-out placeholders (lines 220-221, 223-224, 226, 242-243). The same call exists in a drifted form in multi_head:125-149 (missing 8 arguments) and deprecated/train_deep_sdf_multi_surface_orig.py:171-215 (hardcoded objects_per_decoder=2, missing `device`). This argument list is the largest single duplication in the subsystem.
+**NSM/mesh/interpolate.py:291 — build_mesh_laplacian does not return a Laplacian**  
+`REPRODUCES`
 
-**NSM/train/train_deep_sdf.py:281 — train_epoch's n_surfaces default of 2 contradicts train_deep_sdf's objects_per_decoder default of 1**
+The matrix is what the entry says it is, but 'does not return a Laplacian' implies the reader
+is misled, and the docstring tells them plainly. Only the name is loose. Cheapest honest fix
+is a rename (`build_row_normalized_adjacency`) or a one-word summary-line change; either way
+it is prose-level, and the entry overstates the hazard.
 
-`train_epoch(..., n_surfaces=2)` (line 281) versus `config.setdefault("objects_per_decoder", 1)` (line 56). The only in-repo caller passes it explicitly (line 175), so the default is reachable only by direct use of `train_epoch` — which is a public, exported symbol with no docstring. Calling it directly with a single-surface model silently takes the multi-surface branch at line 331 and indexes `gt_sdf[:, :, 1]`.
+**NSM/mesh/interpolate.py:473 — interpolate_common is public, 18 parameters, zero docstring**  
+`REPRODUCES`
 
-**NSM/train/train_deep_sdf.py:422 — multi_object_overlap is a config key whose only implementation is an unconditional raise**
+Reproduces. The bulk of the fix is prose — a docstring on the only undocumented public
+function in an otherwise thoroughly documented module. The adjacent 3-line code fix (make
+`points1`/`mesh` required, replace the bare `Exception('Not implemented')` with a TypeError
+naming the missing argument) can ride along. No issue.
 
-Lines 421-428: `if config.get("multi_object_overlap", False) == True: raise Exception("Not implemented yet")` followed by seven lines of design commentary. The key is a documented-looking config knob that can only crash training mid-epoch, after data loading and the first forward pass. Present identically in multi_head:259-266 and deprecated/train_deep_sdf_multi_surface_orig.py:356-363.
+**NSM/mesh/main.py:126 — scale_mesh_ 's trailing underscore promises in-place semantics it only sometimes has**  
+`REPRODUCES`
 
-**NSM/train/train_deep_sdf.py:510 — Enabling eikonal loss silently doubles the forward-pass cost and is untested**
+The two aliasing contracts are real and executed. But the only caller is scale_mesh (:181)
+inside the same module — there is no external consumer to be surprised. The whole remedy is a
+docstring, which is the same work item as the `main.py:185` entry.
 
-Lines 506-514 run a SECOND full forward pass (`pred_sdf_grad = model(inputs_grad, epoch=epoch)`) per chunk purely to obtain gradients, on top of the pass at line 388, plus an autograd.grad per surface inside eikonal_loss (NSM/losses.py:45-56). Setting `eikonal_weight > 0` therefore more than doubles training time with no note anywhere. The repo's own CLAUDE.md says 'EIKONAL LOSS HAS NOT BEEN TESTED'; default_config.json ships `eikonal_weight: 0.0`, and there is no test covering this branch. The loss is also computed on the UNCLAMPED prediction while the L1 term uses the clamped one (line 398) — an undocumented inconsistency.
+**NSM/mesh/main.py:185 — Five public functions in main.py have no docstring at all**  
+`REPRODUCES` · owned by The plan .claude/plans/NSM_CODE_HEALTH_REFACTOR.md already carries "Deliverable: docstring coverage >=90% on surviving public API, lint-enforced."
 
-**NSM/train/train_deep_sdf.py:573 — grad_clip is applied to the model only, never to the latent codes**
+Reproduces precisely. It is missing prose, already inside the plan's docstring-coverage
+deliverable, and it absorbs the scale_mesh_ entry above.
 
-Line 572-573: `torch.nn.utils.clip_grad_norm_(model.parameters(), config["grad_clip"])`. `latent_vecs` is an nn.Embedding that is a first-class optimizer param group (NSM/utils.py:376-383) and receives gradients from both the L1 term and the code-regularization term, but its gradients are never clipped. Nothing documents this asymmetry, and `grad_clip` reads as a global setting. Identical in multi_head:403 and both deprecated files.
+**NSM/mesh/main.py:323 — band_width documented as world units, used as a voxel multiplier**  
+`REPRODUCES`
 
-**NSM/train/train_deep_sdf.py:620 — mesh_names exists in config but is never used to label anything**
+The two halves of one sentence contradict each other, measured. Delete "in world units" in
+both places. No behaviour change.
 
-`mesh_names` is defaulted (line 57), length-validated (lines 64-70), warned about (71-78), and persisted via save_model_params (line 198) — but no code in train/ ever reads its contents. Per-surface metrics are still logged positionally as `l1_loss_0`, `l1_loss_1` (line 620), and the per-surface print at line 603 is an unlabelled list. The one place the names would eliminate the positional ambiguity they were added to fix, they are not consulted.
+**NSM/mesh/main.py:341 — crop_sdf_to_narrow_band names every index variable for the wrong axis**  
+`REPRODUCES`
 
-### `NSM/train/utils.py`
+Confirmed as stated, including the entry's own concession that it is functionally correct.
+Rename the locals; nothing else changes.
 
-**NSM/train/utils.py:76 — The positional indexing the LR fix removed still survives in the logging helper**
+**NSM/mesh/main.py:525 — create_grid_samples_in_bounds silently requires numpy arrays, not the tuples its docstring implies**  
+`REPRODUCES`
 
-`add_plain_lr_to_config` calls `resolve_schedule_targets(...)` then converts the result straight back into list positions with `targets.index(LR_TARGET_MODEL)` / `targets.index(LR_TARGET_LATENT)` (lines 76-78) so it can index `schedule_specs[idx]` (line 87). It is correct today, but it is the one remaining place where a schedule entry is reached by position, and it still accepts caller-supplied `idx_model`/`idx_latent` overrides (line 62) that bypass the target lookup entirely (exercised by testing/NSM/test_lr_schedules.py:535-538).
+Reproduces, but it raises immediately and loudly, has one internal caller that always passes
+ndarrays, and the fix is `np.asarray(...)` or a clearer docstring. Lowest-value entry in the
+slice; keep it only as prose.
 
-**NSM/train/utils.py:87 — add_plain_lr_to_config mutates the caller's config in place while also returning it**
+**NSM/mesh/main.py:603 — create_mesh_adaptive docstring understates what n_pts_per_axis controls**  
+`REPRODUCES`
 
-Lines 87-97 write six new keys directly into the passed dict and line 97 returns the same object. All four call sites use the return-value idiom `config = add_plain_lr_to_config(config)` (train_deep_sdf.py:80, multi_head:54, deprecated orig:26, deprecated multi_surface_orig:49), which reads as if it were pure. The docstring says nothing about mutation. testing/NSM/test_lr_schedules.py:520 defends against this with `copy.deepcopy(raw)` — evidence the aliasing is already a known trap. Because `save_model_params` (line 198) dumps the whole config, these derived logging keys are also persisted into model_params_config.json as if they were user-supplied settings.
+"(for fallback only)" is false whenever voxel_size is None, which is the mean-mesh caller's
+case. One-clause docstring fix.
 
-**NSM/train/utils.py:115 — get_profiler hardcodes a schedule that only profiles the first 8 steps and has no docstring**
+**NSM/mesh/main.py:76 — coarse_bounds_from_sign_change returns None for two different reasons, one undocumented**  
+`REPRODUCES`
 
-Lines 115-125: `torch.profiler.schedule(wait=0, warmup=2, active=6)` with no `repeat` argument and traces written to a fixed relative `./log` directory (line 119). Because the profiler is entered ONCE around the entire epoch loop (train_deep_sdf.py:162) and `profiler.step()` is called per EPOCH (line 265), the 'steps' are epochs — so the profiler captures epochs 3-8 and then goes inert for the rest of the run, and `./log` lands in whatever the process CWD happens to be. None of this is documented; the function has no docstring, and `config["profiler"]` (line 116) is read with `[]` so a missing key is fatal.
+Reproduces; the remedy is one clause in the Returns line (or a distinguishing warning). Not
+worth an issue on its own — fold into the mesh/main.py docstring pass.
 
-### `NSM/utils.py`
+**NSM/mesh/refine_mesh.py:142 — Stale 'Implement this' comment on already-implemented code**  
+`REPRODUCES`
 
-**NSM/utils.py:9 — Importing NSM prints to stdout unconditionally when schedulefree is absent**
+Two stale TODO-style comments on working code. Delete both lines' trailing comments.
 
-`except ImportError: print("schedulefree not found, skipping import")` runs at import time, and NSM/__init__.py:9 imports utils, so every `import NSM` — including the downstream consumer's `from NSM.models import TriplanarDecoder` (kneepipeline/steps/run_nsm.py:85) — emits this line on stdout. Observed on every python invocation during this audit. The consumer's step protocol parses stdout ('stdout: progress lines followed by a JSON result as the last line'); the print lands before the JSON so it does not break the last-line contract today, but a library writing to stdout at import is a hazard for exactly that reason. `warnings` is already imported in the same file (line 11).
+**NSM/mesh/refine_mesh.py:239 — add_vertex_if_new returns a tuple, its docstring promises an int, and its index lives in a third array's space**  
+`REPRODUCES`
 
-### `docs/KNOWN_ISSUES.md`
+Two of three sub-claims hold: the Returns section describes an int and the function returns
+(new_vertices, index), and `threshold` is undocumented. The third is wrong — the docstring
+literally says "combined list of original mesh vertices and new_vertices", so the index space
+IS stated. The whole remedy is prose.
 
-**docs/KNOWN_ISSUES.md:183 — Open action recorded in the LR post-mortem that the refactor plan should absorb**
+**NSM/mesh/refine_mesh.py:278 — create_new_faces depends on an unstated midpoint ordering produced two functions away**  
+`REPRODUCES`
 
-'**Open action:** re-tune learning rates under the fixed mapping and compare against the current production models before assuming either is better. Not yet done.' Every pre-Aug-2026 hyperparameter search optimized under the swapped mapping (lines 176-182), so the LR pair shipped in default_config.json:83-98 is tuned for a mapping the code no longer implements.
+Confirmed: a permuted midpoint list yields a different, wrong triangulation with no error. But
+it can only be triggered by editing new_vertices_faces — there is no external caller. One
+sentence in each docstring closes it.
+
+**NSM/mesh/refine_mesh.py:46 — find_all_faces_to_split: docstring promises a 2-tuple, mutates its loop target, dead counters**  
+`REPRODUCES`
+
+Two of three sub-claims hold and both are prose/dead-code cleanup. The third — the one that
+made this a 'defect' rather than 'rot' — I tried to reproduce and could not. Demote and fix
+the docstring.
+
+**NSM/mesh/triangle_metrics.py:1 — triangle_metrics.py has zero docstrings on every public symbol**  
+`REPRODUCES` · owned by docs/SCOPE.md:205 lists triangle_metrics.py as "keep — scope under investigation".
+
+Exactly as stated, verified by introspection rather than reading. Prose work; it should be
+done in the same pass as the two triangle_metrics semantics entries (edge ordering, areas
+normalisation) so the file is documented once.
+
+**NSM/mesh/triangle_metrics.py:37 — Undocumented edge ordering shared by two modules with no cross-reference**  
+`REPRODUCES`
+
+The convention and its duplication are confirmed. It is a comment/docstring gap with no
+behavioural consequence today — the two implementations agree. Fold into the triangle_metrics
+docstring pass.
+
+**NSM/mesh/triangle_metrics.py:51 — TriangleProperties.areas returns a dimensionless deviation, not areas, by default**  
+`REPRODUCES` · owned by docs/SCOPE.md §2.3 condition 3 and the module ledger at docs/SCOPE.md:205 both already record this.
+
+Exactly reproduces, including the numbers, and the 0.01 case shows a caller reading the
+docstring gets 144 cells where they expected 240. Purely a prose fix (three refine_mesh
+docstrings plus one on areas) — already ruled as condition 3 of the refine_mesh keep.
+
+**NSM/models/loader.py:147 — Two contradictory deprecation messages for latent_dropout, and the shipped config triggers one**  
+`REPRODUCES`
+
+Reproduces. Neither message names a true replacement (latent_dropout was a boolean enabling
+dropout on the latent portion; neither `dropout` nor `dropout_prob` is that), so both texts
+are wrong. Prose fix: one message, naming what a user should actually do, in both places.
+
+**NSM/models/modulated_periodic_activations.py:196 — ModulationNetwork concatenates in the opposite order from its docstring**  
+`REPRODUCES`
+
+Reproduces; harmless numerically but the weight columns are laid out opposite to the only
+written description of them. One-line prose fix — correct the docstring to match `cat([out,
+input])`, since the ordering is baked into any trained weights.
+
+**NSM/models/modulated_periodic_activations.py:244 — Debug print left on ImplicitDecoder's forward path**  
+`REPRODUCES`
+
+Reproduces. One-line deletion — code, not prose, but it belongs in the same Phase 2 cleanup
+sweep rather than a GitHub issue. Nothing depends on the output; the passing suite merely
+tolerates it.
+
+**NSM/models/triplanar.py:12 — That same block documents the plane channel order backwards**  
+`REPRODUCES`
+
+Reproduces. Prose-only fix, and the ordering is baked into every trained checkpoint so the
+comment must change, not the code. Fix together with the entry below (the same block is not a
+docstring).
+
+**NSM/models/triplanar.py:219 — Assertion message states the opposite of the branch it guards**  
+`REPRODUCES`
+
+Reproduces verbatim. One-word prose fix (True -> False). Note it sits three lines above the
+sum_sdf_features=False defect filed as an issue, so fix them in the same pass.
+
+**NSM/models/triplanar.py:384 — Legacy triplanar path has a silent performance cliff on ungrouped latents**  
+`REPRODUCES`
+
+Reproduces, ordering caveat included — the entry is accurate and not overstated. Correctness
+is unaffected; it is purely a documented-nowhere performance requirement. One or two lines in
+the forward docstring, no issue.
+
+**NSM/models/triplanar.py:5 — Unused imports**  
+`REPRODUCES`
+
+Reproduces; zero behavioural impact. Belongs in the Phase 2 cleanup sweep, not an issue. Worth
+flagging that 'flake8 is at zero' does not mean unused imports were removed — F401 is globally
+suppressed.
+
+**NSM/models/triplanar.py:9 — triplanar.py's apparent module docstring is a no-op string literal**  
+`REPRODUCES`
+
+Reproduces. Fix together with the plane-order entry: move the literal above the imports so it
+becomes a real docstring, and correct xy/xz/yz to xz/yz/xy in the same edit.
+
+**NSM/reconstruct/main.py:1140 — reconstruct_mesh switches return type between a list and a dict based on seven unrelated flags**  
+`REPRODUCES`
+
+The switch is real and I executed both branches, but it is a deliberate convenience API, not a
+defect — every first-party caller trips the dict branch and changing the return type would be
+a public-surface break for unknown forks. What is missing is a Returns block saying so. Prose
+fix.
+
+**NSM/reconstruct/main.py:1299 — get_mean_errors sets register_similarity twice and its error message contains a typo**  
+`REPRODUCES`
+
+Both halves reproduce and both are cosmetic: the duplicate assignment cannot change behaviour,
+and the message is a stray 'm' plus an advertised value ('diffusion') no branch accepts. Prose
+fix, no issue.
+
+**NSM/reconstruct/main.py:253 — project_latent is labelled legacy but is still the only path honoured under LBFGS-with-hard-constraint**  
+`REPRODUCES`
+
+The docstring's "Legacy" label is wrong — the function is live under ANY optimizer whenever
+use_soft_norm_constraint=False, not only LBFGS as the entry's title says. It also returns None
+and mutates its argument, undocumented. Both are prose corrections, not behaviour changes.
+Production never sets latent_norm, so neither branch runs today.
+
+**NSM/reconstruct/main.py:536 — pts_surface encoding is an undocumented positional contract**  
+`REPRODUCES`
+
+Reproduces exactly as stated: swapping the sdf_gt order relative to the pts_surface labels
+silently produces a different fit with no error, and the function that implements the contract
+has no docstring at all. The fix is prose (document the contract on reconstruct_latent) —
+validating it would need a surface-name mechanism, which is the SCOPE.md §3.1 work item, not
+this.
+
+**NSM/reconstruct/main.py:826 — `mesh_to_scale` inline comment is stale since multi-surface registration landed**  
+`REPRODUCES`
+
+Executed, not inferred. Pure comment correction. Note the `decoder_to_scale` half of the entry
+is fine — that one IS still an int index (`decoders[decoder_to_scale]`, :953).
+
+**NSM/train/train_deep_sdf.py:433 — surface_accuracy curriculum is inverted relative to sample_difficulty, so schedule='constant' disables it entirely**  
+`NOT_A_DEFECT`
+
+The 'constant disables it' half reproduces. The 'inverted' headline does not: `1 -
+calc_weight` is the correct direction for Curriculum-DeepSDF eq. 5, where the surface-accuracy
+tolerance SHRINKS over training (the comment at lines 443-444 says so). The two features
+legitimately move in opposite directions; what is missing is any record of that, since
+calc_weight has no docstring. Correct the prose (docstring on calc_weight naming the
+convention and what 'constant' means for each consumer); no issue.
+
+**NSM/train/train_deep_sdf_multi_head.py:27 — CLAUDE.md still advertises train_deep_sdf_multi_head as a supported training pipeline**  
+`REPRODUCES`
+
+A live contradiction between CLAUDE.md and SCOPE.md. Prose fix only: qualify the CLAUDE.md
+line. Note SCOPE.md 2.1 also records that the module's own warning text is wrong (it names
+train_deep_sdf as a replacement, which is a different architecture) — that is still unfixed
+and belongs in the same prose pass.
+
+**NSM/train/utils.py:51 — get_kld's docstring describes a different computation than the code performs**  
+`REPRODUCES`
+
+The docstring describes a different estimator with a different return shape, and the code's
+value swings 67x with batch size — none of which is written down. Prose fix: rewrite the
+docstring to state what is computed, that it is a scalar, that Bessel's correction applies,
+and that the value depends on batch size. No issue; the function is only reachable via
+code_regularization_type_prior='kld_diagonal', which is not the shipped default.
+
+**NSM/train/utils.py:87 — add_plain_lr_to_config mutates the caller's config in place while also returning it**  
+`REPRODUCES`
+
+Both halves reproduce. The behaviour is arguably fine — all four call sites use `config =
+f(config)` and testing/NSM/test_lr_schedules.py:520 already deepcopies defensively — but the
+docstring says nothing about mutation. Prose fix: say it mutates and returns the same object.
+No issue.
+
+**NSM/utils.py:19 — CLASSIFICATION_HEADS_GROUP_NAME is documented as a real param group but nothing ever creates one**  
+`REPRODUCES`
+
+Reproduces. The harm is prose, not behaviour: two docstrings in utils.py assert a param group
+that no code path creates (utils.py:213-214 drops the hedge that utils.py:77-78 keeps). Fix is
+to correct those two lines and delete the constant; no issue needed. The constant deletion
+also belongs to the dead-public-symbol sweep named in class_group.
+
+</details>
+
 
 ---
 
-## Documentation inaccuracies (25)
+# 4. `SCOPE.md` rulings
+
+****NSM/configs/deep_sdf_config:25 — A scratch notes file ships inside the package and preserves the obsolete two-positional-entry LR shape****  
+`REPRODUCES`
 
-Prose documentation checked line-by-line against the code. `claim` quotes the document;
-`reality` is what the code does, with the line that proves it.
+Reproduces, but the title is wrong: NSM/configs has no __init__.py, so find_packages excludes
+it and the file does NOT ship in a wheel (see the packaging entry). It is a dead 404-byte
+scratch file in the source tree. That is a status ruling — SCOPE.md "dead, delete it" — not a
+defect.
+
+*Evidence:* `file NSM/configs/deep_sdf_config` -> ASCII text; `wc -c` -> 404. Lines 25-29
+read: 'LearningRateSchedule': [ {}, {} ] `git log --follow` -> only 5188417 and fa33adb, i.e.
+untouched since the initial NSM commit. Nothing imports or reads it …
+
+****NSM/losses.py:82 — Three of losses.py's five public functions have never been called by anything****  
+`REPRODUCES`
+
+Reproduces and is understated (four, not three). This is a status question — are these
+supported API or dead? — which is what SCOPE.md is for. SCOPE.md §1 currently rules only on
+eikonal_loss and says nothing about the other four.
 
-### [misleading] `CLAUDE.md:120`
+*Evidence:* Definitions now at losses.py:19 (eikonal_loss), :90 (compute_sdf_gradients), :168
+(combined_sdf_loss), :236 (l1_loss), :241 (l2_loss). `grep -rn '\bcompute_sdf_gradients\b'
+NSM/ testing/ examples/` -> only losses.py:90. Same for …
 
-> - `train_deep_sdf_multi_head.py`: Multi-head training for multiple surfaces
+****NSM/reconstruct/utils.py:58 — compute_assd is defined but its only import is commented out****  
+`REPRODUCES` · owned by #20 (for the n_samples_assd half only)
 
-**Reality.** The module is deprecated and known broken; the Architecture section lists it as an ordinary training pipeline with no caveat, while docs/KNOWN_ISSUES.md §2 documents it as silently optimizing only the last model. Calling it emits a DeprecationWarning saying so, and `get_optimizer` at line 85 is passed the leaked loop variable `model` rather than `models`, so every decoder but the last stays at initialization. An agent reading only CLAUDE.md's architecture map would pick this entry point for multi-surface work.
+Reproduces. Two ASSD implementations, one unreachable — that is a keep-or-delete ruling for
+SCOPE.md, same class as the four dead losses.py functions. The dead parameter half is already
+#20's.
 
-**Evidence.** NSM/train/train_deep_sdf_multi_head.py:27-33,85-91
+*Evidence:* `grep -rn 'compute_assd' --include=*.py .` -> exactly two hits:
+NSM/reconstruct/recon_evaluation.py:13: `from .utils import compute_chamfer # , compute_assd`
+NSM/reconstruct/utils.py:58: `def compute_assd(` ASSD is computed instead by …
 
-### [misleading] `CLAUDE.md:34`
+**NSM/mesh/correspondence_metrics.py:224 — Two divergent implementations of the edge-ratio statistic**  
+`REPRODUCES` · owned by docs/SCOPE.md §2.6 already carries an open ruling on mesh/triangle_metrics.py ('is all five of its public symbols live, or only the part correspondence_metrics uses; whether it stays a separate file or merges').
 
-> # Quick dev cycle (format + run loader tests)
-make quick-test
+Reproduces, and the entry itself explains the divergence is deliberate (raise vs degrade).
+That makes it a status question, not a defect: it is direct input to the already-open SCOPE.md
+§2.6 ruling on whether triangle_metrics survives as a separate file. Route it there rather
+than filing an issue; a one-line comment at triangle_health naming the deliberate divergence
+would also close it.
 
-**Reality.** `quick-test` cannot reach its test phase. It depends on `format`, which runs `black NSM/ testing/`; black exits 123 because testing/testing_h5_vs_np_loading/save_and_load_h5_vs_np.py line 1 is a shell command (`salloc -c 2 --mem=12gb ...`), not Python. I ran the exact command on a copy of the tree: '9 files reformatted, 43 files left unchanged, 1 file failed to reformat', exit 123. make aborts the target chain there, so test-loader never runs. `make format-check` fails identically (exit 123).
+*Evidence:* RAN corr_check.py on a 2-triangle PolyData whose second triangle has a duplicated
+vertex (zero-length edge): `TriangleProperties.edge_ratio()` raises `Exception: edge length
+zero! triangle with zero length edge: (array([1]),)` …
 
-**Evidence.** testing/testing_h5_vs_np_loading/save_and_load_h5_vs_np.py:1; Makefile:49-53,83
+**NSM/mesh/main.py:440 — find_object_bounds_random_sampling is dead and was explicitly superseded**  
+`REPRODUCES` · owned by Not ruled anywhere: `grep -n find_object_bounds_random_sampling docs/SCOPE.md docs/ARCHITECTURE.md docs/KNOWN_ISSUES.md .claude/plans/NSM_CODE_HEALTH_REFACTOR.md` returns nothing.
 
-### [misleading] `CONTRIBUTING.md:87`
+This is a keep-or-delete ruling on ~60 lines of superseded, non-deterministic, star-exported
+code, not a defect. It belongs in SCOPE.md §2 next to the other mesh rulings. Note the stale
+build/ tree is the only thing that still calls it — do not let a grep over build/ talk anyone
+out of deleting it.
 
-> make dev
-    make requirements
+*Evidence:* Function now at NSM/mesh/main.py:444. `grep -rn
+'find_object_bounds_random_sampling' --include=*.py --include=*.md .`: ./NSM/mesh/main.py:444
+(the definition) ./docs/AUDIT_FINDINGS.md:1034 ./build/lib/NSM/mesh/main.py:326 and :474 `git
+…
 
-**Reality.** Neither target exists. The Makefile defines help, install, install-dev, test, test-loader, test-coverage, lint, format, format-check, clean, env-setup, quick-test. Running either prints 'No rule to make target'. The correct command is `make install-dev`. The same phantom targets are wired into CI: .github/workflows/docs.yml:25 runs `make requirements dev` and :27 runs `make docs`, so the documentation-site build cannot succeed either.
+**NSM/mesh/refine_mesh.py:465 — subdivide_triangles_on_base_mesh assumes two meshes share cell indexing**  
+`REPRODUCES` · owned by docs/SCOPE.md §2.3 condition 2 already states this verbatim, including the same line reference (:465, now :466).
 
-**Evidence.** Makefile:23-67; .github/workflows/docs.yml:25-27
+The precondition is real and undocumented, but the failure I could produce is a loud
+IndexError, not the silent wrong mesh the entry implies — silence needs equal cell counts with
+different ordering. SCOPE.md already owns this as condition 2 of the refine_mesh ruling;
+nothing further to file.
 
-### [misleading] `CONTRIBUTING.md:102`
+*Evidence:* Ran t_refine2.py with base = 240-cell sphere, mesh = 720-cell sphere: target cells
+computed on `other`: n = 560 max index = 717 base has only 240 cells -> indices out of range:
+393 RESULT: IndexError: index 241 is out of bounds for axis 0 …
 
-> $ make autoformat
+**NSM/models/loader.py:228 — The 'implicit' config vocabulary is incompatible with real training configs**  
+`REPRODUCES`
 
-**Reality.** There is no `autoformat` target; the formatting target is `format` (which itself fails, see the CLAUDE.md quick-test finding). Line 141 repeats the error in the doc's summary hint, 'make autoformat test', presented as the command to run before every push.
+Reproduces, but this is a status ruling rather than a bug to fix in isolation.
+docs/SCOPE.md:41-48 already rules that load_model 'advertises four model types and three of
+them cannot be reconstructed' with a Phase 4 work item. The specific vocabulary split
+(latent_dim/hidden_dim/num_layers vs latent_size/layer_dimensions) is a sharpening that
+belongs in that SCOPE ruling, together with the sigmoid-default entry below.
 
-**Evidence.** Makefile:49-53
+*Evidence:* _get_implicit_params now at loader.py:227-263, required_keys
+['latent_dim','hidden_dim','num_layers'] at :229. Ran against the shipped
+NSM/configs/default_config.json: default_config has latent_size: True, latent_dim: False,
+hidden_dim: …
 
-### [misleading] `DEVELOPMENT.md:18`
+**NSM/models/modulated_periodic_activations.py:211 — ImplicitDecoder defaults to a sigmoid output, which cannot represent a signed distance**  
+`REPRODUCES`
 
-> # Install development dependencies
-pip install -r requirements-dev.txt
+Reproduces: the default output range is (0,1), so the decoder cannot express a negative
+distance at all. Same ruling as loader:228 — this is why 'implicit' is not a usable SDF model
+type, not a defect to patch in isolation. Fold both into the SCOPE.md §1 statement about the
+three unusable model types.
 
-# Install NSM in development mode
-pip install -e .
+*Evidence:* Default now at modulated_periodic_activations.py:212
+(`final_activation=torch.sigmoid`). Executed:
+inspect.signature(ImplicitDecoder.__init__).parameters['final_activation'].default -> <built-
+in method sigmoid> dec = …
 
-**Reality.** This leaves the package unusable. requirements-dev.txt carries only test/lint/docs tooling; the runtime dependencies live in requirements.txt (mskt, pykeops, einops, pymeshfix, scikit-image, pandas, wandb, tqdm) and `pip install -e .` cannot supply them because pyproject.toml declares `dependencies = []`. `import NSM` alone survives (NSM/__init__.py imports only NSM.utils), but NSM.datasets, NSM.mesh, NSM.reconstruct and NSM.train all fail on the missing pymskt. The Option 2 venv recipe at lines 36-41 has the identical omission, and both diverge from `make install-dev`, which installs requirements.txt first.
+**NSM/reconstruct/main.py:1202 — tune_reconstruction is uncalled and passes a parameter get_mean_errors no longer honours**  
+`REPRODUCES`
 
-**Evidence.** pyproject.toml:30; Makefile:26-29; NSM/datasets/sdf_dataset.py:2
+Every claim reproduces (the key count is 27, not 24, and 22 of them are absent from the
+shipped default config, so no shipped config can drive it). This is a status question — dead
+research entry point, plus compute_correlation_coefficient (:1481, a 4-line np.corrcoef
+wrapper with no callers) — and SCOPE.md §2.6 adjudicates modules but has no ruling for these
+two functions. Rule them there; do not open an issue.
 
-### [misleading] `docs/MULTI_SURFACE_REGISTRATION.md:75`
+*Evidence:* Now at :1246. `grep -rn 'tune_reconstruction\|compute_correlation_coefficient'
+--include=*.py .` -> only the two `def` lines. Same grep over
+/mnt/data/programming/kneepipeline -> zero hits. Ran scratchpad/t_tune.py: ``` config keys …
 
-> The `load_reference_mesh()` method now supports creating reference meshes from multiple surfaces
+**NSM/reconstruct/main.py:588 — Only TriplanarDecoder can actually be reconstructed; the other three loader targets cannot**  
+`REPRODUCES` · owned by docs/SCOPE.md §1 already rules this a Phase 4 work item ("a common decoder interface plus a registration pathway")
 
-**Reality.** The multi-surface branch raises UnboundLocalError and can never return a combined reference mesh. Inside `elif isinstance(self.reference_mesh, int):`, the list-valued `mesh_to_scale` branch assigns `self.reference_mesh = combine_meshes(...)` but never binds the local `mesh`; control then falls through to the unconditional `self.reference_mesh = Mesh(mesh)` at line 1360, which references the unbound local. Even if `mesh` were bound, that line would overwrite the combined mesh the branch just built. Reproduced directly: constructing a MultiSurfaceSDFSamples with reference_mesh=0, list_mesh_paths=[[a,b],[a,b]], mesh_to_scale=[0,1] and calling load_reference_mesh() raises `UnboundLocalError: local variable 'mesh' referenced before assignment`.
+Reproduced by execution, and already adjudicated in SCOPE.md §1 with a named Phase 4 work item
+and the same evidence. It is a design ruling that exists, not a new issue.
 
-**Evidence.** NSM/datasets/sdf_dataset.py:1348-1360
+*Evidence:* Call sites now :593 and :673. Ran scratchpad/t_decoders.py: ``` Decoder (self,
+input_, epoch=None) TwoStageDecoder (self, input, epoch=None) ImplicitDecoder (self, input_,
+epoch=None) TriplanarDecoder (self, x=None, latent=None, xyz=None, …
 
-### [misleading] `.claude/plans/BREAKING_CHANGE_PROPOSAL.md:51`
+**NSM/reconstruct/main.py:616 — In-code TODO admits the multi-surface truncation is a hack that assumes surface 0 is the bone**  
+`REPRODUCES` · owned by Same class as docs/SCOPE.md §3.1's surface-ordering ruling
 
-> - [x] ✅ Implement warning system for potentially incorrect sigma values
+Reproduces exactly as the TODO admits. It is a deliberate, documented-in-code design
+compromise, and it is the same positional-surface-identity problem SCOPE.md §3.1 already owns
+— record it there alongside the ordering contract rather than filing it as a defect.
 
-**Reality.** No sigma warning system exists. `SDFSamples.preprocess_inputs()` contains only two `scale_jointly` guards on center_pts/norm_pts and never inspects sigma_near/sigma_far. Grepping sdf_dataset.py for any sigma-related warn/print/threshold turns up a single timing print at line 1849. The `warnings` module is imported (line 10) but never used for sigma.
+*Evidence:* TODO now at :621-624; the `break` at :629. Ran scratchpad/t_trunc.py — the
+committed 2-surface decoder fit against a single ground-truth surface: ``` bone-only gt
+against a 2-surface decoder: loss = 0.08817599713802338 verbose log: …
 
-**Evidence.** NSM/datasets/sdf_dataset.py:1092-1105
+**NSM/reconstruct/main.py:873 — The consumer's `batch_size_latent_recon` is a no-op absorbed by **kwargs, while the real `batch_size` is left at its default**  
+`REPRODUCES`
 
-### [misleading] `.claude/plans/BREAKING_CHANGE_PROPOSAL.md:50`
+Every factual claim holds, but calling it a silent "no-op" overstates: it prints a deprecation
+warning on every call, which is the intended behaviour of a deprecation shim. What is actually
+wrong is that the shim is inline and undated (CLAUDE.md § "Separate permanent from
+transitional at write time"). Record in SCOPE.md as deprecated-with-a-delete-when condition;
+the consumer-side cleanup is a kneepipeline change, not an nsm defect.
 
-> - [x] ✅ Add comprehensive documentation about current dual-mode behavior
+*Evidence:* Ran scratchpad/t_bslr.py against the committed regression decoder: ``` batch_size
+default: 32768 (:833) 'batch_size_latent_recon' in signature: False (commented out at :834)
+deprecation warning printed: True (:906-910) latent identical …
 
-**Reality.** No such documentation exists in the code. `grep -i 'coordinate space' NSM/datasets/sdf_dataset.py` returns nothing, and the sigma_near docstring is a single line — 'Standard deviation/scale of the distribution for points near the surface. Defaults to 0.01.' — with no mention that its coordinate space flips with `scale_jointly`.
+**NSM/train/train_deep_sdf.py:422 — multi_object_overlap is a config key whose only implementation is an unconditional raise**  
+`REPRODUCES`
 
-**Evidence.** NSM/datasets/sdf_dataset.py:781
+Reproduces, but it is a status question, not a defect: the key names an unimplemented feature.
+It belongs in SCOPE.md alongside the eikonal ruling — 'accepted by config, not implemented,
+crashes mid-epoch if enabled' — rather than as an issue.
 
-### [stale] `CLAUDE.md:39`
+*Evidence:* scratchpad/e13_misc.py — set config["multi_object_overlap"]=True on an otherwise
+working run: Exception: Not implemented yet | raised at line 435 (inside train_epoch, after
+data loading and the first forward pass) Same construct at …
 
-> - Black formatting with 100 character line length
-
-**Reality.** Configured but not achieved on main. `black --check NSM/ testing/` reports 9 files that would be reformatted — including NSM/reconstruct/main.py, NSM/mesh/main.py, NSM/losses.py, NSM/models/triplanar.py — plus 1 unparseable. The companion claim on line 40 ('isort with black profile') is likewise unenforced: `isort --check-only NSM/ testing/` fails on 37 files. CI does not gate on either; its lint job is `continue-on-error: true`.
-
-**Evidence.** NSM/reconstruct/main.py:1 (one of 9 unformatted files); .github/workflows/build-test.yml:13-22
-
-### [stale] `CLAUDE.md:42`
-
-> - Pytest is configured in pyproject.toml
-
-**Reality.** It is configured, but the configuration contradicts the line directly above it ('Tests live in `testing/` directory (not `tests/`)'): `testpaths = ["tests"]` names a directory that does not exist. A bare `pytest` only works by accident — pytest 8.4.2 emits 'PytestConfigWarning: No files were found in testpaths; ... Searching recursively from the current directory instead' and then collects 154 items. The neighbouring `addopts = "-k 'not train_test.py'"` filters a file that also does not exist anywhere in the repo. README.md:188 and DEVELOPMENT.md:59 both tell users to run bare `pytest`, so they all ride on that fallback.
-
-**Evidence.** pyproject.toml:93-96
-
-### [stale] `CLAUDE.md:28`
-
-> # Lint with flake8
-make lint
-
-**Reality.** `make lint` always fails on main: `flake8 NSM/ testing/` emits 445 violations and exits 1 (187 W293, 131 E501, 42 E231, 35 W291, 8 F841, 4 F821 undefined names, ...). This is known and accepted — the CI lint job is marked continue-on-error — but neither CLAUDE.md nor README.md nor DEVELOPMENT.md says so, and all three present it as a routine pre-commit step. The CI comment that documents it also states a count of '~600 pre-existing flake8 violations'; the actual figure is 445.
-
-**Evidence.** .github/workflows/build-test.yml:13-22; Makefile:46-47
-
-### [stale] `CONTRIBUTING.md:53`
-
-> Create a development branch - all changes should merged with the `NSM`-`development` branch ... **Do not** work on the `main` branch.
-
-**Reality.** Not how the repo is run. The three most recent merges all target main directly from topic branches: 73a0326 'Merge pull request #11 from gattia/sync-default-config', c7fb91b 'Merge pull request #10 from gattia/lr-schedule-target-key', 58066b4 'Merge pull request #9 from gattia/fix-lr-schedule-mapping'. Branch naming follows the topic-branch convention the same section offers as an alternative, not a long-lived `development` integration branch.
-
-**Evidence.** git log --oneline (73a0326, c7fb91b, 58066b4 all merge PRs into main)
-
-### [stale] `DEVELOPMENT.md:202`
-
-> # Run specific performance tests
-pytest testing/performance/ -v
-
-**Reality.** There is no testing/performance/ directory. testing/ contains NSM/, testing_h5_vs_np_loading/ and testing_sdf_calculation_times/ — the last of which holds the actual timing scripts (time.py, time_pcu_sdf.py, time_vtk_vs_pcu.py, time_vtkimplicit.py), and is excluded from flake8 as scratch. The command exits 4 with 'file or directory not found'.
-
-**Evidence.** testing/testing_sdf_calculation_times/ (time.py, time_pcu_sdf.py, time_vtk_vs_pcu.py, time_vtkimplicit.py); .flake8:20-21
-
-### [stale] `README.md:215`
-
-> - [`docs/MULTI_SURFACE_REGISTRATION.md`](docs/MULTI_SURFACE_REGISTRATION.md) - Multi-surface registration functionality
-
-**Reality.** The docs/ listing is incomplete: docs/ also contains KNOWN_ISSUES.md, added Aug 2026 and the file CLAUDE.md:97 makes mandatory for any numerical-behaviour change. It is the one document a user with old training runs most needs to find from the README.
-
-**Evidence.** docs/KNOWN_ISSUES.md:1
-
-### [stale] `README.md:217`
-
-> API documentation is planned for future development. Consider using `pdoc` for auto-generated docs:
-
-**Reality.** Contradicts line 2 of the same file, which links '|[Documentation](http://anthonygattiphd.com/NSM/)|' as though a doc site exists. The workflow meant to publish it cannot run: .github/workflows/docs.yml invokes `make requirements dev` and `make docs`, neither of which is a Makefile target, so the website job fails before the pdoc step the README describes as hypothetical. (Whether the live URL currently serves anything is UNVERIFIED — no network access from this session.)
-
-**Evidence.** .github/workflows/docs.yml:25-27; Makefile:23-67
-
-### [stale] `docs/KNOWN_ISSUES.md:192`
-
-> - `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §4 — this fix as the migration template
-
-**Reality.** ~~That file does not exist in the repo.~~ **RESOLVED by merge `458e6e6`.** It was a branch artifact: `docs/KNOWN_ISSUES.md` shipped on `main` while the plan it cites lived only on `plan-code-health-refactor`, so neither tree contained both. Merging `main` in put both in one tree and the three citations (lines 192, 221, 251) now resolve. Keep the entry as a record of the failure mode: a document whose stated purpose is to be answerable years later had two open actions pointing at nothing, purely because two branches each held half the story.
-
-**Evidence.** .claude/plans/ (directory listing: NSM_RECTIFIED_FLOW_CORRESPONDENCE.md, NSM_TRAINING_IDEAS.md, completed/)
-
-### [stale] `docs/MULTI_SURFACE_REGISTRATION.md:170`
-
-> - Updated docstrings and class documentation
-
-**Reality.** The MultiSurfaceSDFSamples class docstring still documents the superseded implementation: 'When mesh_to_scale is a list, meshes are combined using VTK's vtkAppendPolyData'. The actual `combine_meshes` uses the Mesh `+` operator, and this same document's Technical Details section (lines 127-140) explicitly contrasts that with 'the original VTK append approach'. A reader in the code sees the story this document says was replaced.
-
-**Evidence.** NSM/datasets/sdf_dataset.py:1589 vs NSM/datasets/sdf_dataset.py:2188-2193
-
-### [stale] `.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md:4`
-
-> Add `sigma_coordinate_space` parameter to decouple sigma sampling from `scale_jointly` flag, enabling explicit control over coordinate space interpretation.
-
-**Reality.** Unimplemented in its entirety — `sigma_coordinate_space` occurs in no .py file under NSM/. Neither SDFSamples.__init__ nor MultiSurfaceSDFSamples.__init__ accepts it, preprocess_inputs performs none of the Step 3 validation, and neither get_hash_params includes it, so caches built under the two coordinate interpretations still collide. Flagged as aspirational rather than wrong: the plan carries no completion markers, and the baseline code it quotes still matches the file exactly.
-
-**Evidence.** NSM/datasets/sdf_dataset.py:806-838 (SDFSamples.__init__ signature), :1092-1105 (preprocess_inputs), :1395-1407 (get_hash_params)
-
-### [cosmetic] `CLAUDE.md:152`
-
-> A warning is emitted during training if `mesh_names` is not provided.
-
-**Reality.** The warning is conditional on `objects_per_decoder > 1`, not on mesh_names being absent. In `train_deep_sdf`, the `elif config["objects_per_decoder"] > 1:` guard means a single-surface config with no mesh_names trains silently. (The deprecated multi-head path warns unconditionally, and validates length against `objects_per_decoder * len(models)` rather than `objects_per_decoder` as line 150 states.)
-
-**Evidence.** NSM/train/train_deep_sdf.py:63-78
-
-### [cosmetic] `CLAUDE.md:193`
-
-> Several groups may share a target: every decoder and the classification heads all take the `model` schedule.
-
-**Reality.** NSM never builds a classification-heads param group. `get_optimizer` emits exactly one `latent` group plus one `model_{idx}` group per decoder. `CLASSIFICATION_HEADS_GROUP_NAME` is defined at utils.py:19 but referenced nowhere else in NSM/; the only construction of such a group is a hand-built dict in a test. The code's own docstring hedges correctly ('and, when present, ``classification_heads``'); CLAUDE.md drops the hedge and asserts they exist.
-
-**Evidence.** NSM/utils.py:376-392
-
-### [cosmetic] `CONTRIBUTING.md:19`
-
-> If you cannot find you bug, follow the instructions in the [Bug Report](https://github.com/gattia/cycpd/issues/new/choose) template.
-
-**Reality.** Points bug reports at a different project, cycpd. Line 39 leaves the same template artifact in prose: 'You will need basic git proficiency to be able to contribute to cycpd.' The feature-request link on line 34 was updated to gattia/NSM, so this is an incomplete find-and-replace rather than an intentional cross-reference.
-
-**Evidence.** CONTRIBUTING.md:5 ("This guide is inspired by DOSMA"), :34 (gattia/NSM link)
-
-### [cosmetic] `DEVELOPMENT.md:131`
-
-> │   ├── reconstruct/      # Reconstruction utilities
-│   └── utils.py          # Utility functions
-
-**Reality.** The project-structure tree is missing four of the package's directories/modules, including one CLAUDE.md lists as a core module: NSM/mesh/ (marching cubes, refinement, interpolation), NSM/losses.py, NSM/configs/ (default_config.json and its generator) and NSM/dependencies/ (sinkhorn). The `└──` on utils.py asserts it is the last child of NSM/, which it is not.
-
-**Evidence.** NSM/mesh/main.py:1; NSM/losses.py:1; NSM/configs/default_config.json; NSM/dependencies/sinkhorn.py
-
-### [cosmetic] `Makefile:20`
-
-> @echo "  env-setup        Setup conda development environment"
-
-**Reality.** The help listing ends here, omitting `quick-test`, which is a real target defined at line 83 and is the one CLAUDE.md:33-34 advertises as the quick dev cycle. `.PHONY` on line 4 is also incomplete — it omits test-loader, format-check, env-setup and quick-test, so any same-named file in the repo root would shadow them.
-
-**Evidence.** Makefile:4, Makefile:83-84
-
-### [cosmetic] `README.md:11`
-
-> Steps to update this package for new repository: 
-4. update `requirements.txt` and `dependencies` in `pyproject.toml`
-     - To do - can dependencies read/update from requirements.txt?
-
-**Reality.** Leftover cookiecutter instruction addressed to the package author, sitting in the Introduction where a reader expects a project description. The list has one item and it is numbered 4, so steps 1-3 were deleted without renumbering. Its own TODO is still open: pyproject.toml declares `dependencies = []` while requirements.txt lists 15 packages.
-
-**Evidence.** pyproject.toml:30; requirements.txt:1-30
-
-### [cosmetic] `docs/KNOWN_ISSUES.md:25`
-
-> | **Fixed in** | `fix-lr-schedule-mapping`, Aug 2026 |
-
-**Reality.** The branch named shipped only the first half. `fix-lr-schedule-mapping` (PR #9, merged as 58066b4) mapped schedules by param-group name. The `Target` key contract that the rest of this entry documents — the migration guard, the {target: schedule} dict, the swapped shipped defaults — landed on branch `lr-schedule-target-key` (PR #10, merged as c7fb91b). A reader trying to date a checkout against 'the fix' would place the cutoff one PR too early.
-
-**Evidence.** git log: 58066b4 (Merge PR #9 fix-lr-schedule-mapping), c7fb91b (Merge PR #10 lr-schedule-target-key), 0d87e3c 'Declare LR schedule targets per entry'
 
 ---
 
-## Document-level verdicts
+# 5. `KNOWN_ISSUES.md` entries
 
-| Document | Verdict |
-|---|---|
-| `CLAUDE.md` | **partly-stale** |
-| `README.md` | **partly-stale** |
-| `CONTRIBUTING.md` | **stale** |
-| `DEVELOPMENT.md` | **partly-stale** |
-| `Makefile` | **partly-stale** |
-| `docs/MULTI_SURFACE_REGISTRATION.md` | **partly-stale** |
-| `docs/KNOWN_ISSUES.md` | **partly-stale** |
-| `.claude/plans/BREAKING_CHANGE_PROPOSAL.md` | **aspirational** |
-| `.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` | **aspirational** |
-| `.claude/plans/HYBRID_OPTIMIZER_REPORT.md` | **accurate** |
-| `examples/load_trained_model.py` | **accurate** |
+**NSM/train/train_deep_sdf.py:573 — grad_clip is applied to the model only, never to the latent codes**  
+`REPRODUCES`
+
+Reproduces exactly. Not worth an issue — clipping the latents would silently change the
+numerics of every run that sets grad_clip — but a user setting a knob named grad_clip will
+reasonably assume it is global. That is a durable, user-visible fact: KNOWN_ISSUES § Open, one
+short entry.
+
+*Evidence:* scratchpad/e14_misc2.py — ran a real epoch with grad_clip=1e-8, wrapping
+torch.nn.utils.clip_grad_norm_ to record what it is handed: clip_grad_norm_ called 2 times,
+each on {21} tensors model param tensors: 21 The latent nn.Embedding is a first-class
+optimizer param group (NSM/utils.py:376-383) and …
+
+
+---
+
+# 6. Deleted
+
+Fixed, refuted, not a defect, or already owned by an open issue. Evidence is kept for the
+refuted ones until this file goes: 'we checked and it is not true' is the expensive part to
+redo.
+
+
+## Does not reproduce (9)
+
+****NSM/reconstruct/cartilage_func.py:116 — compare_cart_thickness mutates the reconstructed meshes it is asked to evaluate****  
+`DOES_NOT_REPRODUCE`
+
+The claim "These are the same objects reconstruct_mesh returns in result['mesh']" is false for
+the production path. The register inferred aliasing from reading the assignment and did not
+check pymskt's copy semantics — the known failure mode.
+
+*Evidence:* Built two spheres, ran compare_cart_thickness with the mesh types reconstruct_mesh
+actually produces (plain `mskt.mesh.Mesh` — create_mesh_adaptive -> create_mesh ->
+`mskt.mesh.Mesh(...)` at mesh/main.py:315,436): recon_bone arrays BEFORE: ['Normals']
+recon_bone arrays AFTER : ['Normals'] has list_cartilage_meshes attr AFTER: False The …
+
+****NSM/reconstruct/reconstruct_latent_S3.py:58 — reconstruct_latent_S3 is exported as public API but has never been exercised****  
+`DOES_NOT_REPRODUCE` · owned by #35
+
+"Has never been exercised" is now false — the default path runs. Status is already ruled in
+docs/SCOPE.md §2.4 ("deferred research, scheduled for repair; keep the re-export") and the
+live defect is #35.
+
+*Evidence:* It runs. Executed on CPU with an 8-dim latent, a 3-layer-free Linear decoder and a
+32x4 SDF tensor, num_iterations=4: returns a tuple, prints `Step: 0 Loss: 0.207...`. Of the
+four defects the entry lists as proof it was never run: the NameError at :127 and the missing
+wandb import are FIXED (d2ba1c7); the latent_loss_ UnboundLocalError …
+
+**NSM/datasets/sdf_dataset.py:1046 — joint_scale_buffer is applied on the disk path and silently ignored on the in-memory path**  
+`DOES_NOT_REPRODUCE` · owned by see :1061 / #22
+
+The stated consequence — "the same dataset config produces two different normalizations" —
+cannot happen: the in-memory branch raises before it computes any normalization at all. The
+source asymmetry is real but unobservable, so this is an overstatement; the observable fact is
+the :1061 crash and belongs there.
+
+*Evidence:* Buffer now applied at :1119 (disk branch only). Disk path, SDFSamples with
+scale_jointly=True: joint_scale_buffer=0.0 -> max_radius 13.834341 joint_scale_buffer=0.1 ->
+max_radius 15.217775 (x1.1 exactly) joint_scale_buffer=0.5 -> max_radius 20.751511 (x1.5
+exactly) In-memory path with the same config: joint_scale_buffer=0.0 -> KeyError: …
+
+**NSM/datasets/sdf_dataset.py:1759 — Cache-upgrade path resaves stale pos/neg indices after removing overlapping points**  
+`DOES_NOT_REPRODUCE`
+
+The order-of-operations observation is correct but its stated consequence is wrong. The entry
+dismisses test_if_idx_in_range as catching 'only out-of-range indices'; every deletion makes
+the top stored index out of range, so the guard always fires. The real cost is a silently
+discarded cache and a re-sample, not stale indices baked to disk.
+
+*Evidence:* Built a real multi-surface dataset, then doctored its .npz into a 'legacy' cache:
+5 rows inside both surfaces prepended, and pos/neg/surf indices recomputed over the full
+1205-row array (scratchpad/e5_stale.py). Reloading with load_cache=True printed: File found in
+cache: .../c_stale/Aug_20_2026/d23329a1....npz Indices out of range! …
+
+**NSM/mesh/correspondence_metrics.py:333 — self_intersection_count's runtime guard does not guard against its actual runtime**  
+`DOES_NOT_REPRODUCE`
+
+The central claim — 'a 50k-triangle mesh under this implementation will not finish in a usable
+time' — is measurably false: ~34 s for a real surface mesh. The O(n^2) worst case exists but
+needs a mesh whose triangles all overlap in x, which no surface mesh does. Classic
+overstatement in the direction of alarm; delete. (If anyone wants the residual fact, it is
+that the guard is sized in triangles when the real cost driver is x-extent overlap — but 50k
+is a defensible number as measured.)
+
+*Evidence:* RAN /tmp/claude-1000/.../scratchpad/corr_check2.py, timing
+`self_intersection_count` on triangulated spheres: 448 tris -> 0.139 s; 1,920 -> 0.671 s;
+7,936 -> 3.227 s; 19,600 -> 10.094 s; 38,640 -> 25.145 s. log-log slope = **1.16** (near-
+linear, not quadratic). Extrapolated to the 50,000-triangle max_triangles default: **~34 s**.
+Flat …
+
+**NSM/mesh/main.py:667 — Multi-object adaptive meshing shares one AABB across all surfaces**  
+`DOES_NOT_REPRODUCE`
+
+The union AABB costs evaluated points (speed), not resolution — the small surface comes out
+point-for-point identical. The note's stated harm is wrong, and the inline comment "Union
+across objects" already says what actually happens. Overstatement in the direction of alarm;
+delete.
+
+*Evidence:* Union at NSM/mesh/main.py:671 (`coarse_sdf_flat =
+torch.min(coarse_sdf_values_flat, dim=1)[0]`). The entry's stated consequence is that the
+small surface "los[es] the resolution benefit". Ran t_aabb.py: a radius-0.05 sphere meshed
+alone (objects=1) versus the same sphere as object 1 of a pair with a radius-0.9 sphere
+(objects=2), both at …
+
+**NSM/reconstruct/main.py:919 — Mean-mesh generation and final-mesh generation call create_mesh_adaptive with different grid parameters**  
+`DOES_NOT_REPRODUCE`
+
+Executed and disproved. The two call styles produce bit-identical geometry even with
+recon_grid_origin != 1.0, so "the registration target and the reconstruction live on
+inconsistent grids" is false. The only residue is the fallback branch, which is a different
+AUDIT entry anchored to NSM/mesh/main.py and is latent anyway (recon_grid_origin defaults to
+1.0).
+
+*Evidence:* Mean-mesh call now :951-960 (search_bounds only); reconstruction call :1145-1161
+(explicit voxel_origin and voxel_size). Ran scratchpad/t_grid.py at recon_grid_origin = 1.5,
+n_pts_per_axis = 48, on the committed 2-surface decoder — calling create_mesh_adaptive both
+ways: ``` surface 0: npts (2497, 3) vs (2497, 3) identical: True surface …
+
+**NSM/train/utils.py:115 — get_profiler hardcodes a schedule that only profiles the first 8 steps and has no docstring**  
+`DOES_NOT_REPRODUCE`
+
+The load-bearing assertion — "captures epochs 3-8 and then goes inert for the rest of the run"
+— is wrong, and it is exactly the read-only overstatement the register's banner warns about.
+What survives is a fixed relative output directory and a missing docstring, neither worth
+carrying.
+
+*Evidence:* The central claim is false. torch.profiler.schedule defaults to repeat=0, which
+means repeat FOREVER, so the cycle restarts rather than going inert. scratchpad/e7_lrutils.py,
+evaluating the schedule directly: steps 0..12: WARMUP WARMUP RECORD RECORD RECORD RECORD
+RECORD RECORD_AND_SAVE WARMUP WARMUP RECORD RECORD RECORD ^ cycle restarts …
+
+**NSM/train/utils.py:4 — Unused imports and a duplicated import in train/utils.py**  
+`DOES_NOT_REPRODUCE`
+
+Half the entry is factually wrong now, and the surviving half is four dead import names that
+repo policy already chose to suppress. Nothing to track; sweep whenever.
+
+*Evidence:* grep -n '^import torch|^from torch' NSM/train/utils.py: 2:import torch 3:from
+torch.profiler import profile, tensorboard_trace_handler There is NO duplicate `import torch`
+— the entry's headline claim is false on current main. The unused-import half does hold.
+`flake8 NSM/train/` exits 0 only because .flake8 sets `extend-ignore = ... …
+
+
+## Not a defect — the entry overstates (17)
+
+**### [stale] `.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md:4`**  
+`NOT_A_DEFECT`
+
+The entry itself already flags this as "aspirational rather than wrong". A plan that says it
+is blocked and has not been done is doing its job. Nothing to fix.
+
+*Evidence:* `grep -rn 'sigma_coordinate_space' --include=*.py NSM/ testing/` -> no matches, so
+the plan is still unimplemented. But the file now opens with a State block: "**Updated:**
+2026-08-17 · **Status:** blocked", with Next/Blocked-on lines pointing at
+NSM_CODE_HEALTH_REFACTOR.md §8. All its checkboxes for the parameter work are `[ ]`, …
+
+****NSM/losses.py:110 — losses.py builds model input as cat([latent, points]) — an undocumented latent-first ordering, the same bug class as the LR mapping****  
+`NOT_A_DEFECT`
+
+Overstated in the direction of alarm. The ordering is correct and identical to the live
+trainer's; calling it "the same bug class as the LR mapping" is wrong — the LR bug was a
+mismatch, this is a match. What is left is a missing docstring sentence in code nothing calls.
+
+*Evidence:* The ordering is now at losses.py:118 (compute_sdf_gradients) and :225
+(combined_sdf_loss). Checked it against the two consumers of that convention: -
+TriplanarDecoder.forward legacy branch: `xyz = x[:, -3:]` / `latent = x[:, :-3:]`
+(NSM/models/triplanar.py, legacy mode). - Live trainer: `inputs = torch.cat([batch_vecs,
+xyz[split_idx]], …
+
+**NSM/_lr_migration.py:55 — migration_error decides the historical LR mapping by substring-sniffing the optimizer name**  
+`NOT_A_DEFECT`
+
+The mechanism reproduces but the consequence cannot occur, which is the register's known
+failure mode. Over the closed set of optimizers the library will actually build,
+`'schedule_free' in name` is exactly equivalent to a membership test. A 'typo'd or future
+optimizer name' has no historical run to reproduce, because get_optimizer refuses to build it.
+Overstated; delete.
+
+*Evidence:* RAN /tmp/claude-1000/.../scratchpad/lrmig_check.py. `resolve_schedule_targets` on
+a Target-less config gives: Adam/AdamW/'schedual_free_AdamW'(typo)/'Lion'/''/None all ->
+'entry 0 -> latent, entry 1 -> model', caution absent; only 'schedule_free_AdamW' -> 'entry 0
+-> model, entry 1 -> latent' with the CAUTION block. So the substring test …
+
+**NSM/_lr_migration.py:7 — _lr_migration.py states its own delete-when condition and it is not yet met**  
+`NOT_A_DEFECT` · owned by docs/KNOWN_ISSUES.md:526 already records the module as non-permanent with its delete-when condition.
+
+Executed, and the condition is objectively unmet — the two production model configs the
+downstream consumer ships are both pre-Target, so the module is still load-bearing. But that
+is the module working as designed: it carries its own delete-when condition in its header,
+exactly as CLAUDE.md § 'Separate permanent from transitional' requires, and
+KNOWN_ISSUES.md:526 repeats it. The entry restates the header; nothing to act on. Delete.
+
+*Evidence:* RAN a loop over NSM/configs/*.json and
+/mnt/data/programming/kneepipeline/NSM_MODELS/*/model_params_config.json:
+`NSM/configs/default_config.json: targets=['model','latent']` but BOTH shipped production
+model configs are pre-Target — `647_nsm_femur_v0.0.1: targets=[None, None] optimizer=AdamW`
+and `551_nsm_femur_bone_v0.0.1: …
+
+**NSM/datasets/sdf_dataset.py:1635 — n_meshes and n_pts are derived from len(list_mesh_paths[0]), which is a character count for a string path**  
+`NOT_A_DEFECT`
+
+The character-count derivation is real, but it is filed as a landmine — 'no error, plausible
+number' — and the configuration that triggers it cannot construct: it raises RuntimeError
+before any sample is produced. Loud, not silent. Overstated.
+
+*Evidence:* Mechanism confirmed (scratchpad/e4_npts.py, patching SDFSamples.__init__ to a
+recorder so only MultiSurfaceSDFSamples.__init__ :1718-1734 runs), flat list of two 33-char
+paths: n_meshes after __init__ : 33 ; len(self.n_pts): 33 ; total_n_pts: 16500000 after
+preprocess_inputs -> n_meshes: 2 ; len(n_pts): 33 ; total_n_pts: 16500000 (not …
+
+**NSM/mesh/interpolate.py:625 — interpolate_points / interpolate_mesh call interpolate_common with 8 positional args**  
+`NOT_A_DEFECT`
+
+Nothing is wrong today — the binding is correct, both wrappers are internal, and the
+hypothetical is 'someone inserts a parameter before data'. That is a maintenance hazard, not a
+defect, and converting eight positionals to keywords is a two-line change anyone can make
+while in the file. Delete the entry; the class name is there in case the parent files one
+positional-coupling sweep.
+
+*Evidence:* RAN interp_check.py: `inspect.signature(interpolate_common).bind(model, 'L1',
+'L2', 100, 'POINTS1', 0, False, True, is_mesh=False)` -> `{'model': ..., 'latent1': 'L1',
+'latent2': 'L2', 'n_steps': 100, 'data': 'POINTS1', 'surface_idx': 0, 'verbose': False,
+'spherical': True}`, i.e. `points1`/`mesh` binds to `data` purely by position, …
+
+**NSM/mesh/main.py:277 — narrow_band default flips with the use_vtk flag**  
+`NOT_A_DEFECT`
+
+The asymmetry is real but I measured its consequence and it is zero — the narrow band is a
+speed optimisation that preserves the extracted surface exactly. "Silently toggles whether the
+volume is cropped" is true and uninteresting. Roll the default alignment into the :280 twins
+issue; there is nothing to record here.
+
+*Evidence:* Defaults confirmed by introspection (t_main.py section D): sdf_grid_to_mesh
+narrow_band default False (:278); sdf_grid_to_mesh_vtk default True (:382). But the flip is
+behaviourally inert. t_nb.py, 64^3 grid, sphere of radius 0.25 in [-1,1]^3 so the crop is
+substantial: use_vtk=False: nb=False n=1152 nb=True n=1152 same_pts=True …
+
+**NSM/mesh/main.py:690 — Fallback path passes 17 positional arguments to create_mesh**  
+`NOT_A_DEFECT`
+
+Nothing is wrong today and I demonstrated it mechanically. It is a maintenance hazard of the
+shape CLAUDE.md names, but there is one call site, in the same file, 40 lines from the
+signature. If we want a guard it is a lint/AST assertion, not an issue with a reproduction.
+
+*Evidence:* Call now at NSM/mesh/main.py:693. Ran t_pos.py, which AST-parses the module and
+diffs the call against the signature: create_mesh call: positional args = 17 keyword args = 0
+create_mesh signature (17 params): …
+
+**NSM/mesh/main.py:711 — create_mesh_adaptive silently discards the caller's voxel_origin**  
+`NOT_A_DEFECT`
+
+Documented as fallback-only, and the value discarded in production is the default. The entry
+overstates on both counts. The real risk in this area is the separate :638 entry, which I
+kept.
+
+*Evidence:* Rebinding now at NSM/mesh/main.py:727 (`samples, grid_dims, voxel_origin =
+create_grid_samples_in_bounds(...)`). Ran t_adaptive.py section G on CPU with a sphere
+decoder: create_mesh_adaptive(..., voxel_origin=(-1,-1,-1)) vs (...,
+voxel_origin=(-500,-500,-500)) adaptive path, voxel_origin ignored? True | bounds: [-0.3 -0.3
+-0.3] [-0.3 …
+
+**NSM/mesh/main.py:862 — decode_sdf's fast path passes an unbatched latent, the legacy path an expanded one**  
+`NOT_A_DEFECT`
+
+Every sub-claim either describes the correct contract of each interface or ends in a loud
+ValueError, and the per-batch inspect.signature cost is sub-millisecond over a whole
+reconstruction. Textbook overstatement in the direction of alarm.
+
+*Evidence:* Now NSM/mesh/main.py:884 / :887-889. Ran t_main.py section B with shape-recording
+stub decoders: {'fast_latent': (8,), 'fast_xyz': (10, 3), 'legacy_inputs': (10, 11)} Those are
+the shapes each interface requires, not a divergence: NSM/models/triplanar.py:370-376 accepts
+(D,) or (1,D) and raises ValueError otherwise, while the legacy …
+
+**NSM/mesh/refine_mesh.py:438 — Plan claims a symbol that exists nowhere, leaving refine_mesh.py orphaned**  
+`NOT_A_DEFECT` · owned by docs/SCOPE.md §2.3 now rules refine_mesh.py "research, keep" on grounds that do not depend on interpolate_points_refined.
+
+The entry's conclusion — "the only stated reason for keeping it no longer exists" — has been
+superseded by an explicit SCOPE ruling that gives an independent reason. The stale sentence
+lives in a completed plan, which per CLAUDE.md keeps its body as a record of what was
+believed. Nothing to do.
+
+*Evidence:* `grep -rn 'interpolate_points_refined' --include=*.py --include=*.md .` returns
+only .claude/plans/completed/NSM_MESH_INTERPOLATION_IMPROVEMENTS_COMPLETED.md:146, :320, :380
+— no Python anywhere. So the premise is factually right. But docs/SCOPE.md:135-148 now reads:
+"Zero importers is confirmed. 'Therefore dead' is not. …
+
+**NSM/models/two_stage.py:65 — TwoStageDecoder permanently corrupts its own module-level default dicts**  
+`NOT_A_DEFECT`
+
+The mutation is real but inert: the only four keys it writes are the same four every
+subsequent construction rewrites, and no code in the repo reads the module dicts. 'A
+subsequent default-constructed model silently inherits the previous model's geometry' is
+exactly the alarm-direction overstatement the banner warns about. Delete.
+
+*Evidence:* Mutation is now two_stage.py:65-68. The mutation itself reproduces: before:
+default_triplanar_params latent_dim=256 n_objects=2; default_mlp_params latent_size=256
+n_objects=2 after a single TwoStageDecoder(latent_size=8, n_objects=5) attempt: latent_dim=4
+n_objects=5; latent_size=4 n_objects=5 (and it persists even though construction …
+
+**NSM/reconstruct/main.py:1002 — mean_mesh is passed to the multi-object reader even when register_similarity is False**  
+`NOT_A_DEFECT`
+
+Executed and shown inert. The parameter is unread when register_to_mean_first is False, so the
+two call sites differ cosmetically and produce identical output. Overstated entry.
+
+*Evidence:* Asymmetry confirmed textually — :1026 `mean_mesh=mean_mesh if register_similarity
+else None`, :1044 `mean_mesh=mean_mesh`. Ran scratchpad/t_meanmesh.py —
+read_meshes_get_sampled_pts called twice with register_to_mean_first=False, once with
+mean_mesh=None and once with a real sphere: ``` pts identical: True sdf identical: True icp
+a,b: …
+
+**NSM/train/train_deep_sdf.py:152 — The param-group target key is duplicated as a bare string literal in the train loop**  
+`NOT_A_DEFECT`
+
+Not a defect — a one-line style coupling with no observable failure. Filed under "Defects" it
+is overstated. Fold into whatever edit next touches the resume block; nothing to track.
+
+*Evidence:* scratchpad/e13_misc.py: constant imported into train_deep_sdf? False literal used:
+['if any(group.get("target") is None for group in optimizer.param_groups):'] (line 152)
+NSM.utils.PARAM_GROUP_TARGET_KEY = 'target' Behaviour is correct today: the literal and the
+constant are the same string, and the 57 tests in …
+
+**NSM/train/train_deep_sdf.py:210 — TODO in the validation block describes work the refactor should absorb**  
+`NOT_A_DEFECT`
+
+An observation about an existing TODO, not a finding. It reports no behaviour and asserts
+nothing testable. Git and the TODO itself already carry it; the register adds nothing.
+
+*Evidence:* Read at current line numbers: the TODO is at 212-214, the get_mean_errors call
+spans 215-260 with six commented-out placeholder arguments (222-223, 225-226, 228, 244-245).
+No execution possible — it is a comment about a duplication, and the duplication is real
+(multi_head:125-149, deprecated multi_surface_orig:171-215).
+
+**NSM/train/train_deep_sdf.py:620 — mesh_names exists in config but is never used to label anything**  
+`NOT_A_DEFECT`
+
+The entry says the names are "never used to label anything". They are: save_model_params
+persists them, which is exactly the purpose CLAUDE.md gives them ("downstream consumers must
+infer mesh identity from the output count, which is fragile"). Only the wandb metric names
+stay positional, which is cosmetic. Overstated; its one real residue — that the persisted
+names are never checked against the dataset's order — is carried by the :333 entry.
+
+*Evidence:* scratchpad/e5_run.py — real run with mesh_names=['bone','cart']: log_dict keys
+include 'l1_loss_0', 'l1_loss_1' (positional, as claimed) scratchpad/e13_misc.py — but the
+names ARE consumed: mesh_names in model_params_config.json: ['bone', 'cart']
+
+**NSM/train/utils.py:76 — The positional indexing the LR fix removed still survives in the logging helper**  
+`NOT_A_DEFECT`
+
+The entry itself concedes "It is correct today". targets.index() is an internal implementation
+detail of a lookup that is keyed by Target, not a surviving positional contract. The only
+substantive half — the idx_model/idx_latent override — is the :63 entry. Duplicate.
+
+*Evidence:* scratchpad/e7_lrutils.py — both entry orders through the target-keyed path:
+('model','latent') -> model_lr_initial 0.005 latent_lr_initial 0.001 ('latent','model') ->
+model_lr_initial 0.005 latent_lr_initial 0.001 Correct in both. Pinned by
+testing/NSM/test_lr_schedules.py::test_labels_survive_reordered_entries; all 57 tests in …
+
+
+## Already fixed since the audit (19)
+
+<details><summary>Show</summary>
+
+**### [misleading] `CLAUDE.md:34`**  
+`ALREADY_FIXED`
+
+Fixed. NOTE for the parent: a NEW inaccuracy replaced it at CLAUDE.md:22 and :25 — those lines
+advertise `make format` and `make format-check`, and neither target exists any more (`make
+format` -> "No rule to make target 'format'", same for format-check). requirements-dev.txt:10
+also still references `make format-check`.
+
+**### [misleading] `CONTRIBUTING.md:102`**  
+`ALREADY_FIXED`
+
+Fixed — the Makefile was renamed to match, rather than the doc. The entry's parenthetical
+"(which itself fails, see the CLAUDE.md quick-test finding)" is also stale: black is clean.
+
+**### [stale] `CLAUDE.md:28`**  
+`ALREADY_FIXED`
+
+Fixed by edb1048. Both the code and the documentation moved.
+
+**### [stale] `CLAUDE.md:39`**  
+`ALREADY_FIXED`
+
+Fixed. CLAUDE.md:39-40 is now true and CI enforces it.
+
+**### [stale] `CLAUDE.md:42`**  
+`ALREADY_FIXED`
+
+Fixed. Same fix as the pyproject.toml:95 landmine entry — both should go together.
+
+**### [stale] `docs/KNOWN_ISSUES.md:192`**  
+`ALREADY_FIXED`
+
+Fixed, and the entry says so. The failure-mode anecdote it asks to preserve (two branches each
+holding half the story) belongs in the plan's Diverged section if anywhere, not in a findings
+register that is itself scheduled for deletion.
+
+****NSM/losses.py:1 — losses.py is the one file in the subsystem that fails the repo's own Black check****  
+`ALREADY_FIXED`
+
+Fixed, and the CI lint job now gates rather than continue-on-error.
+
+****NSM/losses.py:13 — The eikonal loss is still untested, as CLAUDE.md says, while being wired into both live loss paths****  
+`ALREADY_FIXED`
+
+Fixed, and the entry already carries its own CORRECTION note saying so. The remaining status
+question (is the eikonal loss supported?) is answered in docs/SCOPE.md §1 under "Genuinely
+experimental" and the repair is scheduled in the code-health plan §8.2.
+
+****NSM/reconstruct/cartilage_func.py:141 — Dead locals left behind by a commented-out KL-divergence metric****  
+`ALREADY_FIXED`
+
+The named defect (dead locals) is fixed. What is left is a commented-out block plus an import
+kept alive by it — worth removing when someone next opens the file, not worth an entry.
+
+****NSM/reconstruct/recon_evaluation.py:34 — compute_recon_loss docstring documents a parameter that no longer exists and omits three that do****  
+`ALREADY_FIXED` · owned by #20
+
+The headline claim is fixed. The dead `n_samples_assd` belongs to issue #20's sweep
+(parameters accepted and never read), not to a fresh entry; the assert wording is a one-word
+tidy.
+
+****pyproject.toml:95 — pytest testpaths points at a directory that does not exist****  
+`ALREADY_FIXED`
+
+Fixed. Both halves of the entry (wrong testpaths, phantom -k filter) are gone from the file.
+
+**NSM/datasets/sdf_dataset.py:87 — get_pts_center_and_scale ignores its center= and scale= flags (verified at runtime)**  
+`ALREADY_FIXED` · owned by #20 / #21 (both closed by b0c8bf5)
+
+The parameters no longer exist. The residual behaviour the entry flags (centering implies
+scaling, no reachable centre-without-scale config) survives — `(center_pts is True) or
+(norm_pts is True)` at :330 and :624 still triggers both — but that was ruled intended in #20,
+not a defect.
+
+**NSM/datasets/sdf_dataset.py:91 — get_pts_center_and_scale mutates the caller's array in place, undocumented**  
+`ALREADY_FIXED` · owned by #21 (closed by b0c8bf5)
+
+No longer mutates. Pinned by test_dataset_cache.py:776-780.
+
+**NSM/datasets/sdf_dataset.py:989 — os.sched_setaffinity is called unguarded on a platform-conditional API that is guarded 55 lines earlier**  
+`ALREADY_FIXED`
+
+Fixed before this pass. Listed in the prompt's already-fixed set and confirmed in the source.
+
+**NSM/mesh/main.py:169 — Dead local and formatting drift against the project's own stated standard**  
+`ALREADY_FIXED`
+
+Every checkable claim in this entry is now false. Fixed by edb1048.
+
+**NSM/models/deep_sdf.py:241 — NameError disguised as an error path in progressive_layer**  
+`ALREADY_FIXED`
+
+The headline claim is fixed. The surviving off-by-one (epoch == start applies the layer at
+full weight for one epoch before the warmup ramp starts from ~0) is a one-line rider that
+belongs on the progressive_add_depth issue filed for deep_sdf:171, not a separate entry — the
+feature crashes for the first 1009 epochs anyway.
+
+**NSM/reconstruct/main.py:420 — `latent_input` is computed and never used**  
+`ALREADY_FIXED`
+
+Removed by edb1048. Nothing left to fix.
+
+**NSM/train/train_deep_sdf.py:510 — Enabling eikonal loss silently doubles the forward-pass cost and is untested**  
+`ALREADY_FIXED`
+
+The behaviour the entry describes can no longer happen — enabling it now raises at the top of
+train_deep_sdf. One knock-on: docs/SCOPE.md:58 still says the eikonal loss is "Wired into both
+live loss paths" and "needs a loud warning at the point of use"; it now raises instead. That
+SCOPE line is stale and should be corrected in the same prose pass as the multi_head CLAUDE.md
+line.
+
+**NSM/train/utils.py:41 — cyclic_anneal_linear computes an unused `cycle` local**  
+`ALREADY_FIXED`
+
+The headline is fixed. The docstring residue is too thin to file; fold it into any prose pass
+that touches train/utils.py.
+
+</details>
+
+
+## Reproduces, but an open issue already owns it (57)
+
+<details><summary>Show</summary>
+
+**## Document-level verdicts**  
+`REPRODUCES`
+
+The table is a rollup of the 25 entries above it and carries no fact those entries do not. Per
+the register's own delete-when condition, it goes with them — after the individual
+FIX_IN_PHASE_2 prose corrections land, there is nothing for it to summarise.
+
+****NSM/__init__.py:1 — NSM/__init__.py leaks `os` into the public namespace for the sake of commented-out code****  
+`REPRODUCES`
+
+Reproduces exactly. But it is a two-line cleanup that belongs to the per-subpackage __all__
+work docs/SCOPE.md §3.3 already scopes and explains, not a separate register entry.
+
+****NSM/configs/default_config.json:1 — No shipped config can construct a triplanar model faithfully****  
+`REPRODUCES`
+
+Factually correct and executed, but it is already ruled on in docs/SCOPE.md §1 as a Phase 4
+work item ("ship a default config per model type, derived from the ShapeMedKnee configs").
+Keeping it here duplicates a doc that already owns it.
+
+****NSM/configs/default_config.json:1 — Nothing in the library ever loads default_config.json****  
+`REPRODUCES`
+
+Reproduces, and it is an observation rather than a defect — docs/SCOPE.md §2.6 already rules
+generate_sdf_default_config.py "supported: it owns the shipped default_config.json and is
+pinned by test_default_config_sync.py", which says the same thing.
+
+****NSM/configs/generate_sdf_default_config.py:1 — NSM/configs is not a package and will not ship in a built distribution****  
+`REPRODUCES`
+
+Reproduces exactly, but docs/SCOPE.md §5 already records it verbatim ("NSM.configs will not
+ship in a built distribution... works today only because installs are editable"). Already
+homed.
+
+****NSM/mesh/__init__.py:1 — Package __init__ star-exports main.py's third-party imports and hides four modules****  
+`REPRODUCES`
+
+Reproduces, but docs/ARCHITECTURE.md §5 counts and names this surface and docs/SCOPE.md
+§3.2/§3.3 carries the recommendation. Already homed.
+
+****NSM/models/__init__.py:1 — Public API surface is polluted by a wildcard import****  
+`REPRODUCES`
+
+Reproduces, already counted and named in docs/ARCHITECTURE.md §5 and scoped in SCOPE.md §3.2.
+Duplicate.
+
+****NSM/reconstruct/__init__.py:1 — Star-import __init__ files re-export third-party modules as part of the package API****  
+`REPRODUCES`
+
+Reproduces with slightly different numbers, which is itself the argument against keeping hand-
+transcribed counts in a doc (CLAUDE.md rule 1: a number is computed or it is not committed).
+ARCHITECTURE.md §5 and SCOPE.md §3.2 own this.
+
+****NSM/reconstruct/__init__.py:1 — `from .main import *` with no __all__ leaks the entire main.py import namespace onto the package****  
+`REPRODUCES`
+
+Reproduces, but it is already recorded in docs/ARCHITECTURE.md §5 ("The star-import surface",
+138 de-facto exports) and ruled on in docs/SCOPE.md §3.2/§3.3, which recommends per-subpackage
+__all__. Duplicate of a doc that owns it.
+
+****NSM/reconstruct/cartilage_func.py:50 — cartilage_func's mesh slicing is a hardcoded positional layout with no validation****  
+`REPRODUCES`
+
+The structure reproduces, but "silently produces wrong numbers" does not — the whole-joint
+variant raises before returning anything. docs/SCOPE.md §2.5 already rules the module
+Production-and-clunky. Not worth an issue on the strength of a crash that is already loud.
+
+****NSM/reconstruct/utils.py:104 — Two different `adjust_learning_rate` functions in the same package; the reconstruct one shadows via star-import****  
+`REPRODUCES`
+
+Duplicate entry for the same finding, and the finding is already in ARCHITECTURE.md §6 and
+SCOPE.md §3.2. Delete both.
+
+****NSM/reconstruct/utils.py:104 — Two unrelated functions named adjust_learning_rate; the reconstruct one is re-exported from the NSM.reconstruct package namespace****  
+`REPRODUCES`
+
+Reproduces, but docs/ARCHITECTURE.md §6 has it as a named row ("Two adjust_learning_rate") and
+docs/SCOPE.md §3.2 cites it as the motivating example for __all__. Already homed twice.
+
+****docs/KNOWN_ISSUES.md:183 — Open action recorded in the LR post-mortem that the refactor plan should absorb****  
+`REPRODUCES`
+
+Reproduces only as a pointer. It records that a document has an open action — which the
+document already says, in the place a reader will find it. Nothing to fix here; the entry is a
+stale line number wrapped around a sentence KNOWN_ISSUES.md owns.
+
+****testing/testing_h5_vs_np_loading/save_and_load_h5_vs_np.py:74 — unpack_pts/unpack_numpy_data are duplicated verbatim in a testing script****  
+`REPRODUCES`
+
+Reproduces and "verbatim" is now half-false. But the file is an excluded scratch benchmark
+(.flake8 excludes testing/testing_h5_vs_np_loading), its line 1 is a commented salloc
+invocation, and nothing imports it. Not worth an issue; delete the entry and the drift will be
+handled if Phase 4 touches the caching seam.
+
+**NSM/datasets/sdf_dataset.py:1021 — norm_and_scale_all_meshes reads every cache file twice from disk**  
+`REPRODUCES` · owned by #2 (adjacent — 'SDFSamples - slow loading')
+
+Measured and reproduces exactly 2x. But it is a one-time startup cost on the
+scale_jointly=True path only, and #2 is already the open home for SDFSamples loading cost. Not
+worth its own issue; add the measurement to #2 if that is ever worked.
+
+**NSM/datasets/sdf_dataset.py:1061 — ISSUE #1 REFUTED AS STATED, AND INVERTED: norm_and_scale_all_meshes works on disk and crashes in memory**  
+`REPRODUCES` · owned by adjacent to #22 (different crash site, not covered by #22's fix statement); refutes legacy #1 · fold into #22; close #1 with a pointer
+
+Live hard crash on a documented option combination, and it is NOT what #22 tracks: #22 is an
+UnboundLocalError in __getitem__ over the four timing keys, and its stated fix (deciding the
+batch-key contract) would leave this KeyError untouched. It also settles open issue #1, whose
+premise is exactly backwards. "Fixed" means scale_jointly=True + store_data_in_memory=True
+constructs, and #1 closes.
+
+**NSM/datasets/sdf_dataset.py:1097 — ISSUE #3 CONFIRMED: sigma_near/sigma_far change coordinate space with scale_jointly**  
+`REPRODUCES` · owned by #3
+
+Confirms #3, which is already open and is the canonical home for it. Nothing new to file.
+
+**NSM/datasets/sdf_dataset.py:1131 — save_data_to_cache serializes three keys that nothing ever produces**  
+`REPRODUCES`
+
+Reproduces (three permanently dead entries plus a commented-out alternative at :1216), but it
+is six lines of inert list with no user-visible effect. No fixable statement beyond deleting
+them.
+
+**NSM/datasets/sdf_dataset.py:1146 — Cache key names are renamed on write and triple-guessed on read**  
+`REPRODUCES`
+
+Factually accurate but it is a description, not a defect — the fallbacks work and nothing
+misbehaves. No statement of what 'fixed' would mean that is not just 'rewrite the cache
+format', which #19 already has to do for its own reasons.
+
+**NSM/datasets/sdf_dataset.py:1310 — find_hash returns the first match anywhere under loc_save, across all date folders**  
+`REPRODUCES` · owned by #19
+
+The behaviour is exactly as described, but it is the design: the md5 is the cache identity and
+the date folder only organises writes, so serving a match from any date is intended. The harm
+the entry attributes to it ('the reuse window is wide and silent') is entirely the incomplete
+key, which is #19. Nothing to fix here that #19 does not already own.
+
+**NSM/datasets/sdf_dataset.py:1396 — uniform_pts_buffer and subsample also affect cached content but are not hashed**  
+`REPRODUCES` · owned by #19 (a)
+
+Still true, but already owned by issue #19 (a), annotated in the source and pinned by strict
+xfail tests. Keeping a duplicate copy in AUDIT_FINDINGS adds nothing.
+
+**NSM/datasets/sdf_dataset.py:1406 — reference_mesh is hashed by str(), so passing a Mesh object makes the cache key its memory address**  
+`REPRODUCES` · owned by #19 (c)
+
+Every factual claim survives, but it is issue #19 (c) verbatim, is annotated in both
+get_hash_params docstrings, and is pinned by TestReferenceMeshHashing. Duplicate.
+
+**NSM/datasets/sdf_dataset.py:169 — `mean` parameter is documented and accepted by both sampling functions but never used**  
+`REPRODUCES` · owned by #20
+
+Reproduces, and #20 explicitly says 'the first task is the enumeration, not the fix'. This is
+that enumeration's result for this file, and `mean` is not in #20's known-instances table — it
+should be added there rather than filed as its own issue.
+
+**NSM/datasets/sdf_dataset.py:1726 — get_sample_data_dict writes an unconditional append-only log into the cache root**  
+`REPRODUCES` · fold into #22
+
+All three claims reproduce: unconditional (not behind verbose), never truncated, and a hard
+construction failure in the save_cache=False configuration because a debug log is written to a
+directory only the caching path creates. Fixed = the log is behind verbose (or gone), and
+nothing on the load path depends on loc_save existing. Same configuration family as #22 — file
+it there or alongside it.
+
+**NSM/datasets/sdf_dataset.py:184 — n_pts_random is silently swallowed by **kwargs in both read_*_get_sampled_pts functions**  
+`REPRODUCES` · owned by #16 (and the #20 class sweep)
+
+Still true and still exactly as described, but #16 already owns it with the same evidence, and
+#20 owns the class. Filing again would duplicate.
+
+**NSM/datasets/sdf_dataset.py:1973 — mesh_to_scale is not part of the multi-surface cache hash**  
+`REPRODUCES` · owned by #19 (a)
+
+Reproduces, but it is the headline instance of issue #19 (a), already annotated in the source
+and pinned by an xfail. Duplicate.
+
+**NSM/datasets/sdf_dataset.py:2158 — MultiSurfaceSDFSamples.__getitem__ raises UnboundLocalError when store_data_in_memory=True (verified)**  
+`REPRODUCES` · owned by #22
+
+Reproduces, but is issue #22 word for word, annotated in the source and pinned by
+test_dataset_cache.TestConfigurationsThatDoNotRun. Duplicate.
+
+**NSM/datasets/sdf_dataset.py:314 — read_mesh_get_sampled_pts returns 'xyz' or 'pts' depending on get_random; one consumer reads 'pts' unconditionally**  
+`REPRODUCES` · owned by #15
+
+Reproduces exactly, including the crash line. #15 already owns it by title.
+
+**NSM/datasets/sdf_dataset.py:316 — pts_surface return type differs between the single- and multi-mesh functions**  
+`REPRODUCES`
+
+Reproduces, but no in-repo consumer takes .shape of the single-mesh value, so there is no
+defect today — it is one more face of the sampler-divergence class (with :308 and :314). Fold
+the observation into that class if it is fixed; do not file it.
+
+**NSM/datasets/sdf_dataset.py:665 — include_surf_in_pts in the multi-mesh path concatenates a leaked loop variable**  
+`REPRODUCES` · owned by #17
+
+Reproduces precisely as described. #17 already owns it by title.
+
+**NSM/datasets/sdf_dataset.py:671 — pts_surface concatenation raises ValueError when any surface is allocated zero points**  
+`REPRODUCES` · owned by #23
+
+Reproduces, but it is a second crash site for #23's exact fixable statement ("a zero-count
+sampling combo samples nothing instead of raising"). #23's pinned test only exercises the
+uniform case, so the :739 site is worth adding as evidence to #23 rather than filed
+separately.
+
+**NSM/datasets/sdf_dataset.py:820 — loc_save default is evaluated at import time, so setting LOC_SDF_CACHE later has no effect**  
+`REPRODUCES` · owned by #24
+
+Reproduces. #24 owns it and is pinned by TestCacheLocationDefault; the docstring at :848-853
+now warns about it too, so the documentation half is already done.
+
+**NSM/datasets/sdf_dataset.py:832 — `multiprocessing` is simultaneously a module, a constructor parameter, and an instance attribute**  
+`REPRODUCES`
+
+Reproduces as a naming collision, but every current use resolves correctly — the shadowing is
+confined to __init__, and :1058 is a different scope. Readability, not a defect, and no
+fixable statement beyond renaming.
+
+**NSM/datasets/sdf_dataset.py:849 — check_probabilities type gate rejects integer probabilities**  
+`REPRODUCES` · owned by adjacent to #23, but not covered by it · fold into #23
+
+Not covered by #23 — #23's pinned test uses the list form [0.0, 0.0], which never reaches this
+gate, and #23's stated failure (inside point_cloud_utils) is not where a scalar int fails. A
+whole-number probability from a JSON config dies at construction with a message that is
+factually wrong about what it accepts. "Fixed" means the gate accepts any real number
+(excluding bool), so the value reaches the same handling a float gets.
+
+**NSM/mesh/interpolate.py:98 — Three divergent hand-rolled decoder invocation conventions in one subsystem**  
+`REPRODUCES`
+
+The divergence is real and I demonstrated its consequence, but the consequence is
+hypothetical: no decoder in NSM/ is fast-interface-only, and none is planned. `decode_sdf`'s
+dispatch is a performance shortcut, not a compatibility requirement. The only live residue is
+that interpolate never takes the fast path on the production TriplanarDecoder — a perf note,
+not the 'would break half the subsystem' the entry claims. Overstated; delete.
+
+**NSM/mesh/main.py:171 — scale_mesh silently overrides the caller's scale and offset**  
+`REPRODUCES` · owned by #20 — this is a new instance for #20's enumeration table, not a separate issue. #20 explicitly says "The first task is the enumeration, not the fix" and the mechanical check it names (does the parameter name appear in the body before rebinding) catches this one. · fold into #20
+
+Same shape as get_pts_center_and_scale, which #20 already owns: a named parameter is rebound
+before it is read, silently. Fixed means the two are reconciled (raise, or drop the
+parameters) and the instance is recorded in #20's table.
+
+**NSM/models/deep_sdf.py:27 — Sine.__init__ is misspelled and never runs**  
+`REPRODUCES`
+
+Reproduces and is harmless, and the fact is already in ARCHITECTURE.md's name-trap table.
+Nothing to promote.
+
+**NSM/models/deep_sdf.py:47 — xyz_in_all is accepted and documented but never used**  
+`REPRODUCES` · owned by #20
+
+Reproduces, but already an Open KNOWN_ISSUES entry pointing at #20's class sweep. Duplicate.
+
+**NSM/models/deep_sdf.py:87 — latent_noise_sigma is stored and never read**  
+`REPRODUCES` · owned by #20
+
+Reproduces, but it is one more instance of #20's class. #20's body says explicitly 'The
+instances below are what we tripped over, not what exists. The check is mechanical' — the
+sweep will find this. Do not file separately; add it to #20's instance table if you want it
+named.
+
+**NSM/models/loader.py:119 — Decoder output column -> surface identity is nowhere in the models package**  
+`REPRODUCES`
+
+True but already promoted into SCOPE.md, which is where a design/status fact belongs. Keeping
+it in AUDIT_FINDINGS duplicates a ruling that already exists.
+
+**NSM/models/modulated_periodic_activations.py:43 — Two different Sine classes in one package, with incompatible defaults**  
+`REPRODUCES`
+
+Reproduces exactly as described, but ARCHITECTURE.md §6 already owns this trap, and the
+__init__ has been annotated with a pointer to it. Duplicate.
+
+**NSM/models/triplanar.py:197 — The consumer's hand-rolled param mapping omits padding**  
+`REPRODUCES` · owned by #26
+
+Tracked in four places already (issue #26, KNOWN_ISSUES entry, SCOPE ruling, inline code
+comment) with a pinning test. Nothing left in the AUDIT_FINDINGS copy.
+
+**NSM/models/triplanar.py:312 — normalize_coordinates ignores its own padding parameter**  
+`REPRODUCES` · owned by #20
+
+Reproduces, and is the single most thoroughly tracked item in my slice — issue #20, a
+KNOWN_ISSUES entry, an inline code comment, and a pinning test. Duplicate. (The `10e-6`
+literal noted in the entry's last sentence is also still there at :337; that is cosmetic and
+not worth carrying.)
+
+**NSM/models/triplanar.py:87 — VAEDecoder builds no activation functions between its conv layers**  
+`REPRODUCES`
+
+Reproduces, but the full corrected analysis already lives in ARCHITECTURE.md §7.1 including
+the trains-nonlinear/evaluates-affine hazard. Nothing here to promote. The UnboundLocalError
+rider is an instance of the constructible-but-uncallable class issue and should be listed
+there.
+
+**NSM/models/triplanar.py:99 — VAEDecoder registers every submodule twice, doubling checkpoint keys**  
+`REPRODUCES` · owned by #27
+
+Fully tracked three ways already: GitHub #27, a KNOWN_ISSUES.md entry with a pinning test, and
+an inline code comment. The AUDIT_FINDINGS copy is redundant.
+
+**NSM/reconstruct/main.py:1118 — Undocumented mesh-index ordering is the load-bearing contract between reconstruct_mesh and its consumer**  
+`REPRODUCES` · owned by Already ruled in docs/SCOPE.md §3.1 and pinned by testing/NSM/regression/test_reconstruction_regression.py::TestSurfaceOrderContract
+
+True, but it is verbatim what docs/SCOPE.md §3.1 already rules ("reconstruct_mesh's result
+mesh list is ordered, and the order is the contract", naming mesh_names and the same LR-bug
+analogy), and TestSurfaceOrderContract already pins it geometrically. Duplicating it into an
+issue adds nothing.
+
+**NSM/reconstruct/main.py:1167 — time_calc_recon_loss is measured and thrown away while return_timing claims to report timings**  
+`REPRODUCES` · owned by #29 — adjacent (both are "the result dict is missing what the caller asked for"); fix them together · fold into #29
+
+Reproduced by execution. One line to add. Small enough that it should ride along with the #29
+result-dict fix rather than becoming its own issue.
+
+**NSM/reconstruct/main.py:393 — In hybrid-optimizer mode the LR decay interval is computed from the wrong iteration count**  
+`REPRODUCES`
+
+The mechanism is real but the entry's stated trigger is WRONG: `any lbfgs_iterations > 0` does
+NOT break it — I measured an identical schedule. It breaks only when adam_iterations is set
+explicitly and differs from num_iterations, in which case the requested decays never happen at
+all. Fixed = derive adjust_lr_every from adam_iterations. Low priority (hybrid_optimizer is
+off everywhere and has no test), and the duplicated if/else at :506-521 is a separate
+simplification — the two arms are equivalent because current_optimizer is bound in both modes.
+
+**NSM/reconstruct/main.py:588 — reconstruct_latent calls decoders with keyword-only interface that only TriplanarDecoder implements**  
+`REPRODUCES` · owned by Duplicate of the entry immediately above it in AUDIT_FINDINGS.md (same anchor line :588); both already covered by docs/SCOPE.md §1
+
+Verbatim duplicate of the preceding entry — same file, same line, same finding, written twice
+under two titles. Delete this one; keep the SCOPE ruling.
+
+**NSM/reconstruct/main.py:960 — Missing f-string prefix silently collapses per-mesh EMD results to one literal key**  
+`REPRODUCES` · owned by #29 — same early-return block (which already carries a `KNOWN DEFECT, #29` comment at :982). Fold in as an extra bullet rather than filing separately. · fold into #29
+
+Reproduced by execution. One missing `f`. It sits inside the exact block #29 owns and #29's
+own statement ("drops keys the caller asked for") already covers it, so it belongs on #29, not
+in a new issue.
+
+**NSM/train/train_deep_sdf.py:279 — train_epoch accepts return_loss and verbose parameters that are never read**  
+`REPRODUCES` · owned by #20 — "Sweep: parameters accepted and never read (read the traps before fixing)"
+
+Confirmed, but #20 is explicitly the class sweep for exactly this and says "the instances
+below are what we tripped over, not what exists". These belong in that enumeration, not as a
+separate register entry.
+
+**NSM/train/train_deep_sdf.py:281 — train_epoch's n_surfaces default of 2 contradicts train_deep_sdf's objects_per_decoder default of 1**  
+`REPRODUCES`
+
+The default mismatch is real, but the entry's stated consequence — "silently takes the multi-
+surface branch" — is wrong: it raises a loud IndexError at line 429. It is also not an
+exported symbol. Overstated on both counts, and the loud failure means nothing silent is at
+stake.
+
+**NSM/train/train_deep_sdf.py:575 — train_epoch hard-requires optional data-loading telemetry keys from the dataset**  
+`REPRODUCES` · owned by #22 — "store_data_in_memory=True raises, and its workaround cannot train"
+
+Reproduces exactly, but issue #22 already states this defect including the fact that the
+workaround cannot reach training and quotes train_deep_sdf.py:578-581. Already tracked;
+nothing to add.
+
+**NSM/train/train_deep_sdf.py:84 — Dead duplicate of the resume_epoch default**  
+`REPRODUCES`
+
+Reproduces, but it is two unreachable lines with no behavioural consequence. Not worth an
+issue; delete it in any pass that touches the function.
+
+**NSM/train/train_deep_sdf_multi_head.py:85 — train_deep_sdf_multi_head builds the optimizer from a leaked loop variable — only the last decoder is trained**  
+`REPRODUCES` · owned by docs/KNOWN_ISSUES.md §2 "train_deep_sdf_multi_head optimizes only the last model"; docs/SCOPE.md §2.1 ruling
+
+Reproduces exactly, but it is already a KNOWN_ISSUES entry AND a SCOPE ruling AND a
+DeprecationWarning in the module. Nothing left for the register to carry.
+
+**NSM/utils.py:26 — LearningRateSchedule base class returns None instead of raising**  
+`REPRODUCES`
+
+The mechanism reproduces, but there is no reachable path in the repo or in any shipped config
+that triggers it — it needs a user-written subclass that forgets to override. `raise
+NotImplementedError` is a genuinely free one-line hardening to make while touching the file,
+but it does not clear the 'worth fixing' bar as a standalone issue.
+
+**NSM/utils.py:394 — get_optimizer silently drops weight_decay for the default 'Adam' optimizer**  
+`REPRODUCES` · fold into #20) + KNOWN_ISSUES § History required on fix
+
+Reproduces, and the shipped default config hits it: every default Adam run silently trains
+with zero weight decay while the config says 1e-4. Note for whoever fixes it — this changes
+training output for inputs that previously ran without error, so per CLAUDE.md § Numerical-
+behaviour changes the fix needs a KNOWN_ISSUES.md § History entry. 'Fixed' = pass weight_decay
+to Adam (with the History note), or delete the parameter and the config key.
+
+</details>
 

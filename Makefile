@@ -15,9 +15,9 @@ help:
 	@echo "  test             Run all tests with pytest"
 	@echo "  test-loader      Run only model loader tests"
 	@echo "  test-coverage    Run tests with coverage report"
-	@echo "  lint             Run code linting (flake8)"
-	@echo "  format           Format code with black"
-	@echo "  format-check     Check if code formatting is correct"
+	@echo "  lint             Check formatting and lint (isort, black, flake8)"
+	@echo "  autoformat       Apply isort and black"
+	@echo "  docs             Build the API reference into site/"
 	@echo "  clean            Clean up temporary files and caches"
 	@echo "  env-setup        Setup conda development environment"
 

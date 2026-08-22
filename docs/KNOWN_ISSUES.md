@@ -214,6 +214,37 @@ deadlocks, with no message, on the second one. Long-standing rather than new.
 `test_dataset_cache.TestSeedDerivation`, which builds its two datasets in separate
 subprocesses.
 
+## Packaging and configuration
+
+### Shipped model configs predate the `Target` requirement and cannot be trained from
+
+Both production model configs — `647_nsm_femur_v0.0.1` and `551_nsm_femur_bone_v0.0.1` —
+carry two `LearningRateSchedule` entries with no `Target`. `get_learning_rate_schedules`
+raises `ValueError` on either.
+
+**Inference is unaffected**, which is why nobody has hit it: `steps/run_nsm.py` reads those
+files only for constructor kwargs and never builds a schedule. What does not work is
+resuming or re-training from a shipped model's own config without annotating it first.
+
+The consequence for the codebase is that `NSM/_lr_migration.py`'s delete-when condition —
+no configs left that omit `Target` — is objectively unmet, and was not recorded anywhere.
+Do not delete that module on the assumption the migration is finished.
+
+**How to tell whether you are affected:** if you load a `model_params_config.json` written
+before Aug 2026 and call anything in the training path, you get the `ValueError`, and its
+message prints the paste-ready annotation for that run's optimizer. Take it from there
+rather than hand-writing `Target`, since Adam and `schedule_free_*` migrate to opposite
+values.
+
+### `F401` is project-ignored, so unused imports do not appear in `make lint`
+
+`.flake8`'s `extend-ignore` has carried `F401` since before the Aug 2026 lint work. `make
+lint` reports zero violations, and separately there are **43** unused imports it will never
+show. "flake8 is at zero" is true and does not mean the imports are gone.
+
+*Fix:* not filed. Removing the ignore is a judgement call — several are deliberate
+re-exports in `__init__.py` files, which is the usual reason `F401` gets ignored wholesale.
+
 ## `models/triplanar.py`
 
 ### `padding` is not in the checkpoint, and the mismatch is silent
@@ -275,6 +306,28 @@ both names.
 both directions and needs a migration shim. *Pinned by:*
 `test_model_roundtrip.TestAliasedCheckpointEntries`.
 
+### Latent gradients are summed over query points, so the reg balance depends on N
+
+When a latent is optimized (reconstruction fitting, and the training embedding), the
+gradient it receives from the data term is **summed** over the N query points — 10× the
+points, 10× the pull — while the latent-regularization term does not scale with N.
+Measured: 10.00× at N=10, 1000.00× at N=1000, **identically** on both decoder
+interfaces (`triplanar.UniqueConsecutive` and `triplanar.FastUnique`), so it is a
+long-standing convention, not a regression. Details: ARCHITECTURE §6.
+
+No shipped run is affected — `l2reg_recon: false` in both production configs, so the
+imbalance multiplies a term that is zero.
+
+**Why this entry exists (maintainer, 2026-08-22): to be revisited, deliberately.** The
+maintainer reports latent regularization was historically a pain to tune and was
+abandoned — consistent with the effective weight being silently divided by N
+(thousands), so nominal weights would have felt inert. That is a hypothesis, not a
+finding. The experiment when someone picks this up: enable `l2reg` with the weight
+scaled by ~N versus nominal, compare fit quality and fitted-latent norms (see also
+`NSM_TRAINING_IDEAS.md` Idea 4, the norm-saturation gap). Any change to the convention
+rescales every training and reconstruction run and needs a § History entry plus a
+Phase-A-style migration.
+
 ## `models/deep_sdf.py`
 
 ### `xyz_in_all` is accepted and never read
@@ -319,6 +372,20 @@ to wrap `train_epoch` to observe anything (`testing/NSM/regression/_harness.py`)
 this deletes that wrapper.
 
 *Fix:* [#28](https://github.com/gattia/nsm/issues/28).
+
+### `grad_clip` clips the model only, never the latent codes
+
+`train_epoch` hands `torch.nn.utils.clip_grad_norm_` the model's parameter tensors and
+nothing else; the latent `nn.Embedding` is a first-class optimizer param group and is
+never clipped. Verified by wrapping the clip call on a real epoch: called on the 21 model
+tensors only. A user setting a knob named `grad_clip` will reasonably assume it is
+global. Clipping the latents now would silently change the numerics of every run that
+sets `grad_clip`, so this is documented rather than fixed.
+
+**Revisit (maintainer, 2026-08-22):** worth an experiment rather than a permanent
+shrug — train with the clip applied to both groups (or one global clip) and compare
+stability and latent-norm trajectories against the current behaviour. If adopted, it
+changes numerics for every run that sets `grad_clip` → § History entry.
 
 ## `reconstruct/main.py`
 
@@ -552,6 +619,11 @@ every model does reach the device despite the pointless rebinding. The defect is
 below it: the optimizer is built from the leaked loop variable rather than from `models`,
 so **only the last decoder in `models` ever receives gradient updates**. The others stay
 at initialization.
+
+It also cannot complete one epoch on the shipped `default_config.json`: a
+non-short-circuit `&` between two membership tests raises `KeyError:
+'surface_weighting'` before the epoch ends, so any run that would have hit the
+silent-training defect crashes first on the default config.
 
 The module now emits a `DeprecationWarning`. Use `NSM.train.train_deep_sdf` with
 `objects_per_decoder > 1` instead. Whether to repair or delete this file is a Phase 0
