@@ -2,14 +2,6 @@ import logging
 
 import numpy as np
 
-try:
-    from NSM.dependencies import sinkhorn
-
-    __emd__ = True
-except Exception:
-    print("Error importing `sinkhorn` from NSM.dependencies")
-    __emd__ = False
-
 from .utils import compute_chamfer  # , compute_assd
 
 # Set up logger for this module
@@ -25,7 +17,6 @@ def compute_recon_loss(
     chamfer_norm=1,
     calc_symmetric_chamfer=False,
     calc_assd=False,
-    calc_emd=False,
 ):
     """
     Computes the reconstruction loss between the predicted meshes and the ground truth meshes.
@@ -39,16 +30,13 @@ def compute_recon_loss(
         chamfer_norm (int, optional): The power to which the chamfer distance is raised. Defaults to 1.
         calc_symmetric_chamfer (bool, optional): Whether to calculate the symmetric chamfer distance. Defaults to False.
         calc_assd (bool, optional): Whether to calculate the average symmetric surface distance. Defaults to False.
-        calc_emd (bool, optional): Whether to calculate the earth mover's distance. Defaults to False.
 
     Returns:
         dict: A dictionary containing the reconstruction loss for each mesh.
     """
     logger.info("Starting reconstruction loss computation")
     logger.debug(f"Computing loss for {len(meshes) if isinstance(meshes, list) else 1} meshes")
-    logger.debug(
-        f"Loss calculation settings: chamfer={calc_symmetric_chamfer}, assd={calc_assd}, emd={calc_emd}"
-    )
+    logger.debug(f"Loss calculation settings: chamfer={calc_symmetric_chamfer}, assd={calc_assd}")
 
     result = {}
 
@@ -111,20 +99,6 @@ def compute_recon_loss(
                 #     num_samples=n_samples_assd,
                 # )
             result[f"assd_{mesh_idx}"] = assd_loss_
-
-        if calc_emd:
-            logger.debug(f"Computing EMD for mesh {mesh_idx}")
-            if __emd__ is True:
-                if pts_recon_ is None:
-                    emd_loss_ = np.nan
-                    logger.warning(f"Mesh {mesh_idx}: EMD set to NaN (no reconstructed mesh)")
-                else:
-                    emd_loss_, _, _ = sinkhorn(xyz_orig_, pts_recon_)
-                    logger.debug(f"Mesh {mesh_idx}: EMD = {emd_loss_:.6f}")
-                result[f"emd_{mesh_idx}"] = emd_loss_
-            elif __emd__ is False:
-                logger.error("Cannot calculate EMD: sinkhorn module not available")
-                raise ImportError("Cannot calculate EMD without emd module")
 
     logger.info(f"Reconstruction loss computation completed. Computed {len(result)} loss values.")
     logger.debug(f"Result keys: {list(result.keys())}")

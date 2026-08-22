@@ -305,4 +305,4 @@ schedules on every Adam/AdamW run from May 2023 to Aug 2026.
 
 ### Dependencies
 
-Key libraries: PyTorch (core ML), mskt (pip name for pymskt - musculoskeletal toolkit), pymeshfix, pykeops (Sinkhorn/optimal transport), einops, wandb (experiment tracking)
+Key libraries: PyTorch (core ML), mskt (pip name for pymskt - musculoskeletal toolkit), pymeshfix, einops, wandb (experiment tracking)
