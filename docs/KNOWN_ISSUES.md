@@ -720,3 +720,79 @@ files nor reordering the list changes what a subject samples. See `derive_seed` 
 
 Upstream half: [gattia/pymskt#54](https://github.com/gattia/pymskt/issues/54), fixed in
 [#55](https://github.com/gattia/pymskt/pull/55), released as 0.1.21.
+
+---
+
+## 4. `weight_decay` was silently ignored under `Adam`
+
+| | |
+|---|---|
+| **Affects** | Every `optimizer: "Adam"` run that set `weight_decay`, from the initial commit → Aug 2026 |
+| **Unaffected** | `AdamW` and `schedule_free_AdamW` runs — **both shipped ShapeMedKnee configs use `AdamW`** |
+| **Severity** | Silent — the config said one thing, training did another |
+| **Fixed in** | `wave-1`, Aug 2026 ([#47](https://github.com/gattia/nsm/issues/47)) |
+
+### What was wrong
+
+`get_optimizer` passed `weight_decay` to `AdamW` and `schedule_free_AdamW` but built
+`torch.optim.Adam(list_params)` bare. `train_deep_sdf` forwards `config["weight_decay"]`
+unconditionally, so an `Adam` config trained with **zero** weight decay at any configured
+value. The regression harness's own config (`Adam`, `weight_decay: 1e-4`) ran through the
+bug, so its committed training baselines described un-decayed training and were
+regenerated with the fix.
+
+### How to tell whether one of your runs is affected
+
+`optimizer == "Adam"` and `weight_decay` set nonzero in its `model_params_config.json`
+→ that run had no weight decay. The weights themselves don't record it; the config plus
+the date is the test.
+
+### Magnitude, and how to reproduce old behaviour
+
+On the 8-epoch CPU harness at `weight_decay: 1e-4`, the loss trajectory diverges from the
+un-decayed path by ~0.03% at epoch 1, growing to ~3% by epoch 6 — a slow drift, not a
+jump. Reconstruction baselines did not move (`reconstruct_latent` builds its own
+optimizer and never went through `get_optimizer`). To reproduce an affected run exactly
+under fixed code, set `weight_decay: 0`.
+
+---
+
+## 5. Above two surfaces, overlap removal and multi-decoder reconstruction indexed wrong
+
+| | |
+|---|---|
+| **Affects** | `MultiSurfaceSDFSamples` training runs with **3+ surfaces**; reconstructions with **2+ decoders** |
+| **Unaffected** | Every two-surface, single-decoder run — **the shipped configuration** (both ShapeMedKnee models; `kneepipeline` passes one decoder) |
+| **Severity** | Silent — no error, plausible outputs |
+| **Fixed in** | `wave-1`, Aug 2026 ([#44](https://github.com/gattia/nsm/issues/44)) |
+
+### What was wrong
+
+Two instances of the same shape — positional bookkeeping that is only correct at the
+shipped size:
+
+- **`remove_overlapping_points`** tested a sign **sum** (`total == -2`), which equals
+  "inside two or more surfaces" only at exactly two surfaces. Enumerated by execution
+  over every sign pattern: at 3 or 5 surfaces it removed **nothing**; at 4 it removed
+  only the inside-3-of-4 patterns, missing all-4-inside and 2-of-4-inside. It never
+  wrongly removed a point, so affected datasets **retained** overlap points they should
+  have dropped. Now a count: inside (strictly negative SDF) of two or more.
+- **`reconstruct_latent`** indexed the flat `sdf_gt` list per decoder without a running
+  offset: the single-output branch used the decoder index, and the multi-output branch
+  restarted at 0 for every decoder — so with two 2-surface decoders, the second decoder
+  was scored against the **first decoder's** surfaces (demonstrated: all-NaN ground
+  truth for surfaces 2 and 3 left the loss bit-identical). Now a running surface offset.
+
+### How to tell whether one of your runs is affected
+
+Dataset side: `model_params_config.json` with 3+ surfaces (`objects_per_decoder` ≥ 3, or
+a `mesh_names` list of length ≥ 3) trained before the fix kept overlap points.
+Reconstruction side: any fit that passed 2+ decoders. Two-surface single-decoder runs
+are bit-identical before and after — the committed regression baselines did not move,
+and the sign-pattern enumeration at n=2 agrees with the old test on every pattern
+(`testing/NSM/datasets/test_remove_overlapping_points.py`).
+
+### Reproducing old behaviour
+
+No compatibility switch — the old selection is a bookkeeping error with no meaning worth
+preserving. Check out a pre-fix commit if an affected run must be reproduced exactly.
