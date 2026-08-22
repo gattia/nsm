@@ -53,36 +53,28 @@ class TestCombineMeshes:
         assert result == mesh1
 
     def test_combine_meshes_multiple_indices(self):
-        """Test combine_meshes with multiple indices."""
+        """
+        A combined result is a pymskt ``Mesh``, per the declared contract -- pymskt's
+        ``+`` operator returns a pyvista ``PolyData``, which ``combine_meshes`` rewraps
+        (#61). Callers rely on ``Mesh`` methods: ``load_reference_mesh`` saves the
+        reference with ``save_mesh`` under ``multiprocessing=True``.
+        """
         mesh1 = Mesh(np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]]), np.array([[0, 1, 2]]))
         mesh2 = Mesh(np.array([[2, 0, 0], [3, 0, 0], [2, 1, 0]]), np.array([[0, 1, 2]]))
         mesh3 = Mesh(np.array([[4, 0, 0], [5, 0, 0], [4, 1, 0]]), np.array([[0, 1, 2]]))
         meshes = [mesh1, mesh2, mesh3]
 
-        # Combine multiple meshes
         result = combine_meshes(meshes, [0, 1])
-        combined_expected = mesh1 + mesh2
-
-        # Check that vertices were combined (handle both Mesh and PolyData objects)
-        result_points = result.point_coords if hasattr(result, "point_coords") else result.points
-        expected_points = (
-            combined_expected.point_coords
-            if hasattr(combined_expected, "point_coords")
-            else combined_expected.points
+        assert isinstance(result, Mesh)
+        assert result.point_coords.shape[0] == (
+            mesh1.point_coords.shape[0] + mesh2.point_coords.shape[0]
         )
-        assert result_points.shape[0] == expected_points.shape[0]
 
-        # Test with three meshes
         result_three = combine_meshes(meshes, [0, 1, 2])
-        result_three_points = (
-            result_three.point_coords
-            if hasattr(result_three, "point_coords")
-            else result_three.points
-        )
-        expected_min_points = (
+        assert isinstance(result_three, Mesh)
+        assert result_three.point_coords.shape[0] == (
             mesh1.point_coords.shape[0] + mesh2.point_coords.shape[0] + mesh3.point_coords.shape[0]
         )
-        assert result_three_points.shape[0] >= expected_min_points
 
 
 @pytest.mark.skip(reason="Requires actual mesh files - use for integration testing")

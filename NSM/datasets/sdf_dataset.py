@@ -610,8 +610,7 @@ def read_meshes_get_sampled_pts(
             if isinstance(mesh_to_scale, (list, tuple)):
                 print(f"Registering to multiple surfaces: {mesh_to_scale}")
                 # Combine multiple meshes for registration
-                combined_mesh = combine_meshes(orig_meshes, mesh_to_scale)
-                registration_mesh = Mesh(combined_mesh)
+                registration_mesh = combine_meshes(orig_meshes, mesh_to_scale)
             else:
                 # Single mesh registration (original behavior)
                 registration_mesh = orig_meshes[mesh_to_scale]
@@ -1471,21 +1470,18 @@ class SDFSamples(torch.utils.data.Dataset):
             pass
         elif isinstance(self.reference_mesh, int):
             if isinstance(self.list_mesh_paths[0], (str, Mesh)):
-                mesh = self.list_mesh_paths[self.reference_mesh]
+                self.reference_mesh = Mesh(self.list_mesh_paths[self.reference_mesh])
             elif isinstance(self.list_mesh_paths[0], (list, tuple)):
-                # Support multi-surface reference mesh creation
+                # Multi-surface subject: the reference is the surface(s) that drive
+                # registration -- combined into one mesh when mesh_to_scale is a list.
+                subject = self.list_mesh_paths[self.reference_mesh]
                 if isinstance(self.mesh_to_scale, (list, tuple)):
-                    # When mesh_to_scale is a list, create reference mesh by combining multiple surfaces
-                    meshes = [
-                        Mesh(self.list_mesh_paths[self.reference_mesh][idx])
-                        for idx in self.mesh_to_scale
-                    ]
+                    meshes = [Mesh(subject[idx]) for idx in self.mesh_to_scale]
                     self.reference_mesh = combine_meshes(meshes, list(range(len(meshes))))
                 else:
-                    mesh = self.list_mesh_paths[self.reference_mesh][self.mesh_to_scale]
+                    self.reference_mesh = Mesh(subject[self.mesh_to_scale])
             else:
                 raise TypeError("provided list_meshes wrong type")
-            self.reference_mesh = Mesh(mesh)
         elif isinstance(self.reference_mesh, str):
             self.reference_mesh = Mesh(self.reference_mesh)
         elif isinstance(self.reference_mesh, list):
@@ -2342,18 +2338,17 @@ class MultiSurfaceSDFSamples(SDFSamples):
 
 def combine_meshes(meshes, mesh_indices):
     """
-    Combine multiple meshes into a single mesh using Mesh addition operator.
+    Combine the selected meshes into a single pymskt Mesh.
 
     Args:
         meshes (list): List of Mesh objects
         mesh_indices (list or int): Indices of meshes to combine
 
     Returns:
-        Mesh: Combined mesh object
-
-    Notes:
-        Since Mesh objects support the + operator, we can simply add them together
-        to combine multiple surfaces into a single mesh for registration.
+        Mesh: The single selected mesh unchanged, or -- when two or more are combined --
+        a new Mesh wrapping their union. pymskt's ``+`` operator returns a pyvista
+        ``PolyData``, which has no ``save_mesh``, so the combined result is rewrapped
+        before returning (#61).
     """
     if isinstance(mesh_indices, int):
         return meshes[mesh_indices]
@@ -2368,4 +2363,4 @@ def combine_meshes(meshes, mesh_indices):
         if meshes[idx] is not None:
             combined_mesh = combined_mesh + meshes[idx]
 
-    return combined_mesh
+    return Mesh(combined_mesh)

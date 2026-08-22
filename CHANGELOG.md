@@ -119,6 +119,11 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   happens to equal the production value, which is why nothing noticed. Not yet in the
   cache key — that is #19's business (it does not change cached bytes).
 
+- **`reference_mesh=<int>` with multi-surface registration builds** (#61). The path
+  raised `UnboundLocalError`, and `combine_meshes` returned a pyvista `PolyData` (no
+  `save_mesh`) whenever it actually combined meshes; it now keeps its declared `Mesh`
+  return type.
+
 - **`cyclic_anneal_linear` no longer NaNs runs shorter than its cycle count.**
   `floor(n_epochs / n_cycles)` was 0 for `n_epochs < 5`, so `epoch % 0` returned NaN and
   the NaN regularization weight silently NaN'd the entire training loss — the run

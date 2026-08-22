@@ -950,3 +950,33 @@ class TestConstructorContract:
         wide = build_dataset(meshes, cache, load_cache=True, joint_scale_buffer=0.25, **joint)
 
         assert wide.max_radius / narrow.max_radius == pytest.approx(1.25 / 1.1, rel=1e-6)
+
+
+class TestReferenceMeshFromSubjectIndex:
+    """
+    ``reference_mesh=<int>`` names a subject to register everyone else to (#61, fixed
+    Aug 2026).
+    """
+
+    def test_an_integer_reference_with_combined_surfaces_builds(self, tmp_path_factory):
+        """
+        With ``mesh_to_scale=[0, 1]``, subject 0's two surfaces are combined into the
+        registration target. This path raised ``UnboundLocalError`` one statement before
+        the combine result -- a pyvista ``PolyData`` with no ``save_mesh`` -- would have
+        broken anyway; ``combine_meshes`` now keeps its declared ``Mesh`` return type.
+        """
+        from pymskt.mesh import Mesh
+
+        subjects = write_synthetic_meshes(tmp_path_factory.mktemp("ref_meshes"))[:2]
+        dataset = build_dataset(
+            subjects,
+            tmp_path_factory.mktemp("ref_cache"),
+            mesh_to_scale=[0, 1],
+            reference_mesh=0,
+            **SMALL,
+        )
+
+        assert isinstance(dataset.reference_mesh, Mesh)
+        assert len(dataset) == 2
+        item, _ = dataset[0]
+        assert {"xyz", "gt_sdf"} <= set(item)
