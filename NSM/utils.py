@@ -407,11 +407,6 @@ def get_optimizer(model, latent_vecs, lr_schedules, optimizer="Adam", weight_dec
     return optimizer
 
 
-def symmetric_chammfer(p1, p2, n_pts):
-    """ """
-    pass
-
-
 def is_jsonable(x):
     try:
         json.dumps(x)
