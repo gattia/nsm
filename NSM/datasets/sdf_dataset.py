@@ -216,6 +216,32 @@ def get_cube_mins_maxs(pts):
     return mins, maxs
 
 
+def get_buffered_cube_mins_maxs(pts, buffer):
+    """
+    The uniform-sampling cube around ``pts``, expanded symmetrically by ``buffer``.
+
+    Each side moves out by ``buffer / 2`` of the cube's span, so the span grows by a
+    factor of ``1 + buffer`` and the centre stays put. The buffer exists so the cube
+    still covers the model's full [-1, 1] domain when normalization leaves the object
+    smaller than it -- e.g. ``scale_jointly`` with a ``joint_scale_buffer`` (48c5f60).
+
+    One helper for both samplers on purpose: the two carried private copies of this
+    arithmetic until Aug 2026 and they diverged -- ``mins`` was rebound before ``maxs``
+    read it, so a nonzero buffer grew the cube more above than below, and only the
+    single-mesh copy clipped the result. See ``docs/KNOWN_ISSUES.md`` § History (#40).
+
+    Args:
+        pts (np.ndarray): (n_pts, 3) array of points
+        buffer (float): Fraction of the span added across each axis (half per side).
+
+    Returns:
+        tuple: (mins, maxs) of the expanded cube, each an np array of shape (3,)
+    """
+    mins, maxs = get_cube_mins_maxs(pts)
+    span = maxs - mins
+    return mins - buffer / 2 * span, maxs + buffer / 2 * span
+
+
 def read_mesh_get_sampled_pts(
     path,
     mean=[0, 0, 0],
@@ -254,6 +280,9 @@ def read_mesh_get_sampled_pts(
         return_point_cloud (bool, optional): Whether to return the point cloud. Defaults to False.
         fix_mesh (bool, optional): Whether to fix the mesh (using meshfix). Defaults to True.
         include_surf_in_pts (bool, optional): Whether to include the surface points in the random points. Defaults to False.
+        uniform_pts_buffer (float, optional): Expansion of the uniform sampling cube, as a
+            fraction of its span; see get_buffered_cube_mins_maxs. Only used when sigma is
+            None. Defaults to 0.0.
         seed (int, optional): Seed for the random draw. Defaults to None (unseeded).
 
     Returns:
@@ -353,27 +382,21 @@ def read_mesh_get_sampled_pts(
                 seed=seed,
             )
         else:
-            mins, maxs = get_cube_mins_maxs(new_pts)
-            mins = mins - uniform_pts_buffer / 2 * (maxs - mins)
-            maxs = maxs + uniform_pts_buffer / 2 * (maxs - mins)
+            mins, maxs = get_buffered_cube_mins_maxs(new_pts, uniform_pts_buffer)
             rand_pts = get_rand_uniform_pts(n_pts, mins=mins, maxs=maxs, seed=seed)
 
         if include_surf_in_pts is True:
             rand_pts = np.concatenate([rand_pts, new_pts], axis=0)
 
-        if norm_pts is True:
-            clip_val = 1.0 + uniform_pts_buffer / 2
-            rand_pts = np.clip(rand_pts, -clip_val, clip_val)
-
         rand_sdf = new_mesh.get_sdf_pts(pts=rand_pts, method="pcu")
 
         results["xyz"] = rand_pts
         results["sdf"] = rand_sdf
-        results["pts_surface"] = [0] * rand_pts.shape[0]
+        results["pts_surface"] = np.zeros(rand_pts.shape[0], dtype=np.int64)
     else:
         results["pts"] = new_pts
         results["sdf"] = np.zeros(new_pts.shape[0])
-        results["pts_surface"] = [0] * new_pts.shape[0]
+        results["pts_surface"] = np.zeros(new_pts.shape[0], dtype=np.int64)
 
     if return_point_cloud is True:
         results["point_cloud"] = new_pts
@@ -701,9 +724,7 @@ def read_meshes_get_sampled_pts(
         if None in sigma:
             new_pts_ = [x for x in new_pts if x is not None]
             pts_cube = np.concatenate(new_pts_, axis=0)
-            mins, maxs = get_cube_mins_maxs(pts_cube)
-            mins = mins - uniform_pts_buffer / 2 * (maxs - mins)
-            maxs = maxs + uniform_pts_buffer / 2 * (maxs - mins)
+            mins, maxs = get_buffered_cube_mins_maxs(pts_cube, uniform_pts_buffer)
 
         for new_pts_idx, new_mesh_ in enumerate(new_meshes):
             if new_mesh_ is None:
@@ -727,10 +748,12 @@ def read_meshes_get_sampled_pts(
                     rand_pts_ = np.concatenate([rand_pts_, new_pts_], axis=0)
 
                 rand_pts.append(rand_pts_)
-                pts_surface.append([new_pts_idx] * rand_pts_.shape[0])
+                pts_surface.append(np.full(rand_pts_.shape[0], new_pts_idx, dtype=np.int64))
             else:
                 rand_pts.append(np.zeros((0, 3)))
-                pts_surface.append(np.zeros((0, 3)))
+                # 1-D like its siblings: a (0, 3) entry here makes the concatenate below
+                # raise as soon as any other surface contributed points.
+                pts_surface.append(np.zeros(0, dtype=np.int64))
 
         rand_pts = np.concatenate(rand_pts, axis=0)
         # NOTE: pts_surface indices correspond to original mesh positions in the input list,
@@ -793,7 +816,7 @@ def read_meshes_get_sampled_pts(
         for pts_idx, new_pts_ in enumerate(new_pts):
             if new_pts_ is None:
                 continue
-            pts_surface.append([pts_idx] * new_pts_.shape[0])
+            pts_surface.append(np.full(new_pts_.shape[0], pts_idx, dtype=np.int64))
         pts_surface = np.concatenate(pts_surface, axis=0)
 
         new_pts_filtered = [x for x in new_pts if x is not None]

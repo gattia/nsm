@@ -25,6 +25,7 @@ from _harness import (
     build_dataset,
     build_model,
     build_single_surface_dataset,
+    quiet,
     run_training,
     training_config,
     write_synthetic_meshes,
@@ -778,3 +779,77 @@ class TestPointCenteringAndScaling:
         points = np.array([[1.0, 1.0, 1.0], [3.0, 3.0, 3.0]])
         get_pts_center_and_scale(points)
         assert np.allclose(points, [[1.0, 1.0, 1.0], [3.0, 3.0, 3.0]])
+
+
+class TestUniformSamplingCube:
+    """
+    The uniform-sampling cube the two samplers draw from when ``sigma`` is None.
+
+    The single- and multi-mesh samplers carried private copies of the cube arithmetic and
+    they had diverged (#40, fixed Aug 2026): in both, ``mins`` was rebound before ``maxs``
+    read it, so a nonzero ``uniform_pts_buffer`` grew the cube more above than below; and
+    only the single-mesh copy clipped its draws, to +/-(1 + buffer/2), piling the
+    truncated samples onto the clip faces. Both now share
+    ``get_buffered_cube_mins_maxs`` and neither clips.
+    """
+
+    def test_the_buffer_expands_the_cube_symmetrically(self):
+        from NSM.datasets.sdf_dataset import get_buffered_cube_mins_maxs, get_cube_mins_maxs
+
+        rng = np.random.default_rng(0)
+        pts = rng.normal(size=(500, 3)) + [5.0, -2.0, 0.5]
+        mins0, maxs0 = get_cube_mins_maxs(pts)
+        mins, maxs = get_buffered_cube_mins_maxs(pts, 0.5)
+
+        assert np.allclose((mins + maxs) / 2, (mins0 + maxs0) / 2), "the centre moved"
+        assert np.allclose(maxs - mins, 1.5 * (maxs0 - mins0)), "span must grow by 1+buffer"
+
+    def test_the_two_samplers_draw_from_the_same_cube(self, meshes):
+        """
+        Same mesh, same buffer, uniform path: a normalized mesh spans a +/-1 cube, and
+        ``uniform_pts_buffer=0.5`` widens it to +/-1.5 in both samplers. Before the fix
+        the single-mesh draw was clipped to +/-1.25 and the multi-mesh one spanned
+        -1.50/+1.56 -- so each bound assertion below fails against one of the two old
+        behaviours.
+        """
+        from NSM.datasets.sdf_dataset import (
+            read_mesh_get_sampled_pts,
+            read_meshes_get_sampled_pts,
+        )
+
+        path = meshes[0][0]
+        kwargs = dict(center_pts=True, norm_pts=True, fix_mesh=False, get_random=True)
+        with quiet():
+            single = read_mesh_get_sampled_pts(
+                path, sigma=None, n_pts=4000, uniform_pts_buffer=0.5, seed=0, **kwargs
+            )
+            multi = read_meshes_get_sampled_pts(
+                [path], sigma=[None], n_pts=[4000], uniform_pts_buffer=0.5, seed=0, **kwargs
+            )
+
+        for label, pts in (("single", single["xyz"]), ("multi", multi["pts"])):
+            assert pts.min() >= -1.5 and pts.max() <= 1.5, f"{label}: cube too large"
+            assert pts.max() > 1.4 and pts.min() < -1.4, f"{label}: cube did not reach its bounds"
+            assert abs(pts.max() + pts.min()) < 0.1, f"{label}: cube is asymmetric"
+
+    def test_pts_surface_return_types_match(self, meshes):
+        """
+        ``pts_surface`` was a Python list from the single-mesh sampler and an int64 array
+        from the multi-mesh one -- the last of #40's three divergences.
+        """
+        from NSM.datasets.sdf_dataset import (
+            read_mesh_get_sampled_pts,
+            read_meshes_get_sampled_pts,
+        )
+
+        path = meshes[0][0]
+        kwargs = dict(center_pts=True, norm_pts=True, fix_mesh=False, get_random=True)
+        with quiet():
+            single = read_mesh_get_sampled_pts(path, sigma=0.05, n_pts=200, seed=0, **kwargs)
+            multi = read_meshes_get_sampled_pts([path], sigma=[0.05], n_pts=[200], seed=0, **kwargs)
+
+        for label, result in (("single", single), ("multi", multi)):
+            surface = result["pts_surface"]
+            assert isinstance(surface, np.ndarray), label
+            assert surface.dtype == np.int64, label
+            assert surface.shape == (200,), label

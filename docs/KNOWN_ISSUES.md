@@ -796,3 +796,59 @@ and the sign-pattern enumeration at n=2 agrees with the old test on every patter
 
 No compatibility switch — the old selection is a bookkeeping error with no meaning worth
 preserving. Check out a pre-fix commit if an affected run must be reproduced exactly.
+
+---
+
+## 6. The uniform sampling cube was asymmetric, and the single-mesh sampler clipped its draws
+
+| | |
+|---|---|
+| **Affects** | Uniform ("random") training samples: (a) any run with a nonzero `uniform_pts_buffer` — the parameter exists since Jan 2025 (`48c5f60`) and the shipped `default_config.json` sets `dataset_uniform_pts_buffer: 0.2`; (b) any **single-surface** run with `norm_pts=True` |
+| **Unaffected** | Multi-surface runs at buffer 0 (the arithmetic is exactly zero — the harness baselines did not move); every `norm_pts=False` run, which is what `scale_jointly` requires and **both shipped ShapeMedKnee configs use**; reconstruction unless `get_rand_pts=True` (`kneepipeline` leaves it off) |
+| **Severity** | Silent — the samples were drawn from a slightly different region than configured |
+| **Fixed in** | `sdf-dataset-fixes`, Aug 2026 ([#40](https://github.com/gattia/nsm/issues/40)) |
+
+### What was wrong
+
+The single- and multi-mesh samplers carried private copies of the buffered-cube
+arithmetic, and both rebound `mins` before `maxs` read it:
+
+```python
+mins = mins - uniform_pts_buffer / 2 * (maxs - mins)
+maxs = maxs + uniform_pts_buffer / 2 * (maxs - mins)   # (maxs - mins) has already grown
+```
+
+so a nonzero buffer grew the cube more above than below and moved its centre up. At the
+shipped `0.2` on a normalized object the cube was `[-1.200, +1.220]` per axis instead of
+`±1.200` — the top face 1% of the span too far out.
+
+Separately, only the single-mesh copy clipped its draws — to `±1` originally, widened to
+`±(1 + buffer/2)` by `48c5f60` — under `norm_pts=True`. The clip piled the truncated
+samples onto the cube faces, and it caught the *near-surface* Gaussian draws too:
+measured on a normalized synthetic bone, 0.6% of samples at `sigma=0.01` and 2.9% at
+`sigma=0.03` had a coordinate beyond `±1` and were moved onto the faces. The multi-mesh
+sampler never clipped, so with `uniform_pts_buffer=0.5, norm_pts=True` the two spanned
+`±1.25` (clipped) versus `-1.50/+1.56` (asymmetric).
+
+Both now share one helper, `get_buffered_cube_mins_maxs` — symmetric, centre preserved,
+no clipping in either sampler.
+
+### How to tell whether one of your runs is affected
+
+Check the run's dataset settings: a nonzero `uniform_pts_buffer`
+(`dataset_uniform_pts_buffer` in configs), or a single-surface dataset with
+`norm_pts: true`, built before the fix → the uniform samples (and, under the clip, some
+near-surface samples) came from the old region.
+
+**The cache will not tell you, and it will not heal itself:** `uniform_pts_buffer` is not
+in the cache key ([#19](https://github.com/gattia/nsm/issues/19)), so a post-fix run
+pointed at a pre-fix cache silently reuses the old points. Delete the affected `.npz`
+files to resample.
+
+### Reproducing old behaviour
+
+No compatibility switch — the asymmetry was a bookkeeping error, not a semantic option.
+Check out a pre-fix commit, or reuse the pre-fix cache files (see above), if an affected
+run must be reproduced exactly.
+
+*Pinned by:* `test_dataset_cache.TestUniformSamplingCube`.
