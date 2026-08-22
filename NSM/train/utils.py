@@ -6,7 +6,15 @@ from NSM.utils import LR_TARGET_LATENT, LR_TARGET_MODEL, resolve_schedule_target
 
 
 def calc_weight(epoch, n_epochs, schedule, cooldown=None):
+    """Curriculum weight ramping 0 -> 1 over training (1.0 inside any cooldown tail).
 
+    Its two consumers apply it in OPPOSITE directions, deliberately:
+    ``sample_difficulty_weight`` uses the value directly (emphasis grows over
+    training), while ``surface_accuracy_e`` uses ``1 - calc_weight(...)`` so the
+    error tolerance SHRINKS over training (Curriculum-DeepSDF eq. 5). That also
+    means ``schedule="constant"`` (always 1.0) keeps sample-difficulty weighting
+    fully on but turns the surface-accuracy tolerance OFF entirely (1 - 1 = 0).
+    """
     if cooldown is not None:
         if epoch > (n_epochs - cooldown):
             return 1.0
@@ -49,10 +57,19 @@ def cyclic_anneal_linear(
 
 
 def get_kld(array, samples_dim=0):
-    """
-    kld_loss = -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1)
+    """Scalar KLD between the BATCH's empirical diagonal Gaussian and N(0, I).
+
+    Not the standard per-sample VAE estimator (which sums a per-row
+    ``-0.5 * (1 + log_var - mu**2 - exp(log_var))`` from encoder outputs): this takes
+    the empirical mean and variance of ``array`` across ``samples_dim`` and plugs
+    those moments into the closed form, summing over latent dimensions into one
+    scalar. ``torch.var`` applies Bessel's correction. Because the moments are
+    estimated from whatever batch is passed, the value depends on batch size —
+    do not compare its magnitude across runs with different batch sizes.
+
+    Reachable only via ``code_regularization_type_prior: "kld_diagonal"``, which is
+    not the shipped default.
     https://en.wikipedia.org/wiki/Kullback%E2%80%93Leibler_divergence#Multivariate_normal_distributions
-    Above is the KLD between a diagonal multivariate normal distribution and a standard normal distribution.
     """
     mean = torch.mean(array, dim=samples_dim)
     var = torch.var(array, dim=samples_dim)
@@ -68,6 +85,9 @@ def add_plain_lr_to_config(config, idx_model=None, idx_latent=None):
     Which entry is the model and which is the latent comes from each entry's declared
     ``Target``, not from its position, so logged ``model_lr_*`` / ``latent_lr_*`` values
     always carry the correct labels. Explicit indices override the lookup.
+
+    Mutates the caller's ``config`` in place and returns that same object (the return
+    value is a convenience, not a copy).
     """
     if idx_model is None or idx_latent is None:
         targets = resolve_schedule_targets(

@@ -25,9 +25,12 @@ loss_l1 = torch.nn.L1Loss(reduction="none")
 def train_deep_sdf(config, models: tuple, sdf_dataset, use_wandb=False):
 
     warnings.warn(
-        "train_deep_sdf_multi_head is DEPRECATED and known to be broken: the optimizer is "
+        "train_deep_sdf_multi_head is known to be BROKEN and unfixed: the optimizer is "
         "built from a leaked loop variable, so only the LAST model in `models` is ever "
-        "optimized. Use NSM.train.train_deep_sdf with 'objects_per_decoder' > 1 instead.",
+        "optimized (issue #51). Do not use it until that is fixed. There is no "
+        "replacement: this trainer fits N independent decoders against one shared "
+        "latent embedding, which train_deep_sdf with 'objects_per_decoder' > 1 (one "
+        "decoder, N output channels) is not.",
         DeprecationWarning,
         stacklevel=2,
     )
