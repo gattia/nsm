@@ -84,7 +84,10 @@ def add_plain_lr_to_config(config, idx_model=None, idx_latent=None):
     for key, idx in schedules.items():
         schedule_ = schedule_specs[idx]
         config[f"{key}_lr_type"] = schedule_["Type"]
-        config[f"{key}_lr_initial"] = schedule_["Initial"]
+        # Constant entries carry "Value" where every other type carries "Initial".
+        initial = schedule_.get("Initial", schedule_.get("Value"))
+        if initial is not None:
+            config[f"{key}_lr_initial"] = initial
         if "Interval" in schedule_.keys():
             config[f"{key}_lr_update_interval"] = schedule_["Interval"]
         if "Factor" in schedule_.keys():
