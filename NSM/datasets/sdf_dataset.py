@@ -77,22 +77,16 @@ def mesh_content_key(paths):
 
 def get_rand_uniform_pts(n_pts, mins=(-1, -1, -1), maxs=(1, 1, 1), seed=None):
     """
-    Given a set of points, returns a set of points that are randomly sampled
-    from a uniform distribution from min(s) to max(s).
+    Sample ``n_pts`` points uniformly from the axis-aligned box ``[mins, maxs]``.
 
     Args:
         n_pts (int): Number of points to sample
-        mins (tuple, optional): Minimum value of the distribution. Defaults to (-1, -1, -1).
-        maxs (tuple, optional): Maximum value of the distribution. Defaults to (1, 1, 1).
+        mins (tuple, optional): Per-axis lower bounds. Defaults to (-1, -1, -1).
+        maxs (tuple, optional): Per-axis upper bounds. Defaults to (1, 1, 1).
         seed (int, optional): Seed for this draw. Defaults to None (unseeded).
 
     Returns:
         np.ndarray: (n_pts, 3) array of points
-
-    Tests:
-        - Ensure returns np array
-            - Ensure shape (n_pts, 3)
-            - Ensure points within input mins/maxs
     """
     # seed=None stays on the legacy global stream, so an unseeded call draws exactly the
     # numbers it always did; default_rng is a different stream entirely.
@@ -155,6 +149,7 @@ def get_pts_center_and_scale(pts, scale_method="max_rad", return_pts=False, pts_
 
 
 def is_zipfile(filename):
+    """``zipfile.is_zipfile`` that returns False on unreadable paths instead of raising."""
     try:
         return zipfile.is_zipfile(filename)
     except (IOError, zipfile.BadZipfile):
@@ -163,13 +158,17 @@ def is_zipfile(filename):
 
 def meshfix(mesh, assert_=False, assert_error=0.01):
     """
-    Fixes a mesh using meshfix.
+    Fix a mesh in place with pymskt's meshfix wrapper, printing the point-count change.
+
+    Degenerate meshes break SDF fitting, which is why the datasets run this on every
+    mesh they read unless ``fix_mesh=False``.
 
     Args:
-        mesh (mskt.mesh.Mesh): Mesh to fix
-
-    Notes:
-        Fixes the mesh in place.
+        mesh (mskt.mesh.Mesh): Mesh to fix. Modified in place.
+        assert_ (bool, optional): If True, raise ``AssertionError`` when fixing dropped
+            ``assert_error`` or more of the original points. Defaults to False.
+        assert_error (float, optional): Tolerated fraction of dropped points.
+            Defaults to 0.01.
     """
     n_pts_orig = mesh.point_coords.shape[0]
     mesh.fix_mesh()
@@ -186,21 +185,21 @@ def meshfix(mesh, assert_=False, assert_error=0.01):
 
 def get_cube_mins_maxs(pts):
     """
-    Given a set of points, returns the mins and maxs of the points
-    in a cube.
+    The cube the uniform sampler draws from: centred on the centroid of ``pts``, with
+    half-width equal to the largest centroid-to-point distance.
+
+    That circumscribes the points' bounding *sphere*, so it is deliberately larger than
+    their axis-aligned bounding box -- it matches the ``max_rad`` normalization, which
+    scales by the same radius.
 
     Args:
         pts (np.ndarray): (n_pts, 3) array of points
 
     Returns:
-        tuple: (mins, maxs) of the points
+        tuple: (mins, maxs) of the cube, each an np array of shape (3,)
 
     Raises:
         ValueError: If input is empty or has wrong dimensions
-
-    Tests:
-        - ensure returns tuple length 2
-        - ensure mins and maxs are np arrays of shape (3,)
     """
     if pts.size == 0:
         raise ValueError("Input array is empty")
@@ -263,40 +262,54 @@ def read_mesh_get_sampled_pts(
     **kwargs,
 ):
     """
-    Function to read in and sample points from a single mesh.
+    Read one mesh; optionally register and normalize it; sample SDF points from it.
 
     Args:
         path (str): Path to mesh
-        sigma (float, optional): Standard deviation/scale to apply for random sample(s). Defaults to 1.
+        sigma (float or None, optional): Width of the perturbation applied to surface
+            points when drawing random samples. None instead draws uniformly from the
+            buffered cube around the mesh. Defaults to 1.
         n_pts (int, optional): Number of points to sample. Defaults to 200000.
         rand_function (str, optional): Distribution to sample from. Defaults to 'normal'. Also supports 'laplace'.
-        center_pts (bool, optional): Whether to center the points. Defaults to True.
-        norm_pts (bool, optional): Whether to normalize the points. Defaults to False.
+        center_pts (bool, optional): Defaults to True.
+        norm_pts (bool, optional): Defaults to False. The two flags decide *whether*
+            normalization runs, not which half of it: if either is True the mesh is both
+            centered and scaled by ``get_pts_center_and_scale``; only False/False leaves
+            coordinates untouched. See ``docs/KNOWN_ISSUES.md`` § Open,
+            "``center_pts`` and ``norm_pts`` do not select which normalization happens".
         scale_method (str, optional): Method to scale the points. Defaults to 'max_rad'.
-        get_random (bool, optional): Whether to sample random points. Defaults to True.
-        register_to_mean_first (bool, optional): Whether to register the mesh to the mean mesh first. Defaults to False.
+        get_random (bool, optional): Sample random points around the surface (True), or
+            return the surface vertices themselves with SDF 0 (False). Defaults to True.
+        register_to_mean_first (bool, optional): Similarity-register the mesh to
+            ``mean_mesh`` before any normalization. Defaults to False.
         mean_mesh (vtkPolyData or mskt.mesh.Mesh, optional): Mean mesh to register to. Defaults to None.
-        return_point_cloud (bool, optional): Whether to return the point cloud. Defaults to False.
+        return_point_cloud (bool, optional): Also store the normalized surface points
+            under ``"point_cloud"``. Defaults to False.
         fix_mesh (bool, optional): Whether to fix the mesh (using meshfix). Defaults to True.
-        include_surf_in_pts (bool, optional): Whether to include the surface points in the random points. Defaults to False.
+        include_surf_in_pts (bool, optional): Append the surface vertices to the random
+            points, so ``"xyz"`` holds ``n_pts`` + n_vertices rows. Defaults to False.
         uniform_pts_buffer (float, optional): Expansion of the uniform sampling cube, as a
             fraction of its span; see get_buffered_cube_mins_maxs. Only used when sigma is
             None. Defaults to 0.0.
         seed (int, optional): Seed for the random draw. Defaults to None (unseeded).
 
     Returns:
-        dict: Dictionary of results
+        dict or None: None when ``path`` does not exist -- the datasets skip that
+        subject. Otherwise:
+
+        - ``"orig_pts"``, ``"new_pts"``, ``"orig_mesh"``, ``"new_mesh"``: one-element
+          lists (points and mesh, before / after transformation), matching
+          ``read_meshes_get_sampled_pts``'s per-surface layout.
+        - ``"scale"``, ``"center"``: the normalization applied (1 and zeros when none).
+        - ``"icp_transform"``: the registration transform, or None.
+        - With ``get_random=True``: sample coordinates under ``"xyz"`` (n, 3), signed
+          distances under ``"sdf"`` (n,), and ``"pts_surface"`` (n,) of zeros.
+        - With ``get_random=False``: the surface vertices under ``"pts"`` -- a
+          *different key* than the random path's ``"xyz"`` -- with ``"sdf"`` all zeros.
 
     Notes:
-        - Is this too big? Can this be broken into smaller functions and then
-        called in this function?
-            - Its currently > 100 lines of code.
-            - Some of the individual components are lengthy enough to be a single function.
-            - This will make it easier to test and debug
-                - Each individual function could be more easily tested.
-
-    Tests:
-        -
+        Unknown keyword arguments are swallowed silently, except the historical
+        ``return_*`` flags and ``mean``, which print a deprecation line.
     """
     # Accepted for backwards compatibility and ignored: each is now unconditionally on,
     # so passing False did not do what it said. They were documented as live parameters
@@ -416,25 +429,21 @@ def read_mesh_get_sampled_pts(
 
 def unpack_pts(data, pts_name="orig_pts"):
     """
-    Unpacks the points loaded from a numpy.npz cache file. The cache is a
-    dict of various params, e.g., xyz, sdf, indices of positive and negative
-    sdfs, for each surface.
+    Rebuild one key group from a loaded ``.npz`` cache into a per-surface list.
+
+    ``save_data_to_cache`` flattens list-valued entries to indexed keys
+    (``new_pts_0``, ``new_pts_1``, ...); this reads ``{pts_name}_0..N`` back. Keys are
+    matched by *substring*, so a ``pts_name`` that is a prefix of another stored group
+    would miscount its members -- none of the group names this is called with collide
+    that way.
 
     Args:
-        data (dict): Dictionary of data loaded from a numpy.npz cache file.
-        pts_name (str, optional): Name of the points to unpack. Defaults to 'orig_pts'.
+        data (np.lib.npyio.NpzFile): Loaded ``.npz`` cache file.
+        pts_name (str, optional): Name of the key group to unpack. Defaults to 'orig_pts'.
 
     Returns:
-        list: List of torch tensors of the points. The index position indicates
-        what the surface the points are from.
-
-    Notes:
-        -
-
-    Tests:
-        - Give path npz file, load, ensure:
-            - returns list of torch tensors
-            - the list length is the number of surfaces
+        list: Torch tensors; index position = surface position. Empty when the group
+        is absent.
     """
     # get original points...
     pts = []
@@ -451,7 +460,26 @@ def unpack_numpy_data(
     point_cloud=False,
     list_additional_keys=["orig_pts", "new_pts", "pos_idx", "neg_idx", "surf_idx"],
 ):
+    """
+    Normalize a cached sample dict to the in-memory layout the datasets use.
 
+    Accepts the key spellings the cache has used over time -- ``pts``/``xyz`` for
+    coordinates, ``sdfs``/``gt_sdf``/``sdf`` for signed distances -- and returns them
+    as float32 tensors under ``xyz`` / ``gt_sdf``, plus each requested key group
+    unpacked into a per-surface list (see ``unpack_pts``).
+
+    Args:
+        data_ (np.lib.npyio.NpzFile or dict): Raw cached data.
+        point_cloud (bool, optional): Also convert ``point_cloud``. Defaults to False.
+        list_additional_keys (list, optional): Key groups to unpack into per-surface
+            lists; absent groups come back as empty lists.
+
+    Returns:
+        dict: ``xyz``, ``gt_sdf``, and one list per requested key group.
+
+    Raises:
+        ValueError: If no coordinate or no SDF key is present under any known name.
+    """
     data = {}
 
     # Get points / xyz coords
@@ -507,40 +535,76 @@ def read_meshes_get_sampled_pts(
     **kwargs,
 ):
     """
-    Function to read in and sample points from multiple meshes.
+    Read one subject's surfaces; register and normalize them jointly; sample SDF points.
 
     Args:
-        paths (list): List of paths to meshes
-        sigma (list, optional): Standard deviation/scale to apply for random sample(s). Defaults to [1, 1].
-        n_pts (list, optional): Number of points to sample per mesh. Defaults to [200000, 200000].
+        paths (list): Per-surface mesh paths for one subject, in a fixed surface order.
+            A None entry marks a missing surface: it is carried through as None
+            placeholders. A path that does not *exist* is different -- the whole subject
+            returns None.
+        sigma (list, optional): Per-surface perturbation widths for draws around each
+            surface. A None entry draws that surface's points uniformly from one cube
+            around all surfaces jointly. Defaults to [1, 1].
+        n_pts (list, optional): Number of points to sample per mesh; 0 contributes no
+            points for that surface. Defaults to [200000, 200000].
         rand_function (str, optional): Distribution to sample from. Defaults to 'normal'. Also supports 'laplace'.
-        center_pts (bool, optional): Whether to center the points. Defaults to True.
-        norm_pts (bool, optional): Whether to normalize the points. Defaults to False.
+        center_pts (bool, optional): Defaults to True.
+        norm_pts (bool, optional): Defaults to False. As in
+            ``read_mesh_get_sampled_pts``: the two flags decide *whether* normalization
+            runs, not which half of it -- either being True both centers and scales; see
+            ``docs/KNOWN_ISSUES.md`` § Open.
         scale_method (str, optional): Method to scale the points. Defaults to 'max_rad'.
-        get_random (bool, optional): Whether to sample random points. Defaults to True.
-        register_to_mean_first (bool, optional): Whether to register meshes to mean mesh first. Defaults to False.
+        get_random (bool, optional): Sample random points around the surfaces (True), or
+            use the surface vertices themselves as the points (False). Defaults to True.
+        register_to_mean_first (bool, optional): Similarity-register to ``mean_mesh``
+            before any normalization. Defaults to False.
         mean_mesh (vtkPolyData or mskt.mesh.Mesh, optional): Mean mesh to register to. Defaults to None.
         fix_mesh (bool, optional): Whether to fix meshes (using meshfix). Defaults to True.
-        include_surf_in_pts (bool, optional): Whether to include surface points in random points. Defaults to False.
-        scale_all_meshes (bool, optional): Whether to scale all meshes together. Defaults to True.
-        center_all_meshes (bool, optional): Whether to center all meshes together. Defaults to False.
+        include_surf_in_pts (bool, optional): Append each surface's vertices to its
+            random points. Defaults to False.
+        scale_all_meshes (bool, optional): Scale using every surface's points (True) or
+            only ``mesh_to_scale``'s (False). Defaults to True.
+        center_all_meshes (bool, optional): Center on every surface's points (True) or
+            only ``mesh_to_scale``'s (False). Under the defaults the frame is centered
+            on ``mesh_to_scale`` and scaled so every surface fits the domain -- e.g.
+            centered on the bone, scaled by bone + cartilage. Defaults to False.
         mesh_to_scale (int or list, optional): Index(es) of mesh(es) to use for registration and scaling.
             If int, uses single mesh. If list, combines multiple meshes for registration. Defaults to 0.
         verbose (bool, optional): Whether to print verbose output. Defaults to False.
-        icp_transform (vtk.vtkTransform, optional): Pre-computed ICP transform. Defaults to None.
-        uniform_pts_buffer (float, optional): Buffer for uniform point sampling. Defaults to 0.0.
+        icp_transform (vtk.vtkTransform, optional): Pre-computed transform to apply
+            instead of registering. The dataset's sampling passes reuse the first pass's
+            transform this way, so all of a subject's points share one registration.
+            Defaults to None.
+        uniform_pts_buffer (float, optional): Expansion of the uniform sampling cube, as
+            a fraction of its span; see get_buffered_cube_mins_maxs. Only used for
+            surfaces whose sigma is None. Defaults to 0.0.
         seed (int, optional): Seed for the random draws; each surface gets its own seed
             derived from it. Defaults to None (unseeded).
 
     Returns:
-        dict: Dictionary containing processed mesh data, points, SDFs, and transforms
+        dict or None: None when any path does not exist. Otherwise:
+
+        - ``"pts"`` (n, 3): sample coordinates, all surfaces concatenated. (This
+          function's random path uses ``"pts"`` where the single-mesh one says
+          ``"xyz"``; callers probe both.)
+        - ``"sdf"``: list with one entry per surface -- each surface's signed distance
+          to *all* n points, or None for a missing surface. With ``get_random=False``
+          the entries are 0 where the points came from that same surface.
+        - ``"pts_surface"`` (n,): which surface each point was drawn around, numbered
+          by position in ``paths`` -- a missing surface leaves a gap in the numbering
+          rather than renumbering those after it.
+        - ``"orig_pts"``, ``"new_pts"``, ``"orig_mesh"``, ``"new_mesh"``: per-surface
+          lists, with None placeholders for missing surfaces.
+        - ``"scale"``, ``"center"``, ``"icp_transform"``: as in
+          ``read_mesh_get_sampled_pts``.
 
     Notes:
         - When mesh_to_scale is a list (e.g., [0, 1]), multiple surfaces are combined
           with the pymskt Mesh `+` operator (see combine_meshes) for joint registration
           (e.g., medial + lateral menisci)
         - The same ICP transform is applied to all meshes regardless of registration method
-        - Scaling and centering can be based on single or multiple reference surfaces
+        - Unknown keyword arguments are swallowed silently, except the historical
+          ``return_*`` flags and ``mean``, which print a deprecation line.
     """
     tic = time.time()
     # Same contract as read_mesh_get_sampled_pts: the return_* flags are unconditionally
@@ -843,13 +907,14 @@ def read_meshes_get_sampled_pts(
     return results
 
 
-# check that probabilities 0-1
 def check_probabilities(p_):
+    """Raise ValueError unless ``p_`` is in [0, 1]."""
     if (p_ < 0) or (p_ > 1):
         raise ValueError("Probabilities must be between 0 and 1")
 
 
 def check_probabilities_sum(p_near_, p_far_):
+    """Raise ValueError if the near + far shares exceed 1 (the rest samples uniformly)."""
     if p_near_ + p_far_ > 1:
         raise ValueError("sum of p_near_ & p_far_ must be <=1")
 
@@ -868,12 +933,17 @@ class SDFSamples(torch.utils.data.Dataset):
         sigma_near (float, optional): Standard deviation/scale of the distribution for points near the surface. Defaults to 0.01.
         sigma_far (float, optional): Standard deviation/scale of the distribution for points further from the surface. Defaults to 0.1.
         rand_function (str, optional): Distribution to sample from. Defaults to 'normal'. Also supports 'laplace'.
-        center_pts (bool, optional): Whether to center the points. Defaults to True.
-        norm_pts (bool, optional): Whether to normalize the points. Defaults to False.
+        center_pts (bool, optional): Defaults to True.
+        norm_pts (bool, optional): Defaults to False. Together they decide *whether*
+            per-subject normalization runs, not which half of it: if either is True
+            each subject is both centered and scaled (see ``docs/KNOWN_ISSUES.md``
+            § Open on ``center_pts``/``norm_pts``). Only False/False leaves coordinates
+            alone, which is what ``scale_jointly`` requires.
         scale_method (str, optional): Method to scale the points. Defaults to 'max_rad'.
         scale_jointly (bool, optional): Whether to center and scale all subjects together
             after loading (norm_and_scale_all_meshes) instead of per subject; requires
-            center_pts=False and norm_pts=False. Defaults to False.
+            center_pts=False and norm_pts=False. Currently also requires the default
+            store_data_in_memory=False -- see norm_and_scale_all_meshes. Defaults to False.
         joint_scale_buffer (float, optional): Margin added to the joint max radius when
             scale_jointly is True, so unseen subjects slightly larger than the training
             set still fit inside the model's domain. Defaults to 0.1.
@@ -888,17 +958,40 @@ class SDFSamples(torch.utils.data.Dataset):
             reordering list_mesh_paths nor moving the meshes changes any subject's data.
             Defaults to None, which leaves sampling unseeded -- the historical behaviour.
             Reproducible sampling requires mskt>=0.1.21.
-        reference_mesh (vtkPolyData or mskt.mesh.Mesh, optional): Reference mesh to register to. Defaults to None.
+        reference_mesh (Mesh, str, int or list, optional): What every subject is
+            similarity-registered to before sampling; None skips registration. Accepts a
+            loaded Mesh, a path, an index into list_mesh_paths, or a list of paths --
+            see load_reference_mesh for how each resolves. Defaults to None.
         verbose (bool, optional): Whether to print verbose output. Defaults to False.
-        equal_pos_neg (bool, optional): Whether to have equal positive and negative SDFs. Defaults to True.
-        fix_mesh (bool, optional): Whether to fix the meshes (sing meshfix). Defaults to True.
+        equal_pos_neg (bool, optional): Draw half of every batch from positive-SDF
+            samples and half from negative, instead of uniformly. Defaults to True.
+        fix_mesh (bool, optional): Whether to fix the meshes (using meshfix). Defaults to True.
         print_filename (bool, optional): Whether to print the filename when loading. Defaults to False.
+        multiprocessing (bool, optional): Build/load subjects in a Pool(n_processes).
+            Also makes a reference_mesh spill to disk so workers can share it
+            (see load_reference_mesh). Defaults to True.
+        n_processes (int, optional): Pool size when multiprocessing. Defaults to 2.
+        store_data_in_memory (bool, optional): Keep every subject's sample dict in
+            memory (True), or keep only its cache path and reload the .npz on every
+            __getitem__ (False). False requires save_cache=True. Defaults to False.
+        debug_memory (bool, optional): Print a pympler memory-summary diff every 100th
+            subject load (requires pympler installed). Defaults to False.
+        test_load_times (bool, optional): Include time/size/mb_per_sec/whole_load_time
+            in each disk-backed __getitem__ batch. Optional diagnostics, not batch
+            contract: in-memory items never carry them (#22). Defaults to True.
+        uniform_pts_buffer (float, optional): Expansion of the uniform sampling cube;
+            see get_buffered_cube_mins_maxs. Not part of the cache key (#19). Defaults
+            to 0.0.
 
-        Notes:
-            If reference_mesh is not None, then all meshes will be registered to the reference mesh.
-            If equal_pos_neg is True, then the number of positive and negative SDFs will be equal.
-            If fix_mesh is True, then the meshes will be fixed using meshfix.
-            If print_filename is True, then the filename will be printed when loading.
+    Notes:
+        ``__getitem__`` returns ``(batch, idx)``: ``batch["xyz"]`` is (subsample, 3)
+        and ``batch["gt_sdf"]`` (subsample,), float32, plus the load-time diagnostics
+        when enabled.
+
+        Caches are one ``.npz`` per subject under ``loc_save/<Mon_DD_YYYY>/``, the date
+        fixed at import time; lookups search all of ``loc_save`` recursively, so hits
+        cross dates. The cache key does not cover every parameter that changes the data
+        -- see get_hash_params (#19).
     """
 
     def __init__(
@@ -1069,6 +1162,7 @@ class SDFSamples(torch.utils.data.Dataset):
             self.norm_and_scale_all_meshes()
 
     def print_memory_summary(self):
+        """Print a pympler summary diff every 100th call (``debug_memory=True`` only)."""
         if self._memory_tracker is None:
             self._memory_tracker = tracker.SummaryTracker()
 
@@ -1091,9 +1185,17 @@ class SDFSamples(torch.utils.data.Dataset):
         self._memory_counter += 1
 
     def run_before_loading_data(self):
+        """Subclass hook, called after setup but before any subject loads."""
         pass
 
     def load_mesh_step(self, loc_mesh, verbose):
+        """
+        Per-subject worker: build or load one subject via ``get_sample_data_dict``.
+
+        Returns its result unchanged -- a sample dict, a cache path, or None for a
+        failed subject, which ``__init__`` then drops from ``list_mesh_paths`` and
+        ``data``.
+        """
         if verbose is True:
             print("Loading mesh:", loc_mesh)
 
@@ -1125,14 +1227,25 @@ class SDFSamples(torch.utils.data.Dataset):
 
     def norm_and_scale_all_meshes(self):
         """
-        Normalize and scale all of the meshes.
+        Center and scale every subject into one shared frame (``scale_jointly=True``).
 
-        Take the average of the center of each mesh and uses it to center all of the meshes.
-        Then, takes the max radius of all of the meshes (after centering) and uses it to
-        scale all of the meshes.
+        The shared center is the across-subject mean of each subject's
+        ``reference_object`` surface centroid -- the other surfaces follow the reference,
+        they do not pull on it. The shared scale is the largest radius any surface of any
+        subject reaches from that center, grown by ``joint_scale_buffer`` so unseen
+        subjects slightly larger than the training set still land inside the model's
+        domain. One frame for everyone removes per-subject position/size as a source of
+        variation.
 
-        Now, all of the meshes are centered and scaled jointly so the anatomical surfaces should
-        roughly be aligned, removing this as a source of variation.
+        Nothing is rescaled here on the disk-backed path: the result is stored as
+        ``self.center`` / ``self.max_radius`` and applied per batch in ``__getitem__``,
+        so the cached ``.npz`` files stay in the unscaled frame.
+
+        KNOWN DEFECT: the ``store_data_in_memory=True`` branch has never worked. It
+        reads the flattened ``new_pts_0``-style keys that exist only in the ``.npz``
+        layout -- in-memory dicts hold ``new_pts`` as a list -- so it raises
+        ``KeyError``; it also omits ``joint_scale_buffer``. Verified 2026-08-22 on both
+        dataset classes.
         """
         print("Computing centering and scaling...")
         # if not stored in memory, then get the centers and max radii from the data in memory
@@ -1213,7 +1326,11 @@ class SDFSamples(torch.utils.data.Dataset):
 
     def preprocess_inputs(self):
         """
-        Preprocess inputs to ensure they are in the correct format.
+        Validate/normalize constructor inputs before any data loads. Subclasses extend.
+
+        Raises:
+            ValueError: If ``scale_jointly`` is combined with ``center_pts`` or
+                ``norm_pts`` -- joint scaling requires untouched per-subject coordinates.
         """
 
         if self.scale_jointly is True:
@@ -1227,6 +1344,7 @@ class SDFSamples(torch.utils.data.Dataset):
                 )
 
     def get_dict_pts(self, data, pts_name):
+        """Flatten ``data[pts_name]`` to ``{pts_name}_{i}`` keys for ``np.savez``."""
         dict_pts = {}
         if isinstance(data[pts_name], list):
             for idx_, orig_pts_ in enumerate(data[pts_name]):
@@ -1237,11 +1355,17 @@ class SDFSamples(torch.utils.data.Dataset):
 
     def save_data_to_cache(self, data, file_hash, filepath=None):
         """
-        Save the data to the cache.
+        Write one subject's sample dict to a ``.npz`` cache file.
+
+        The on-disk spelling differs from the in-memory one: ``xyz`` is stored as
+        ``pts``, ``gt_sdf`` as ``sdfs``, and list-valued entries are flattened to
+        indexed keys (``new_pts_0``, ...). ``unpack_numpy_data`` reverses all of it.
 
         Args:
             data (dict): Dictionary of data to save
-            file_hash (str): Hash of the file
+            file_hash (str): Cache key; names the file ``{file_hash}.npz``
+            filepath (str, optional): Write here instead (used to upgrade an existing
+                cache file in place). Defaults to None.
         """
         # if want to cache, and new... then save.
         if filepath is None:
@@ -1269,13 +1393,21 @@ class SDFSamples(torch.utils.data.Dataset):
 
     def get_sample_data_dict(self, loc_mesh):
         """
-        Given a mesh path, return a dictionary of the sampled points and SDFs.
+        Build or load one subject's samples; return them, or the path they are cached at.
+
+        On a cache hit (``load_cache=True``): unreadable ``.npz`` files are deleted and
+        the next candidate tried; caches from before the ``pos_idx`` layout are upgraded
+        in place (indices computed, file resaved). On a miss: each ``pt_sample_combos``
+        entry is sampled via ``read_mesh_get_sampled_pts``, with a per-combo seed
+        derived from ``random_seed`` and keyed on the mesh contents.
 
         Args:
             loc_mesh (str): Path to mesh
 
         Returns:
-            dict: Dictionary of sampled points and SDFs
+            dict, str or None: The sample dict (``store_data_in_memory=True``), the
+            path of its cached ``.npz`` (False, the default), or None when the mesh
+            failed to load -- ``__init__`` then drops the subject.
         """
 
         # Create hash and filename
@@ -1400,10 +1532,14 @@ class SDFSamples(torch.utils.data.Dataset):
 
     def get_pt_sample_combos(self):
         """
-        Get the combinations of points and sigmas to sample from each mesh.
+        The three sampling passes: near-surface, far-surface, and uniform.
+
+        Counts follow ``p_near_surface`` / ``p_further_from_surface``; whatever the two
+        (truncated) shares leave of ``n_pts`` is drawn uniformly from the buffered cube,
+        marked by sigma None.
 
         Returns:
-            list: List of lists of [n_pts, sigma] to sample
+            list: List of [n_pts, sigma] pairs, one per pass
         """
 
         n_p_near_surface = int(self.n_pts * self.p_near_surface)
@@ -1420,13 +1556,22 @@ class SDFSamples(torch.utils.data.Dataset):
 
     def sdf_pos_neg_idx(self, data):
         """
-        Get the indices of the positive, negative, and surface SDFs.
+        Index the samples by SDF sign, padded for equal-share batch draws.
+
+        ``pos_idx`` and ``neg_idx`` are tiled (``repeat``) until each holds at least
+        ``subsample / 2`` entries, so a scarce sign is drawn with repetition rather
+        than exhausted. ``surf_idx`` (exact zeros) is returned unpadded.
 
         Args:
             data (dict): Dictionary of sampled points and SDFs
 
         Returns:
-            tuple: (pos_idx, neg_idx, surf_idx) of indices
+            tuple: (pos_idx, neg_idx, surf_idx) index tensors into ``data["xyz"]``
+
+        Raises:
+            ValueError: If every sample has the same sign -- equal batches cannot be
+                drawn, and a mesh with no interior or no exterior samples is degenerate
+                or unclosed (#41).
         """
 
         pos_idx = (data["gt_sdf"] > 0).nonzero(as_tuple=True)[0]
@@ -1451,13 +1596,16 @@ class SDFSamples(torch.utils.data.Dataset):
 
     def find_hash(self, filename="hashed_filename.npz"):
         """
-        Find the hashed filename in the cache.
+        Search the cache tree for ``filename``, stopping at the first match.
+
+        Walks all of ``loc_save`` -- every date folder, not just today's -- so a cache
+        written on an earlier day still hits.
 
         Args:
             filename (str, optional): Hashed filename. Defaults to 'hashed_filename.npz'.
 
         Returns:
-            list: List of paths to the hashed filename
+            list: Zero or one path(s); the first match wins.
         """
 
         files = []
@@ -1472,10 +1620,21 @@ class SDFSamples(torch.utils.data.Dataset):
 
     def load_reference_mesh(self):
         """
-        Load the reference mesh.
+        Resolve ``reference_mesh`` into a loaded ``Mesh`` -- or a path workers reload.
+
+        Accepted forms: a ``Mesh``, used as-is; a path string; an int, indexing
+        ``list_mesh_paths`` -- a multi-surface subject resolves to its registration
+        surface(s), ``mesh_to_scale``, combined into one mesh when that is a list
+        (#61); or a list of paths, indexed by ``reference_object``.
+
+        With ``multiprocessing=True`` the mesh is then written to a timestamped ``.vtk``
+        in the cache folder and ``self.reference_mesh`` set back to None: pool workers
+        reload it from ``self.reference_mesh_path`` rather than receiving the object
+        itself, and the timestamp keeps concurrent runs' reference meshes apart.
 
         Raises:
-            TypeError: If reference mesh is not a string, list of strings, or mesh.Mesh object
+            TypeError: If reference mesh is not a string, int, list of strings, or
+                mesh.Mesh object
         """
 
         if self.verbose is True:
@@ -1557,10 +1716,15 @@ class SDFSamples(torch.utils.data.Dataset):
 
     def create_hash(self, loc_mesh):
         """
-        Create the hash for the cache.
+        The cache key for one subject: md5 over its mesh path(s) plus the hash params.
+
+        The path(s) are prepended to ``list_hash_params`` (a list lands in reverse
+        order) and ``random_seed`` is appended when set; everything is stringified,
+        joined and hashed. The mesh *contents* are not part of the key, so overwriting
+        a mesh file in place reuses the stale cache.
 
         Args:
-            loc_mesh (str): Path to mesh
+            loc_mesh (str or list): Path(s) to the subject's mesh(es)
 
         Returns:
             str: Hashed string
@@ -1585,25 +1749,28 @@ class SDFSamples(torch.utils.data.Dataset):
         return hash_str
 
     def __len__(self):
-        """
-        Get the length of the dataset.
-
-        Returns:
-            int: Length of the dataset
-        """
+        """Number of subjects that loaded successfully (failures are dropped)."""
 
         return len(self.data)
 
     def __getitem__(self, idx):
         """
-        Get the item at the index.
+        One training batch for subject ``idx``.
+
+        Disk-backed datasets (``store_data_in_memory=False``) reload the subject's
+        ``.npz`` on every call. With ``equal_pos_neg``, ``subsample / 2`` rows are drawn
+        from each sign's index list, topped up with unconstrained draws when the halves
+        round short. Under joint scaling the shared center/scale is applied here, to the
+        batch, not to the cache.
 
         Args:
-            idx (int): Index of the item
+            idx (int): Subject index
 
         Returns:
-            dict: Dictionary of the item
-            idx (int): Index of the item
+            tuple: ``(batch, idx)``. ``batch["xyz"]`` is (subsample, 3) and
+            ``batch["gt_sdf"]`` (subsample,), float32. The timing keys (``time``,
+            ``size``, ``mb_per_sec``, ``whole_load_time``) appear only when
+            ``test_load_times=True`` and the item came from disk (#22).
         """
 
         tic_whole_load = time.time()
@@ -1723,6 +1890,11 @@ class MultiSurfaceSDFSamples(SDFSamples):
     such as bone + cartilage or medial + lateral menisci.
 
     Args:
+        list_mesh_paths (list): One entry per subject, each a list of per-surface mesh
+            paths in a fixed surface order, e.g. ``[[bone, cart], ...]``. A None entry
+            marks a subject's missing surface -- accepted here, but the build path for
+            it has never worked end to end (#67).
+
         mesh_to_scale (int or list): Index(es) of mesh(es) to use for registration and scaling.
             - If int: Uses single mesh for registration (original behavior)
             - If list: Combines multiple meshes for joint registration
@@ -1734,6 +1906,15 @@ class MultiSurfaceSDFSamples(SDFSamples):
             and scaling); the two are not kept in sync, and why they are separate is
             an open question inherited from the original implementation.
 
+        scale_all_meshes (bool): Scale using every surface's points (True, default) or
+            only ``mesh_to_scale``'s (False). See read_meshes_get_sampled_pts.
+        center_all_meshes (bool): Center on every surface's points (True) or only
+            ``mesh_to_scale``'s (False, default).
+
+        n_pts (int or list): Per-surface sample counts; a scalar or one-element list is
+            broadcast to every surface. The per-surface floats (p_near_surface,
+            p_further_from_surface, sigma_near, sigma_far) broadcast the same way.
+
         Other args: Same as SDFSamples parent class
 
     Notes:
@@ -1741,7 +1922,9 @@ class MultiSurfaceSDFSamples(SDFSamples):
           operator (see combine_meshes)
         - Joint registration improves alignment when multiple related surfaces should
           be considered together rather than individually
-        - All other functionality (scaling, centering, caching) remains the same
+        - ``__getitem__`` returns ``batch["gt_sdf"]`` with shape (subsample,
+          n_surfaces): every surface's signed distance to every sampled point, not just
+          the surface the point was drawn around.
     """
 
     def __init__(
@@ -1831,6 +2014,8 @@ class MultiSurfaceSDFSamples(SDFSamples):
         )
 
     def preprocess_inputs(self):
+        """As the parent's, plus: count the surfaces and broadcast scalar per-surface
+        parameters (p_near_surface, sigma_near, ...) into per-surface lists."""
         super().preprocess_inputs()
 
         if isinstance(self.list_mesh_paths[0], (list, tuple)):
@@ -1850,9 +2035,17 @@ class MultiSurfaceSDFSamples(SDFSamples):
             self.n_pts = [self.n_pts] * self.n_meshes
 
     def run_before_loading_data(self):
+        """Precompute each surface's per-sign batch share before any subject loads."""
         self.get_samples_per_sign()
 
     def test_if_idx_in_range(self, data):
+        """
+        Whether every pos/neg index actually points into ``data["xyz"]``.
+
+        Guards against stale caches: ``remove_overlapping_points`` shrinks the point
+        set, so index lists computed before an overlap pass can exceed it. A False
+        return makes ``get_sample_data_dict`` delete the cache file and rebuild.
+        """
         n_pts = data["xyz"].shape[0]
 
         for name in ["pos_idx", "neg_idx"]:
@@ -1870,10 +2063,24 @@ class MultiSurfaceSDFSamples(SDFSamples):
         return True
 
     def get_sample_data_dict(self, loc_meshes):
-        # with open(os.path.expanduser('~/test.txt'), 'a') as f:
-        # Use the print function with the `file` argument to write to the file.
-        # print(f'inside get_sample_data_dict, affinity: {os.sched_getaffinity(0)}', file=f)
+        """
+        Build or load one subject's samples; return them, or the path they are cached at.
 
+        The multi-surface differences from ``SDFSamples.get_sample_data_dict``:
+        ``gt_sdf`` is built (sum(n_pts), n_surfaces), with a missing (None) surface's
+        column all-NaN; ``remove_overlapping_points`` runs on fresh builds *and* on
+        cache hits, so pre-overlap-pass caches are upgraded and resaved; cached index
+        lists that fail ``test_if_idx_in_range`` delete the cache and force a rebuild;
+        and each subject started is appended to ``list_meshes_started_loading.log`` in
+        ``loc_save``, so a crash mid-build names its subject.
+
+        Args:
+            loc_meshes (list or str): The subject's per-surface mesh path(s).
+
+        Returns:
+            dict, str or None: As the parent -- sample dict, cache path, or None for a
+            failed subject.
+        """
         if type(loc_meshes) not in (tuple, list):
             loc_meshes = [loc_meshes]
 
@@ -2053,6 +2260,12 @@ class MultiSurfaceSDFSamples(SDFSamples):
         return data
 
     def get_samples_per_sign(self):
+        """
+        Each surface's per-sign share of a batch: ``subsample`` split across surfaces
+        in proportion to their ``n_pts``, halved per sign, truncated. Truncation means
+        the shares can sum below ``subsample``; ``__getitem__`` tops the batch up with
+        unconstrained draws. Stored as ``self.samples_per_sign_``.
+        """
         samples_per_mesh = [
             int((n_pts_ / self.total_n_pts) * self.subsample) for n_pts_ in self.n_pts
         ]
@@ -2066,6 +2279,22 @@ class MultiSurfaceSDFSamples(SDFSamples):
             self.samples_per_sign_.append(samples_per_sign)
 
     def remove_overlapping_points(self, data):
+        """
+        Drop points labeled inside two or more surfaces -- anatomically impossible,
+        so such a point is a segmentation/meshing error and would teach the model a
+        false interior.
+
+        All-NaN columns (missing surfaces) are excluded from the count. Removal
+        shrinks ``xyz``/``gt_sdf``, which is why index lists must be recomputed after
+        this runs (see ``test_if_idx_in_range``).
+
+        Args:
+            data (dict): Sample dict with ``gt_sdf`` of shape (n, n_surfaces)
+
+        Returns:
+            tuple: ``(data, n_removed)``; a nonzero count on a cache hit triggers a
+            resave.
+        """
         sdf_ = data["gt_sdf"].clone()
 
         # Check if we have None values (represented as NaN)
@@ -2105,6 +2334,13 @@ class MultiSurfaceSDFSamples(SDFSamples):
         return data, in_in
 
     def get_pt_sample_combos(self):
+        """
+        As the parent's, with per-surface counts: each pass pairs a count list and a
+        sigma list, and the uniform pass carries one None per surface.
+
+        Returns:
+            list: List of [n_pts_list, sigma_list] pairs, one per pass
+        """
         n_p_near_surface = [
             int(n_pts_ * p_near) for n_pts_, p_near in zip(self.n_pts, self.p_near_surface)
         ]
@@ -2171,11 +2407,24 @@ class MultiSurfaceSDFSamples(SDFSamples):
 
     def sdf_pos_neg_idx(self, data):
         """
-        - iterate over each mesh
-        - get number of points for that mesh and get:
-            - points positive (outside mesh)
-            - points negative (inside mesh)
-        - return list of indices
+        Per-surface sign indices, padded for each surface's batch share.
+
+        As the parent's, per surface: each surface's ``pos_idx``/``neg_idx`` are tiled
+        up to its ``samples_per_sign_`` share. A surface nothing is drawn from -- a
+        zero share, or the all-NaN column of a missing surface -- keeps empty index
+        lists instead of raising.
+
+        Args:
+            data (dict): Sample dict with ``gt_sdf`` of shape (n, n_surfaces)
+
+        Returns:
+            tuple: (pos_idx, neg_idx, surf_idx) -- each a list with one index tensor
+            per surface, indexing into ``data["xyz"]``
+
+        Raises:
+            ValueError: If a surface that *is* drawn from has every sample on one side
+                (#41) -- e.g. a surface nested inside another loses every interior
+                point to remove_overlapping_points.
         """
 
         pos_idx = []
@@ -2220,12 +2469,22 @@ class MultiSurfaceSDFSamples(SDFSamples):
         return pos_idx, neg_idx, surf_idx
 
     def __getitem__(self, idx):
-        # TODO: get rid of pts_array from above
-        # replace with self.data[idx] = [pts, sdfs_]
-        # this will simplify everything downstream because this is something that we are
-        # constantly undoing/re-doing elsewhere in the code - and it even lookts like
-        # the sdfs/pts are stroed separately in the npy files.
+        """
+        One training batch for subject ``idx``.
 
+        As the parent's, with the equal-sign draw done per surface: each surface
+        contributes its ``samples_per_sign_`` share from each of its own index lists
+        (a zero-share surface contributes nothing), and the batch is topped up with
+        unconstrained draws when the truncated shares sum below ``subsample``.
+
+        Args:
+            idx (int): Subject index
+
+        Returns:
+            tuple: ``(batch, idx)``. ``batch["xyz"]`` is (subsample, 3) and
+            ``batch["gt_sdf"]`` (subsample, n_surfaces), float32. Timing keys as in
+            the parent (#22).
+        """
         tic_whole_load = time.time()
         if self.store_data_in_memory is False:
             # if not storing in memory, then load from cache
