@@ -115,6 +115,10 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   the keys appear (in batches and in the epoch log) only when a disk load was actually
   timed.
 
+- **A zero sampling probability samples nothing instead of crashing** (#23).
+  `p_near_surface=0` / `p_further_from_surface=0` produced a zero-count combo that was
+  handed to `point_cloud_utils` anyway; both classes now skip empty combos.
+
 - **A surface with no positive or no negative SDF samples raises a `ValueError` naming
   the surface** (#41) instead of `ZeroDivisionError` — e.g. one surface nested inside
   another loses every interior point to overlap removal. A surface nothing draws from (a

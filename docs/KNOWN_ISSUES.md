@@ -48,7 +48,6 @@ queue.
 | `n_pts_random` accepted and discarded | Medium | [#16](https://github.com/gattia/nsm/issues/16) |
 | `sample_difficulty_lx` shipped but unimplemented | Medium | [#18](https://github.com/gattia/nsm/issues/18) |
 | `enforce_minmax` clamps predictions | Medium — config semantics | *none — a docs/design call, see below* |
-| `p_near_surface=0` crashes | Low | [#23](https://github.com/gattia/nsm/issues/23) |
 | `LOC_SDF_CACHE` read at import time | Low | [#24](https://github.com/gattia/nsm/issues/24) |
 | `Pool` deadlocks after an in-process build | Low — hangs, does not corrupt | [#25](https://github.com/gattia/nsm/issues/25) |
 | `train_deep_sdf` returns nothing | Low — blocks observability | [#28](https://github.com/gattia/nsm/issues/28) |
@@ -134,14 +133,6 @@ coordinate space, with a migration guard of the same shape as History §1's. Wri
 `.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md`, scheduled into
 `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §8. Tracked as
 [#3](https://github.com/gattia/nsm/issues/3), open since Sept 2025.
-
-### `p_near_surface=0` crashes inside `point_cloud_utils`
-
-`get_pt_sample_combos` emits a `[0, sigma]` combo and `get_sample_data_dict` calls the
-sampler with it regardless, so asking for no near-surface points raises
-`ValueError: Invalid input point cloud with zero points`. Same for `p_further_from_surface=0`.
-*Fix:* [#23](https://github.com/gattia/nsm/issues/23). *Pinned by:*
-`test_dataset_cache...::test_zero_sampling_probability_must_sample_nothing`.
 
 ### `center_pts` and `norm_pts` do not select which normalization happens
 

@@ -1332,6 +1332,12 @@ class SDFSamples(torch.utils.data.Dataset):
             content_key = mesh_content_key(loc_mesh) if self.random_seed is not None else None
 
             for idx_, (n_pts_, sigma_) in enumerate(self.pt_sample_combos):
+                # A zero-count combo (p_near_surface=0, p_further_from_surface=0, or the
+                # two summing to 1) samples nothing; passing it through would crash in
+                # point_cloud_utils on an empty point cloud (#23). The seed key stays
+                # idx_, so skipping one combo does not re-seed the others.
+                if n_pts_ == 0:
+                    continue
                 result_ = read_mesh_get_sampled_pts(
                     loc_mesh,
                     mean=[0, 0, 0],
@@ -1359,8 +1365,9 @@ class SDFSamples(torch.utils.data.Dataset):
                 data["gt_sdf"][pts_idx : pts_idx + n_pts_] = torch.from_numpy(sdfs_).float()
                 pts_idx += n_pts_
 
-                if idx_ == 0:
-                    # Convert list of arrays to tensors
+                if "orig_pts" not in data:
+                    # First combo that actually ran -- not necessarily combo 0, which a
+                    # zero count skips. Convert list of arrays to tensors.
                     data["orig_pts"] = [
                         torch.from_numpy(pts).float() for pts in result_["orig_pts"]
                     ]
@@ -1959,10 +1966,12 @@ class MultiSurfaceSDFSamples(SDFSamples):
 
             content_key = mesh_content_key(loc_meshes) if self.random_seed is not None else None
 
-            # KNOWN DEFECT, #23: a combo with n_pts_ == 0 is passed to the
-            # sampler regardless, so p_near_surface=0 (or p_further_from_surface=0) raises
-            # inside point_cloud_utils rather than sampling nothing.
             for idx_, (n_pts_, sigma_) in enumerate(self.pt_sample_combos):
+                # A combo asked to sample nothing anywhere would crash in
+                # point_cloud_utils on an empty point cloud (#23). The seed key stays
+                # idx_, so skipping one combo does not re-seed the others.
+                if sum(n_pts_) == 0:
+                    continue
                 tic = time.time()
                 result_ = read_meshes_get_sampled_pts(
                     loc_meshes,
@@ -1994,7 +2003,9 @@ class MultiSurfaceSDFSamples(SDFSamples):
                 toc = time.time()
                 print(f"{idx_} - {sigma_}: {toc - tic}s")
 
-                if idx_ == 0:
+                if "orig_pts" not in data:
+                    # First combo that actually ran -- not necessarily combo 0,
+                    # which a zero count skips.
                     data["orig_pts"] = result_["orig_pts"]
                     data["new_pts"] = result_["new_pts"]
 

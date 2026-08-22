@@ -628,14 +628,13 @@ class TestFormerlyUncallableConfigurations:
     fixed Aug 2026.
     """
 
-    @pytest.mark.xfail(
-        strict=True, reason="#23: a zero-count sampling combo is passed to pcu anyway"
-    )
-    def test_zero_sampling_probability_must_sample_nothing(self, meshes, tmp_path_factory):
+    def test_zero_sampling_probability_samples_nothing(self, meshes, tmp_path_factory):
         """
-        ``get_pt_sample_combos`` emits a ``[0, sigma]`` combo and ``get_sample_data_dict``
-        calls the sampler with it regardless (``sdf_dataset.py:1820``), so asking for no
-        near-surface points is a crash rather than a configuration.
+        ``get_pt_sample_combos`` emits a ``[0, sigma]`` combo when a probability is 0,
+        and ``get_sample_data_dict`` now skips it (#23) instead of handing
+        ``point_cloud_utils`` an empty point cloud to crash on. The remaining combos
+        still fill the whole preallocated buffer -- the random share absorbs what the
+        probabilities leave over, so nothing is silently left at zero.
         """
         dataset = build_dataset(
             meshes,
@@ -646,6 +645,23 @@ class TestFormerlyUncallableConfigurations:
             **SMALL,
         )
         assert len(dataset) == len(meshes)
+        arrays = cached_arrays(dataset)
+        # A skipped combo must not leave a hole of never-written rows in the buffer.
+        assert not np.any(np.all(arrays["pts"] == 0, axis=1))
+        item, _ = dataset[0]
+        assert {"xyz", "gt_sdf"} <= set(item)
+
+    def test_zero_probability_on_the_single_surface_class(self, bone_meshes, tmp_path_factory):
+        """``SDFSamples.get_sample_data_dict`` is separate code from the subclass's."""
+        dataset = build_single_surface_dataset(
+            bone_meshes[:1],
+            tmp_path_factory.mktemp("p_zero_single"),
+            p_near_surface=0.0,
+            p_further_from_surface=0.5,
+            **SMALL_SINGLE,
+        )
+        item, _ = dataset[0]
+        assert {"xyz", "gt_sdf"} <= set(item)
 
     def test_store_data_in_memory_yields_an_item(self, meshes, tmp_path_factory):
         """
