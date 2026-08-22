@@ -872,12 +872,9 @@ class SDFSamples(torch.utils.data.Dataset):
         joint_scale_buffer (float, optional): Margin added to the joint max radius when
             scale_jointly is True, so unseen subjects slightly larger than the training
             set still fit inside the model's domain. Defaults to 0.1.
-        loc_save (str, optional): Location to save the cached files. Defaults to
-            os.environ['LOC_SDF_CACHE'].
-
-            KNOWN DEFECT, #24: this default is evaluated when the module is IMPORTED,
-            so setting LOC_SDF_CACHE afterwards has no effect and the caller silently
-            writes to ~/.cache/nsm_sdf_cache. Pass loc_save explicitly.
+        loc_save (str, optional): Directory for the cached files. Defaults to the
+            LOC_SDF_CACHE environment variable, read when the dataset is constructed
+            (an empty value counts as unset), else ~/.cache/nsm_sdf_cache.
         save_cache (bool, optional): Whether to save the cached files. Defaults to True.
         load_cache (bool, optional): Whether to load the cached files. Defaults to True.
         random_seed (int, optional): Seeds the sampling, and is part of the cache key.
@@ -914,9 +911,7 @@ class SDFSamples(torch.utils.data.Dataset):
         scale_method="max_rad",
         scale_jointly=False,
         joint_scale_buffer=0.1,
-        loc_save=os.environ.get(
-            "LOC_SDF_CACHE", os.path.join(os.path.expanduser("~"), ".cache", "nsm_sdf_cache")
-        ),
+        loc_save=None,
         save_cache=True,
         load_cache=True,
         random_seed=None,
@@ -940,6 +935,15 @@ class SDFSamples(torch.utils.data.Dataset):
             raise ValueError(
                 f"subsample must be a positive int -- the number of points each "
                 f"__getitem__ returns -- got {subsample!r}."
+            )
+
+        # Resolved at call time so setting LOC_SDF_CACHE before construction works; it
+        # was frozen into the signature at import time until Aug 2026 (#24). An empty
+        # value counts as unset, so a caller blanking the variable gets the home-cache
+        # default rather than a cache rooted at the working directory.
+        if loc_save is None:
+            loc_save = os.environ.get("LOC_SDF_CACHE") or os.path.join(
+                os.path.expanduser("~"), ".cache", "nsm_sdf_cache"
             )
 
         # p_near_surface & p_further_from_surface must be >=0, <=1
@@ -1751,9 +1755,7 @@ class MultiSurfaceSDFSamples(SDFSamples):
         scale_method="max_rad",
         scale_jointly=False,
         joint_scale_buffer=0.1,
-        loc_save=os.environ.get(
-            "LOC_SDF_CACHE", os.path.join(os.path.expanduser("~"), ".cache", "nsm_sdf_cache")
-        ),
+        loc_save=None,
         save_cache=True,
         load_cache=True,
         random_seed=None,

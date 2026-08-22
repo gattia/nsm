@@ -727,20 +727,34 @@ class TestFormerlyUncallableConfigurations:
 
 class TestCacheLocationDefault:
     """
-    ``loc_save``'s default is ``os.environ.get("LOC_SDF_CACHE", ...)`` evaluated as a
-    default argument, so it is bound once when ``sdf_dataset`` is imported. Setting the
-    env var afterwards has no effect, and a caller who believes it does writes into
-    ``~/.cache/nsm_sdf_cache``. The harness passes ``loc_save`` explicitly for this reason.
+    ``loc_save=None`` resolves ``LOC_SDF_CACHE`` when the dataset is CONSTRUCTED. Until
+    Aug 2026 the environment read was a default argument, evaluated once at import (#24),
+    so setting the variable afterwards had no effect and the cache silently went to
+    ``~/.cache/nsm_sdf_cache``. The harness still passes ``loc_save`` explicitly
+    everywhere else so its tests can never depend on the developer's environment.
     """
 
-    @pytest.mark.xfail(strict=True, reason="#24: LOC_SDF_CACHE is read once, at import time")
-    def test_setting_the_env_var_must_change_where_the_cache_goes(self, monkeypatch):
-        from NSM.datasets.sdf_dataset import MultiSurfaceSDFSamples
+    def test_setting_the_env_var_changes_where_the_cache_goes(
+        self, meshes, monkeypatch, tmp_path_factory
+    ):
+        cache_root = tmp_path_factory.mktemp("env_cache")
+        monkeypatch.setenv("LOC_SDF_CACHE", str(cache_root))
+        dataset = build_dataset(meshes, "ignored-by-override", loc_save=None, **SMALL)
+        assert dataset.loc_save == str(cache_root)
+        assert dataset.data[0].startswith(str(cache_root))
 
-        before = inspect.signature(MultiSurfaceSDFSamples.__init__).parameters["loc_save"].default
-        monkeypatch.setenv("LOC_SDF_CACHE", "/nowhere/that/exists")
-        after = inspect.signature(MultiSurfaceSDFSamples.__init__).parameters["loc_save"].default
-        assert after != before
+    def test_a_blank_env_var_counts_as_unset(self, meshes, monkeypatch, tmp_path_factory):
+        """
+        The downstream consumer blanks the variable rather than unsetting it
+        (``kneepipeline/steps/run_nsm.py``), and ``""`` must mean the home default: a
+        literally-empty ``loc_save`` would root the cache -- and ``find_hash``'s
+        recursive walk -- at the current working directory.
+        """
+        fake_home = tmp_path_factory.mktemp("fake_home")
+        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.setenv("LOC_SDF_CACHE", "")
+        dataset = build_dataset(meshes, "ignored-by-override", loc_save=None, **SMALL)
+        assert dataset.loc_save == os.path.join(str(fake_home), ".cache", "nsm_sdf_cache")
 
 
 class TestPointCenteringAndScaling:
@@ -762,8 +776,6 @@ class TestPointCenteringAndScaling:
         changes the coordinate frame of every dataset, checkpoint and reconstruction
         NSM has ever produced. See #20.
         """
-        import inspect
-
         from NSM.datasets.sdf_dataset import get_pts_center_and_scale
 
         taken = inspect.signature(get_pts_center_and_scale).parameters

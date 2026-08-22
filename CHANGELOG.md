@@ -119,6 +119,10 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   `p_near_surface=0` / `p_further_from_surface=0` produced a zero-count combo that was
   handed to `point_cloud_utils` anyway; both classes now skip empty combos.
 
+- **`LOC_SDF_CACHE` is read when a dataset is constructed, not when the module is
+  imported** (#24). Setting the variable before construction now works; an empty value
+  counts as unset. Pass `loc_save` explicitly to override either way.
+
 - **A surface with no positive or no negative SDF samples raises a `ValueError` naming
   the surface** (#41) instead of `ZeroDivisionError` — e.g. one surface nested inside
   another loses every interior point to overlap removal. A surface nothing draws from (a

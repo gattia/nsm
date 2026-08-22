@@ -48,7 +48,6 @@ queue.
 | `n_pts_random` accepted and discarded | Medium | [#16](https://github.com/gattia/nsm/issues/16) |
 | `sample_difficulty_lx` shipped but unimplemented | Medium | [#18](https://github.com/gattia/nsm/issues/18) |
 | `enforce_minmax` clamps predictions | Medium — config semantics | *none — a docs/design call, see below* |
-| `LOC_SDF_CACHE` read at import time | Low | [#24](https://github.com/gattia/nsm/issues/24) |
 | `Pool` deadlocks after an in-process build | Low — hangs, does not corrupt | [#25](https://github.com/gattia/nsm/issues/25) |
 | `train_deep_sdf` returns nothing | Low — blocks observability | [#28](https://github.com/gattia/nsm/issues/28) |
 
@@ -152,20 +151,6 @@ the two config keys still read as independent switches and are not.
 that makes `norm_pts` authoritative changes the coordinate frame of every dataset and
 checkpoint ever produced, and needs a migration, not a patch. *Pinned by:*
 `test_dataset_cache.TestPointCenteringAndScaling::test_centering_and_scaling_still_happen_unconditionally`.
-
-### `LOC_SDF_CACHE` is read at import time
-
-It is read inside a **default argument** — `loc_save=os.environ.get("LOC_SDF_CACHE", ...)`
-in both dataset constructors — so it binds once when the module is imported. Setting it
-afterwards has no effect and the caller silently writes to `~/.cache/nsm_sdf_cache`.
-
-The downstream consumer does exactly this: `kneepipeline/steps/run_nsm.py` sets
-`os.environ["LOC_SDF_CACHE"] = ""` *after* importing `reconstruct_mesh` on the line above.
-Harmless there — `reconstruct_mesh` never constructs a dataset — but the line does not do
-what it looks like it does.
-
-*Fix:* [#24](https://github.com/gattia/nsm/issues/24). *Pinned by:*
-`test_dataset_cache.TestCacheLocationDefault`.
 
 ### `Pool` deadlocks after an in-process build
 
