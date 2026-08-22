@@ -3,21 +3,23 @@
 > ## ⚠️ A staging document, not a register of facts.
 >
 > Every entry was **re-verified by execution** against `main` in Aug 2026 and sorted into
-> what happens to it. Nothing has been filed or deleted yet — this exists so the triage can
-> be reviewed as a diff before any of it becomes irreversible.
+> what happens to it. The maintainer approved the § 0 disposition on 2026-08-22; the 22
+> approved drafts are filed as **#40–#61**, #6 is closed as already-fixed, and the § 2
+> folds are commented onto #20/#22/#23/#35. What remains before this file is deleted is
+> listed in § 0.6.
 >
 > **Delete when:** the issues are filed, the prose corrections land, the `SCOPE` and
 > `KNOWN_ISSUES` edits are made, and this file goes with the last of them, leaving a pointer
 > to that PR. It is transitional debt by its own rule, and its line numbers have drifted once
 > already — every anchor below is the ORIGINAL cited location, not a current one.
 
-# 0. Final disposition — 2026-08-21, awaiting maintainer approval
+# 0. Final disposition — approved by the maintainer 2026-08-22, filed the same day
 
 Three earlier analyses proposed three different issue sets (17 / ~8 / 6) with different
 membership. This section supersedes all three. Where they disagreed, the disagreement was
-settled **by execution this session**, not by averaging. Nothing has been filed, closed,
-or edited on GitHub; that happens only after the maintainer approves this section, draft
-by draft.
+settled **by execution**, not by averaging. The maintainer reviewed the drafts on
+2026-08-22 (withdrawing draft 13 and settling D1–D4); the 22 surviving drafts were then
+filed verbatim, extracted mechanically from § 0.3.
 
 **Baseline at time of writing:** suite 356 passed / 1 skipped / 16 xfailed (64s);
 `make lint` clean. Branch **`quick-wins`** (six commits off `main`) holds the ride-along
@@ -82,6 +84,11 @@ no tiers — CLAUDE.md orders issues by `file:function`; the two-tier split belo
 only to make this review faster. Every draft is self-contained (this register is
 deleted when the drafts land, so the evidence a closer needs is in the draft, not
 here).
+
+**Filed 2026-08-22**, draft → issue: 1→#40, 2→#41, 3→#42, 4→#43, 5→#44, 6→#45, 7→#46,
+8→#47, 9→#48, 10→#49, 11→#50, 12→#51, 14→#52, 15→#53, 16→#54, 17→#55, 18→#56, 19→#57,
+20→#58, 21→#59, 22→#60, 23→#61. Alongside: #6 closed as already-fixed (`0aee8ad`), and
+the § 2 folds commented onto #20, #22, #23 and #35.
 
 ### Tier 1 — silent wrong results, or blocks a run someone would launch
 

@@ -6,16 +6,17 @@
 
 **Updated:** 2026-08-21 · **Status:** open
 
-- **Next:** the maintainer reviews `docs/AUDIT_FINDINGS.md` § 0 (23 issue drafts, 4
-  decision items) and the `quick-wins` branch (6 commits, suite green at 356/1/16).
-  After approval: file the approved drafts, merge `quick-wins`, land the SCOPE.md
-  rulings PR and the Phase-2 prose pass, and delete `AUDIT_FINDINGS.md` in the PR that
-  lands the last of them. Then resume as before: #23 and #24 — the remaining contained
-  defects in `sdf_dataset.py`, one strict xfail each; Phase 2's semantic pass on that
-  file (7 contradicting docstrings); then its decomposition. The order is deliberate:
-  fixing before splitting gives the harness one clean before/after, where fixing after
-  spreads the same change over more files.
-- **Blocked on:** maintainer approval of `AUDIT_FINDINGS.md` § 0. Nothing else.
+- **Next:** the maintainer merges the two open PRs (`audit-triage`, `quick-wins`),
+  then wave 1 — the decided, bounded fixes, one PR each with the maintainer in the
+  loop: EMD deletion (#53), `weight_decay` under Adam (#47, baselines regenerate +
+  History entry), the ShapeMedKnee-derived `default_config.json` (#48), and the
+  numerics-changing pair #44 (decoder indexing + `remove_overlapping_points`, one
+  History entry). Then the SCOPE.md rulings PR and the Phase-2 prose pass, and delete
+  `AUDIT_FINDINGS.md` in the PR that lands the last of them. Then resume as before:
+  #23 and #24 in `sdf_dataset.py`, its semantic docstring pass, then its
+  decomposition — fixing before splitting, deliberately.
+- **Blocked on:** nothing. (Audit disposition approved and filed 2026-08-22:
+  #40–#61, #6 closed, folds commented onto #20/#22/#23/#35.)
 - **Deliberately deferred:** #19 (cache key, 6 xfails) and #27 (checkpoint aliasing). Both
   force downstream regeneration or migration, so they land together as one release rather
   than making consumers migrate twice. This is the argument that grouped #19 in the first
