@@ -1,8 +1,22 @@
+"""Per-triangle quality metrics on VTK meshes (areas, edge lengths, aspect ratios).
+
+Importers: ``correspondence_metrics`` and ``refine_mesh``. Two conventions here are
+shared with those modules and are easy to violate silently:
+
+- **Edge ordering** is (p0-p1, p1-p2, p2-p0) — the same cyclic order
+  ``refine_mesh.new_vertices_faces`` iterates edges in.
+- **Failure policy on degenerate triangles diverges deliberately**:
+  ``TriangleProperties.edge_ratio`` raises on a zero-length edge, while
+  ``correspondence_metrics.triangle_health`` computes the same statistic and degrades
+  gracefully (reporting a ``degenerate_count`` instead). See ``docs/SCOPE.md`` §2.6.
+"""
+
 import numpy as np
 import vtk
 
 
 def get_triangle_area(cell):
+    """Area of one VTK cell; raises on any non-triangle cell type."""
     if cell.GetCellType() == vtk.VTK_TRIANGLE:
         p0 = cell.GetPoints().GetPoint(0)
         p1 = cell.GetPoints().GetPoint(1)
@@ -17,6 +31,7 @@ def get_triangle_area(cell):
 
 
 def calculate_triangle_areas(polyData):
+    """List of per-cell triangle areas for a vtkPolyData, in cell order."""
     areas = []
     for i in range(polyData.GetNumberOfCells()):
         cell = polyData.GetCell(i)
@@ -26,10 +41,16 @@ def calculate_triangle_areas(polyData):
 
 
 def length(x1, x2):
+    """Euclidean distance between two points."""
     return np.sqrt(sum((x1 - x2) ** 2))
 
 
 def get_edge_lengths(cell):
+    """The three edge lengths of a triangle cell, ordered (p0-p1, p1-p2, p2-p0).
+
+    The order is a contract: refine_mesh iterates edges in the same cyclic order,
+    so index i here refers to the same edge there.
+    """
     p0 = np.asarray(cell.GetPoints().GetPoint(0))
     p1 = np.asarray(cell.GetPoints().GetPoint(1))
     p2 = np.asarray(cell.GetPoints().GetPoint(2))
@@ -43,12 +64,23 @@ def get_edge_lengths(cell):
 
 
 class TriangleProperties:
+    """Lazily-computed per-triangle metrics for one VTK mesh (results cached)."""
+
     def __init__(self, mesh):
         self._mesh = mesh
         self.edge_lengths = None
         self._areas = None
 
     def areas(self, norm=True):
+        """Per-triangle areas — but NOT areas at the default.
+
+        With ``norm=True`` (the default) this returns the dimensionless *relative
+        deviation from the mean area*, ``(area - mean) / mean`` — negative for
+        below-average triangles, zero mean by construction. Only ``norm=False``
+        returns actual areas. This is the trap behind refine_mesh's
+        ``area_threshold``, whose docstrings call it "the maximum area of a
+        triangle": the value is compared against this relative deviation.
+        """
         if self._areas is None:
             self._areas = calculate_triangle_areas(self._mesh)
 
@@ -61,6 +93,7 @@ class TriangleProperties:
         return np.asarray(areas)
 
     def compute_edge_lengths(self):
+        """Fill self.edge_lengths: (n_cells, 3) array in the module's edge order."""
         self.edge_lengths = []
         for i in range(self._mesh.GetNumberOfCells()):
             cell = self._mesh.GetCell(i)
@@ -70,6 +103,12 @@ class TriangleProperties:
         self.edge_lengths = np.array(self.edge_lengths)
 
     def edge_ratio(self):
+        """Per-triangle aspect ratio (longest edge / shortest edge).
+
+        Raises on any zero-length edge — deliberately stricter than
+        ``correspondence_metrics.triangle_health``, which degrades instead
+        (see the module docstring).
+        """
         if self.edge_lengths is None:
             self.compute_edge_lengths()
 
@@ -85,12 +124,14 @@ class TriangleProperties:
         return lengths_ratio
 
     def edge_sd(self):
+        """Per-triangle standard deviation of the three edge lengths."""
         if self.edge_lengths is None:
             self.compute_edge_lengths()
 
         return np.std(self.edge_lengths, axis=1)
 
     def edge_length_max(self):
+        """Per-triangle longest edge length."""
         if self.edge_lengths is None:
             self.compute_edge_lengths()
 

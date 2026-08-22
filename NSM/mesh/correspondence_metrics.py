@@ -602,9 +602,11 @@ def score_correspondence(
             entirely (useful for large meshes where even the broadphase is slow).
 
     Returns:
-        Nested dict keyed by metric name.  Each value is either the metric
-        result dict / scalar, or ``{"skipped": True, "reason": "<str>"}`` when
-        the metric could not be computed.
+        Nested dict keyed by metric name.  Each value is one of three shapes:
+        the metric result dict / scalar; ``{"skipped": True, "reason": "<str>"}``
+        when a required input was absent; or ``{"error": "<str>"}`` when the
+        metric raised (the exception is swallowed so one bad metric cannot sink
+        the rest).
     """
     results: Dict[str, object] = {}
 

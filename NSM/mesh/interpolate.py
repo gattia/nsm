@@ -13,9 +13,11 @@ the mesh-interpolation experiments; without ``tangent_laplacian`` it reduces
 to a single Newton step per latent increment.
 
 The full set of fixes that were explored (six kwarg-gated variants plus two
-added during the work) lives on the ``mesh-interpolation-improvements``
-branch (tagged ``archive/mesh-interp-full-exploration``) and in the
-completed plan ``NSM_MESH_INTERPOLATION_IMPROVEMENTS_COMPLETED.md``.
+added during the work) is recorded in the completed plan
+``NSM_MESH_INTERPOLATION_IMPROVEMENTS_COMPLETED.md``. (It also cites an
+archive branch/tag — ``mesh-interpolation-improvements``,
+``archive/mesh-interp-full-exploration`` — which was never pushed to origin;
+as of 2026-08-22 it exists, if anywhere, only in a local clone.)
 """
 
 import numpy as np
@@ -196,11 +198,12 @@ def _project_once(model, latent, points, surface_idx):
 
 
 def build_mesh_laplacian(faces, n_points, device, dtype=torch.float32):
-    """Build a row-normalised (umbrella) graph Laplacian as a torch sparse tensor.
+    """Build a row-normalised (umbrella) adjacency operator as a torch sparse tensor.
 
-    ``Laplacian @ x`` gives, per vertex, the mean of its neighbours' positions;
-    the discrete Laplacian displacement is ``(Laplacian @ x) - x``. Built once
-    from the source-mesh connectivity and reused every step.
+    Not itself a Laplacian: ``operator @ x`` gives, per vertex, the mean of its
+    neighbours' positions; the discrete Laplacian displacement is
+    ``(operator @ x) - x``. Built once from the source-mesh connectivity and
+    reused every step.
 
     Args:
     - faces (np.ndarray): triangle connectivity, shape (M, 3).
@@ -404,8 +407,37 @@ def interpolate_common(
     tangent_laplacian_iters=1,
     tangent_laplacian_feature_angle=45.0,
 ):
+    """Shared engine behind interpolate_points and interpolate_mesh.
+
+    Steps the latent from ``latent1`` to ``latent2`` in ``n_steps`` increments
+    (spherical or linear interpolation), carrying ``data`` along the level set:
+    each increment does a single Newton projection onto the surface of the
+    current latent (see the module docstring).
+
+    Args:
+    - model (nn.Module): the SDF decoder.
+    - latent1, latent2 (np.ndarray): source and target latent vectors.
+    - n_steps (int): number of latent increments.
+    - data: REQUIRED despite the ``None`` default. With ``is_mesh=False``, an
+      (N, 3) np.ndarray or torch tensor of point positions on shape A. With
+      ``is_mesh=True``, a mskt Mesh whose ``point_coords`` are advanced
+      **in place** (the returned object is the caller's own mesh, mutated).
+    - surface_idx (int): which decoder output surface to project onto.
+    - spherical (bool): slerp (True) or linear (False) latent interpolation.
+    - is_mesh (bool): selects the mesh path (per-step VTK subdivide/smooth via
+      ``adaptive``/``smooth``/``smooth_type``/``max_edge_len``) or the points
+      path (optional tangent-Laplacian smoothing via the ``tangent_*`` args,
+      which needs ``faces``; see interpolate_points).
+
+    Returns:
+    - With ``is_mesh=False``: (N, 3) np.ndarray of final point positions.
+    - With ``is_mesh=True``: the (mutated) input mesh object.
+    """
     if data is None:
-        raise Exception("Not implemented")
+        raise TypeError(
+            "interpolate_common() requires `data` (points array/tensor, or a mesh "
+            "with is_mesh=True); it only defaults to None for signature compatibility."
+        )
 
     if is_mesh:
         if not isinstance(data.mesh, pv.PolyData):
