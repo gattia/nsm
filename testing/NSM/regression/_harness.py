@@ -500,10 +500,11 @@ def build_dataset(mesh_paths, cache_dir, seed=0, **overrides):
     seeds every draw, and as ``np.random.seed``, which still governs the legacy global
     stream an unseeded (``random_seed=None``) call draws from.
 
-    ``loc_save`` is always an explicit temporary directory. The constructor's default is
-    read from ``LOC_SDF_CACHE`` *at import time*, so setting that env var inside a test
-    would come too late and the test would write into the developer's real
-    ``~/.cache/nsm_sdf_cache``.
+    ``loc_save`` is always an explicit temporary directory, so no test here depends on
+    the developer's environment or writes into their real cache. (``loc_save=None``
+    resolves ``LOC_SDF_CACHE`` when the dataset is constructed -- #24 fixed the old
+    import-time read -- and ``TestCacheLocationDefault`` covers that path deliberately,
+    under a monkeypatched variable.)
     """
     from NSM.datasets.sdf_dataset import MultiSurfaceSDFSamples
 

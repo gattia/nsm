@@ -6,10 +6,17 @@
 
 **Updated:** 2026-08-22 · **Status:** open
 
-- **Next:** `sdf_dataset.py`'s **semantic docstring pass** (its file:function fixes are
-  done — see Done), then its decomposition (§8). Still open from #48: the `barrier`
-  norm-penalty NaN and `Regress.add_latent`. (Both document passes are done and the
-  audit register is deleted — see Done.)
+- **Next:** (1) merge the `sdf-dataset-docstrings` PR (commits reviewed 2026-08-22,
+  maintainer approved; #69 filed with approved text and cited by the pin). (2) Then
+  `sdf_dataset.py` decomposition (§8), characterization tests first (§7.3). Still open
+  from #48: the `barrier` norm-penalty NaN and `Regress.add_latent`.
+- **Scale preservation is an idea, not a defect** (maintainer, 2026-08-22): similarity
+  registration deliberately matching subjects to the reference's size is a valid
+  design; keeping true size is an *additional mode* worth having. It therefore lives
+  as `NSM_TRAINING_IDEAS.md` Idea 6 (with the measured evidence and design sketch),
+  not in `KNOWN_ISSUES.md` and not on the tracker; the durable fact — similarity =
+  rigid + uniform scale, size does not survive registration — is stated in the
+  `reference_mesh` / `register_to_mean_first` docstrings.
 - **Blocked on:** nothing.
 - **Context for whoever picks this up:** PR #68 carried one commit per concern, so
   `git log NSM/datasets/sdf_dataset.py` explains each fix. Decisions of record are in
@@ -68,6 +75,18 @@
     keys optional), #23 (zero-count combos skipped), #24 (`LOC_SDF_CACHE` at
     construction) — one commit per concern, all closed by PR #68. Also filed and
     pinned strict-xfail: #67 (the None-surface path has never built end to end)
+  - `sdf_dataset.py` semantic docstring pass, branch `sdf-dataset-docstrings`
+    (commits maintainer-reviewed 2026-08-22): `mean` deleted from both samplers —
+    the file's only accepted-and-never-read parameter left, by AST scan (#20 instance;
+    CHANGELOG entry); every public function/method documented, silent conventions
+    written down ("pts"/"xyz" key asymmetry, npz vs in-memory spelling, batch
+    contracts, cache-key omissions), false text corrected; the in-memory
+    joint-scaling defect pinned strict-xfail, filed as #69 with approved text and a
+    `KNOWN_ISSUES` § Open entry; `_harness.py`'s stale import-time `LOC_SDF_CACHE`
+    claim fixed (stale since #24); the scale-erasure fact measured (ICP scale factor
+    exactly 1/1.3 on a 1.3-vs-1.0 sphere pair) and recorded as `NSM_TRAINING_IDEAS.md`
+    Idea 6 plus docstring clauses — initially misfiled as a KNOWN_ISSUES entry, moved
+    on the maintainer's call that it is a design alternative, not a defect
 - **Surprises:**
   - **"Fixed seed" was not available.** NSM called no seeding function anywhere, and the
     near-surface sampler could not be seeded by any caller. Closed via pymskt 0.1.21 plus
@@ -119,6 +138,12 @@
     became History §6 rather than close-by-deletion. And because the buffer is absent
     from the cache key (#19), the fix alone does not resample: pre-fix `.npz` caches
     keep serving the old points until deleted.
+  - **The docstring pass found a never-worked configuration the fix pass had missed.**
+    Writing `norm_and_scale_all_meshes`' docstring forced running its in-memory branch:
+    `KeyError` on both classes, plus a silently-dropped `joint_scale_buffer` behind it.
+    Documenting a function honestly means executing it — the branch had survived #22's
+    in-memory fixes and #43's `joint_scale_buffer` work untouched because neither had a
+    reason to run that exact combination.
 
 ---
 

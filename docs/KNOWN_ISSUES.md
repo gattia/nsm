@@ -166,6 +166,22 @@ that makes `norm_pts` authoritative changes the coordinate frame of every datase
 checkpoint ever produced, and needs a migration, not a patch. *Pinned by:*
 `test_dataset_cache.TestPointCenteringAndScaling::test_centering_and_scaling_still_happen_unconditionally`.
 
+### `scale_jointly` cannot run in memory, and would drop its buffer if it could
+
+`scale_jointly=True` with `store_data_in_memory=True` raises `KeyError: 'new_pts_0'` at
+construction, on both dataset classes: the in-memory branch of
+`norm_and_scale_all_meshes` reads the flattened `new_pts_0`-style keys that exist only in
+the `.npz` cache layout, while in-memory sample dicts hold `new_pts` as a list. The
+combination has never constructed, so no results are affected.
+
+The same branch also omits `joint_scale_buffer` — the disk branch grows the shared scale
+by `1 + buffer`, the in-memory branch does not — so a fix for the `KeyError` alone would
+quietly put in-memory runs in a different coordinate frame than disk-backed ones. The pin
+asserts the buffered domain and `raises=KeyError`, forcing both halves to land together.
+
+*Fix:* [#69](https://github.com/gattia/nsm/issues/69). *Pinned by:*
+`test_dataset_cache.TestScaleJointlyInMemory::test_an_in_memory_dataset_lands_inside_the_buffered_domain`.
+
 ### `Pool` deadlocks after an in-process build
 
 A `multiprocessing=True` build hangs indefinitely with idle workers (`SDFSamples.__init__`)

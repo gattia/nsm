@@ -30,6 +30,14 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **`read_mesh_get_sampled_pts` and `read_meshes_get_sampled_pts` no longer take
+  `mean`.** No code path ever read it — verified by AST scan, and it is the only
+  never-read parameter in `sdf_dataset.py` — so at every value it did nothing. Removed
+  rather than honoured, the same call as `get_pts_center_and_scale`'s `center`/`scale`
+  below: an offset that suddenly worked would move every caller's samples. An old call
+  passing `mean` still runs (both functions swallow unknown kwargs) and now prints a
+  deprecation line. **No numerical output changes.**
+
 - **Four dead symbols are deleted** (audit disposition, maintainer-approved
   2026-08-22): `symmetric_chammfer` (`NSM/utils.py` — a `pass` stub returning `None`),
   `sdf_gradients` (`NSM/mesh/interpolate.py` — its return was mostly fabricated zero

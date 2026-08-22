@@ -2,7 +2,7 @@
 
 ## State
 
-**Updated:** 2026-08-17 · **Status:** open
+**Updated:** 2026-08-22 · **Status:** open
 
 > **This is the ideas file.** Per `CLAUDE.md` § Documents and work, new training ideas are
 > appended here rather than given their own plan. An idea graduates to its own plan only
@@ -182,6 +182,41 @@ negative result should be withdrawn rather than trusted.
 **Cost / retrain.** Two training runs plus the draft-6 fix as a prerequisite.
 
 **Status.** Idea — not started. Blocked on the draft-6 fix.
+
+---
+
+## Idea 6 — A size-preserving mode: rigid-at-true-size registration under `scale_jointly`
+
+**What.** An *additional* dataset mode in which reference-mesh registration still uses
+similarity (rigid + uniform scale) for anatomical correspondence, but the transform's
+uniform-scale component is then undone before sampling — each subject sits rigidly
+aligned at its own true size — and `scale_jointly`'s shared max-radius +
+`joint_scale_buffer` frame maps everyone into the unit domain while preserving
+between-subject size ratios.
+
+**Why.** Today between-subject size never reaches the model on any registered path:
+per-subject normalization erases it by construction (`max_rad` to the unit sphere), and
+reference-mesh registration erases it because both samplers hardcode
+`reg_mode="similarity"` — measured 2026-08-22 with the exact `rigidly_register` call
+`read_meshes_get_sampled_pts` makes: a radius-1.3 sphere registered to a radius-1.0
+reference lands at radius 1.0000 (ICP scale factor 0.7692 = 1/1.3). Size survives only
+with no `reference_mesh` at all under `scale_jointly=True`. Bone size plausibly carries
+disease signal (maintainer, 2026-08-22), so a mode that keeps it may be a beneficial
+addition. Size-invariant training stays valid and remains the default — this is an
+alternative worth having, not a defect in the current behaviour, which is why it lives
+here and not in `KNOWN_ISSUES.md`.
+
+**How.** Extract the uniform scale from the ICP transform (cube root of the 3×3 block's
+determinant) and divide it out of the transform before applying, behind a new opt-in
+config key; the reconstruction path (`reconstruct/main.py`, `register_similarity`) must
+offer the matching mode so fitted latents live in the frame the model trained in. The
+coordinate frame changes for runs that opt in, so the key needs the loud-config
+treatment of `NSM_CODE_HEALTH_REFACTOR.md` §4.
+
+**Cost / retrain.** Full retrain for any model that wants size sensitivity; existing
+models and defaults are untouched (opt-in).
+
+**Status.** Idea — not started.
 
 ---
 
