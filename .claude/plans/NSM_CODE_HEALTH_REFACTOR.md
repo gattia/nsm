@@ -6,10 +6,30 @@
 
 **Updated:** 2026-08-22 · **Status:** open
 
-- **Next:** `sdf_dataset.py`'s **semantic docstring pass** (its file:function fixes are
-  done — see Done), then its decomposition (§8). Still open from #48: the `barrier`
-  norm-penalty NaN and `Regress.add_latent`. (Both document passes are done and the
-  audit register is deleted — see Done.)
+- **Next:** (1) maintainer reviews branch `sdf-dataset-docstrings` — four commits, one
+  concern each: `mean` deletion (#20 instance), the semantic docstring pass, the
+  in-memory joint-scaling pin, the harness `LOC_SDF_CACHE` staleness fix. (2) On
+  approval of the issue draft below: file it, then patch the two `#TBD` markers (xfail
+  reason in `test_dataset_cache.TestScaleJointlyInMemory`, *Fix* line in
+  `KNOWN_ISSUES.md` § Open) with the real number. (3) Then `sdf_dataset.py`
+  decomposition (§8), characterization tests first (§7.3). Still open from #48: the
+  `barrier` norm-penalty NaN and `Regress.add_latent`.
+- **Issue draft awaiting approval** (do not file without the maintainer's OK):
+  - **Title:** `norm_and_scale_all_meshes`: `scale_jointly` cannot run in memory, and
+    would drop its buffer if it could
+  - **Body:** `scale_jointly=True` + `store_data_in_memory=True` raises
+    `KeyError: 'new_pts_0'` at construction, on both dataset classes: the in-memory
+    branch of `norm_and_scale_all_meshes` reads the flattened `new_pts_0`-style keys
+    that exist only in the `.npz` cache layout, while in-memory sample dicts hold
+    `new_pts` as a list. Reproduced 2026-08-22 end to end on synthetic meshes. Second
+    defect in the same branch: it omits `joint_scale_buffer` — the disk branch grows
+    the shared scale by `1 + buffer`, the in-memory branch divides by the raw max
+    radius — so a KeyError-only fix would silently put in-memory runs in a different
+    coordinate frame than disk-backed ones. **Fixed means:** the strict-xfail pin
+    (`test_dataset_cache.TestScaleJointlyInMemory`) passes un-marked — the dataset
+    constructs and its batches land in the buffered domain. Its `raises=KeyError`
+    makes a half-fix report as a plain failure. Always crashed, so no results are
+    affected and no History entry is due on fixing it.
 - **Blocked on:** nothing.
 - **Context for whoever picks this up:** PR #68 carried one commit per concern, so
   `git log NSM/datasets/sdf_dataset.py` explains each fix. Decisions of record are in
@@ -68,6 +88,15 @@
     keys optional), #23 (zero-count combos skipped), #24 (`LOC_SDF_CACHE` at
     construction) — one commit per concern, all closed by PR #68. Also filed and
     pinned strict-xfail: #67 (the None-surface path has never built end to end)
+  - `sdf_dataset.py` semantic docstring pass, on branch `sdf-dataset-docstrings`
+    (awaiting review, commits in concern order): `mean` deleted from both samplers —
+    the file's only accepted-and-never-read parameter left, by AST scan (#20 instance;
+    CHANGELOG entry); every public function/method documented, silent conventions
+    written down ("pts"/"xyz" key asymmetry, npz vs in-memory spelling, batch
+    contracts, cache-key omissions), false text corrected; the in-memory
+    joint-scaling defect pinned strict-xfail with a `KNOWN_ISSUES` § Open entry
+    (issue number #TBD until the draft above is filed); `_harness.py`'s stale
+    import-time `LOC_SDF_CACHE` claim fixed (stale since #24)
 - **Surprises:**
   - **"Fixed seed" was not available.** NSM called no seeding function anywhere, and the
     near-surface sampler could not be seeded by any caller. Closed via pymskt 0.1.21 plus
@@ -119,6 +148,12 @@
     became History §6 rather than close-by-deletion. And because the buffer is absent
     from the cache key (#19), the fix alone does not resample: pre-fix `.npz` caches
     keep serving the old points until deleted.
+  - **The docstring pass found a never-worked configuration the fix pass had missed.**
+    Writing `norm_and_scale_all_meshes`' docstring forced running its in-memory branch:
+    `KeyError` on both classes, plus a silently-dropped `joint_scale_buffer` behind it.
+    Documenting a function honestly means executing it — the branch had survived #22's
+    in-memory fixes and #43's `joint_scale_buffer` work untouched because neither had a
+    reason to run that exact combination.
 
 ---
 
