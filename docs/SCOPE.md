@@ -2,6 +2,8 @@
 
 **Phase 0 deliverable of `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md`.**
 **Verified:** 2026-08-15, against `main` at commit `73a0326`.
+**§2.8 and the 2026-08-22 amendments to §1, §2.6 and §3.1:** verified 2026-08-22, against
+`main` at `986fded` (post-PR #64) — every claim in them was re-run, not transcribed.
 
 > ⚠️ **Line references predate the Aug 2026 seeding work.** That work moved
 > `sdf_dataset.py` by over 100 lines, so a `file:line` below may not land where it did when
@@ -46,12 +48,23 @@ fix rather than limitations to document:
   → **Phase 4 work item: a common decoder interface plus a registration pathway**, so a
   third party can add a model and have it work in train, reconstruct, mesh and interpolate
   without editing NSM internals. One calling convention has to win.
-- **The shipped `default_config.json` only describes a DeepSDF model.** It has 61 keys and
-  none of the eleven `conv_*` / `sdf_*` keys a triplanar model needs, so a triplanar model
-  built from it silently falls back to a different architecture than the production models.
-  The real ShapeMedKnee configs carry 131 keys.
-  → **Phase 4 work item: ship a default config per model type, derived from the
-  ShapeMedKnee configs**, generated and sync-pinned the way the current one already is.
+
+  The `implicit` type is the furthest gone of the three, in two independent ways
+  (audit rulings, re-verified 2026-08-22): `loader._get_implicit_params` requires
+  `latent_dim`/`hidden_dim`/`num_layers` — a vocabulary no real training config uses
+  (the shipped configs carry `latent_size`/`layer_dimensions`) — and both that loader
+  and `ImplicitDecoder` default the output through a sigmoid, whose (0, 1) range cannot
+  represent a signed distance. Unreachable from real configs, and non-SDF by default
+  even when reached. Fold any fix into the registration-pathway work; neither half is
+  worth patching in isolation.
+- **The shipped `default_config.json` describes only the triplanar production model.**
+  PR #64 (issue #48) replaced the old 61-key DeepSDF-shaped default — which could not
+  drive `train_deep_sdf` at all — with a sanitized snapshot of the ShapeMedKnee
+  `647_nsm_femur_v0.0.1` triplanar config, pinned by the generator-sync test and a test
+  that instantiates the trainer from the shipped file. That delivers the first of the
+  per-model-type defaults.
+  → **Remaining Phase 4 work item: a default config for each *other* model type**
+  (deepsdf, two_stage; `implicit` first needs the vocabulary reconciliation above).
 
 **Genuinely experimental — needs a warning, not a fix:**
 
@@ -63,6 +76,13 @@ fix rather than limitations to document:
 - **`train_deep_sdf_multi_head`.** Kept (see §2.1), but its training parameters have never
   been tuned and it has never been used in anger. **Do not advertise it as a supported way
   to train models.** Its capability is real; its readiness is not.
+- **`multi_object_overlap`.** A config key both live trainers read and neither implements:
+  enabling it raises `Exception("Not implemented yet")` mid-epoch, after data loading and
+  the first forward pass (`train_deep_sdf.train_epoch` and its multi_head counterpart;
+  re-verified 2026-08-22). Accepted by config, not implemented, crashes any run that sets
+  it — the same shape as the eikonal ruling above, and it gets the same treatment: it is
+  not a defect to patch in isolation, it is an unbuilt feature whose key must not read as
+  a working option.
 
 ---
 
@@ -202,7 +222,7 @@ that paper, which is worth pinning down.
 | Module | Lines | Status | What decides it |
 |---|---|---|---|
 | `models/loader.py` | 387 | **production — fix, under investigation** | Not a status question. It is the documented entry point (README, `examples/`) *and* the natural home of the extensibility work in §1, since `load_model` is what a registration pathway would hang off. But three of its four advertised model types cannot be reconstructed, and the consumer does not use it — `steps/run_nsm.py:94-112` hand-rolls the config→constructor mapping instead and drops `padding`. **Open question being investigated: could the consumer switch to `load_model` today, and if not, what exactly is missing?** That answer sets the size of the fix. |
-| `mesh/triangle_metrics.py` | 97 | **keep — scope under investigation** | Both importers (`correspondence_metrics`, `refine_mesh`) are themselves unreached from production, so it cannot be ruled on independently of §2.3. Two open questions: is all five of its public symbols live, or only the part `correspondence_metrics` uses; and its `areas(norm=True)` default returns a relative deviation rather than areas, which is what makes `refine_mesh`'s `area_threshold` misleading. **Keep either way** — the question is whether it stays a separate file or the live part merges into `correspondence_metrics`. |
+| `mesh/triangle_metrics.py` | 97 | **keep — scope under investigation** | Both importers (`correspondence_metrics`, `refine_mesh`) are themselves unreached from production, so it cannot be ruled on independently of §2.3. Two open questions: is all five of its public symbols live, or only the part `correspondence_metrics` uses; and its `areas(norm=True)` default returns a relative deviation rather than areas, which is what makes `refine_mesh`'s `area_threshold` misleading. **Keep either way** — the question is whether it stays a separate file or the live part merges into `correspondence_metrics`. Input to that merge decision, from the audit (re-verified 2026-08-22): the two modules implement the edge-ratio statistic with deliberately opposite failure behaviour — `TriangleProperties.edge_ratio` raises on a zero-length edge, `correspondence_metrics.triangle_health` degrades gracefully and reports a `degenerate_count`. A merge must reconcile that split or keep it, deliberately. |
 | `datasets/utils.py` | 2 | **dead** | A two-line TODO proposing the Phase 4 `sdf_dataset` split. Zero importers. Delete when Phase 4 does the split it describes. |
 | `configs/generate_sdf_default_config.py` | 112 | **supported** | Confirmed — it owns the shipped `default_config.json` and is pinned by `test_default_config_sync.py`. The plan already ruled this correctly. |
 
@@ -240,6 +260,53 @@ counted as library code at all.
 **No module ruled dead had zero cost to remove.** That is the finding, and it argues for
 keeping Principle 2 ("quarantine, don't delete") rather than relaxing it.
 
+### 2.8 Function-level rulings — audit round, ruled 2026-08-22
+
+The Aug 2026 audit (register since deleted; disposition approved by the maintainer
+2026-08-22) surfaced symbols whose status no module-level ruling covers. Each claim below
+was re-verified by execution in the commit that wrote it.
+
+**Ruled dead and deleted** (the maintainer-approved cluster — the exception to
+Principle 2, because every one was unreachable or content-free, so there is no downstream
+use to break):
+
+- `symmetric_chammfer` (was in `NSM/utils.py`) — a `pass` stub with a whitespace-only
+  docstring, returning `None` to any caller. Zero callers.
+- `sdf_gradients` (was in `NSM/mesh/interpolate.py`) — zero callers, including inside its
+  own module (the interpolation path computes gradients through its own private helpers).
+  Its return prepended latent-width columns of fabricated zeros presented as gradient —
+  98.8% zero padding at the production latent size.
+- `find_object_bounds_random_sampling` (was in `NSM/mesh/main.py`) — zero callers,
+  non-deterministic by construction, and superseded by the deterministic
+  `main.coarse_bounds_from_sign_change`. A stale gitignored `build/` tree is the only
+  thing that still referenced it; do not let a grep over `build/` resurrect it.
+- `NSM/configs/deep_sdf_config` — a 404-byte scratch-notes file, untouched since the
+  initial commit, read by nothing, excluded from wheels (`NSM/configs` has no
+  `__init__.py`), and preserving the obsolete two-positional-entry LR shape as if it were
+  documentation.
+
+**Ruled dead, deletion deferred to the review that owns the file** — each was left in
+place so its removal happens in one reviewed pass over its module, not as a drive-by:
+
+| Symbol | Evidence (re-run 2026-08-22) | Delete with |
+|---|---|---|
+| `utils.compute_assd` (reconstruct) | Its only import is commented out (`recon_evaluation` imports `compute_chamfer  # , compute_assd`); the live ASSD path is pymskt's `get_assd_mesh` in `recon_evaluation.compute_recon_loss` | the #20 cleanup of `reconstruct/utils.py` |
+| `main.tune_reconstruction` (reconstruct) | Zero callers; reads 27 config keys of which 22 are absent from the shipped default, so no shipped config can drive it | Phase 4 decomposition of `reconstruct/main.py` |
+| `main.compute_correlation_coefficient` (reconstruct) | A four-line `np.corrcoef` wrapper, zero callers | Phase 4 decomposition of `reconstruct/main.py` |
+| `losses.l1_loss`, `losses.l2_loss` | One-line re-exports of torch's functional l1/mse losses, labelled "legacy aliases"; zero callers | the eikonal repair's pass over `losses.py` (plan §8.2) |
+
+**Ruled kept despite zero callers:**
+
+- `losses.compute_sdf_gradients` and `losses.combined_sdf_loss` — uncalled today, but
+  they are the eikonal helper surface: `compute_sdf_gradients` carries the same
+  `retain_graph` defect the eikonal repair must fix, and both stand or fall with that
+  repair (plan §8.2), not with caller count. Experimental, same ruling as the eikonal
+  loss itself (§1).
+
+Two audit rulings needed no new text, verified rather than assumed: `refine_mesh`'s
+cross-mesh cell-indexing precondition is already condition 2 of §2.3, and the
+only-TriplanarDecoder reconstruction limit is already §1's first bullet.
+
 ---
 
 ## 3. The public API contract
@@ -264,6 +331,14 @@ Two things about that surface are load-bearing and undocumented:
    dict names the surfaces — and the repo already has a `mesh_names` config field for
    exactly this, which `NSM/models/` never reads. This is the same undocumented-positional
    -ordering shape as the LR bug.
+
+   The same assumption is admitted in code one layer down (audit ruling, re-verified
+   2026-08-22): when a fit has fewer ground-truth surfaces than the decoder has outputs,
+   `main.reconstruct_latent` silently `break`s out of the surface loop under an in-code
+   TODO that says outright "it assumes the first surface is the bone / only of interest".
+   A deliberate, written-down design compromise, not a defect to file — it is recorded
+   here because it is one more instance of the positional-surface-identity contract this
+   section owns, and any surface-naming fix must cover it.
 2. **The consumer hand-rolls the config→constructor mapping and omits `padding`.** It
    passes 15 of `TriplanarDecoder`'s 16 meaningful arguments. `padding` is not a learned
    parameter, so a checkpoint trained at a different value loads cleanly under strict
@@ -273,6 +348,15 @@ Two things about that surface are load-bearing and undocumented:
    the consumer uses. **Closing that gap is the single highest-value API change available.**
 
 `reconstruct_mesh` has **one executed line** in the entire test suite: its `def`.
+
+**Deprecated, with a delete-when (audit ruling, re-verified 2026-08-22):**
+`batch_size_latent_recon`. `reconstruct_mesh` dropped the parameter, absorbs it via
+`**kwargs`, and prints a deprecation warning on every call — while the consumer still
+passes it (`steps/run_nsm.py`) and `main.get_mean_errors` still takes it as a real
+parameter. The shim behaves correctly; what the audit flagged is that it is inline and
+undated, indistinguishable from permanent API (the failure shape CLAUDE.md § "Separate
+permanent from transitional" names). **Delete the shim when kneepipeline stops passing
+the argument**; the kneepipeline-side change is a consumer cleanup, not an NSM defect.
 
 ### 3.2 Proposed `__all__` tiers
 

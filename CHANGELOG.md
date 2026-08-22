@@ -30,6 +30,14 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **Four dead symbols are deleted** (audit disposition, maintainer-approved
+  2026-08-22): `symmetric_chammfer` (`NSM/utils.py` — a `pass` stub returning `None`),
+  `sdf_gradients` (`NSM/mesh/interpolate.py` — its return was mostly fabricated zero
+  padding), `find_object_bounds_random_sampling` (`NSM/mesh/main.py` — non-deterministic,
+  superseded by `coarse_bounds_from_sign_change`), and the `NSM/configs/deep_sdf_config`
+  scratch file. All four had zero callers in this repo and in `kneepipeline`; rulings and
+  evidence in `docs/SCOPE.md` §2.8.
+
 - **`default_config.json` is replaced wholesale** (#48, maintainer decision): it is now a
   sanitized snapshot of the ShapeMedKnee `647_nsm_femur_v0.0.1` training config — the
   values that actually produced a shipped model — instead of a hand-written DeepSDF-era

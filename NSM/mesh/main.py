@@ -441,65 +441,6 @@ def sdf_grid_to_mesh_vtk(
     return mesh
 
 
-def find_object_bounds_random_sampling(
-    decoder,
-    latent_vector,
-    n_random_samples=300_000,
-    search_bounds=(-1.0, 1.0),
-    objects=1,
-    batch_size=300_000,
-    device="cuda",
-    verbose=False,
-):
-    """
-    Find bounding box of objects by random sampling and detecting interior points (SDF < 0).
-
-    Args:
-        decoder: SDF decoder network
-        latent_vector: Latent code for the objects
-        n_random_samples: Number of random points to sample
-        search_bounds: (min, max) bounds to sample within (assumes cube)
-        objects: Number of objects
-        batch_size: Batch size for SDF computation
-        device: Device to run computation on
-        verbose: Whether to print progress
-
-    Returns:
-        tuple: (bounds_min, bounds_max) where each is (x, y, z), or None if no objects found
-    """
-    if verbose:
-        print(f"Finding object bounds with {n_random_samples} random samples...")
-
-    # Generate random samples in the search space
-    samples = (
-        torch.rand(n_random_samples, 3) * (search_bounds[1] - search_bounds[0]) + search_bounds[0]
-    )
-
-    # Get SDF values for random samples
-    sdf_values = get_sdfs(decoder, samples, latent_vector, batch_size, objects, device)
-
-    # Find points that are inside any object (SDF < 0)
-    interior_mask = torch.any(sdf_values < 0, dim=1)  # True if inside ANY object
-    interior_points = samples[interior_mask]
-
-    if len(interior_points) == 0:
-        if verbose:
-            print("WARNING: No interior points found in random sampling")
-        return None
-
-    # Calculate bounding box
-    bounds_min = interior_points.min(dim=0)[0].cpu().numpy()
-    bounds_max = interior_points.max(dim=0)[0].cpu().numpy()
-
-    if verbose:
-        print(f"Found {len(interior_points)} interior points")
-        print(f"Object bounds: min={bounds_min}, max={bounds_max}")
-        extent = bounds_max - bounds_min
-        print(f"Object extent: {extent}")
-
-    return bounds_min, bounds_max
-
-
 def create_grid_samples_in_bounds(
     bounds_min,
     bounds_max,

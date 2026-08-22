@@ -6,19 +6,14 @@
 
 **Updated:** 2026-08-22 · **Status:** open
 
-- **Next:** two document passes, then back to code. (1) The SCOPE.md rulings pass:
-  transcribe the 13 rulings from `docs/AUDIT_FINDINGS.md` § 4 into SCOPE.md — each was
-  execution-verified in Aug 2026, but re-verify every claim in the same commit that
-  writes it — plus the dead-symbol cluster from § 0.5 (`symmetric_chammfer`,
-  `sdf_gradients`, `find_object_bounds_random_sampling`: rule dead, delete). (2) The
-  Phase-2 prose pass: the 62 corrections in `AUDIT_FINDINGS.md` § 3, plus the
-  `get_latent_vecs` docstring (withdrawn draft 13: document that variational doubles
+- **Next:** the Phase-2 prose pass: the 62 corrections in `AUDIT_FINDINGS.md` § 3, plus
+  the `get_latent_vecs` docstring (withdrawn draft 13: document that variational doubles
   the embedding for mean+logvar and that KLD supersedes `latent_bound`). The PR that
-  lands the last of this **deletes `AUDIT_FINDINGS.md`**, leaving a pointer. Then
-  `sdf_dataset.py`: its issues in file:function order (#40, #41, #43, #61, plus
-  #22/#23/#24), its semantic docstring pass, then its decomposition — fixing before
-  splitting, deliberately. Still open from #48: the `barrier` norm-penalty NaN and
-  `Regress.add_latent`.
+  lands it **deletes `AUDIT_FINDINGS.md`**, leaving a pointer — the SCOPE rulings pass
+  (PR #65) was the other gate and is done. Then back to code, `sdf_dataset.py`: its
+  issues in file:function order (#40, #41, #43, #61, plus #22/#23/#24), its semantic
+  docstring pass, then its decomposition — fixing before splitting, deliberately. Still
+  open from #48: the `barrier` norm-penalty NaN and `Regress.add_latent`.
 - **Blocked on:** nothing.
 - **Deliberately deferred:** #19 (cache key, 6 xfails) and #27 (checkpoint aliasing). Both
   force downstream regeneration or migration, so they land together as one release rather
@@ -45,6 +40,11 @@
     landed via PRs #62 (disposition) and #63 (quick wins)
   - Wave 1 — the four decided fixes (#47, #44, #53, #48-partial) plus the
     cyclic-anneal and Constant-schedule ride-alongs — PR #64
+  - SCOPE rulings pass: the register's 13 § 4 rulings transcribed into SCOPE.md
+    (every claim re-run against `main` first), the § 0.5 dead cluster deleted
+    (`symmetric_chammfer`, `sdf_gradients`, `find_object_bounds_random_sampling`,
+    `NSM/configs/deep_sdf_config`), and the stale §1 default-config bullet corrected
+    post-#64 — PR #65
 - **Surprises:**
   - **"Fixed seed" was not available.** NSM called no seeding function anywhere, and the
     near-surface sampler could not be seeded by any caller. Closed via pymskt 0.1.21 plus
