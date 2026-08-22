@@ -42,6 +42,7 @@ queue.
 | `include_surf_in_pts` appends a leaked loop variable | **High** | [#17](https://github.com/gattia/nsm/issues/17) |
 | Parameters accepted and never read | Medium — **read the traps first** | [#20](https://github.com/gattia/nsm/issues/20) |
 | `xyz_in_all` accepted and never read | Medium — silent no-op | [#20](https://github.com/gattia/nsm/issues/20) |
+| A `None` surface cannot build | Medium — advertised feature, unusable | [#67](https://github.com/gattia/nsm/issues/67) |
 | Every VAE layer stored twice | Medium — 1.92× checkpoints | [#27](https://github.com/gattia/nsm/issues/27) |
 | `reconstruct_mesh` early return drops requested keys | Medium | [#29](https://github.com/gattia/nsm/issues/29) |
 | `reconstruct_mesh` raises `KeyError: 'pts'` on one branch | Medium | [#15](https://github.com/gattia/nsm/issues/15) |
@@ -132,6 +133,19 @@ coordinate space, with a migration guard of the same shape as History §1's. Wri
 `.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md`, scheduled into
 `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §8. Tracked as
 [#3](https://github.com/gattia/nsm/issues/3), open since Sept 2025.
+
+### A `None` surface cannot build
+
+`MultiSurfaceSDFSamples` accepts `None` in a subject's path list — a missing structure,
+the fdfe902 feature — but `get_sample_data_dict` preallocates `data["xyz"]` with
+`sum(n_pts_)` rows per combo while `read_meshes_get_sampled_pts` returns points only for
+the non-None surfaces, so the first buffer write raises `RuntimeError` (expanded-size
+mismatch). The feature has never worked through the dataset class; the downstream
+NaN-column handling (`remove_overlapping_points`, `sdf_pos_neg_idx`) is reachable only by
+direct call.
+
+*Fix:* [#67](https://github.com/gattia/nsm/issues/67). *Pinned by:*
+`test_dataset_cache.TestEmptySignedSamples::test_a_none_surface_subject_must_build`.
 
 ### `center_pts` and `norm_pts` do not select which normalization happens
 

@@ -937,6 +937,26 @@ class TestEmptySignedSamples:
         assert pos[0].numel() > 0 and neg[0].numel() > 0
         assert pos[1].numel() == 0 and neg[1].numel() == 0 and surf[1].numel() == 0
 
+    @pytest.mark.xfail(
+        strict=True, reason="#67: a None surface dies at the preallocated buffer write"
+    )
+    def test_a_none_surface_subject_must_build(self, meshes, tmp_path_factory):
+        """
+        The fdfe902 feature: a subject may be missing a structure. The build currently
+        dies in ``get_sample_data_dict`` -- ``data["xyz"]`` expects ``sum(n_pts_)`` rows
+        per combo while the sampler returns only the non-None surfaces' points -- which
+        is why the NaN-column handling above is reachable only by direct call.
+        """
+        dataset = build_dataset(
+            [[meshes[0][0], None]],
+            tmp_path_factory.mktemp("none_surface"),
+            store_data_in_memory=True,
+            save_cache=False,
+            **SMALL,
+        )
+        item, _ = dataset[0]
+        assert {"xyz", "gt_sdf"} <= set(item)
+
     def test_the_single_surface_class_also_raises_by_name(self):
         """``SDFSamples.sdf_pos_neg_idx`` is separate code with the same division."""
         from types import SimpleNamespace
