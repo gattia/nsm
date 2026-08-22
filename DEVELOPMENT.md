@@ -14,11 +14,14 @@ conda activate nsm-dev
 # Install PyTorch (adjust for your CUDA version if needed)
 conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
 
-# Install development dependencies
+# Install runtime + development dependencies and NSM in development mode
+# (pyproject.toml declares no dependencies, so requirements.txt is NOT optional:
+# skipping it leaves every subpackage except NSM.utils unimportable)
+pip install -r requirements.txt
 pip install -r requirements-dev.txt
-
-# Install NSM in development mode
 pip install -e .
+# ...or, equivalently, all three in one step:
+make install-dev
 ```
 
 ### Option 2: Using pip with virtual environment
@@ -34,10 +37,10 @@ pip install --upgrade pip
 # Install PyTorch (CPU version - adjust for GPU if needed)
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
-# Install development dependencies
+# Install runtime + development dependencies and NSM in development mode
+# (requirements.txt is not optional; see Option 1)
+pip install -r requirements.txt
 pip install -r requirements-dev.txt
-
-# Install NSM in development mode
 pip install -e .
 ```
 
@@ -123,19 +126,21 @@ mypy NSM/
 ```
 NSM/
 ├── NSM/                    # Main package
-│   ├── models/            # Model definitions and loader
+│   ├── configs/           # default_config.json and its generator
 │   ├── datasets/          # Dataset handling
-│   ├── train/            # Training utilities
-│   ├── reconstruct/      # Reconstruction utilities
-│   └── utils.py          # Utility functions
+│   ├── mesh/              # Marching cubes, refinement, interpolation
+│   ├── models/            # Model definitions and loader
+│   ├── reconstruct/       # Reconstruction utilities
+│   ├── train/             # Training utilities
+│   ├── losses.py          # SDF loss functions
+│   └── utils.py           # Utility functions
 ├── testing/               # Test suite
 │   └── NSM/              # Tests mirroring package structure
-│       ├── models/       # Model tests
-│       └── reconstruct/  # Reconstruction tests
 ├── examples/              # Usage examples
+├── docs/                  # Engineering docs (SCOPE, ARCHITECTURE, KNOWN_ISSUES)
 ├── requirements.txt       # Runtime dependencies
 ├── requirements-dev.txt   # Development dependencies
-└── setup.py              # Package configuration
+└── pyproject.toml         # Package configuration
 ```
 
 ## Adding New Tests
@@ -199,8 +204,9 @@ class TestYourNewModel(unittest.TestCase):
 For performance-critical changes:
 
 ```bash
-# Run specific performance tests
-pytest testing/performance/ -v
+# Timing scripts live in testing/testing_sdf_calculation_times/ (scratch scripts,
+# run directly rather than through pytest)
+python testing/testing_sdf_calculation_times/time.py
 
 # Profile code
 python -m cProfile -s cumtime your_script.py

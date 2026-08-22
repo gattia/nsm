@@ -450,8 +450,8 @@ The dataset cache hash is the one to act on. `get_hash_params` omits `mesh_to_sc
 `uniform_pts_buffer` and `subsample`, all of which change cached content — so two runs
 differing only in `mesh_to_scale` produce the same key and the second silently reuses the
 first's alignment and normalization. Separately, a `Mesh` object passed as `reference_mesh`
-hashes via its memory address, so the cache never hits. Details in
-`docs/AUDIT_FINDINGS.md`.
+hashes via its memory address, so the cache never hits. Tracked as issue #19 (whose
+fix is deliberately bundled with #27 — see the plan's State block).
 
 ---
 

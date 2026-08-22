@@ -70,7 +70,12 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
 
         if "latent_dropout" in kwargs:
-            warnings.warn("latent_dropout is deprecated. Use dropout instead.", DeprecationWarning)
+            warnings.warn(
+                "latent_dropout is deprecated and ignored: the latent-input dropout it once "
+                "enabled no longer exists, and per-layer dropout (dropout + dropout_prob) is "
+                "a different mechanism, not a replacement. Delete the argument.",
+                DeprecationWarning,
+            )
 
         # DEPRECATED
         self.norm_layers = norm_layers

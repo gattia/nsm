@@ -145,7 +145,10 @@ def _get_deepsdf_params(config: Dict[str, Any]) -> tuple:
     # Handle deprecated parameters
     if "latent_dropout" in config:
         warnings.warn(
-            "latent_dropout is deprecated in config. Use dropout_prob instead.", DeprecationWarning
+            "latent_dropout is deprecated and ignored: the latent-input dropout it once "
+            "enabled no longer exists, and per-layer dropout (layers_with_dropout + "
+            "dropout_prob) is a different mechanism, not a replacement. Delete the key.",
+            DeprecationWarning,
         )
 
     params = {

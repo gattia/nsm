@@ -44,19 +44,20 @@ def find_all_faces_to_split(mesh, cells_to_divide):
     - cells_to_divide: A numpy array of indices of faces to split.
 
     Returns:
-    - cells_to_divide: A numpy array of indices of faces to split.
-    - list_adjacent: A list of indices of faces that are adjacent to the faces in cells_to_divide.
+    - cells_to_divide: A numpy array of indices of faces to split (the input set
+      plus every face pulled in by the adjacency rule). The caller's array is not
+      modified; the growth happens on an internal list.
     """
 
     list_adjacent = []
 
     faces = get_faces(mesh)
 
-    unique = 0
-    not_unique = 0
-
     cells_to_divide = cells_to_divide.tolist()
 
+    # Deliberately appends to the list being iterated: faces pulled in by the
+    # adjacency rule are themselves visited later in the same loop, so the set
+    # grows to a fixed point.
     for face_idx in cells_to_divide:
         for edge_idx in range(3):
             p1 = faces[face_idx, edge_idx]
@@ -64,10 +65,8 @@ def find_all_faces_to_split(mesh, cells_to_divide):
             adjacent_face_idx = find_adjacent_face(faces=faces, p1=p1, p2=p2, current_face=face_idx)
             if adjacent_face_idx not in list_adjacent:
                 list_adjacent.append(adjacent_face_idx)
-                unique += 1
             elif adjacent_face_idx not in cells_to_divide:
                 cells_to_divide.append(adjacent_face_idx)
-                not_unique += 1
 
     cells_to_divide = np.array(cells_to_divide)
 
@@ -117,7 +116,9 @@ def new_vertices_faces(mesh, face_idx, new_vertices, cells_to_divide):
         # & return the index (based on the total number of points that already
         # exist)
         new_vertices, midpoint_index = add_vertex_if_new(edge_dict["midpoint"], mesh, new_vertices)
-        # store the index so it can be used to create the new faces
+        # store the index so it can be used to create the new faces.
+        # Edge iteration order is (v0-v1, v1-v2, v2-v0), so midpoint_indices comes out
+        # as (AB, BC, CA) -- the exact order create_new_faces unpacks it in.
         midpoint_indices.append(midpoint_index)
 
         # get adjacent faces to the one being split (shares the edge of this loop)
@@ -140,7 +141,7 @@ def new_vertices_faces(mesh, face_idx, new_vertices, cells_to_divide):
             )
 
     # Create new faces using original vertices and new midpoints
-    new_faces = create_new_faces(faces[face_idx], midpoint_indices)  # Implement this
+    new_faces = create_new_faces(faces[face_idx], midpoint_indices)
     # combine the two lists of new faces
     new_faces.extend(new_adjacent_faces)
 
@@ -236,9 +237,11 @@ def add_vertex_if_new(
     - vertex: The new vertex to add (numpy array or list of 3 floats: x, y, z).
     - mesh: The original PyVista mesh.
     - new_vertices: A list to store new vertices added to the mesh.
+    - threshold: Distance below which two vertices count as the same point.
 
     Returns:
-    - The index of the vertex in the combined list of original mesh vertices and new_vertices.
+    - tuple: (new_vertices, index) — the (possibly appended-to) new_vertices list, and
+      the vertex's index in the combined list of original mesh vertices and new_vertices.
     """
 
     # Combine original mesh vertices with new_vertices to search for existing vertex
@@ -272,6 +275,11 @@ def create_new_faces(original_vertex_indices, midpoint_indices):
 
     Returns:
     - new_faces: A list of new faces (triangles), where each face is represented as a list of vertex indices.
+
+    Contract: midpoint_indices must be ordered (AB, BC, CA) — midpoint of the edge
+    between the 1st and 2nd vertex, then 2nd and 3rd, then 3rd and 1st. That is the
+    order new_vertices_faces builds them in; a permuted list silently yields a
+    different, wrong triangulation.
     """
     # Original vertices are A, B, C
     A, B, C = original_vertex_indices
@@ -353,9 +361,7 @@ def subdivide_triangles(mesh, cells_to_divide):
     # with the existing mesh faces/vertices and delete the
     # faces for all of the cells_to_divide (because these
     # have now been subdivided).
-    mesh_ = update_mesh(
-        mesh, new_vertices, new_faces, faces_to_delete
-    )  # Implement mesh update logic
+    mesh_ = update_mesh(mesh, new_vertices, new_faces, faces_to_delete)
 
     return mesh_
 
@@ -368,7 +374,9 @@ def get_target_cells(
 
     Parameters:
     - mesh: A PyVista mesh.
-    - area_threshold: The maximum area of a triangle before it is subdivided.
+    - area_threshold: Relative-deviation cutoff, NOT an area: compared against
+      TriangleProperties.areas(norm=True), i.e. (area - mean_area) / mean_area, so 0.5
+      means "50% larger than the mean triangle". Triangles above it are subdivided.
     - length_threshold: The maximum:min edge length ratio of a triangle before it is subdivided.
     - max_length_threshold: The maximum edge length of a triangle before it is subdivided.
 
@@ -418,7 +426,9 @@ def subdivide_large_triangles(
 
     Parameters:
     - mesh: A PyVista mesh.
-    - area_threshold: The maximum area of a triangle before it is subdivided.
+    - area_threshold: Relative-deviation cutoff, NOT an area: compared against
+      TriangleProperties.areas(norm=True), i.e. (area - mean_area) / mean_area, so 0.5
+      means "50% larger than the mean triangle". Triangles above it are subdivided.
     - length_threshold: The maximum:min edge length ratio of a triangle before it is subdivided.
     - max_length_threshold: The maximum edge length of a triangle before it is subdivided.
     - verbose: Whether to print additional information.
@@ -453,7 +463,9 @@ def subdivide_triangles_on_base_mesh(
     Parameters:
     - base_mesh: A PyVista mesh.
     - mesh: A PyVista mesh.
-    - area_threshold: The maximum area of a triangle before it is subdivided.
+    - area_threshold: Relative-deviation cutoff, NOT an area: compared against
+      TriangleProperties.areas(norm=True), i.e. (area - mean_area) / mean_area, so 0.5
+      means "50% larger than the mean triangle". Triangles above it are subdivided.
     - length_threshold: The maximum:min edge length ratio of a triangle before it is subdivided.
     - max_length_threshold: The maximum edge length of a triangle before it is subdivided.
     - verbose: Whether to print additional information.

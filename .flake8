@@ -23,5 +23,4 @@ exclude =
     dist,
     .venv,
     testing/testing_h5_vs_np_loading,
-    testing/testing_sdf_calculation_times,
-    experiments
+    testing/testing_sdf_calculation_times

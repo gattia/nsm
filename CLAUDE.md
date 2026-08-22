@@ -231,7 +231,9 @@ When you touch code a `docs/` file describes, verify it in the same commit or pu
 
 **`NSM/train/`** - Training pipelines:
 - `train_deep_sdf.py`: Main training loop
-- `train_deep_sdf_multi_head.py`: Multi-head training for multiple surfaces
+- `train_deep_sdf_multi_head.py`: Multi-head training (N independent decoders, one shared
+  latent) — **broken, do not use**: only the last decoder trains (#51; `docs/SCOPE.md`
+  §2.1 rules it supported-but-unready, kept out of the documented surface)
 - `utils.py`: Weight scheduling (linear, exponential, exponential_plateau, constant), KLD loss
 
 **`NSM/reconstruct/`** - Reconstruction and evaluation:
@@ -263,7 +265,7 @@ When training models that decode multiple surfaces (e.g., bone + cartilage + men
 
 - **`mesh_names`** (list of str, optional): Human-readable names for each decoder output, in order. For example: `["bone", "cart", "med_men", "lat_men"]` for a 4-surface femur model. Must have the same length as `objects_per_decoder`. Saved to `model_params_config.json` alongside other config fields.
 
-**Always include `mesh_names` in new training configs.** Without it, downstream consumers (e.g., nsosim) must infer mesh identity from the output count, which is fragile. A warning is emitted during training if `mesh_names` is not provided.
+**Always include `mesh_names` in new training configs.** Without it, downstream consumers (e.g., nsosim) must infer mesh identity from the output count, which is fragile. A warning is emitted during training if `objects_per_decoder > 1` and `mesh_names` is not provided — a single-surface config with no `mesh_names` trains silently.
 
 Example config snippet:
 ```json
@@ -304,9 +306,9 @@ vocabulary spanning config and optimizer:
 - Param groups also carry `name` (`latent`, `model_0`, …), but that is a **human label
   only** — nothing dispatches on it. Renaming a group changes nothing.
 
-Several groups may share a target: every decoder and the classification heads all take
-the `model` schedule. That many-to-one relation is why group `name` and schedule `Target`
-are separate fields rather than one.
+Several groups may share a target: every decoder takes the `model` schedule. That
+many-to-one relation is why group `name` and schedule `Target` are separate fields
+rather than one.
 
 Background: `docs/KNOWN_ISSUES.md` §1 — a positional-mapping bug swapped these two
 schedules on every Adam/AdamW run from May 2023 to Aug 2026.

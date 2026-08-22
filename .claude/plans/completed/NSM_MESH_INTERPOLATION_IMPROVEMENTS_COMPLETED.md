@@ -40,6 +40,15 @@ believed beforehand and why it was wrong.
   kwarg-gated options; exactly two are recommended (Fix 2 + Fix 4c at θ=45°). The other six
   are reachable, tested, and not advised — which is a maintenance surface the plan did not
   anticipate creating.
+- **The deliverables list below no longer matches `main`** *(noted 2026-08-22, audit
+  round)*: the 31 interpolate tests were trimmed to 9 by `fa862aa` ("Trim mesh
+  interpolation to production config") — the 39 correspondence-metrics tests survive in
+  full — and the `experiments/mesh_interpolation/` tree exists on no branch of `origin`.
+  The archive branch/tag this plan and the module docstring point to
+  (`mesh-interpolation-improvements`, `archive/mesh-interp-full-exploration`) were never
+  pushed: as of 2026-08-22 they exist, if anywhere, only in a local clone. The counts and
+  paths below are kept as a record of what was delivered at completion, not of what is
+  checked out today.
 
 ## Completion Notes
 

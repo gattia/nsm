@@ -168,10 +168,13 @@ class ModulationNetwork(nn.Module):
         in_dim = latent_dim size
         mod_dims = hidden_dim size from MLP
 
-        At each layer, the latent (in_dim) is concatenated with the output of the previous layer (mod_dims[i-1])
-        and then fed into the next layer to produce an output of dimension mod_dims[i]. The output of each layer
-        is stored/returned in a list. This list of outputs is the same size as the hidden layers of the original MLP.
-        This list of outputs is then used to modulate the weights of the original MLP (alpha_i in eqn 2. of the paper)
+        At each layer, the output of the previous layer (mod_dims[i-1]) is concatenated with the
+        latent (in_dim) — in that order: ``cat([out, input])``, previous-layer features first,
+        latent second, which is baked into the weight layout of any trained checkpoint — and
+        then fed into the next layer to produce an output of dimension mod_dims[i]. The output
+        of each layer is stored/returned in a list. This list of outputs is the same size as the
+        hidden layers of the original MLP. This list of outputs is then used to modulate the
+        weights of the original MLP (alpha_i in eqn 2. of the paper)
 
         """
         super().__init__()
@@ -192,8 +195,8 @@ class ModulationNetwork(nn.Module):
             out = block(out)
             # store outputs of the modulation network to be passed to the MLP
             mods.append(out)
-            # concatenate the latent_dim (in_dim) with the previous layer's output (mod_dims[i-1])
-            # this is only for the input to the next layer, not passed to MLP.
+            # concatenate the previous layer's output (mod_dims[i-1]) with the latent (in_dim),
+            # in that order; this is only for the input to the next layer, not passed to MLP.
             out = torch.cat([out, input], dim=-1)
         return mods
 

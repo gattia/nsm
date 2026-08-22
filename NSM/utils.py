@@ -16,7 +16,6 @@ except ImportError:
 # (see LR_TARGET_KEY below), which is what makes group ORDER irrelevant.
 LATENT_GROUP_NAME = "latent"
 MODEL_GROUP_PREFIX = "model_"
-CLASSIFICATION_HEADS_GROUP_NAME = "classification_heads"
 
 # Key under which a param group records which schedule drives it. Same vocabulary as a
 # config entry's "Target", so there is one set of names spanning config and optimizer.
@@ -74,8 +73,8 @@ class LogAnnealLearningRateSchedule(LearningRateSchedule):
 # mandatory rather than inferred from position.
 LR_TARGET_KEY = "Target"
 
-#: Drives the model/decoder param groups (``model_0``, ``model_1``, ...) and, when
-#: present, ``classification_heads``.
+#: Drives the model/decoder param groups (``model_0``, ``model_1``, ...) and any other
+#: group that declares this target (NSM itself creates none beyond the decoders).
 LR_TARGET_MODEL = "model"
 
 #: Drives the latent-code param group.
@@ -210,8 +209,8 @@ def adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False):
     orders the groups ``[latent, model...]`` the two schedules were applied swapped for
     the whole of every affected run. See ``docs/KNOWN_ISSUES.md``.
 
-    Several groups may share a target -- every decoder and the classification heads all
-    take the model schedule.
+    Several groups may share a target -- every decoder takes the model schedule, as
+    would any extra group declaring ``target="model"`` (NSM itself creates none).
 
     Raises
     ------
@@ -340,6 +339,17 @@ def get_checkpoints(config):
 
 
 def get_latent_vecs(num_objects, config):
+    """Build the per-object latent embedding the trainer optimizes.
+
+    Variational contract (deliberate, per maintainer review 2026-08-22): with
+    ``variational: true`` the embedding width doubles to ``2 * latent_size`` because
+    each row stores the VAE mean and log-variance; the decoder's latent is still
+    ``latent_size``, so that is the correct value for ``model_params_config.json``
+    and for downstream consumers. In the same mode the hard ``latent_bound``
+    (``max_norm``) is superseded: training swaps the regularizer to KLD
+    (``train_deep_sdf.train_epoch``), and the hardcoded 1000 below is deliberately
+    "effectively unbounded", not an ignored config value.
+    """
     if ("variational" in config) and (config["variational"] is True):
         latent_size = config["latent_size"] * 2
         latent_bound = 1000

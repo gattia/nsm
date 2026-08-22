@@ -426,7 +426,7 @@ Dependency bugs that reach an NSM user.
 | **Affected optimizers** | `Adam`, `AdamW` |
 | **Unaffected optimizers** | `schedule_free_AdamW`, `schedule_free_SGD` |
 | **Severity** | Silent — wrong numerics, no error, no warning |
-| **Fixed in** | `fix-lr-schedule-mapping`, Aug 2026 |
+| **Fixed in** | Two PRs, Aug 2026 — dating a checkout needs the **second**: PR #9 (`fix-lr-schedule-mapping`) mapped schedules by param-group name; PR #10 (`lr-schedule-target-key`) landed the `Target` contract this entry documents (the migration guard, the `{target: schedule}` dict, the swapped shipped defaults) |
 | **Reported by** | Dr. Katherine Wolcott, Florida Museum of Natural History / BioVision Lab, 2026-07-10 |
 
 ### What was wrong

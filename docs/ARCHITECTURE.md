@@ -16,8 +16,11 @@ import's enclosing scope so deferred imports are distinguished structurally. Cov
 `pytest testing/ --cov=NSM`. Caller counts exclude `build/lib/`, which is a stale
 gitignored copy of the whole package and double-counts every naive `grep -r`.
 
-Findings referenced here are catalogued in [`AUDIT_FINDINGS.md`](AUDIT_FINDINGS.md);
-status rulings are in [`SCOPE.md`](SCOPE.md).
+Findings referenced here were catalogued in a staging register
+(`docs/AUDIT_FINDINGS.md`) that was retired on 2026-08-22 once everything in it had a
+durable home: issues #40–#61 on the tracker, the `SCOPE.md` §2.8 rulings, and the
+Phase-2 prose corrections. The register itself survives in git history; status rulings
+are in [`SCOPE.md`](SCOPE.md).
 
 ---
 

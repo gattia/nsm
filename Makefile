@@ -20,6 +20,7 @@ help:
 	@echo "  docs             Build the API reference into site/"
 	@echo "  clean            Clean up temporary files and caches"
 	@echo "  env-setup        Setup conda development environment"
+	@echo "  quick-test       Quick dev cycle: autoformat + loader tests"
 
 # Installation targets
 install:
@@ -78,11 +79,11 @@ env-setup:
 # ARCHITECTURE, KNOWN_ISSUES) that pdoc would overwrite. pymskt writes into its
 # docs/ because that directory is generated output; ours is not.
 #
-# PDOC_ALLOW_EXEC=1 because importing NSM.dependencies pulls in pykeops, which
-# compiles a probe binary at import. pdoc blocks subprocesses by default, and the
-# import fails without it.
+# (PDOC_ALLOW_EXEC=1 was needed while the vendored NSM.dependencies pulled in
+# pykeops, which compiles a probe binary at import; both left with PR #64 and
+# the build was re-verified without it.)
 docs:
-	PDOC_ALLOW_EXEC=1 pdoc -o site/ NSM
+	pdoc -o site/ NSM
 
 # TODO: CI/CD targets - set these up once CI is configured
 # ci-test: install-dev test-coverage lint

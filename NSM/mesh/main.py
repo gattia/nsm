@@ -70,7 +70,9 @@ def coarse_bounds_from_sign_change(
         limit_near0_to_band: Restrict near0 to band around sign_change
 
     Returns:
-        tuple: (bounds_min, bounds_max) where each is (x, y, z), or None if no surface found
+        tuple: (bounds_min, bounds_max) where each is (x, y, z). None for either of two
+        reasons: the coarse grid is degenerate (fewer than 2 samples on some axis, so
+        there are no cells to test), or no cell contains the surface.
     """
     sdf = (
         sdf_coarse_zyx.detach().cpu().numpy()
@@ -127,6 +129,25 @@ def coarse_bounds_from_sign_change(
 
 
 def scale_mesh_(mesh, scale=1.0, offset=(0.0, 0.0, 0.0), icp_transform=None, verbose=False):
+    """
+    Scale, offset, and (optionally) inverse-ICP-transform a mesh — sometimes in place.
+
+    The trailing underscore only half holds: a mskt Mesh input is mutated in place and
+    also returned; any other input (vtk, pyvista, file path) is first wrapped in a new
+    mskt Mesh, so the caller's object is untouched. The only in-repo caller is
+    scale_mesh below.
+
+    Args:
+        mesh: mskt Mesh (mutated in place) or anything mskt.mesh.Mesh() accepts.
+        scale (float): multiplier applied to the point coordinates first.
+        offset: translation added after scaling.
+        icp_transform (vtkTransform, optional): if given, its INVERSE is applied after
+            scale+offset (undoing a registration).
+        verbose (bool): print progress.
+
+    Returns:
+        mskt Mesh: the input object (Mesh input) or the new wrapper (other inputs).
+    """
     if not issubclass(type(mesh), mskt.mesh.Mesh):
         mesh = mskt.mesh.Mesh(mesh)
 
@@ -160,7 +181,18 @@ def scale_mesh(
     icp_transform=None,
     verbose=False,
 ):
+    """
+    Scale/offset new_mesh, deriving the transform from old_mesh when one is given.
 
+    With old_mesh: the passed scale/offset are ignored and recomputed from old_mesh
+    (offset = its centroid; scale = its max point radius after centering, the "max_rad"
+    method — the only one implemented). Without old_mesh: the passed scale/offset are
+    used as-is. Either way the work is done by scale_mesh_ (see its docstring for the
+    in-place caveat and the inverse-ICP behaviour).
+
+    Returns:
+        mskt Mesh: the transformed mesh.
+    """
     if old_mesh is not None:
         old_mesh = mskt.mesh.Mesh(old_mesh)  # should handle vtk, pyvista, or string path to file
         old_pts = old_mesh.point_coords
@@ -203,7 +235,20 @@ def create_mesh(
     device="cuda",
     use_vtk=True,
 ):
+    """
+    Reconstruct surface mesh(es) from a decoder + latent by dense marching cubes.
 
+    Evaluates the decoder on a full n_pts_per_axis^3 grid (voxel_size defaults to
+    2/(n_pts_per_axis - 1), spanning [-1, 1]^3 from voxel_origin), extracts the zero
+    level set per object (VTK FlyingEdges when use_vtk, else skimage marching cubes),
+    then optionally rescales each mesh back to the original coordinate frame
+    (scale_to_original_mesh via scale_mesh) and saves it (path_save/filename).
+
+    Returns:
+        A single mskt Mesh when objects == 1, else a list of length `objects`.
+        An object whose SDF never crosses zero yields None in its slot (with a
+        warning when verbose).
+    """
     if voxel_size is None:
         voxel_size = 2.0 / (n_pts_per_axis - 1)
 
@@ -279,6 +324,22 @@ def sdf_grid_to_mesh(
     band_width=3.0,
     pad_voxels=2,
 ):
+    """
+    Extract the zero level set of a gridded SDF with skimage marching cubes.
+
+    The torch-tensor twin of sdf_grid_to_mesh_vtk (this one requires a torch tensor —
+    the first line calls .cpu(); the VTK twin accepts numpy too). With narrow_band,
+    the volume is first cropped by crop_sdf_to_narrow_band.
+
+    Args:
+        sdf_values (torch.Tensor): SDF grid in array[x, y, z] layout.
+        voxel_origin: (x, y, z) world position of grid index (0, 0, 0).
+        voxel_size (float): isotropic voxel edge length.
+        narrow_band / band_width / pad_voxels: see crop_sdf_to_narrow_band.
+
+    Returns:
+        mskt Mesh: the extracted surface.
+    """
     sdf_values = sdf_values.cpu().numpy()
 
     if verbose is True:
@@ -327,7 +388,7 @@ def crop_sdf_to_narrow_band(
         sdf_values: numpy array containing SDF values
         voxel_origin: Origin point of the voxel grid (x, y, z)
         voxel_size: Size of each voxel
-        band_width: Width of narrow band in world units (multiplier of voxel_size)
+        band_width: Width of narrow band, as a multiplier of voxel_size
         pad_voxels: Number of voxels to pad around cropped region
         verbose: Whether to print progress messages
 
@@ -339,32 +400,32 @@ def crop_sdf_to_narrow_band(
     if verbose:
         print(f"Applying narrow band optimization (band_width={band_width} * voxel_size)...")
 
-    # Find voxels within the narrow band around the surface
+    # Find voxels within the narrow band around the surface.
+    # The volume is in array[x, y, z] layout, so np.where's axes are (X, Y, Z).
     band = band_width * voxel_size
     mask = np.abs(sdf_values) <= band
-    z, y, x = np.where(mask)
+    ix, iy, iz = np.where(mask)
 
-    if len(z) == 0:
+    if len(ix) == 0:
         if verbose:
             print("WARNING: No voxels found within narrow band - using full volume")
         return sdf_values, voxel_origin
 
     # Calculate cropping bounds with padding
-    xs = max(x.min() - pad_voxels, 0)
-    xe = min(x.max() + pad_voxels + 1, orig_nz)
-    ys = max(y.min() - pad_voxels, 0)
-    ye = min(y.max() + pad_voxels + 1, orig_ny)
-    zs = max(z.min() - pad_voxels, 0)
-    ze = min(z.max() + pad_voxels + 1, orig_nx)
+    x0 = max(ix.min() - pad_voxels, 0)
+    x1 = min(ix.max() + pad_voxels + 1, orig_nx)
+    y0 = max(iy.min() - pad_voxels, 0)
+    y1 = min(iy.max() + pad_voxels + 1, orig_ny)
+    z0 = max(iz.min() - pad_voxels, 0)
+    z1 = min(iz.max() + pad_voxels + 1, orig_nz)
 
     # Extract subvolume
-    sub_sdf = sdf_values[zs:ze, ys:ye, xs:xe]
+    sub_sdf = sdf_values[x0:x1, y0:y1, z0:z1]
 
-    # Calculate new origin: array[x,y,z] layout means zs→X, ys→Y, xs→Z in world coords
     crop_origin = (
-        voxel_origin[0] + zs * voxel_size,  # X
-        voxel_origin[1] + ys * voxel_size,  # Y
-        voxel_origin[2] + xs * voxel_size,  # Z
+        voxel_origin[0] + x0 * voxel_size,
+        voxel_origin[1] + y0 * voxel_size,
+        voxel_origin[2] + z0 * voxel_size,
     )
 
     if verbose:
@@ -392,7 +453,7 @@ def sdf_grid_to_mesh_vtk(
         voxel_size: Size of each voxel
         verbose: Whether to print progress messages
         narrow_band: Whether to crop volume to narrow band around surface for speed
-        band_width: Width of narrow band in world units (multiplier of voxel_size)
+        band_width: Width of narrow band, as a multiplier of voxel_size
         pad_voxels: Number of voxels to pad around cropped region
 
     Returns:
@@ -453,8 +514,9 @@ def create_grid_samples_in_bounds(
     Create dense grid samples within discovered bounds using consistent spacing.
 
     Args:
-        bounds_min: (x, y, z) minimum bounds
-        bounds_max: (x, y, z) maximum bounds
+        bounds_min: (x, y, z) minimum bounds, as a numpy array (element-wise
+            arithmetic is performed on it; a plain tuple raises TypeError)
+        bounds_max: (x, y, z) maximum bounds, as a numpy array
         original_spacing: Voxel spacing from original full grid
         padding: Extra space around bounds (world units)
         min_dim: Minimum dimension per axis (for VTK stability)
@@ -547,7 +609,9 @@ def create_mesh_adaptive(
     Args:
         decoder: SDF decoder network
         latent_vector: Latent code for the shape
-        n_pts_per_axis: Dense grid resolution (for fallback only)
+        n_pts_per_axis: Sets the fine voxel size whenever voxel_size is None
+            (extent / (n_pts_per_axis - 1)) — the mean-mesh caller's case — and
+            the full-grid resolution on the fallback path
         voxel_origin: Origin for fallback grid
         voxel_size: Voxel size for dense grid (computed if None)
         n_pts_coarse: Coarse grid resolution per axis
@@ -742,6 +806,22 @@ def create_grid_samples(
     voxel_origin=(-1, -1, -1),
     voxel_size=None,
 ):
+    """
+    Build the flat (N^3, 3) coordinate list for a regular grid.
+
+    Sample order is Z-fastest (x=0,y=0,z=0 then x=0,y=0,z=1, ...), so a C-order
+    reshape of per-sample values gives array[x, y, z] layout — the convention every
+    grid consumer in this module relies on.
+
+    Args:
+        n_pts_per_axis (int): samples per axis (N).
+        voxel_origin: (x, y, z) world position of grid index (0, 0, 0).
+        voxel_size (float): grid spacing. REQUIRED despite the None default
+            (None raises TypeError in the scaling arithmetic).
+
+    Returns:
+        torch.Tensor: (n_pts_per_axis**3, 3) world coordinates.
+    """
     n_pts_total = n_pts_per_axis**3
 
     indices = torch.arange(0, n_pts_total, out=torch.LongTensor())
