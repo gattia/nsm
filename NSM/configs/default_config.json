@@ -1,12 +1,46 @@
 {
-    "project_name": "deep-sdf-femur",
-    "entity_name": "bone-modeling",
+    "project_name": "nsm",
+    "entity": null,
+    "entity_name": null,
     "run_name": null,
     "tags": [
-        "deepsdf",
-        "nif",
-        "generative"
+        "nsm"
     ],
+    "model_type": "triplanar",
+    "decoder_type": "single_head",
+    "objects_per_decoder": 2,
+    "mesh_names": [
+        "bone",
+        "cart"
+    ],
+    "latent_size": 512,
+    "conv_hidden_dims": [
+        512,
+        512,
+        512,
+        512,
+        512
+    ],
+    "conv_deep_image_size": 2,
+    "conv_norm": true,
+    "conv_norm_type": "layer",
+    "conv_pred_sdf": false,
+    "conv_start_with_mlp": true,
+    "sum_conv_output_features": true,
+    "sdf_latent_size": 128,
+    "sdf_hidden_dims": [
+        512,
+        512,
+        512
+    ],
+    "sdf_skip_connection": [
+        4
+    ],
+    "concat_latent_input": true,
+    "padding": 0.1,
+    "modulated": false,
+    "progressive_add_depth": false,
+    "layer_split": false,
     "layer_dimensions": [
         512,
         512,
@@ -27,7 +61,7 @@
         6,
         7
     ],
-    "dropout_prob": 0.2,
+    "dropout_prob": 0,
     "layers_with_norm": [
         0,
         1,
@@ -47,30 +81,73 @@
     "activation": "relu",
     "final_activation": "tanh",
     "seed": 52122,
-    "n_pts_per_object": 500000,
-    "percent_near_surface": 0.4,
-    "percent_further_from_surface": 0.4,
-    "sigma_near": 0.01,
-    "sigma_far": 0.1,
+    "list_mesh_paths": null,
+    "val_paths": null,
+    "n_pts_per_object": [
+        500000,
+        500000
+    ],
+    "percent_near_surface": [
+        0.45,
+        0.45
+    ],
+    "percent_further_from_surface": [
+        0.45,
+        0.45
+    ],
+    "sigma_near": [
+        0.7431352501,
+        0.7431352501
+    ],
+    "sigma_far": [
+        2.35,
+        2.35
+    ],
     "random_function": "normal",
-    "center_pts": true,
-    "normalize_pts": true,
+    "equal_pos_neg": true,
+    "center_all_meshes": false,
+    "center_pts": false,
+    "normalize_pts": false,
+    "scale_all_meshes": true,
+    "scale_jointly": true,
     "scale_method": "max_rad",
+    "mesh_to_scale": 0,
+    "reference_mesh": 0,
+    "dataset_uniform_pts_buffer": 0.2,
+    "multiprocessing": true,
+    "n_processes": 16,
+    "cache": true,
+    "load_cache": true,
+    "store_data_in_memory": false,
+    "fix_mesh": false,
+    "n_samples": null,
+    "n_val": null,
     "objects_per_batch": 64,
     "batch_split": 1,
-    "samples_per_object_per_batch": 16384,
+    "samples_per_object_per_batch": 17000,
     "num_data_loader_threads": 16,
+    "prefetch_factor": 4,
     "n_epochs": 2001,
-    "validation_split": 0.1,
-    "chamfer": true,
-    "emd": true,
-    "val_paths": null,
+    "resume_epoch": 0,
+    "checkpoint_epochs": 500,
+    "additional_checkpoints": [
+        200
+    ],
+    "save_frequency": 50,
+    "device": "cuda:0",
+    "profiler": false,
+    "verbose": true,
+    "log_latent": null,
     "enforce_minmax": true,
-    "clamp_dist": 0.1,
+    "clamp_dist": 1,
+    "surface_weighting": [
+        1,
+        1
+    ],
     "eikonal_weight": 0.0,
-    "sample_difficulty_weight": null,
-    "sample_difficulty_cooldown": null,
-    "sample_difficulty_weight_schedule": "linear",
+    "sample_difficulty_weight": 0.2,
+    "sample_difficulty_weight_schedule": "exponential",
+    "sample_difficulty_cooldown": 200,
     "surface_accuracy_e": null,
     "surface_accuracy_schedule": "linear",
     "surface_accuracy_cooldown": null,
@@ -78,37 +155,51 @@
     "sample_difficulty_lx_schedule": "linear",
     "sample_difficulty_lx_cooldown": null,
     "sample_difficulty_lx_epsilon": 0.0001,
-    "optimizer": "Adam",
+    "code_regularization": true,
+    "code_regularization_weight": 0.0001,
+    "code_regularization_type_prior": "identity",
+    "code_regularization_warmup": 100,
+    "code_cyclic_anneal": true,
+    "optimizer": "AdamW",
     "weight_decay": 0.0001,
+    "grad_clip": null,
     "LearningRateSchedule": [
-        {
-            "Target": "model",
-            "Type": "Step",
-            "Initial": 0.001,
-            "Interval": 500,
-            "Factor": 0.5
-        },
         {
             "Target": "latent",
             "Type": "Step",
-            "Initial": 0.0005,
-            "Interval": 500,
-            "Factor": 0.5
+            "Initial": 0.005,
+            "Interval": 16.666666666666668,
+            "Factor": 0.9523809523809523
+        },
+        {
+            "Target": "model",
+            "Type": "Step",
+            "Initial": 0.0001,
+            "Interval": 1000,
+            "Factor": 0.1
         }
     ],
-    "grad_clip": null,
-    "checkpoint_epochs": 1000,
-    "additional_checkpoints": [
-        100,
-        500
-    ],
-    "device": "cuda:0",
-    "experiment_directory": null,
-    "latent_size": 256,
+    "latent_bound": 10,
     "latent_init_std": 0.01,
-    "latent_bound": 1.0,
-    "code_regularization": true,
-    "code_regularization_weight": 0.0001,
-    "code_regularization_type_prior": "spherical",
-    "code_cyclic_anneal": false
+    "latent_init_normal": true,
+    "variational": false,
+    "num_iterations_recon": 2000,
+    "lr_recon": 0.005,
+    "l2reg_recon": false,
+    "clamp_dist_recon": 0.1,
+    "n_lr_updates_recon": 100,
+    "lr_update_factor_recon": 1.1,
+    "chamfer": true,
+    "assd": true,
+    "convergence_type_recon": "recon_loss",
+    "convergence_patience_recon": 50,
+    "batch_size_latent_recon": 300000,
+    "get_rand_pts_recon": false,
+    "n_pts_random_recon": 100000,
+    "sigma_rand_pts_recon": 0.01,
+    "n_samples_latent_recon": 20000,
+    "max_n_samples_latent_recon": null,
+    "n_steps_sample_ramp_latent_recon": null,
+    "fix_mesh_recon": false,
+    "experiment_directory": null
 }

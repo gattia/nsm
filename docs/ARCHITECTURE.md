@@ -64,11 +64,6 @@ flowchart LR
     DSutils["utils (stub)"]
   end
 
-  subgraph DEP["NSM.dependencies"]
-    DPpkg["__init__"]
-    DPsink["sinkhorn"]
-  end
-
   subgraph ME["NSM.mesh"]
     MEpkg["__init__"]
     MEmain["main"]
@@ -111,7 +106,6 @@ flowchart LR
   Uutils -.->|"deferred import"| Ulrmig
 
   DSpkg -->|star| DSsdf
-  DPpkg --> DPsink
 
   MEpkg -->|star| MEmain
   MEcorr --> MEtri
@@ -141,8 +135,6 @@ flowchart LR
   RCmain --> DSsdf
   RCmain --> MEpkg
   RCmain --> Ulosses
-  RCmain --> DPpkg
-  RCeval --> DPpkg
   RCeval --> RCutils
   RCs3 --> DSpkg
   RCs3 --> RCutils
@@ -166,7 +158,7 @@ flowchart LR
 ```
 
 **Layering is clean and strictly unidirectional:**
-`train` → `reconstruct` → {`datasets`, `mesh`, `losses`, `dependencies`} → `utils`.
+`train` → `reconstruct` → {`datasets`, `mesh`, `losses`} → `utils`.
 Nothing lower imports anything higher. This is better than the plan assumed, and it means
 Phase 4's decompositions are local — no layer inversion has to be untangled first.
 
@@ -266,7 +258,7 @@ Four star-imports, all in `__init__` files, and **no `__all__` anywhere in `NSM/
 non-underscore name in the source module, including its imported third-party modules.
 
 `NSM.reconstruct` is the worst: alongside its real API it publicly exposes `os`, `sys`,
-`torch`, `np`, `wandb`, `copy`, `time`, `mskt`, `logging`, `logger`, `fnmatch`, `sinkhorn`,
+`torch`, `np`, `wandb`, `copy`, `time`, `mskt`, `logging`, `logger`, `fnmatch`,
 `create_mesh_adaptive`, `combine_meshes`, `eikonal_loss`, `read_mesh_get_sampled_pts`,
 `read_meshes_get_sampled_pts` and `adjust_learning_rate` — 138 de-facto exports across the
 package in total.

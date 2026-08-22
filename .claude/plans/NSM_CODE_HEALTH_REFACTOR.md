@@ -4,19 +4,22 @@
 
 ## State
 
-**Updated:** 2026-08-21 · **Status:** open
+**Updated:** 2026-08-22 · **Status:** open
 
-- **Next:** the maintainer merges the two open PRs (`audit-triage`, `quick-wins`),
-  then wave 1 — the decided, bounded fixes, one PR each with the maintainer in the
-  loop: EMD deletion (#53), `weight_decay` under Adam (#47, baselines regenerate +
-  History entry), the ShapeMedKnee-derived `default_config.json` (#48), and the
-  numerics-changing pair #44 (decoder indexing + `remove_overlapping_points`, one
-  History entry). Then the SCOPE.md rulings PR and the Phase-2 prose pass, and delete
-  `AUDIT_FINDINGS.md` in the PR that lands the last of them. Then resume as before:
-  #23 and #24 in `sdf_dataset.py`, its semantic docstring pass, then its
-  decomposition — fixing before splitting, deliberately.
-- **Blocked on:** nothing. (Audit disposition approved and filed 2026-08-22:
-  #40–#61, #6 closed, folds commented onto #20/#22/#23/#35.)
+- **Next:** two document passes, then back to code. (1) The SCOPE.md rulings pass:
+  transcribe the 13 rulings from `docs/AUDIT_FINDINGS.md` § 4 into SCOPE.md — each was
+  execution-verified in Aug 2026, but re-verify every claim in the same commit that
+  writes it — plus the dead-symbol cluster from § 0.5 (`symmetric_chammfer`,
+  `sdf_gradients`, `find_object_bounds_random_sampling`: rule dead, delete). (2) The
+  Phase-2 prose pass: the 62 corrections in `AUDIT_FINDINGS.md` § 3, plus the
+  `get_latent_vecs` docstring (withdrawn draft 13: document that variational doubles
+  the embedding for mean+logvar and that KLD supersedes `latent_bound`). The PR that
+  lands the last of this **deletes `AUDIT_FINDINGS.md`**, leaving a pointer. Then
+  `sdf_dataset.py`: its issues in file:function order (#40, #41, #43, #61, plus
+  #22/#23/#24), its semantic docstring pass, then its decomposition — fixing before
+  splitting, deliberately. Still open from #48: the `barrier` norm-penalty NaN and
+  `Regress.add_latent`.
+- **Blocked on:** nothing.
 - **Deliberately deferred:** #19 (cache key, 6 xfails) and #27 (checkpoint aliasing). Both
   force downstream regeneration or migration, so they land together as one release rather
   than making consumers migrate twice. This is the argument that grouped #19 in the first
@@ -37,6 +40,11 @@
   - Phase 2, mechanical slice: docstrings that contradict their signatures — PR #37
   - #21 closed and #20's function-level half — PR #38
   - `main` protected: 1 review, four required status checks, admins exempt
+  - Audit disposition approved and filed 2026-08-22: issues #40–#61 (mapping in
+    `AUDIT_FINDINGS.md` § 0.3), #6 closed, folds commented onto #20/#22/#23/#35 —
+    landed via PRs #62 (disposition) and #63 (quick wins)
+  - Wave 1 — the four decided fixes (#47, #44, #53, #48-partial) plus the
+    cyclic-anneal and Constant-schedule ride-alongs — PR #64
 - **Surprises:**
   - **"Fixed seed" was not available.** NSM called no seeding function anywhere, and the
     near-surface sampler could not be seeded by any caller. Closed via pymskt 0.1.21 plus

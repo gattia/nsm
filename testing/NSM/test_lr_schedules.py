@@ -105,6 +105,45 @@ class TestNamedParamGroups:
         ]
 
 
+class TestConstantScheduleLogging:
+    """#48: ``get_learning_rate_schedules`` accepts Constant entries, but the logging
+    helper read ``Initial`` unconditionally and raised ``KeyError('Initial')`` on them.
+    """
+
+    def test_constant_entries_do_not_crash_the_logging_helper(self):
+        config = make_config()
+        config["LearningRateSchedule"] = [
+            {"Target": "model", "Type": "Constant", "Value": 0.005},
+            {"Target": "latent", "Type": "Constant", "Value": 0.001},
+        ]
+        config = add_plain_lr_to_config(config)
+        assert config["model_lr_initial"] == 0.005
+        assert config["latent_lr_initial"] == 0.001
+        assert config["model_lr_type"] == "Constant"
+
+
+class TestWeightDecayIsForwarded:
+    """#47: the Adam branch dropped ``weight_decay`` while AdamW passed it.
+
+    torch stamps the constructor's ``weight_decay`` into every param group, which is
+    where a silent drop is observable. ``schedule_free_AdamW`` always forwarded the
+    argument and is not constructible here (schedulefree is absent from the dev env).
+    """
+
+    @pytest.mark.parametrize("name", ["Adam", "AdamW"])
+    def test_every_group_carries_the_configured_decay(self, name):
+        config = make_config()
+        schedules = get_learning_rate_schedules(config)
+        optimizer = get_optimizer(
+            make_model(),
+            make_latents(),
+            lr_schedules=schedules,
+            optimizer=name,
+            weight_decay=0.123,
+        )
+        assert [g["weight_decay"] for g in optimizer.param_groups] == [0.123, 0.123]
+
+
 class TestScheduleMapping:
     """The core regression: mapping must be by name, never by position."""
 
@@ -560,10 +599,13 @@ class TestShippedConfigs:
             warnings.simplefilter("error")
             schedules = get_learning_rate_schedules(config)
 
-        # index 0 = model, and the shipped model LR is the larger of the two
+        # The 647-derived default puts the larger LR on the LATENTS. Deliberate, and
+        # worth pinning because it looks backwards: that is what the shipped models
+        # actually trained under (History §1 — AdamW's entry 0 historically drove the
+        # latents), and their hyperparameters were tuned for exactly that mapping.
         model_lr = schedules[LR_TARGET_MODEL].get_learning_rate(0)
         latent_lr = schedules[LR_TARGET_LATENT].get_learning_rate(0)
-        assert model_lr > latent_lr
+        assert latent_lr > model_lr
 
     def test_generated_default_config_annotates_targets(self, tmp_path, monkeypatch):
         # NB: importing this module writes ./default_config.json as a side effect, so run
@@ -583,7 +625,12 @@ class TestShippedConfigs:
 
         saved = json.loads(json.dumps(load_shipped_default_config()))
 
+        # Resolution must honour each entry's own declaration, whatever order the
+        # shipped file happens to list them in.
         assert resolve_schedule_targets(saved["LearningRateSchedule"]) == [
-            LR_TARGET_MODEL,
+            entry["Target"] for entry in saved["LearningRateSchedule"]
+        ]
+        assert sorted(resolve_schedule_targets(saved["LearningRateSchedule"])) == [
             LR_TARGET_LATENT,
+            LR_TARGET_MODEL,
         ]

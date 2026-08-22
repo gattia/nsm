@@ -230,7 +230,6 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
                     lr_update_factor=config["lr_update_factor_recon"],
                     calc_symmetric_chamfer=config["chamfer"],
                     calc_assd=config["assd"],
-                    calc_emd=config["emd"],
                     convergence=config["convergence_type_recon"],
                     convergence_patience=config["convergence_patience_recon"],
                     # log_wandb

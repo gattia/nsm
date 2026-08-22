@@ -24,15 +24,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-try:
-    from NSM.dependencies import sinkhorn
-
-    __emd__ = True
-except Exception:
-    print("Error importing `sinkhorn` from NSM.dependencies")
-    __emd__ = False
-
-
 def _process_meshes_for_wandb(meshes, mesh_prefix, max_points_3d, log_faces, verbose):
     """
     Helper function to process a list of meshes for wandb logging.
@@ -587,7 +578,10 @@ def reconstruct_latent(
             # Decoder forward pass
             recon_loss = 0
 
-            # Iterate over the decoders (if there are multiple)
+            # Iterate over the decoders (if there are multiple). ``sdf_gt_`` is one flat
+            # list across all decoders; ``surface_offset`` maps each decoder's local
+            # output columns onto it.
+            surface_offset = 0
             for decoder_idx, decoder in enumerate(decoders):
                 # Fast inference: pass latent and xyz separately
                 pred_sdf = decoder(latent=latent.squeeze(0), xyz=xyz_input)
@@ -607,7 +601,7 @@ def reconstruct_latent(
                     _loss_ += (
                         loss_fn(
                             pred_sdf.squeeze(),
-                            sdf_gt_[decoder_idx].squeeze(),
+                            sdf_gt_[surface_offset].squeeze(),
                         )
                         * loss_weight
                     )
@@ -615,7 +609,8 @@ def reconstruct_latent(
                 else:
                     # if multiple surfaces - then compute loss for each surface and weight them
                     for sdf_idx in range(pred_sdf.shape[1]):
-                        if sdf_idx >= len(sdf_gt_):
+                        gt_idx = surface_offset + sdf_idx
+                        if gt_idx >= len(sdf_gt_):
                             # might only have 1 surface (e.g., bone) and trying to reconstruct both
                             # (e.g., bone and cartilage) - in this case, break
                             # TODO: this is a bit of a hack, should be handled better
@@ -624,29 +619,29 @@ def reconstruct_latent(
                             # cartilage first? Or maybe we have multiple bones & cartilage?
                             if verbose is True:
                                 print(
-                                    f"sdf_idx ({sdf_idx}) >= len(sdf_gt_) ({len(sdf_gt)})... exiting"
+                                    f"gt_idx ({gt_idx}) >= len(sdf_gt_) ({len(sdf_gt_)})... exiting"
                                 )
                             break
 
-                        # if sdf_gt_[sdf_idx] is None, then skip this surface
+                        # if sdf_gt_[gt_idx] is None, then skip this surface
                         # in fitting latent
-                        if sdf_gt_[sdf_idx] is None:
+                        if sdf_gt_[gt_idx] is None:
                             if verbose is True:
-                                print(f"sdf_gt_[sdf_idx] is None, skipping surface {sdf_idx}")
+                                print(f"sdf_gt_[gt_idx] is None, skipping surface {gt_idx}")
                             continue
 
                         if difficulty_weight is not None:
                             error_sign = torch.sign(
-                                sdf_gt_[sdf_idx].squeeze() - pred_sdf[:, sdf_idx].squeeze()
+                                sdf_gt_[gt_idx].squeeze() - pred_sdf[:, sdf_idx].squeeze()
                             )
-                            sdf_gt_sign = torch.sign(sdf_gt_[sdf_idx].squeeze())
+                            sdf_gt_sign = torch.sign(sdf_gt_[gt_idx].squeeze())
                             sample_weights = 1 + difficulty_weight * sdf_gt_sign * error_sign
                         else:
                             sample_weights = torch.ones_like(pred_sdf[:, sdf_idx].squeeze())
                         _loss_ += (
                             loss_fn(
                                 pred_sdf[:, sdf_idx].squeeze(),
-                                sdf_gt_[sdf_idx].squeeze(),
+                                sdf_gt_[gt_idx].squeeze(),
                             )
                             * loss_weight
                             * sample_weights
@@ -660,6 +655,9 @@ def reconstruct_latent(
                 _loss_ = torch.mean(_loss_)
                 # update the local loss
                 recon_loss += _loss_
+                # add the number of surfaces we just iterated over to the surface_offset
+                # for the next decoder
+                surface_offset += pred_sdf.shape[1]
 
             # Eikonal loss computation
             # Compute eikonal loss - enforces ||∇f|| = 1 constraint for valid SDFs
@@ -843,7 +841,6 @@ def reconstruct_mesh(
     lr_update_factor=10,
     calc_symmetric_chamfer=False,
     calc_assd=False,
-    calc_emd=False,
     n_pts_per_axis=256,
     log_wandb=False,
     return_latent=False,
@@ -997,9 +994,6 @@ def reconstruct_mesh(
             if calc_assd:
                 for idx in range(sum(objects_per_decoder)):
                     result[f"assd_{idx}"] = np.nan
-            if calc_emd:
-                for idx in range(sum(objects_per_decoder)):
-                    result[f"emd_{idx}"] = np.nan
             if return_latent:
                 result["latent"] = mean_latent
             return result
@@ -1182,8 +1176,7 @@ def reconstruct_mesh(
     tic = time.time()
 
     if (
-        calc_emd
-        or calc_symmetric_chamfer
+        calc_symmetric_chamfer
         or calc_assd
         or return_latent
         or (func is not None)
@@ -1193,7 +1186,7 @@ def reconstruct_mesh(
         result = {"mesh": meshes}
         result["orig_mesh"] = result_["orig_mesh"]
 
-        if calc_emd or calc_symmetric_chamfer or calc_assd:
+        if calc_symmetric_chamfer or calc_assd:
             print("length of meshes: ", len(meshes))
             print("length of orig_mesh: ", len(result_["orig_mesh"]))
             result_recon_metrics = compute_recon_loss(
@@ -1204,7 +1197,6 @@ def reconstruct_mesh(
                 chamfer_norm=chamfer_norm,
                 calc_symmetric_chamfer=calc_symmetric_chamfer,
                 calc_assd=calc_assd,
-                calc_emd=calc_emd,
             )
             print("finished computing recon loss")
             toc = time.time()
@@ -1268,7 +1260,6 @@ def tune_reconstruction(model, config, use_wandb=True):
         lr_update_factor=config["lr_update_factor"],
         calc_symmetric_chamfer=config["chamfer"],
         calc_assd=config["assd"],
-        calc_emd=config["emd"],
         convergence=config["convergence"],
         convergence_patience=config["convergence_patience"],
         log_wandb=use_wandb,
@@ -1291,7 +1282,6 @@ def get_mean_errors(
     latent_size,
     calc_symmetric_chamfer=False,
     calc_assd=False,
-    calc_emd=False,
     log_wandb=False,
     num_iterations=1000,
     n_pts_per_axis=256,
@@ -1339,7 +1329,6 @@ def get_mean_errors(
         "latent_size": latent_size,
         "calc_symmetric_chamfer": calc_symmetric_chamfer,
         "calc_assd": calc_assd,
-        "calc_emd": calc_emd,
         "register_similarity": register_similarity,
         "scale_jointly": scale_jointly,
         "scale_all_meshes": scale_all_meshes,
@@ -1420,10 +1409,6 @@ def get_mean_errors(
                 if idx == 0:
                     loss[f"chamfer_{mesh_idx}"] = []
                 loss[f"chamfer_{mesh_idx}"].append(result_[f"chamfer_{mesh_idx}"])
-            if calc_emd:
-                if idx == 0:
-                    loss[f"emd_{mesh_idx}"] = []
-                loss[f"emd_{mesh_idx}"].append(result_[f"emd_{mesh_idx}"])
             if calc_assd:
                 if idx == 0:
                     loss[f"assd_{mesh_idx}"] = []

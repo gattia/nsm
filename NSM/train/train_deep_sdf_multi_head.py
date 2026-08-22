@@ -129,7 +129,6 @@ def train_deep_sdf(config, models: tuple, sdf_dataset, use_wandb=False):
                     latent_size=config["latent_size"],
                     calc_symmetric_chamfer=config["chamfer"],
                     calc_assd=config["assd"],
-                    calc_emd=config["emd"],
                     register_similarity=True,
                     scale_all_meshes=True,
                     verbose=config["verbose"],

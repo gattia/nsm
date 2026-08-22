@@ -30,6 +30,25 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **`default_config.json` is replaced wholesale** (#48, maintainer decision): it is now a
+  sanitized snapshot of the ShapeMedKnee `647_nsm_femur_v0.0.1` training config — the
+  values that actually produced a shipped model — instead of a hand-written DeepSDF-era
+  dict that could not drive `train_deep_sdf` at all (five unconditionally-read keys were
+  missing, starting with `prefetch_factor`). The `LearningRateSchedule` entries carry
+  `Target`s reproducing what 647 historically trained under — **the larger LR drives the
+  latents** (History §1); `mesh_names` and `padding` are added explicitly; run identity,
+  machine paths and derived keys are stripped. Pinned by
+  `test_default_config_trains.py`, which runs the real trainer from the shipped file.
+
+- **EMD is removed** (#53, maintainer decision): the `calc_emd` parameter of
+  `compute_recon_loss`, `reconstruct_mesh` and `get_mean_errors`, the `emd` config key,
+  the vendored `NSM.dependencies.sinkhorn` module (the whole `NSM.dependencies`
+  package), and the `pykeops` requirement. No result ever existed: the only caller
+  passed numpy arrays, which pykeops rejects at the boundary, in every version since the
+  function was written — `calc_emd=True` always raised. A call that passes `calc_emd`
+  now fails with `TypeError`; a config carrying `emd` is silently ignored. Both shipped
+  ShapeMedKnee configs set `emd: false` and are unaffected.
+
 - **`get_pts_center_and_scale` no longer takes `center` or `scale`.** Both were shadowed by
   the values computed from them before they were read, so neither had any effect at any
   value. They are removed rather than made authoritative: every caller passes
@@ -40,7 +59,38 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   unmoved. Delete the arguments from any call; centering and scaling were always
   unconditional and still are.
 
+### Fixed — affects results
+
+- **`get_optimizer` now passes `weight_decay` to `Adam`** (#47). It always passed it to
+  `AdamW` and `schedule_free_AdamW`; the `Adam` branch silently dropped it, so every
+  `optimizer: "Adam"` run trained with zero weight decay whatever the config said. An
+  `Adam` run that sets `weight_decay` now trains differently — the committed training
+  baselines moved and were regenerated (loss trajectory ~0.03% at epoch 1 to ~3% by
+  epoch 6 at `weight_decay: 1e-4` on the CPU harness). Both shipped ShapeMedKnee configs
+  use `AdamW` and are unaffected. To reproduce the old behaviour exactly, set
+  `weight_decay: 0`. See `docs/KNOWN_ISSUES.md` § History §4.
+
+- **Multi-surface overlap removal now counts, and multi-decoder reconstruction indexes
+  by a running surface offset** (#44). `remove_overlapping_points` removed "sign sum ==
+  −2" points — correct only at exactly two surfaces (nothing removed at 3 or 5; only
+  inside-3-of-4 at 4); it now removes points inside two or more surfaces.
+  `reconstruct_latent` scored every decoder after the first against the first decoder's
+  ground truth; each decoder now reads its own slice of the flat `sdf_gt`. Two-surface,
+  single-decoder runs — the shipped configuration — are bit-identical before and after
+  (regression baselines unmoved). See `docs/KNOWN_ISSUES.md` § History §5.
+
 ### Fixed
+
+- **`cyclic_anneal_linear` no longer NaNs runs shorter than its cycle count.**
+  `floor(n_epochs / n_cycles)` was 0 for `n_epochs < 5`, so `epoch % 0` returned NaN and
+  the NaN regularization weight silently NaN'd the entire training loss — the run
+  completed and exited 0. Degenerate runs now pin the weight at `min_`; any run with
+  `n_epochs >= 5` is bit-identical. No History entry: the degenerate path never produced
+  a usable result.
+
+- **`add_plain_lr_to_config` no longer raises `KeyError: 'Initial'` on a Constant
+  schedule** (#48). `get_learning_rate_schedules` accepts Constant entries (which carry
+  `Value`); the logging helper now reads them too.
 
 - **`get_pts_center_and_scale` no longer mutates its input.** It copies first. The three
   in-repo callers each carried a defensive `np.copy(...)`; those are removed, since the

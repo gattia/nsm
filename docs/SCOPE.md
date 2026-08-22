@@ -332,7 +332,7 @@ submodule import as a side effect. So a top-level `__all__` naming `TriplanarDec
 every subpackage eagerly.
 
 Eager import is not cheap or neutral here. `NSM.models` is fully isolated — importing it
-pulls neither `wandb` nor `pykeops` — which is precisely why the consumer's
+does not pull `wandb` — which is precisely why the consumer's
 `from NSM.models import TriplanarDecoder` is fast. Importing `NSM.reconstruct` pulls
 `wandb`, `pymskt`, `vtk`, `point_cloud_utils`, and reconfigures the **root logger** for the
 host process (at `reconstruct/main.py` module scope). Making that unavoidable for anyone who

@@ -14,11 +14,6 @@ typing-extensions
 wandb
 matplotlib
 
-# Requirements for sinkhorn (a wasserstein distance/earth movers distance algorithm)
-# https://github.com/fwilliams/scalable-pytorch-sinkhorn
-pykeops 
-tqdm
-
 # pytorch_scatter
 # https://github.com/rusty1s/pytorch_scatter
 einops
