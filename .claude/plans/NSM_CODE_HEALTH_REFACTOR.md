@@ -6,30 +6,28 @@
 
 **Updated:** 2026-08-22 · **Status:** open
 
-- **Next:** (1) maintainer reviews branch `sdf-dataset-docstrings` — four commits, one
-  concern each: `mean` deletion (#20 instance), the semantic docstring pass, the
-  in-memory joint-scaling pin, the harness `LOC_SDF_CACHE` staleness fix. (2) On
-  approval of the issue draft below: file it, then patch the two `#TBD` markers (xfail
-  reason in `test_dataset_cache.TestScaleJointlyInMemory`, *Fix* line in
-  `KNOWN_ISSUES.md` § Open) with the real number. (3) Then `sdf_dataset.py`
-  decomposition (§8), characterization tests first (§7.3). Still open from #48: the
-  `barrier` norm-penalty NaN and `Regress.add_latent`.
-- **Issue draft awaiting approval** (do not file without the maintainer's OK):
-  - **Title:** `norm_and_scale_all_meshes`: `scale_jointly` cannot run in memory, and
-    would drop its buffer if it could
-  - **Body:** `scale_jointly=True` + `store_data_in_memory=True` raises
-    `KeyError: 'new_pts_0'` at construction, on both dataset classes: the in-memory
-    branch of `norm_and_scale_all_meshes` reads the flattened `new_pts_0`-style keys
-    that exist only in the `.npz` cache layout, while in-memory sample dicts hold
-    `new_pts` as a list. Reproduced 2026-08-22 end to end on synthetic meshes. Second
-    defect in the same branch: it omits `joint_scale_buffer` — the disk branch grows
-    the shared scale by `1 + buffer`, the in-memory branch divides by the raw max
-    radius — so a KeyError-only fix would silently put in-memory runs in a different
-    coordinate frame than disk-backed ones. **Fixed means:** the strict-xfail pin
-    (`test_dataset_cache.TestScaleJointlyInMemory`) passes un-marked — the dataset
-    constructs and its batches land in the buffered domain. Its `raises=KeyError`
-    makes a half-fix report as a plain failure. Always crashed, so no results are
-    affected and no History entry is due on fixing it.
+- **Next:** (1) merge the `sdf-dataset-docstrings` PR (commits reviewed 2026-08-22,
+  maintainer approved; #69 filed with approved text and cited by the pin). (2) Decide
+  whether the scale-preservation entry (`KNOWN_ISSUES` § Open, "Similarity registration
+  erases each subject's true size") also gets a tracker issue — draft below awaits
+  approval. (3) Then `sdf_dataset.py` decomposition (§8), characterization tests first
+  (§7.3). Still open from #48: the `barrier` norm-penalty NaN and `Regress.add_latent`.
+- **Issue draft awaiting approval** (scale preservation; do not file without the
+  maintainer's OK):
+  - **Title:** Registration removes subject scale; preserve true size under
+    `scale_jointly`
+  - **Body:** Both samplers hardcode `reg_mode="similarity"`, so any dataset built
+    with `reference_mesh` scales every subject to the reference's size before
+    sampling — measured: a radius-1.3 sphere registered to a radius-1.0 reference
+    lands at radius 1.0000 (ICP scale factor 0.7692 = 1/1.3). `scale_jointly` then
+    preserves only what registration left. Bone size carries disease signal
+    (maintainer assessment, 2026-08-22). **Fixed means:** registration still uses
+    similarity for correspondence, but the transform's scale component is undone
+    before sampling, so subjects sit rigidly aligned at true size and the joint
+    max-radius-plus-buffer frame preserves between-subject ratios; the reconstruction
+    path (`reconstruct/main.py` `register_similarity`) moves in step; a migration
+    guard of History §1's shape covers reference-mesh runs, plus a History entry.
+    Full statement: `docs/KNOWN_ISSUES.md` § Open.
 - **Blocked on:** nothing.
 - **Context for whoever picks this up:** PR #68 carried one commit per concern, so
   `git log NSM/datasets/sdf_dataset.py` explains each fix. Decisions of record are in
@@ -88,15 +86,17 @@
     keys optional), #23 (zero-count combos skipped), #24 (`LOC_SDF_CACHE` at
     construction) — one commit per concern, all closed by PR #68. Also filed and
     pinned strict-xfail: #67 (the None-surface path has never built end to end)
-  - `sdf_dataset.py` semantic docstring pass, on branch `sdf-dataset-docstrings`
-    (awaiting review, commits in concern order): `mean` deleted from both samplers —
+  - `sdf_dataset.py` semantic docstring pass, branch `sdf-dataset-docstrings`
+    (commits maintainer-reviewed 2026-08-22): `mean` deleted from both samplers —
     the file's only accepted-and-never-read parameter left, by AST scan (#20 instance;
     CHANGELOG entry); every public function/method documented, silent conventions
     written down ("pts"/"xyz" key asymmetry, npz vs in-memory spelling, batch
     contracts, cache-key omissions), false text corrected; the in-memory
-    joint-scaling defect pinned strict-xfail with a `KNOWN_ISSUES` § Open entry
-    (issue number #TBD until the draft above is filed); `_harness.py`'s stale
-    import-time `LOC_SDF_CACHE` claim fixed (stale since #24)
+    joint-scaling defect pinned strict-xfail, filed as #69 with approved text and a
+    `KNOWN_ISSUES` § Open entry; `_harness.py`'s stale import-time `LOC_SDF_CACHE`
+    claim fixed (stale since #24); the scale-erasure finding recorded in
+    `KNOWN_ISSUES` § Open with its measured evidence and fix direction (maintainer
+    call: scale carries disease signal)
 - **Surprises:**
   - **"Fixed seed" was not available.** NSM called no seeding function anywhere, and the
     near-surface sampler could not be seeded by any caller. Closed via pymskt 0.1.21 plus
