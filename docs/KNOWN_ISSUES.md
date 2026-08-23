@@ -900,7 +900,7 @@ reproduced exactly.
 
 | | |
 |---|---|
-| **Affects** | The *fix* changes output, not the bug: any post-fix rerun of a `reconstruct_mesh` / `get_mean_errors` call with `get_rand_pts=True` draws the `n_pts_random` it asked for (default 100,000) instead of the 200,000 per surface every pre-fix run silently used — a different sample set, so a different fitted latent and reconstruction. Pre-fix runs are self-consistent. May 2023 (`2811d27`, the parameter's introduction) → Aug 2026 |
+| **Affects** | The *fix* changes output, not the bug: any post-fix rerun of a `reconstruct_mesh` / `get_mean_errors` call with `get_rand_pts=True` draws the `n_pts_random` it asked for (default 100,000) instead of the 200,000 per surface every pre-fix run silently used — a different sample set, so a different fitted latent and reconstruction. Pre-fix runs are self-consistent. May 2023 (`09150fe`, the commit that introduced the sampled path — then `GenerativeAnatomy/sdf/reconstruct/main.py`; the readers already took `n_pts=`, so the parameter was born broken and never worked on any day) → Aug 2026 |
 | **Unaffected** | Production and both shipped ShapeMedKnee configs — `get_rand_pts_recon: false`, so the sampled path never ran; single-object calls, which crashed on this path before the #15 fix; `get_rand_pts=False` calls, where `n_pts_random` reaches nothing by design |
 | **Severity** | Silent — `reconstruct_mesh` forwarded `n_pts_random=` to readers whose parameter is `n_pts=`; their `**kwargs` swallowed it without a warning. Measured (2026-08-23): a request for 200 points over two surfaces yielded 400,688 |
 | **Fixed in** | `recon-main-decomposition`, Aug 2026 ([#16](https://github.com/gattia/nsm/issues/16)) |
