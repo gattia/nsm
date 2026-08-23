@@ -6,25 +6,23 @@
 
 **Updated:** 2026-08-23 · **Status:** open
 
-- **Next:** slice B is reviewed (2026-08-23) and up as **draft PR #72** (closes #17
-  and #69 on merge); maintainer approves the PR text, marks it ready, admin-merges.
-  After that:
-  §8's remaining monoliths (`train_deep_sdf.py`, `reconstruct/main.py`) have no
-  slice statements yet; class-side cache/build decomposition stays grouped with
-  #19/#27; still open from #48: the `barrier` norm-penalty NaN and
-  `Regress.add_latent`.
-- **Slice B is on the branch, unreviewed (2026-08-23):** `read_meshes_get_sampled_pts`
-  orchestrates three private helpers (`_register_to_mean`, `_compute_shared_frame`,
-  `_draw_surface_samples`), split commit +64 net against the ~80 budget, suite
-  green with identical counts before/after the split (498 passed, 14 xfailed).
-  Rode along per the statement: **#17 fixed** (appends `new_pts[new_pts_idx]`;
-  both strict-xfails now plain passes; `KNOWN_ISSUES` § History **§7** + CHANGELOG
-  record the one affected run class — multi-object fits with `get_rand_pts=True`
-  on `scale_jointly=False` models, never training data) and **#69 fixed** by
-  unification (both storage modes compute the shared frame, `__getitem__` applies
-  it per batch; the in-memory mutate-in-place branch deleted, net −48; disk
-  numerics unchanged, regression baselines unmoved). #3 got its structural
-  precondition only: sigma's frame-dependence is stated in
+- **Next:** the two #48 remnants (`norm_penalty_type='barrier'` NaN,
+  `Regress.add_latent` handed the result dict), both re-verified by execution
+  2026-08-23: barrier is NaN outside `[min,max]` while its *gradient* stays finite
+  and points **away** from the range below it; the `Regress` seam dies with
+  `TypeError` at the first validation epoch's `calc_r2` — after all its
+  reconstructions have run. Fix per the issue's decided bar: work or raise by
+  name; #48 closes when they land. After that: §8's remaining monoliths
+  (`train_deep_sdf.py`, `reconstruct/main.py`) have no slice statements yet;
+  class-side cache/build decomposition stays grouped with #19/#27.
+- **Slice B landed (2026-08-23):** merged to `main` in PR #72 —
+  `read_meshes_get_sampled_pts` orchestrates three private helpers
+  (`_register_to_mean`, `_compute_shared_frame`, `_draw_surface_samples`); #17 and
+  #69 fixed en route, both closed by the merge (#17: `KNOWN_ISSUES` § History §7
+  records the one affected run class — multi-object fits with `get_rand_pts=True`
+  on `scale_jointly=False` models, never training data; #69: fixed by unification,
+  the in-memory mutate-in-place branch deleted net −48, disk numerics unchanged).
+  #3 got its structural precondition only: sigma's frame-dependence is stated in
   `_draw_surface_samples`' docstring, the single site where sigma is consumed.
 - **Slice A landed (2026-08-22):** merged to `main` in PR #71 — `sdf_dataset.py`
   holds the classes + permanent re-import block, the 13 leaf helpers in
