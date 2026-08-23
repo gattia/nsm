@@ -266,6 +266,51 @@ is no current user to migrate.
 
 ---
 
+## Idea 8 — Supervised / contrastive signal on the latent during training
+
+**What.** Bring subject-level factors (age, OA grade, sex, …) into *training* as an
+auxiliary objective on the latent codes, instead of only probing for them at
+validation time. Today the factor signal touches nothing: `Regress`
+(`reconstruct/predictive_validation_class.py`) is a validation-time linear probe —
+fit latents to held-out meshes, regress factors parsed from filenames, report
+`val_prediction_<factor>` R² — with no gradient to the model. Candidate shapes:
+
+- **Supervised auxiliary loss** — a small head on the latent predicting the factor,
+  weighted into the training loss; organizes latent space along the factor axes.
+- **Contrastive** — SupCon-style (pull latents sharing a label together, push others
+  apart) or CLIP-style alignment against an embedding of non-imaging data, the
+  "language signal helps vision" analogy.
+
+**Why.** Maintainer (2026-08-23): the long-term want is "something akin to `Regress`
+but maybe very different structure", for contrastive/supervised learning on the
+latent. Reported evidence, not reproduced here: a colleague tried contrastive
+objectives on NSM in her fork and it improved **both** reconstruction and downstream
+predictions — which is the interesting part, since an auxiliary factor loss could
+plausibly have traded recon quality away instead.
+
+**How.** First step is reading the colleague's fork before designing anything — it is
+a concrete, reportedly-working implementation, and the plan's fork-coordination note
+(`NSM_CODE_HEALTH_REFACTOR.md` §10) already flags that active forks carry modules
+upstream does not have. Mechanically the hook is `train_deep_sdf`'s loss composition;
+latents are an `nn.Embedding`, so a latent-side auxiliary loss is cheap. Two known
+interactions to design around: the `max_norm` clamp saturating training latents onto
+the radius-10 shell (Idea 4 — a contrastive geometry fights a fixed-norm shell), and
+latent gradients scaling with query-point count (ARCHITECTURE §6), which affects the
+balance of any new latent-side term.
+
+**Evaluation.** The repaired `Regress` probe is the natural metric: `val_prediction_*`
+R² with and without the auxiliary signal, alongside recon error — the colleague's
+result predicts both should improve. Implication for current code: `Regress` stays a
+thin evaluator; the training-time mechanism is new code, not an extension of it.
+
+**Cost / retrain.** Full retrain per objective/weight tried; needs factor labels
+available at training time (today they are parsed from validation filenames only).
+
+**Status.** Idea — not started. Raised by the maintainer 2026-08-23 while reviewing
+the #48 `Regress` seam fix (PR #73).
+
+---
+
 ## Related
 
 - `NSM_MESH_INTERPOLATION_IMPROVEMENTS.md` — inference-only numerical fixes;
