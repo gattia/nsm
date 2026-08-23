@@ -283,13 +283,14 @@ fit latents to held-out meshes, regress factors parsed from filenames, report
 
 **Why.** Maintainer (2026-08-23): the long-term want is "something akin to `Regress`
 but maybe very different structure", for contrastive/supervised learning on the
-latent. Reported evidence, not reproduced here: a colleague tried contrastive
-objectives on NSM in her fork and it improved **both** reconstruction and downstream
-predictions — which is the interesting part, since an auxiliary factor loss could
-plausibly have traded recon quality away instead.
+latent. Reported evidence, not reproduced here: Katie tried contrastive objectives in
+her fork — <https://github.com/3D-fossils-Haag/nsm> — and it improved **both**
+reconstruction and downstream predictions — which is the interesting part, since an
+auxiliary factor loss could plausibly have traded recon quality away instead.
 
-**How.** First step is reading the colleague's fork before designing anything — it is
-a concrete, reportedly-working implementation, and the plan's fork-coordination note
+**How.** First step is reading Katie's fork (`3D-fossils-Haag/nsm`, link above) before
+designing anything — it is a concrete, reportedly-working implementation, and the
+plan's fork-coordination note
 (`NSM_CODE_HEALTH_REFACTOR.md` §10) already flags that active forks carry modules
 upstream does not have. Mechanically the hook is `train_deep_sdf`'s loss composition;
 latents are an `nn.Embedding`, so a latent-side auxiliary loss is cheap. Two known
