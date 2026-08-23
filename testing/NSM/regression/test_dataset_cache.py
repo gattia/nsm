@@ -891,7 +891,7 @@ class TestUniformSamplingCube:
                 [path], sigma=[None], n_pts=[4000], uniform_pts_buffer=0.5, seed=0, **kwargs
             )
 
-        for label, pts in (("single", single["xyz"]), ("multi", multi["pts"])):
+        for label, pts in (("single", single["pts"]), ("multi", multi["pts"])):
             assert pts.min() >= -1.5 and pts.max() <= 1.5, f"{label}: cube too large"
             assert pts.max() > 1.4 and pts.min() < -1.4, f"{label}: cube did not reach its bounds"
             assert abs(pts.max() + pts.min()) < 0.1, f"{label}: cube is asymmetric"

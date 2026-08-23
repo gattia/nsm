@@ -15,9 +15,12 @@
   cache/build decomposition stays grouped with #19/#27.
 - **§8.0.C landed on branch (2026-08-23):** statement → characterization → #15 →
   #16 → class sweep → #29 → split → this update, suite green and lint clean at
-  every commit. #15: readers unified on `"pts"` (`"xyz"` stays as a transitional
-  alias, delete-when at the write site); the two dataset-class probes collapsed,
-  their dead `"gt_sdf"` fallback with them. #16: honoured (History §9) — the
+  every commit. #15: readers unified on `"pts"`; the two dataset-class probes
+  collapsed, their dead `"gt_sdf"` fallback with them. The `"xyz"` transitional
+  alias was then **deleted on the same branch** (maintainer, 2026-08-23:
+  sooner-than-later — and since no tagged release ever carried it, waiting for
+  v0.3.0 would have meant it never shipped at all). #15 is now a clean Breaking
+  rename in the CHANGELOG; external `["xyz"]` readers get a loud `KeyError`. #16: honoured (History §9) — the
   memory said delete, but the measured blast radius is only never-shipped
   multi-object sampled runs and the intent is config-plumbed; the harness's
   sampled tests shrank ~1000× and the suite dropped ~11s. #29: raises
@@ -69,6 +72,13 @@
   not in `KNOWN_ISSUES.md` and not on the tracker; the durable fact — similarity =
   rigid + uniform scale, size does not survive registration — is stated in the
   `reference_mesh` / `register_to_mean_first` docstrings.
+- **Versioning (2026-08-23):** released state is `v0.2.0` (tag + `__version__`
+  agree). The Unreleased CHANGELOG section holds this branch's Breaking set, so
+  the release that ships it is **v0.3.0** per §10.1 (breaking bumps the minor).
+  Cut timing is the maintainer's call — "soonish, or at the end of this cleanup";
+  nothing gates it now that the `"xyz"` alias is gone rather than
+  waiting-to-be-deleted. §10.1's setuptools-scm item (derive the version from the
+  tag) is still open and would naturally ride with the v0.3.0 release PR.
 - **Blocked on:** nothing.
 - **Context for whoever picks this up:** PR #68 carried one commit per concern, so
   `git log NSM/datasets/sdf_dataset.py` explains each fix. Decisions of record are in

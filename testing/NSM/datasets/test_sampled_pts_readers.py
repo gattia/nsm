@@ -8,8 +8,7 @@ already record: the bare-``Exception``-vs-``ValueError`` raise asymmetry between
 readers, and the always-on deprecated flags. The ``include_surf_in_pts`` tests on the
 multi reader were ``xfail(strict=True)`` pins of #17 until its fix landed, and the
 ``"pts"``-vs-``"xyz"`` key asymmetry was pinned here until #15 unified the readers on
-``"pts"`` (``"xyz"`` survives as a transitional alias on the single reader's random
-path); those now assert the fixed behaviour.
+``"pts"``; those now assert the fixed behaviour.
 
 Meshes are analytic spheres with known centers and radii, so the frame math
 (``center`` / ``scale`` under each ``mesh_to_scale`` / ``scale_all_meshes`` /
@@ -62,7 +61,7 @@ class TestSingleMeshReader:
         assert result is None
 
     def test_get_random_false_uses_the_pts_key_with_zero_sdf(self, sphere_paths):
-        """``pts`` on this path too, and no ``xyz`` alias -- it never had the key."""
+        """``pts`` on this path too; ``xyz`` was only ever the random path's key."""
         result = read_mesh_get_sampled_pts(sphere_paths[0], get_random=False, fix_mesh=False)
         assert "pts" in result and "xyz" not in result
         assert np.all(result["sdf"] == 0)
@@ -88,10 +87,14 @@ class TestSingleMeshReader:
         assert result["pts_surface"].shape[0] == n_random + vertices.shape[0]
 
     def test_the_random_path_returns_its_draw_under_pts(self, sphere_paths):
-        """Was the #15 strict xfail: 'pts' is the one key; 'xyz' aliases the same array."""
+        """
+        Was the #15 strict xfail: ``pts`` is the one key. The legacy ``xyz`` briefly
+        survived as an alias, deleted before it ever shipped in a release (maintainer,
+        2026-08-23): an external reader gets a loud KeyError, not a silent second name.
+        """
         result = read_mesh_get_sampled_pts(sphere_paths[0], n_pts=10, sigma=0.1, fix_mesh=False)
         assert "pts" in result
-        assert result["pts"] is result["xyz"]
+        assert "xyz" not in result
 
     def test_registering_without_a_mean_mesh_raises_a_bare_exception(self, sphere_paths):
         """The multi reader raises ValueError for the same mistake; pinned as-is."""

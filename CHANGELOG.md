@@ -28,23 +28,16 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ## Unreleased
 
-### Fixed
-
-- **`reconstruct_mesh` honours `n_pts_random`** (#16). It forwarded the value as
-  `n_pts_random=` to readers whose parameter is `n_pts=`; their `**kwargs` swallowed it,
-  so every `get_rand_pts=True` call drew the readers' 200,000-point default per surface
-  regardless of what was asked. **Numerical output changes** for post-fix reruns of such
-  calls (never a shipped configuration) — `docs/KNOWN_ISSUES.md` § History 9.
-
-- **`read_mesh_get_sampled_pts` returns its random draw under `"pts"`, the same key as
-  `read_meshes_get_sampled_pts`** (#15). It used `"xyz"`, so every consumer that read
-  `"pts"` unconditionally — `reconstruct_mesh`'s single-object branch included — crashed
-  with `KeyError` the moment `get_rand_pts=True` was set. `"xyz"` survives on that path
-  as a transitional alias of the same array; delete-when is noted at the write site.
-  **No numerical output changes** — the array is the same object under a second key, and
-  the path that read `"pts"` never ran.
-
 ### Breaking
+
+- **`read_mesh_get_sampled_pts` returns its random draw under `"pts"` — the `"xyz"` key
+  is gone** (#15). The two readers disagreed on the key, so every consumer that read
+  `"pts"` unconditionally — `reconstruct_mesh`'s single-object branch included — crashed
+  with `KeyError` the moment `get_rand_pts=True` was set; both now use `"pts"` on every
+  path. A reader of the old `"xyz"` key gets a loud `KeyError`: read `"pts"` instead. (A
+  transitional alias existed briefly on this branch and was deleted before any release
+  carried it — maintainer's call, 2026-08-23.) **No numerical output changes** — same
+  array, one name, and the path that read `"pts"` never ran.
 
 - **`reconstruct_mesh` raises `NoZeroLevelSetError` when the decoder's mean shape has no
   surface** (#29), instead of returning a result that looked successful — `mesh` of
@@ -116,6 +109,12 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   positive int, by name. No working call changes.
 
 ### Fixed — affects results
+
+- **`reconstruct_mesh` honours `n_pts_random`** (#16). It forwarded the value as
+  `n_pts_random=` to readers whose parameter is `n_pts=`; their `**kwargs` swallowed it,
+  so every `get_rand_pts=True` call drew the readers' 200,000-point default per surface
+  regardless of what was asked. **Numerical output changes** for post-fix reruns of such
+  calls (never a shipped configuration) — `docs/KNOWN_ISSUES.md` § History 9.
 
 - **`include_surf_in_pts` on `read_meshes_get_sampled_pts` appends each surface's own
   vertices** (#17). It appended a leaked loop variable instead: on the one

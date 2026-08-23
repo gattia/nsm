@@ -87,10 +87,10 @@ def read_mesh_get_sampled_pts(
         - ``"scale"``, ``"center"``: the normalization applied (1 and zeros when none).
         - ``"icp_transform"``: the registration transform, or None.
         - With ``get_random=True``: sample coordinates under ``"pts"`` (n, 3), signed
-          distances under ``"sdf"`` (n,), and ``"pts_surface"`` (n,) of zeros. ``"xyz"``
-          is a legacy alias of the same array (#15); do not write new readers of it.
+          distances under ``"sdf"`` (n,), and ``"pts_surface"`` (n,) of zeros. (The
+          random path's draw was keyed ``"xyz"`` until #15; the legacy key is gone.)
         - With ``get_random=False``: the surface vertices under ``"pts"``, with
-          ``"sdf"`` all zeros. No ``"xyz"`` alias -- this path never had the key.
+          ``"sdf"`` all zeros.
 
     Notes:
         Unknown keyword arguments are swallowed silently, except the historical
@@ -192,9 +192,6 @@ def read_mesh_get_sampled_pts(
         rand_sdf = new_mesh.get_sdf_pts(pts=rand_pts, method="pcu")
 
         results["pts"] = rand_pts
-        # Legacy alias, same array (#15). Transitional: delete when the Phase-0b fork
-        # survey confirms no external ["xyz"] readers, or at v0.3.0, whichever first.
-        results["xyz"] = rand_pts
         results["sdf"] = rand_sdf
         results["pts_surface"] = np.zeros(rand_pts.shape[0], dtype=np.int64)
     else:
@@ -461,8 +458,7 @@ def read_meshes_get_sampled_pts(
         dict or None: None when any path does not exist. Otherwise:
 
         - ``"pts"`` (n, 3): sample coordinates, all surfaces concatenated. The same key
-          as the single-mesh reader on every path (#15 unified them; the single reader
-          additionally aliases its random draw as ``"xyz"``, this one never did).
+          as the single-mesh reader on every path (#15 unified them).
         - ``"sdf"``: list with one entry per surface -- each surface's signed distance
           to *all* n points, or None for a missing surface. With ``get_random=False``
           the entries are 0 where the points came from that same surface. Signs come
