@@ -571,11 +571,6 @@ class TestPlainLrLogging:
         assert config["model_lr_update_interval"] == 10
         assert config["model_lr_update_factor"] == pytest.approx(0.5)
 
-    def test_explicit_indices_still_override(self):
-        config = add_plain_lr_to_config(make_config(), idx_model=1, idx_latent=0)
-
-        assert config["model_lr_initial"] == pytest.approx(LATENT_LR)
-
 
 def load_shipped_default_config():
     import json

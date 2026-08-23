@@ -988,3 +988,23 @@ No switch. The old behaviour was a fresh run whose epoch numbering started at 2 
 
 *Pinned by:* `test_training_regression.TestResumeContract` (all three boundaries:
 0 runs every epoch, 1 and 2 load their checkpoints).
+
+## 12. The logged latent-norm stats were the last batch's, scaled down by the batch count
+
+| | |
+|---|---|
+| **Affects** | The `mean_vec_length` and `std_vec_length` metrics in every wandb run since the metric existed. `train_epoch` assigned (`=`) where every surrounding accumulator adds (`+=`), then divided by `len(data_loader)` — so the logged value was the last batch's stat over the batch count, wrong by roughly ×n_batches (issue verification on a real 2-batch run: true mean 0.0107, logged 0.0053). Nov 2024 (`0638e31`, the commit that added the metric — born with the `=`) → Aug 2026 |
+| **Unaffected** | Weights, gradients, checkpoints, every other logged metric — the two stats were computed and discarded outside the loss path. Single-batch epochs (`objects_per_batch >= n_subjects`), where `=` and `+=` agree |
+| **Severity** | Silent, wandb-only. Anyone who read the metric to judge latent-code scale saw a value shrunk by their batch count |
+| **Fixed in** | `trainer-decomposition`, Aug 2026 ([#59](https://github.com/gattia/nsm/issues/59)) |
+
+### How to tell whether one of your runs is affected
+
+Every pre-fix run with more than one batch per epoch. The stored series is a scaled
+proxy, not garbage: within a run with a fixed batch count, multiplying by
+`ceil(n_subjects / objects_per_batch)` recovers the last-batch stat (still one batch's
+value, not the epoch mean). Do not compare the metric across runs with different batch
+counts.
+
+*Pinned by:* `test_training_regression.TestLatentNormLogging` (latent LR 0 makes the
+true epoch mean exact).

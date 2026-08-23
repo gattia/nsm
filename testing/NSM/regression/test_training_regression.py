@@ -478,14 +478,13 @@ class TestScheduleFreeRuns:
 
 class TestLatentNormLogging:
     """
-    #59: ``train_epoch`` builds ``step_mean_vec_length``/``step_std_vec_length`` with
-    ``=`` where every surrounding accumulator uses ``+=``, then divides by
-    ``len(data_loader)`` — so the logged latent-norm stats are the *last batch's*,
-    scaled down by the batch count. Weights and gradients are untouched; only the
-    logged metrics lie.
+    ``train_epoch``'s logged latent-norm stats must be accumulated over the epoch, like
+    every accumulator around them. They used to be assigned (``=`` for ``+=``), which
+    made the logged value the *last batch's* stat over the batch count — wrong by
+    ~×n_batches on every wandb run since the metric existed (#59,
+    ``docs/KNOWN_ISSUES.md`` § History 12). Weights and gradients were never affected.
     """
 
-    @pytest.mark.xfail(strict=True, reason="#59: latent-norm stats are assigned, not accumulated")
     def test_logged_mean_vec_length_is_the_epoch_mean_not_the_last_batch(
         self, training_dataset, tmp_path_factory
     ):
@@ -494,8 +493,8 @@ class TestLatentNormLogging:
         expected value is then exactly the mean over batches of each batch's mean latent
         norm, computable from the embedding directly. ``shuffle=False`` makes the batch
         composition (``[s0, s1], [s2]``) part of the arithmetic rather than of the seed.
-        Today the logged value is ``norm(s2) / 2`` — the singleton last batch over the
-        batch count — which is the issue's ×n_batches observation in miniature.
+        Pre-fix the logged value was ``norm(s2) / 2`` — the singleton last batch over
+        the batch count — the issue's ×n_batches observation in miniature.
         """
         config = training_config(tmp_path_factory.mktemp("latent_norm_log"))
         for entry in config["LearningRateSchedule"]:

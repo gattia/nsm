@@ -108,7 +108,19 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   joint normalization on a warm one — so construction now refuses anything but a
   positive int, by name. No working call changes.
 
+- **`add_plain_lr_to_config` no longer takes `idx_model` / `idx_latent`** (#59). The
+  two parameters let a caller override the `Target`-based lookup by position — the
+  exact back door the Aug 2026 LR fix exists to forbid — and their only caller was a
+  test asserting deliberately swapped labels. Passing them now raises `TypeError`.
+  **No numerical output changes.**
+
 ### Fixed — affects results
+
+- **The logged `mean_vec_length` / `std_vec_length` are epoch means** (#59). They were
+  assigned (`=` for `+=`) and then divided by the batch count, so every wandb run since
+  Nov 2024 logged the last batch's stat shrunk by ~×n_batches. Weights, gradients and
+  checkpoints were never affected — the two stats sat outside the loss path. See
+  `docs/KNOWN_ISSUES.md` § History §12.
 
 - **`resume_epoch: 1` resumes from the epoch-1 checkpoint** (#49). The resume guard
   read `> 1` while the epoch loop starts at `resume_epoch + 1`, so such a run loaded

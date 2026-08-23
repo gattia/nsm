@@ -599,8 +599,8 @@ def train_epoch(
         for l1_idx, l1_loss_ in enumerate(batch_l1_losses):
             step_l1_losses[l1_idx] += l1_loss_  # l1_loss_
 
-        step_mean_vec_length = mean_vec_length.item()
-        step_std_vec_length = std_vec_length.item()
+        step_mean_vec_length += mean_vec_length.item()
+        step_std_vec_length += std_vec_length.item()
 
         if config["grad_clip"] is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), config["grad_clip"])
