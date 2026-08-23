@@ -85,6 +85,16 @@ class TestSingleMeshReader:
         np.testing.assert_array_equal(result["xyz"][n_random:], vertices)
         assert result["pts_surface"].shape[0] == n_random + vertices.shape[0]
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason="#15: the sampled path's draw must come back under 'pts', the key every "
+        "first-party consumer reads; 'xyz' stays as an alias of the same array",
+    )
+    def test_the_random_path_returns_its_draw_under_pts(self, sphere_paths):
+        result = read_mesh_get_sampled_pts(sphere_paths[0], n_pts=10, sigma=0.1, fix_mesh=False)
+        assert "pts" in result
+        assert result["pts"] is result["xyz"]
+
     def test_registering_without_a_mean_mesh_raises_a_bare_exception(self, sphere_paths):
         """The multi reader raises ValueError for the same mistake; pinned as-is."""
         with pytest.raises(Exception, match="Must provide mean mesh") as excinfo:
