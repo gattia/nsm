@@ -1439,7 +1439,7 @@ def get_mean_errors(
             print("result_", result_)
 
         if predict_val_variables is not None:
-            reg.add_latent(result_)
+            reg.add_latent(result_["latent"].detach().cpu().numpy().ravel())
 
         for mesh_idx in range(len(result_["mesh"])):
             if calc_symmetric_chamfer:

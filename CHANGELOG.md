@@ -126,6 +126,13 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Fixed
 
+- **`predict_val_variables` runs to completion** (#48). `get_mean_errors` handed
+  `Regress.add_latent` the whole result dict rather than the fitted latent, so a run
+  that enabled the latent-to-factor validator died with `TypeError` in `calc_r2` at its
+  first validation pass — after all its reconstructions had run. The seam now passes
+  the latent as a flat float vector. Always crashed, so no results are affected and
+  there is no History entry.
+
 - **`norm_penalty_type='barrier'` raises by name outside its `(min, max)` range instead
   of returning NaN** (#48). Below the range — where every run starts unless
   `latent_init_std` puts the initial norm inside it — the log term's value was NaN but
