@@ -4,23 +4,32 @@
 
 ## State
 
-**Updated:** 2026-08-22 · **Status:** open
+**Updated:** 2026-08-23 · **Status:** open
 
-- **Next:** maintainer reviews the `sdf-dataset-decomposition` branch (5 commits,
-  §8.0 slice A — plan statement, characterization tests, a docstring correction,
-  the move, this State update), then PR + admin merge. After that: slice B, the
-  reader-internals split (registration / frame computation / per-surface draws
-  inside `mesh_sampling.py`), which needs its own §8.0-style statement before any
-  code — #69 (in-memory joint scaling, pinned strict-xfail), #3 (sigma coordinate
-  space) and #17 (include_surf_in_pts, now pinned strict-xfail in
-  `test_sampled_pts_readers.py`) ride along there. Still open from #48: the
-  `barrier` norm-penalty NaN and `Regress.add_latent`.
-- **Slice A is on the branch, unreviewed (2026-08-22):** `sdf_dataset.py` is 1,744
-  lines (classes + permanent re-import block), the 13 leaf helpers live in
-  `NSM/datasets/utils.py`, the two readers in `NSM/datasets/mesh_sampling.py` —
-  verbatim moves, +49 lines net against the ~70 budget, full suite green with
-  identical collection (472 nodes). New tests: `test_dataset_helpers.py`,
-  `test_sampled_pts_readers.py` (characterization, one #17 strict-xfail),
+- **Next:** slice B is reviewed (2026-08-23) and up as **draft PR #72** (closes #17
+  and #69 on merge); maintainer approves the PR text, marks it ready, admin-merges.
+  After that:
+  §8's remaining monoliths (`train_deep_sdf.py`, `reconstruct/main.py`) have no
+  slice statements yet; class-side cache/build decomposition stays grouped with
+  #19/#27; still open from #48: the `barrier` norm-penalty NaN and
+  `Regress.add_latent`.
+- **Slice B is on the branch, unreviewed (2026-08-23):** `read_meshes_get_sampled_pts`
+  orchestrates three private helpers (`_register_to_mean`, `_compute_shared_frame`,
+  `_draw_surface_samples`), split commit +64 net against the ~80 budget, suite
+  green with identical counts before/after the split (498 passed, 14 xfailed).
+  Rode along per the statement: **#17 fixed** (appends `new_pts[new_pts_idx]`;
+  both strict-xfails now plain passes; `KNOWN_ISSUES` § History **§7** + CHANGELOG
+  record the one affected run class — multi-object fits with `get_rand_pts=True`
+  on `scale_jointly=False` models, never training data) and **#69 fixed** by
+  unification (both storage modes compute the shared frame, `__getitem__` applies
+  it per batch; the in-memory mutate-in-place branch deleted, net −48; disk
+  numerics unchanged, regression baselines unmoved). #3 got its structural
+  precondition only: sigma's frame-dependence is stated in
+  `_draw_surface_samples`' docstring, the single site where sigma is consumed.
+- **Slice A landed (2026-08-22):** merged to `main` in PR #71 — `sdf_dataset.py`
+  holds the classes + permanent re-import block, the 13 leaf helpers in
+  `NSM/datasets/utils.py`, the two readers in `NSM/datasets/mesh_sampling.py`;
+  characterization in `test_dataset_helpers.py` / `test_sampled_pts_readers.py` /
   `test_import_compat.py` (frozen name list on both import paths).
   Characterization surprise, pinned and docstring-corrected: `unpack_numpy_data`
   accepts a dict only with `list_additional_keys=[]` — the default reads
@@ -159,6 +168,18 @@
     Documenting a function honestly means executing it — the branch had survived #22's
     in-memory fixes and #43's `joint_scale_buffer` work untouched because neither had a
     reason to run that exact combination.
+  - **#17's blast radius was narrower than the issue feared.** The executed determination
+    (§8.0.B) showed only *one* configuration of `include_surf_in_pts` ever returned
+    results — centering on, numeric sigmas; the production-shaped configuration
+    (`scale_jointly=True` → centering off) always crashed with `UnboundLocalError`, and
+    any `None` sigma always crashed with `ValueError`. Silent corruption was real but
+    confined to multi-object fits on `scale_jointly=False` models; training data was
+    never touched because the dataset classes never pass the flag.
+  - **#69's "two halves" were one defect, and the fix was net-negative.** The KeyError
+    and the missing buffer both came from the in-memory branch reimplementing what the
+    disk branch already did. Unifying on the disk branch's semantics (compute the frame,
+    let `__getitem__` apply it) deleted the entire mutate-in-place branch — −48 lines —
+    instead of repairing it.
 
 ---
 
@@ -626,6 +647,98 @@ spheres.
 #69 (`norm_and_scale_all_meshes` in-memory) and #3 (sigma coordinate space) ride
 along, and it gets its own statement first. Class-side cache/build decomposition
 stays grouped with #19/#27 (see State § Deliberately deferred).
+
+### 8.0.B `read_meshes_get_sampled_pts` internals split — plan statement (2026-08-23)
+
+Slice A moved the readers verbatim; this slice restructures the multi reader's
+inside. The single reader stays untouched — it is 80 flat, legible lines, and its
+`include_surf_in_pts` block is the *correct* one (#17's trap: any "unification"
+risks copying the broken variant over it).
+
+**Target shape (all permanent, nothing transitional).** Three module-private
+helpers inside `mesh_sampling.py`, named for the State's own decomposition —
+private because they are internals, and so that the `test_import_compat` frozen
+namespace list does not change:
+
+- `_register_to_mean(orig_meshes, new_meshes, new_pts, paths, mesh_to_scale,
+  mean_mesh, icp_transform)` → the transform used (caller-supplied or computed via
+  `combine_meshes` for a list `mesh_to_scale`); applies it to every surface in place.
+- `_compute_shared_frame(new_pts, mesh_to_scale, scale_all_meshes,
+  center_all_meshes, scale_method)` → `(center, scale)`. Pure — the six-branch
+  tangle becomes directly testable against the sphere arithmetic the slice-A
+  characterization already asserts.
+- `_draw_surface_samples(new_meshes, new_pts, sigma, n_pts, rand_function,
+  include_surf_in_pts, uniform_pts_buffer, seed)` → `(rand_pts, pts_surface)`.
+  The per-surface SDF loop and the `get_random=False` branch stay inline — coherent
+  as they are, and the State does not name them.
+
+**Fixes land *before* the split**, so the split commit is purely
+behaviour-preserving (no xfail transitions inside it):
+
+- **#17** — the leaked `new_pts_` in the draw loop. The issue's "determine which of
+  the three applies" question is now settled by execution (2026-08-23, sphere pair):
+  with `center_pts`/`norm_pts` both False and numeric sigmas — the shape
+  `reconstruct_mesh` produces for `scale_jointly=True` models — it **always crashed**
+  (`UnboundLocalError`); with any sigma `None` it **always crashed** (`ValueError`,
+  `new_pts_` is a leaked list); with centering on and numeric sigmas it produced
+  **silently wrong data** — 1580 points where 1874 is correct: the *last* surface's
+  pre-normalization vertices appended once per surface, wrong surface *and* wrong
+  frame. So the `KNOWN_ISSUES.md` § History entry covers exactly one run class:
+  multi-surface calls with centering on — via `reconstruct_mesh`, that is
+  `get_rand_pts=True` on a `scale_jointly=False` model. Neither shipped config
+  reaches it (`get_rand_pts_recon: false`). Fix: append `new_pts[new_pts_idx]`; the
+  slice-A strict-xfail passes unmarked. Extraction then removes the *class* of
+  defect — a helper's scope cannot see a leaked binding from another section.
+- **#69** — fix by unification, not by patching the in-memory branch:
+  `norm_and_scale_all_meshes` computes `self.center`/`self.max_radius` in both
+  storage modes (the only difference is reading `new_pts_{i}` npz keys vs the
+  in-memory `new_pts` list) and the existing per-batch application in `__getitem__`
+  — present in both classes (`SDFSamples.__getitem__`,
+  `MultiSurfaceSDFSamples.__getitem__`) and conditioned only on the attributes —
+  does the scaling. The mutate-in-place branch is deleted; the buffer is applied by
+  construction. Disk-path numerics unchanged. Always crashed → no History entry.
+
+**#3 rides along structurally, not as a fix.** After the split there is exactly one
+site where sigma is consumed (`_draw_surface_samples`); its docstring states the
+coordinate-space fact — draws happen in whatever frame the meshes are in at call
+time: normalized when centering ran, original units otherwise. The breaking change
+itself stays with `BREAKING_CHANGE_PROPOSAL.md` / `SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md`
+and needs its §4-style migration guard; nothing in this slice moves it.
+
+**Re-verified during scoping, already tracked:** `reconstruct_mesh` passes
+`n_pts_random=` to readers whose parameter is `n_pts=`, so the kwarg is swallowed
+and the 200,000-point default is used (asked 7, got 200,122 = 200,000 + vertices).
+That is #16; its fix belongs to `reconstruct/main.py`, not this slice.
+
+**Characterization added before any change** (commit 2), pinning what the split
+touches and slice A left unpinned: the `icp_transform` reuse path (the dataset's
+cross-combo contract — pass a transform back in, registration is skipped, the same
+frame comes out), the joint uniform-cube draw (`None` in sigma, without
+`include_surf_in_pts`), reader-level seed determinism (same seed → identical
+draws; different seed → different), and a second #17 strict-xfail for the
+uniform-cube + `include_surf_in_pts` combination.
+
+**Size budget:** #17 ≤ +5 code lines; #69 net ≤ +10 (unification should land ≤ 0);
+the split ≤ +80 net in `mesh_sampling.py` (three signatures + docstrings; bodies
+are moves). Characterization tests are additive and outside the budget. Beyond
+this is scope creep.
+
+**Sequence** (one commit each, suite green at every step):
+1. this statement; 2. characterization additions; 3. #17 fix + History entry +
+xfail unmarks; 4. #69 fix + xfail unmark + `KNOWN_ISSUES` § Open removal;
+5. the split; 6. State update.
+
+**Verification per claim:**
+
+| Claim | Verification |
+|---|---|
+| #17 fix appends each surface's own points | slice-A strict-xfail passes unmarked; new uniform-cube xfail passes unmarked |
+| #17's affected-run classes are as stated | the executed determination above, recorded in the History entry |
+| #69 both halves land together | `TestScaleJointlyInMemory` passes unmarked (asserts the buffered domain; its `raises=KeyError` made a half-fix a plain failure) |
+| #69 leaves disk-path numerics unchanged | regression harness green (`test_dataset_cache`, training regression) |
+| Split changes no behaviour | full suite + harness green before/after; `git diff --color-moved`; no xfail transitions in the split commit |
+| No namespace change | `test_import_compat` frozen list untouched |
+| No new import or dependency edge | helpers live in `mesh_sampling.py`; module still imports only from `.utils` |
 
 ### 8.1 Make the library plural — added 2026-08-15
 

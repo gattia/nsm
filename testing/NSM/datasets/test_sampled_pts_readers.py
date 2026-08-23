@@ -6,8 +6,8 @@ before their move to ``NSM/datasets/mesh_sampling.py`` (plan §8.0, slice A).
 Everything asserts behaviour as it stands today, including the warts the docstrings
 already record: the ``"pts"``-vs-``"xyz"`` key asymmetry, the bare-``Exception``-vs-
 ``ValueError`` raise asymmetry between the two readers, and the always-on deprecated
-flags. The one exception is ``include_surf_in_pts`` on the multi reader, which asserts
-the behaviour NSM *should* have and is ``xfail(strict=True)`` until #17 is fixed.
+flags. The ``include_surf_in_pts`` tests on the multi reader were ``xfail(strict=True)``
+pins of #17 until its fix landed; they now assert the fixed behaviour.
 
 Meshes are analytic spheres with known centers and radii, so the frame math
 (``center`` / ``scale`` under each ``mesh_to_scale`` / ``scale_all_meshes`` /
@@ -25,6 +25,7 @@ from NSM.datasets.sdf_dataset import (  # noqa: E402
     read_mesh_get_sampled_pts,
     read_meshes_get_sampled_pts,
 )
+from NSM.datasets.utils import get_buffered_cube_mins_maxs  # noqa: E402
 
 BONE_CENTER = np.array([2.0, 0.0, 0.0])
 BONE_RADIUS = 1.0
@@ -269,11 +270,96 @@ class TestMultiMeshReader:
         assert result["sdf"][1] is not None
         assert result["sdf"][1].shape[0] == 30
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#17: include_surf_in_pts appends a leaked loop variable, "
-        "not the surface's own points",
-    )
+    def test_a_supplied_icp_transform_is_used_instead_of_registering(self, sphere_paths):
+        """
+        The dataset's cross-combo contract (``MultiSurfaceSDFSamples.get_sample_data_dict``):
+        the first sampling pass registers, every later pass passes that pass's transform
+        back in, so all of a subject's points share one registration. Supplying a
+        transform must skip registration -- the same object comes back out -- and land
+        the surfaces in the identical frame.
+        """
+        bone_path, cart_path = sphere_paths
+        kwargs = dict(
+            sigma=[0.1, 0.1],
+            n_pts=[10, 10],
+            register_to_mean_first=True,
+            mean_mesh=Mesh(bone_path),
+            center_pts=False,
+            norm_pts=False,
+            fix_mesh=False,
+        )
+        first = read_meshes_get_sampled_pts([cart_path, bone_path], **kwargs)
+        transform = first["icp_transform"]
+        assert transform is not None
+
+        second = read_meshes_get_sampled_pts(
+            [cart_path, bone_path], icp_transform=transform, **kwargs
+        )
+        assert second["icp_transform"] is transform
+        for surf_idx in range(2):
+            np.testing.assert_array_equal(second["new_pts"][surf_idx], first["new_pts"][surf_idx])
+
+    def test_a_none_sigma_draws_from_one_cube_around_all_surfaces(self, sphere_paths):
+        """
+        ``None`` sigmas draw uniformly from a single cube around every surface jointly
+        (``get_buffered_cube_mins_maxs`` over the concatenated surfaces), not one cube
+        per surface -- so a bone-surface draw can land far away, inside the cartilage's
+        corner of the cube.
+        """
+        result = read_meshes_get_sampled_pts(
+            list(sphere_paths),
+            sigma=[None, None],
+            n_pts=[200, 200],
+            center_pts=False,
+            norm_pts=False,
+            fix_mesh=False,
+        )
+        union = np.vstack([result["new_pts"][0], result["new_pts"][1]])
+        mins, maxs = get_buffered_cube_mins_maxs(union, 0.0)
+        assert result["pts"].shape[0] == 400
+        assert np.all(result["pts"] >= mins) and np.all(result["pts"] <= maxs)
+        # Both surfaces' draws span the joint cube, not their own sphere's extent:
+        # bone vertices stay below x=3, but bone-labeled samples reach the cartilage's
+        # half of the cube.
+        bone_draws = result["pts"][result["pts_surface"] == 0]
+        assert bone_draws[:, 0].max() > 3.5
+
+    def test_the_same_seed_reproduces_the_draws_and_a_different_seed_changes_them(
+        self, sphere_paths
+    ):
+        kwargs = dict(sigma=[0.1, 0.1], n_pts=[25, 25], fix_mesh=False)
+        first = read_meshes_get_sampled_pts(list(sphere_paths), seed=7, **kwargs)
+        again = read_meshes_get_sampled_pts(list(sphere_paths), seed=7, **kwargs)
+        other = read_meshes_get_sampled_pts(list(sphere_paths), seed=8, **kwargs)
+        np.testing.assert_array_equal(again["pts"], first["pts"])
+        for surf_idx in range(2):
+            np.testing.assert_array_equal(again["sdf"][surf_idx], first["sdf"][surf_idx])
+        assert not np.array_equal(other["pts"], first["pts"])
+
+    def test_include_surf_in_pts_appends_the_vertices_on_the_uniform_cube_path_too(
+        self, sphere_paths
+    ):
+        """
+        Before the #17 fix this configuration could not even run: the leaked
+        ``new_pts_`` was a *list* on the uniform-cube path, so the append raised
+        ``ValueError`` -- the second of #17's three behaviours (executed
+        determination, plan §8.0.B).
+        """
+        n_random = 10
+        result = read_meshes_get_sampled_pts(
+            list(sphere_paths),
+            sigma=[None, None],
+            n_pts=[n_random, n_random],
+            include_surf_in_pts=True,
+            center_pts=False,
+            norm_pts=False,
+            fix_mesh=False,
+        )
+        bone_verts, cart_verts = result["new_pts"]
+        end_of_surface_0 = n_random + bone_verts.shape[0]
+        np.testing.assert_array_equal(result["pts"][n_random:end_of_surface_0], bone_verts)
+        np.testing.assert_array_equal(result["pts"][end_of_surface_0 + n_random :], cart_verts)
+
     def test_include_surf_in_pts_appends_each_surfaces_own_vertices(self, sphere_paths):
         n_random = 10
         result = read_meshes_get_sampled_pts(
