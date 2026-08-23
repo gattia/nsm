@@ -28,6 +28,16 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ## Unreleased
 
+### Fixed
+
+- **`read_mesh_get_sampled_pts` returns its random draw under `"pts"`, the same key as
+  `read_meshes_get_sampled_pts`** (#15). It used `"xyz"`, so every consumer that read
+  `"pts"` unconditionally — `reconstruct_mesh`'s single-object branch included — crashed
+  with `KeyError` the moment `get_rand_pts=True` was set. `"xyz"` survives on that path
+  as a transitional alias of the same array; delete-when is noted at the write site.
+  **No numerical output changes** — the array is the same object under a second key, and
+  the path that read `"pts"` never ran.
+
 ### Breaking
 
 - **`read_mesh_get_sampled_pts` and `read_meshes_get_sampled_pts` no longer take

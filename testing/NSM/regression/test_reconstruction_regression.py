@@ -311,10 +311,10 @@ class TestSampledReconstructionIsSeeded:
     variable rather than the current surface. Neither is asserted on: they are library
     defects, recorded so the cost of this class is explained rather than mysterious.
 
-    The single-object branch is not covered. It needs a one-output decoder, which this
-    fixture's model is not, and it is unreachable anyway: with ``get_rand_pts=True`` its
-    sampler returns the drawn points under ``xyz`` while ``reconstruct_mesh`` reads
-    ``result_["pts"]``, which only exists on the ``get_random=False`` path.
+    The single-object branch is not covered here: it needs a one-output decoder, which
+    this fixture's model is not. (Until #15 unified the sampler keys it was unreachable
+    outright -- the sampler returned the draw under ``xyz`` while ``reconstruct_mesh``
+    read ``result_["pts"]``.)
     """
 
     @pytest.fixture(scope="class")

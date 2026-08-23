@@ -605,8 +605,8 @@ class SDFSamples(torch.utils.data.Dataset):
                 if result_ is None:
                     return None
 
-                xyz_ = result_["pts"] if "pts" in result_ else result_["xyz"]
-                sdfs_ = result_["sdf"] if "sdf" in result_ else result_["gt_sdf"]
+                xyz_ = result_["pts"]
+                sdfs_ = result_["sdf"]
 
                 data["xyz"][pts_idx : pts_idx + n_pts_, :] = torch.from_numpy(xyz_).float()
                 data["gt_sdf"][pts_idx : pts_idx + n_pts_] = torch.from_numpy(sdfs_).float()
@@ -1328,8 +1328,8 @@ class MultiSurfaceSDFSamples(SDFSamples):
                     data["orig_pts"] = result_["orig_pts"]
                     data["new_pts"] = result_["new_pts"]
 
-                xyz_ = result_["pts"] if "pts" in result_ else result_["xyz"]
-                sdfs_ = result_["sdf"] if "sdf" in result_ else result_["gt_sdf"]
+                xyz_ = result_["pts"]
+                sdfs_ = result_["sdf"]
 
                 data["xyz"][pts_idx : pts_idx + sum(n_pts_), :] = torch.from_numpy(xyz_).float()
 
