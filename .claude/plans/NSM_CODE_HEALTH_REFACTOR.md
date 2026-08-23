@@ -627,6 +627,98 @@ spheres.
 along, and it gets its own statement first. Class-side cache/build decomposition
 stays grouped with #19/#27 (see State § Deliberately deferred).
 
+### 8.0.B `read_meshes_get_sampled_pts` internals split — plan statement (2026-08-23)
+
+Slice A moved the readers verbatim; this slice restructures the multi reader's
+inside. The single reader stays untouched — it is 80 flat, legible lines, and its
+`include_surf_in_pts` block is the *correct* one (#17's trap: any "unification"
+risks copying the broken variant over it).
+
+**Target shape (all permanent, nothing transitional).** Three module-private
+helpers inside `mesh_sampling.py`, named for the State's own decomposition —
+private because they are internals, and so that the `test_import_compat` frozen
+namespace list does not change:
+
+- `_register_to_mean(orig_meshes, new_meshes, new_pts, paths, mesh_to_scale,
+  mean_mesh, icp_transform)` → the transform used (caller-supplied or computed via
+  `combine_meshes` for a list `mesh_to_scale`); applies it to every surface in place.
+- `_compute_shared_frame(new_pts, mesh_to_scale, scale_all_meshes,
+  center_all_meshes, scale_method)` → `(center, scale)`. Pure — the six-branch
+  tangle becomes directly testable against the sphere arithmetic the slice-A
+  characterization already asserts.
+- `_draw_surface_samples(new_meshes, new_pts, sigma, n_pts, rand_function,
+  include_surf_in_pts, uniform_pts_buffer, seed)` → `(rand_pts, pts_surface)`.
+  The per-surface SDF loop and the `get_random=False` branch stay inline — coherent
+  as they are, and the State does not name them.
+
+**Fixes land *before* the split**, so the split commit is purely
+behaviour-preserving (no xfail transitions inside it):
+
+- **#17** — the leaked `new_pts_` in the draw loop. The issue's "determine which of
+  the three applies" question is now settled by execution (2026-08-23, sphere pair):
+  with `center_pts`/`norm_pts` both False and numeric sigmas — the shape
+  `reconstruct_mesh` produces for `scale_jointly=True` models — it **always crashed**
+  (`UnboundLocalError`); with any sigma `None` it **always crashed** (`ValueError`,
+  `new_pts_` is a leaked list); with centering on and numeric sigmas it produced
+  **silently wrong data** — 1580 points where 1874 is correct: the *last* surface's
+  pre-normalization vertices appended once per surface, wrong surface *and* wrong
+  frame. So the `KNOWN_ISSUES.md` § History entry covers exactly one run class:
+  multi-surface calls with centering on — via `reconstruct_mesh`, that is
+  `get_rand_pts=True` on a `scale_jointly=False` model. Neither shipped config
+  reaches it (`get_rand_pts_recon: false`). Fix: append `new_pts[new_pts_idx]`; the
+  slice-A strict-xfail passes unmarked. Extraction then removes the *class* of
+  defect — a helper's scope cannot see a leaked binding from another section.
+- **#69** — fix by unification, not by patching the in-memory branch:
+  `norm_and_scale_all_meshes` computes `self.center`/`self.max_radius` in both
+  storage modes (the only difference is reading `new_pts_{i}` npz keys vs the
+  in-memory `new_pts` list) and the existing per-batch application in `__getitem__`
+  — present in both classes (`SDFSamples.__getitem__`,
+  `MultiSurfaceSDFSamples.__getitem__`) and conditioned only on the attributes —
+  does the scaling. The mutate-in-place branch is deleted; the buffer is applied by
+  construction. Disk-path numerics unchanged. Always crashed → no History entry.
+
+**#3 rides along structurally, not as a fix.** After the split there is exactly one
+site where sigma is consumed (`_draw_surface_samples`); its docstring states the
+coordinate-space fact — draws happen in whatever frame the meshes are in at call
+time: normalized when centering ran, original units otherwise. The breaking change
+itself stays with `BREAKING_CHANGE_PROPOSAL.md` / `SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md`
+and needs its §4-style migration guard; nothing in this slice moves it.
+
+**Re-verified during scoping, already tracked:** `reconstruct_mesh` passes
+`n_pts_random=` to readers whose parameter is `n_pts=`, so the kwarg is swallowed
+and the 200,000-point default is used (asked 7, got 200,122 = 200,000 + vertices).
+That is #16; its fix belongs to `reconstruct/main.py`, not this slice.
+
+**Characterization added before any change** (commit 2), pinning what the split
+touches and slice A left unpinned: the `icp_transform` reuse path (the dataset's
+cross-combo contract — pass a transform back in, registration is skipped, the same
+frame comes out), the joint uniform-cube draw (`None` in sigma, without
+`include_surf_in_pts`), reader-level seed determinism (same seed → identical
+draws; different seed → different), and a second #17 strict-xfail for the
+uniform-cube + `include_surf_in_pts` combination.
+
+**Size budget:** #17 ≤ +5 code lines; #69 net ≤ +10 (unification should land ≤ 0);
+the split ≤ +80 net in `mesh_sampling.py` (three signatures + docstrings; bodies
+are moves). Characterization tests are additive and outside the budget. Beyond
+this is scope creep.
+
+**Sequence** (one commit each, suite green at every step):
+1. this statement; 2. characterization additions; 3. #17 fix + History entry +
+xfail unmarks; 4. #69 fix + xfail unmark + `KNOWN_ISSUES` § Open removal;
+5. the split; 6. State update.
+
+**Verification per claim:**
+
+| Claim | Verification |
+|---|---|
+| #17 fix appends each surface's own points | slice-A strict-xfail passes unmarked; new uniform-cube xfail passes unmarked |
+| #17's affected-run classes are as stated | the executed determination above, recorded in the History entry |
+| #69 both halves land together | `TestScaleJointlyInMemory` passes unmarked (asserts the buffered domain; its `raises=KeyError` made a half-fix a plain failure) |
+| #69 leaves disk-path numerics unchanged | regression harness green (`test_dataset_cache`, training regression) |
+| Split changes no behaviour | full suite + harness green before/after; `git diff --color-moved`; no xfail transitions in the split commit |
+| No namespace change | `test_import_compat` frozen list untouched |
+| No new import or dependency edge | helpers live in `mesh_sampling.py`; module still imports only from `.utils` |
+
 ### 8.1 Make the library plural — added 2026-08-15
 
 The name is *neural shape model**s***. Two defects currently make it singular in practice,
