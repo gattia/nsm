@@ -83,9 +83,6 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
     config["checkpoints"] = get_checkpoints(config)
     config["lr_schedules"] = get_learning_rate_schedules(config)
 
-    if "resume_epoch" not in config:
-        config["resume_epoch"] = 0
-
     model = model.to(config["device"])
 
     if use_wandb is True:
@@ -177,7 +174,6 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
                 optimizer=optimizer,
                 config=config,
                 epoch=epoch,
-                return_loss=True,
                 n_surfaces=config["objects_per_decoder"],
             )
             val_epoch = (
@@ -301,8 +297,6 @@ def train_epoch(
     optimizer,
     config,
     epoch,
-    return_loss=True,
-    verbose=False,
     n_surfaces=2,
 ):
     # n_surfaces = len(models)

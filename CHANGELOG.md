@@ -114,6 +114,14 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   test asserting deliberately swapped labels. Passing them now raises `TypeError`.
   **No numerical output changes.**
 
+- **`train_epoch` no longer takes `return_loss` or `verbose`** (#16's class — parameters
+  accepted and never read). The body returns its `log_dict` unconditionally and reads
+  `config["verbose"]`, so neither parameter did anything at any value. Passing them now
+  raises `TypeError`; `config["verbose"]` remains the way to get verbose output. The
+  copies in `train_deep_sdf_multi_head` and `train/deprecated/` are untouched — the
+  former belongs to #51's repair, the latter to the quarantine decision (`SCOPE.md` §2).
+  **No numerical output changes.**
+
 ### Fixed — affects results
 
 - **The logged `mean_vec_length` / `std_vec_length` are epoch means** (#59). They were
