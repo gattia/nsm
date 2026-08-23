@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from NSM.datasets import MultiSurfaceSDFSamples
 from NSM.train.train_deep_sdf import train_deep_sdf as train_single
 from NSM.train.train_deep_sdf_multi_head import train_deep_sdf as train_multi_head
 
@@ -103,3 +104,47 @@ class TestMultiHeadMeshNamesValidation:
                     train_multi_head(config, models=models, sdf_dataset=MagicMock())
                 mesh_warnings = [x for x in w if "mesh_names" in str(x.message)]
                 assert len(mesh_warnings) == 1
+
+
+class TestDatasetCarriedMeshNames:
+    """
+    #52: ``mesh_names`` is a free-floating config key persisted to
+    ``model_params_config.json`` as ground truth, while the per-surface ordering it
+    claims to describe is defined somewhere else entirely — the order of each subject's
+    mesh-path list in the dataset. Nothing ties the two together, so the persisted names
+    can be silently wrong. The fix moves the declaration next to the ordering:
+    ``MultiSurfaceSDFSamples`` accepts ``mesh_names``, and the trainer adopts or
+    cross-checks it at entry. Strict xfails until that lands.
+    """
+
+    @pytest.mark.xfail(
+        strict=True, reason="#52: MultiSurfaceSDFSamples does not yet accept mesh_names"
+    )
+    def test_dataset_validates_names_against_its_own_surface_count(self):
+        """One name for a two-surface subject list must be refused at construction."""
+        with pytest.raises(ValueError, match="mesh_names"):
+            MultiSurfaceSDFSamples(
+                list_mesh_paths=[["a.vtk", "b.vtk"]], subsample=4, mesh_names=["bone"]
+            )
+
+    @pytest.mark.xfail(
+        strict=True, reason="#52: the trainer does not yet adopt dataset-carried mesh_names"
+    )
+    def test_trainer_adopts_the_datasets_names_when_config_has_none(self):
+        config = _make_single_config(objects_per_decoder=2, mesh_names=None)
+        dataset = MagicMock()
+        dataset.mesh_names = ["bone", "cart"]
+        with patch(PATCH_SINGLE, side_effect=StopIteration):
+            with pytest.raises(StopIteration):
+                train_single(config, model=MagicMock(), sdf_dataset=dataset)
+        assert config["mesh_names"] == ["bone", "cart"]
+
+    @pytest.mark.xfail(
+        strict=True, reason="#52: config-vs-dataset mesh_names disagreement is not detected"
+    )
+    def test_disagreeing_declarations_raise_at_entry(self):
+        config = _make_single_config(objects_per_decoder=2, mesh_names=["bone", "cart"])
+        dataset = MagicMock()
+        dataset.mesh_names = ["cart", "bone"]
+        with pytest.raises(ValueError, match="mesh_names"):
+            train_single(config, model=MagicMock(), sdf_dataset=dataset)

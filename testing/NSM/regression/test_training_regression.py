@@ -18,6 +18,7 @@ This module is the other half of that: the mapping surviving a real training loo
 import copy
 import json
 import os
+import types
 
 import pytest
 import torch
@@ -33,11 +34,15 @@ from _harness import (
     headroom,
     platform_matches,
     provenance,
+    quiet,
     regenerating,
     regenerating_decoder,
     run_training,
     training_config,
 )
+
+from NSM.train.train_deep_sdf import train_epoch
+from NSM.utils import get_latent_vecs, get_learning_rate_schedules, get_optimizer
 
 
 def test_baselines_are_not_being_regenerated():
@@ -367,3 +372,159 @@ class TestTrainerContract:
         """
         assert training_run["config"]["mesh_names"] == ["bone", "cart"]
         assert not hasattr(training_run["model"], "mesh_names")
+
+
+# ---------------------------------------------------------------------------
+# §8.0.D characterization: resume, schedule_free, latent-norm logging
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def resume_source_run(training_dataset, tmp_path_factory):
+    """A 2-epoch run checkpointing at every epoch — the source the resume tests load."""
+    config = training_config(tmp_path_factory.mktemp("resume_source"))
+    config.update({"n_epochs": 2, "checkpoint_epochs": 1})
+    model = build_model(config)
+    records, _ = run_training(config, model, training_dataset)
+    return {"config": config, "records": records}
+
+
+def _assert_same_state(state, checkpoint_state):
+    assert state.keys() == checkpoint_state.keys()
+    for key in state:
+        assert torch.equal(state[key], checkpoint_state[key]), f"weights differ at {key!r}"
+
+
+class TestResumeContract:
+    """
+    ``resume_epoch`` names the last *completed* epoch. The two behaviours pinned green
+    here are the ones #49's fix must not disturb; the xfail is the defect itself — the
+    resume guard reads ``> 1`` while the epoch loop starts at ``resume_epoch + 1``, so
+    ``resume_epoch=1`` skips epoch 1 *and* loads nothing.
+    """
+
+    def test_resume_epoch_0_runs_every_epoch(self, resume_source_run):
+        assert [r["epoch"] for r in resume_source_run["records"]] == [1, 2]
+
+    def test_resume_from_a_later_checkpoint_loads_it(self, resume_source_run, training_dataset):
+        """
+        ``resume_epoch=2`` with ``n_epochs=2`` trains nothing — it only loads — so the
+        model must leave ``train_deep_sdf`` carrying exactly the epoch-2 checkpoint's
+        weights rather than the fresh init it walked in with (a different seed, so a
+        skipped load cannot pass by accident).
+        """
+        source_dir = resume_source_run["config"]["experiment_directory"]
+        config = training_config(source_dir)
+        config.update({"n_epochs": 2, "checkpoint_epochs": 1, "resume_epoch": 2})
+        model = build_model(config, seed=7)
+        records, _ = run_training(config, model, training_dataset)
+
+        assert records == []
+        checkpoint = torch.load(os.path.join(source_dir, "model", "2.pth"), weights_only=False)
+        _assert_same_state(model.state_dict(), checkpoint["model"])
+
+    @pytest.mark.xfail(
+        strict=True, reason="#49: resume_epoch == 1 skips epoch 1 without loading anything"
+    )
+    def test_resume_epoch_1_loads_the_epoch_1_checkpoint(self, resume_source_run, training_dataset):
+        """Same contract as the test above, one epoch earlier — the boundary #49 names."""
+        source_dir = resume_source_run["config"]["experiment_directory"]
+        config = training_config(source_dir)
+        config.update({"n_epochs": 1, "checkpoint_epochs": 1, "resume_epoch": 1})
+        model = build_model(config, seed=7)
+        records, _ = run_training(config, model, training_dataset)
+
+        assert records == []
+        checkpoint = torch.load(os.path.join(source_dir, "model", "1.pth"), weights_only=False)
+        _assert_same_state(model.state_dict(), checkpoint["model"])
+
+
+class TestScheduleFreeRuns:
+    """
+    #42: the eval warm-up hands the decoder the raw dataloader item (``model(batch)``
+    where ``batch`` is ``(sdf_data, indices)``), so every schedule_free run dies with a
+    ``TypeError`` at its first checkpoint or validation epoch — which every run reaches.
+
+    ``schedulefree`` is not installed in ``nsm-dev``, and the crash is in the trainer's
+    warm-up, not in schedulefree — so the optimizer is stubbed: AdamW plus the
+    ``train()``/``eval()`` mode switches, the entire interface the trainer uses. What the
+    stub does not exercise is schedulefree's numerics, which ``docs/KNOWN_ISSUES.md`` §1
+    already records as needing retuning.
+    """
+
+    @pytest.mark.xfail(
+        strict=True, reason="#42: the schedule_free eval warm-up forwards a raw dataloader item"
+    )
+    def test_a_schedule_free_run_survives_its_first_checkpoint_epoch(
+        self, training_dataset, tmp_path_factory, monkeypatch
+    ):
+        import NSM.utils
+
+        class _StubAdamWScheduleFree(torch.optim.AdamW):
+            def train(self):
+                pass
+
+            def eval(self):
+                pass
+
+        monkeypatch.setattr(
+            NSM.utils,
+            "schedulefree",
+            types.SimpleNamespace(AdamWScheduleFree=_StubAdamWScheduleFree),
+        )
+
+        config = training_config(tmp_path_factory.mktemp("schedule_free_run"))
+        config.update({"optimizer": "schedule_free_AdamW", "n_epochs": 2, "checkpoint_epochs": 1})
+        model = build_model(config)
+        records, _ = run_training(config, model, training_dataset)
+
+        assert [r["epoch"] for r in records] == [1, 2]
+
+
+class TestLatentNormLogging:
+    """
+    #59: ``train_epoch`` builds ``step_mean_vec_length``/``step_std_vec_length`` with
+    ``=`` where every surrounding accumulator uses ``+=``, then divides by
+    ``len(data_loader)`` — so the logged latent-norm stats are the *last batch's*,
+    scaled down by the batch count. Weights and gradients are untouched; only the
+    logged metrics lie.
+    """
+
+    @pytest.mark.xfail(strict=True, reason="#59: latent-norm stats are assigned, not accumulated")
+    def test_logged_mean_vec_length_is_the_epoch_mean_not_the_last_batch(
+        self, training_dataset, tmp_path_factory
+    ):
+        """
+        The latent LR is set to 0 so the embedding cannot move during the epoch: the
+        expected value is then exactly the mean over batches of each batch's mean latent
+        norm, computable from the embedding directly. ``shuffle=False`` makes the batch
+        composition (``[s0, s1], [s2]``) part of the arithmetic rather than of the seed.
+        Today the logged value is ``norm(s2) / 2`` — the singleton last batch over the
+        batch count — which is the issue's ×n_batches observation in miniature.
+        """
+        config = training_config(tmp_path_factory.mktemp("latent_norm_log"))
+        for entry in config["LearningRateSchedule"]:
+            if entry["Target"] == "latent":
+                entry["Initial"] = 0.0
+        config["log_latent"] = None
+        config["lr_schedules"] = get_learning_rate_schedules(config)
+
+        data_loader = torch.utils.data.DataLoader(training_dataset, batch_size=2, shuffle=False)
+        model = build_model(config)
+        torch.manual_seed(0)
+        latent_vecs = get_latent_vecs(len(training_dataset), config)
+        optimizer = get_optimizer(
+            model,
+            latent_vecs,
+            lr_schedules=config["lr_schedules"],
+            optimizer=config["optimizer"],
+            weight_decay=config["weight_decay"],
+        )
+
+        norms = torch.norm(latent_vecs.weight.data, dim=1)
+        expected = ((norms[0] + norms[1]) / 2 + norms[2]) / 2
+
+        with quiet():
+            log = train_epoch(model, data_loader, latent_vecs, optimizer, config, epoch=1)
+
+        assert log["mean_vec_length"] == pytest.approx(expected.item(), rel=1e-6)
