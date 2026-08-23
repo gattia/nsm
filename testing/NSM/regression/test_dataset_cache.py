@@ -728,24 +728,15 @@ class TestFormerlyUncallableConfigurations:
 
 class TestScaleJointlyInMemory:
     """
-    ``scale_jointly=True`` with ``store_data_in_memory=True`` has never constructed: the
-    in-memory branch of ``norm_and_scale_all_meshes`` reads the flattened
-    ``new_pts_0``-style keys that exist only in the ``.npz`` cache layout, while
-    in-memory sample dicts hold ``new_pts`` as a list -- so it raises ``KeyError``.
-    Verified 2026-08-22 on ``MultiSurfaceSDFSamples`` and ``SDFSamples`` alike; one
-    test pins it because one function is broken.
-
-    The same branch also omits ``joint_scale_buffer``, which the disk branch applies.
-    The test body asserts the buffered domain, and the mark pins ``raises=KeyError``,
-    so fixing only the KeyError turns this into a plain failure rather than a pass:
-    both halves of the fix must land together.
+    ``scale_jointly=True`` with ``store_data_in_memory=True`` never constructed before
+    the #69 fix: the in-memory branch of ``norm_and_scale_all_meshes`` read the
+    flattened ``new_pts_0``-style keys that exist only in the ``.npz`` cache layout,
+    and it also omitted ``joint_scale_buffer``. Until the fix this was a strict-xfail
+    pin whose ``raises=KeyError`` made a KeyError-only half-fix a plain failure; the
+    body asserts the buffered domain, so it now guards both halves of the fix: both
+    storage modes compute the shared frame and ``__getitem__`` applies it per batch.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=KeyError,
-        reason="#69: norm_and_scale_all_meshes' in-memory branch reads .npz-layout keys",
-    )
     def test_an_in_memory_dataset_lands_inside_the_buffered_domain(self, meshes, tmp_path_factory):
         """
         ``joint_scale_buffer=9`` makes the shared scale 10x the observed max radius, so

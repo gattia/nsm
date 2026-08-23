@@ -75,8 +75,8 @@ class SDFSamples(torch.utils.data.Dataset):
         scale_method (str, optional): Method to scale the points. Defaults to 'max_rad'.
         scale_jointly (bool, optional): Whether to center and scale all subjects together
             after loading (norm_and_scale_all_meshes) instead of per subject; requires
-            center_pts=False and norm_pts=False. Currently also requires the default
-            store_data_in_memory=False -- see norm_and_scale_all_meshes. Defaults to False.
+            center_pts=False and norm_pts=False. Works in either storage mode; the
+            shared frame is applied per batch in ``__getitem__``. Defaults to False.
         joint_scale_buffer (float, optional): Margin added to the joint max radius when
             scale_jointly is True, so unseen subjects slightly larger than the training
             set still fit inside the model's domain. Defaults to 0.1.
@@ -361,9 +361,23 @@ class SDFSamples(torch.utils.data.Dataset):
 
         return data
 
+    def _subject_new_pts(self, data):
+        """
+        One subject's per-surface ``new_pts`` arrays, from either storage mode.
+
+        A disk-backed entry is the subject's ``.npz`` path, which flattens the list to
+        ``new_pts_{i}`` keys; an in-memory entry holds ``new_pts`` as a list (of
+        tensors in ``SDFSamples``, arrays in ``MultiSurfaceSDFSamples``, with None for
+        a missing surface -- #67).
+        """
+        if self.store_data_in_memory is True:
+            return [None if pts is None else np.asarray(pts) for pts in data["new_pts"]]
+        data_ = np.load(data)
+        return [data_[f"new_pts_{mesh_idx}"] for mesh_idx in range(self.n_meshes)]
+
     def norm_and_scale_all_meshes(self):
         """
-        Center and scale every subject into one shared frame (``scale_jointly=True``).
+        Compute the shared frame for every subject (``scale_jointly=True``).
 
         The shared center is the across-subject mean of each subject's
         ``reference_object`` surface centroid -- the other surfaces follow the reference,
@@ -373,92 +387,46 @@ class SDFSamples(torch.utils.data.Dataset):
         domain. One frame for everyone removes per-subject position/size as a source of
         variation.
 
-        Nothing is rescaled here on the disk-backed path: the result is stored as
-        ``self.center`` / ``self.max_radius`` and applied per batch in ``__getitem__``,
-        so the cached ``.npz`` files stay in the unscaled frame.
-
-        KNOWN DEFECT: the ``store_data_in_memory=True`` branch has never worked. It
-        reads the flattened ``new_pts_0``-style keys that exist only in the ``.npz``
-        layout -- in-memory dicts hold ``new_pts`` as a list -- so it raises
-        ``KeyError``; it also omits ``joint_scale_buffer``. Verified 2026-08-22 on both
-        dataset classes.
+        Nothing is rescaled here: the result is stored as ``self.center`` /
+        ``self.max_radius`` and applied per batch in ``__getitem__``, so cached ``.npz``
+        files and in-memory sample dicts alike stay in the unscaled frame.
         """
         print("Computing centering and scaling...")
-        # if not stored in memory, then get the centers and max radii from the data in memory
-        if self.store_data_in_memory is False:
-            print("Data not stored in memory... loading from disk")
-            tic = time.time()
-            centers = []
-            for data in self.data:
-                # load in the npz dict
-                data_ = np.load(data)
-                centers.append(np.mean(data_[f"new_pts_{self.reference_object}"], axis=0))
-            # new center:
-            center = np.mean(centers, axis=0)
+        tic = time.time()
+        centers = []
+        for data in self.data:
+            new_pts = self._subject_new_pts(data)
+            centers.append(np.mean(new_pts[self.reference_object], axis=0))
+        # new center:
+        center = np.mean(centers, axis=0)
 
-            print("Done computing centers")
+        print("Done computing centers")
 
-            max_radii = []
-            # for each data, comput the max radius (from the new/global center)
-            for data in self.data:
-                data_ = np.load(data)
-                max_radius = 0
-                for mesh_idx in range(self.n_meshes):
-                    xyz = data_[f"new_pts_{mesh_idx}"]
-                    centered_xyz = xyz - center
-                    radii = np.linalg.norm(centered_xyz, axis=-1)
-                    max_radius_ = np.max(radii)
-                    if max_radius_ > max_radius:
-                        max_radius = max_radius_
-                max_radii.append(max_radius)
-            max_radius = np.max(max_radii)
-            # make the biggest radius a bit bigger than observed to enable model to
-            # generalize to unseen data that is slightly larger than the observed data.
-            max_radius = max_radius * (1 + self.joint_scale_buffer)
-            print("Done computing max radii")
+        max_radii = []
+        # for each data, comput the max radius (from the new/global center)
+        for data in self.data:
+            max_radius = 0
+            for xyz in self._subject_new_pts(data):
+                if xyz is None:
+                    continue
+                centered_xyz = xyz - center
+                radii = np.linalg.norm(centered_xyz, axis=-1)
+                max_radius_ = np.max(radii)
+                if max_radius_ > max_radius:
+                    max_radius = max_radius_
+            max_radii.append(max_radius)
+        max_radius = np.max(max_radii)
+        # make the biggest radius a bit bigger than observed to enable model to
+        # generalize to unseen data that is slightly larger than the observed data.
+        max_radius = max_radius * (1 + self.joint_scale_buffer)
+        print("Done computing max radii")
 
-            self.max_radius = max_radius.astype(np.float32)
-            self.center = center.astype(np.float32)
-            toc = time.time()
-            print(f"Finished computing centering and scaling in {toc - tic:.3f}s")
-            print(f"\tMax radius: {self.max_radius}")
-            print(f"\tCenter: {self.center}")
-
-        else:
-            # get the center of all of the meshes
-            centers = []
-            for data in self.data:
-                # center around the reference object
-                xyz = data[f"new_pts_{self.reference_object}"]
-                center = np.mean(xyz, axis=0)
-                centers.append(center)
-            centers = np.stack(centers, axis=0)
-            center = np.mean(centers, axis=0)
-
-            # subtract the center from all of the meshes
-            for idx, data in enumerate(self.data):
-                self.data[idx]["xyz"] -= center
-                # iterate over all of the meshes and subtract the center
-                for mesh_idx in range(self.n_meshes):
-                    self.data[idx][f"new_pts_{mesh_idx}"] -= center
-
-            # get the max radius of all of the meshes
-            max_radii = 0
-            for data in self.data:
-                for mesh_idx in range(self.n_meshes):
-                    xyz = data[f"new_pts_{mesh_idx}"]
-                    max_radius = np.max(np.linalg.norm(xyz, axis=-1))
-                    if max_radius > max_radii:
-                        max_radii = max_radius
-
-            # divide all of the meshes by the max radius
-            for idx, data in enumerate(self.data):
-                self.data[idx]["xyz"] /= max_radii
-                # do the same for the sdf of each point
-                self.data[idx]["gt_sdf"] /= max_radii
-                # do the same for the original points
-                for mesh_idx in range(self.n_meshes):
-                    self.data[idx][f"new_pts_{mesh_idx}"] /= max_radii
+        self.max_radius = max_radius.astype(np.float32)
+        self.center = center.astype(np.float32)
+        toc = time.time()
+        print(f"Finished computing centering and scaling in {toc - tic:.3f}s")
+        print(f"\tMax radius: {self.max_radius}")
+        print(f"\tCenter: {self.center}")
 
     def preprocess_inputs(self):
         """

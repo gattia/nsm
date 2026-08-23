@@ -126,6 +126,15 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Fixed
 
+- **`scale_jointly=True` works with `store_data_in_memory=True`** (#69). The in-memory
+  branch of `norm_and_scale_all_meshes` read the flattened `new_pts_0`-style keys that
+  exist only in the `.npz` cache layout, so the combination raised `KeyError` at
+  construction on both dataset classes — and it omitted `joint_scale_buffer`, so a
+  KeyError-only fix would have put in-memory runs in a different coordinate frame than
+  disk-backed ones. Both storage modes now compute the shared frame the same way and
+  `__getitem__` applies it per batch; disk-backed numerics are unchanged. Always
+  crashed, so no results are affected.
+
 - **`store_data_in_memory=True` constructs, yields items, and trains** (#22).
   `MultiSurfaceSDFSamples.__getitem__` now guards the load-timing block the way
   `SDFSamples` always did, and `train_epoch` treats the four timing keys as optional
