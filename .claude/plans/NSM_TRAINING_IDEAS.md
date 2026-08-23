@@ -2,7 +2,7 @@
 
 ## State
 
-**Updated:** 2026-08-22 · **Status:** open
+**Updated:** 2026-08-23 · **Status:** open
 
 > **This is the ideas file.** Per `CLAUDE.md` § Documents and work, new training ideas are
 > appended here rather than given their own plan. An idea graduates to its own plan only
@@ -25,8 +25,8 @@ that can be picked up on its own. Append new ideas as they come up.
 **Created:** 2026-05-18.
 **Repo:** `/dataNAS/people/aagatti/programming/NSM/` (NSM).
 
-> **Common theme.** Every idea here is an **upstream, retraining-required**
-> change to how the SDF decoder is trained. They are deliberately out of scope
+> **Common theme.** Unless an entry says otherwise, ideas here are **upstream,
+> retraining-required** changes to how the SDF decoder is trained. They are deliberately out of scope
 > of `NSM_MESH_INTERPOLATION_IMPROVEMENTS.md` (which is inference-only numerical
 > fixes), but several of them would make that plan's stepping *exact* rather
 > than approximate. Where an idea supports a downstream plan, it is noted.
@@ -217,6 +217,52 @@ treatment of `NSM_CODE_HEALTH_REFACTOR.md` §4.
 models and defaults are untouched (opt-in).
 
 **Status.** Idea — not started.
+
+---
+
+## Idea 7 — Make the barrier norm penalty usable from an infeasible start
+
+**What.** Two candidate designs for `norm_penalty_type='barrier'` (the soft latent-norm
+constraint in `reconstruct_latent`) so it works when the latent starts outside the
+`(min, max)` range — which is the initialization state for any plausible range
+(std 0.01 puts a 256-dim latent at norm ~0.16). Since the #48 fix it raises by name
+there; these designs would make it *work* instead.
+
+- **(a) Relaxed log barrier** (interior-point literature). Splice at a threshold δ
+  *inside* the feasible region: `−log(t)` for `t > δ`, and for `t ≤ δ` a quadratic
+  extension matching value and slope at δ. C¹ and monotone from far outside, through
+  the boundary, into the interior. The naive alternative — true log inside plus a
+  linear tail outside — has a cliff at the boundary: approaching from outside the tail
+  decreases, but the step that crosses lands on the log's +∞ wall, so the optimizer
+  parks just outside forever (maintainer's observation, 2026-08-23). Price of the
+  relaxation: the wall is finite near the edge, so "guarantee" degrades to "stiff
+  spring" exactly where the barrier's selling point was the guarantee.
+- **(b) Range annealing / continuation** (maintainer's suggestion: curriculum). Start
+  with bounds wide enough to contain the init norm and shrink them toward the target
+  range over the first N steps; the true log barrier stays defined at every step and
+  keeps its infinite wall. This is what interior-point solvers do with the barrier
+  coefficient μ → 0. Failure mode to design around: the moving bound must never cross
+  the current norm — that is instant NaN — so if the data term pins the latent against
+  the shrinking wall, a fixed schedule breaks; it wants an adaptive schedule ("never
+  tighten past the current norm"), which is more machinery to get right.
+
+**Why.** The barrier is the only *interior* penalty in the option set — quadratic and
+huber are exterior penalties, zero inside the range and acting only after a violation.
+The property worth wanting is "the fit can never leave the range", which the exterior
+penalties do not give. But a log barrier assumes a feasible start, and reconstruction
+cannot provide one.
+
+**Evaluation bar.** Whether any of the three penalty types beats the others has never
+been measured. The bar for adopting either design is a comparison against `quadratic`
+on real fits — recon error and achieved norm — not merely "no NaN". Without that
+measurement this stays an idea.
+
+**Cost / retrain.** None — reconstruction-time only (the exception to this file's
+common theme), ~10–30 lines either way.
+
+**Status.** Idea — not started. Raised 2026-08-23 while fixing the #48 NaN
+(`docs/KNOWN_ISSUES.md` § History §8). Production never sets `latent_norm`, so there
+is no current user to migrate.
 
 ---
 
