@@ -465,7 +465,10 @@ def read_meshes_get_sampled_pts(
           additionally aliases its random draw as ``"xyz"``, this one never did).
         - ``"sdf"``: list with one entry per surface -- each surface's signed distance
           to *all* n points, or None for a missing surface. With ``get_random=False``
-          the entries are 0 where the points came from that same surface.
+          the entries are 0 where the points came from that same surface. Signs come
+          from pcu's closest-point pseudonormal, so an open (clipped) mesh yields the
+          same coherent field as its capped counterpart -- beyond a planar cut reads
+          as outside, at the distance to the cut (``test_open_mesh_sdf``).
         - ``"pts_surface"`` (n,): which surface each point was drawn around, numbered
           by position in ``paths`` -- a missing surface leaves a gap in the numbering
           rather than renumbering those after it.
