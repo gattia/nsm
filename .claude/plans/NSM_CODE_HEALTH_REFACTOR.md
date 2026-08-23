@@ -6,9 +6,9 @@
 
 **Updated:** 2026-08-23 · **Status:** open
 
-- **Next:** maintainer reviews the `sdf-reader-internals` branch (6 commits, §8.0.B
-  slice B — statement, characterization additions, #17 fix, #69 fix, the split,
-  this State update), then PR closing **#17 and #69** + admin merge. After that:
+- **Next:** slice B is reviewed (2026-08-23) and up as **draft PR #72** (closes #17
+  and #69 on merge); maintainer approves the PR text, marks it ready, admin-merges.
+  After that:
   §8's remaining monoliths (`train_deep_sdf.py`, `reconstruct/main.py`) have no
   slice statements yet; class-side cache/build decomposition stays grouped with
   #19/#27; still open from #48: the `barrier` norm-penalty NaN and
