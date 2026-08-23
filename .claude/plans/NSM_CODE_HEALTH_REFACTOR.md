@@ -6,13 +6,15 @@
 
 **Updated:** 2026-08-23 · **Status:** open
 
-- **Next:** §8.0.C is complete on branch `recon-main-decomposition` as a draft PR
-  (closes #15, #16, #29 on merge); maintainer reviews commit-by-commit — one commit
-  per statement step — marks ready, admin-merges. After that: `train_deep_sdf.py`
-  is the last §8 monolith with no slice statement (#28/#42/#49/#52/#59 are filed
-  against it); the evaluation-module split out of `reconstruct/main.py` was
-  deliberately deferred to ride with #5 (wandb-optional), and class-side
-  cache/build decomposition stays grouped with #19/#27.
+- **Next:** execute §8.0.D on branch `trainer-decomposition` (the statement is
+  commit 1; closes #28, #42, #49, #52, #59 on merge): characterization → #42 →
+  #49 → #59 → sweep → #28 → #52 → split → State update, one commit per step,
+  maintainer reviews commit-by-commit. Still queued after it: the
+  evaluation-module split out of `reconstruct/main.py` rides with #5
+  (wandb-optional), and class-side cache/build decomposition stays grouped with
+  #19/#27.
+- **§8.0.C merged to `main` in PR #74; the #48 remnants in PR #73 (both
+  2026-08-23):** #15, #16, #29 closed by the merge.
 - **§8.0.C landed on branch (2026-08-23):** statement → characterization → #15 →
   #16 → class sweep → #29 → split → this update, suite green and lint clean at
   every commit. #15: readers unified on `"pts"`; the two dataset-class probes
@@ -919,6 +921,138 @@ rows; 8. State update.
 | split changes no behaviour | full suite + harness green; `git diff --color-moved` pure moves; no xfail transitions in the split commit |
 | both import paths keep every name | frozen namespace lists, asserted on both paths, written in commit 2 *before* anything moves |
 | no new import cycle | `latent_fit`/`wandb_logging` import nothing from `.main`; ARCHITECTURE.md §2 ast pass re-run |
+
+### 8.0.D `train/train_deep_sdf.py` — the five filed issues and the orchestrator split — plan statement (2026-08-23)
+
+The file is 649 lines in two functions: `train_deep_sdf` (~223, the orchestrator) and
+`train_epoch` (~373, the epoch loop). The five issues filed against it (#28, #42, #49,
+#52, #59) land first, then the trainer-side instances of #16's class, then the
+orchestrator's concerns split into module-private helpers. **Fixes land before the
+split** (8.0.B's pattern): the split commit is purely behaviour-preserving.
+
+**Target shape (all permanent, nothing transitional).** No new modules — module-private
+helpers inside `train_deep_sdf.py`, 8.0.B's pattern, so the `NSM.train` namespace does
+not change:
+
+- `_resume_from_checkpoint(config, model, latent_vecs, optimizer)` — the resume block
+  (both checkpoint loads plus the two refusal guards).
+- `_schedule_free_eval_warmup(model, latent_vecs, data_loader, config, epoch)` — the
+  eval-mode warm-up. #42's fix site; extraction gives its test a callable seam.
+- `_run_validation(config, model)` — the `get_mean_errors` kwarg block.
+- `_save_checkpoint(config, epoch, model, latent_vecs, optimizer, sdf_dataset)` — the
+  three save calls.
+- `train_deep_sdf` keeps setup (defaults, validation, wandb init, dataloader, latents,
+  optimizer) and the epoch loop, becoming a legible orchestrator. **`train_epoch` stays
+  whole** — it *is* the epoch loop §8 names; its internal loss-pipeline decomposition
+  would need its own statement and is not this slice.
+
+**The fixes, with the decisions of record:**
+
+- **#42 — the schedule_free warm-up forwards a raw dataloader item.** `model(batch)`
+  where `batch` is `(sdf_data, indices)`; every schedule_free run dies at its first
+  checkpoint or validation epoch (verified 2026-08-21 with real schedulefree 1.4.1).
+  Fix: unpack the way `train_epoch` does — xyz reshaped, indices repeated per sample,
+  latents looked up (variational sampling included), chunked by `batch_split` (the
+  knob exists because full batches do not fit; a warm-up that skips it OOMs on exactly
+  the configs that need it), `model(inputs, epoch=epoch)` under the existing
+  `no_grad`. Always crashed → **no History entry**. Test strategy: `schedulefree` is
+  not installed in `nsm-dev`, and the crash is in the trainer's forward, not in
+  schedulefree — the pin monkeypatches `NSM.utils.schedulefree` with a stub
+  `AdamWScheduleFree` (AdamW plus `train()`/`eval()` no-ops) and trains through a
+  checkpoint epoch. The stub exercises the trainer's code path, not schedulefree's
+  numerics — KNOWN_ISSUES §1 already records those need retuning.
+- **#49 — `resume_epoch == 1` silently skips epoch 1 without resuming.** The resume
+  guard reads `> 1` while the loop starts at `resume_epoch + 1`. Fix: one boundary —
+  the resume block loads for `resume_epoch >= 1`, so `1` means "epoch 1's checkpoint
+  is complete; continue at 2" (the issue's load option, not the raise option:
+  `resume_epoch` uniformly names the last completed epoch). `resume_epoch=0`
+  unchanged. Pre-fix `resume_epoch=1` runs completed, training from scratch for
+  `n_epochs − 1` epochs with nothing loaded → **History entry** (detection: the run
+  was launched with `resume_epoch=1`).
+- **#59 — logged latent-norm stats are the last batch's; the positional back door.**
+  `step_mean_vec_length`/`step_std_vec_length` use `=` where every surrounding
+  accumulator uses `+=`, then divide by `len(data_loader)` — logged values wrong by
+  ~×n_batches on every run since inception (issue's verification: true mean 0.0107,
+  logged 0.0053, ×n_batches matches). Fix: `+=`. Gradients and weights untouched;
+  wandb-only → **History entry** scoped to logged metrics.
+  `add_plain_lr_to_config` loses `idx_model`/`idx_latent` — the positional override
+  the Aug-2026 fix exists to forbid, whose only caller is a test asserting
+  deliberately swapped labels; parameters and test deleted together. CHANGELOG
+  Breaking (the parameters).
+- **#16's class, trainer instances.** `train_epoch(return_loss, verbose)` — both
+  AST-confirmed unread (the body reads `config["verbose"]`; `log_dict` is returned
+  unconditionally). Deleted from the live trainer's signature and its one call site.
+  multi_head's and the deprecated trainers' copies **stay**: multi_head belongs to
+  #51's repair, `deprecated/` to the 0b quarantine — deleting parameters from a
+  module ruled dead is churn. Also dead: the `if "resume_epoch" not in config`
+  re-default at `:86` (the `setdefault` at `:57` precedes it). CHANGELOG Breaking
+  (`train_epoch` signature).
+- **#28 — `train_deep_sdf` returns nothing.** Returns the per-epoch history: one
+  entry per epoch, `{**log_dict` (the exact wandb payload, validation metrics
+  included on val epochs)`, "epoch", "lrs": {group_name: lr}, "targets":
+  {group_name: target}, "latent_norms": [per-subject]}`. LRs read *after*
+  `train_epoch` (the rates the epoch actually ran with), keyed by group `name` with
+  the name→target map alongside — several groups can share a target, so target alone
+  cannot key the dict. The wandb payload stays byte-identical (extras go on the
+  history entry, not into `log_dict`). The harness's `recording_train_epoch` wrapper
+  is **deleted**; `run_training` maps the return value into the record shape the
+  baselines already pin, so the strict-xfail passes unmarked and the regression suite
+  becomes a consumer of the public contract. CHANGELOG (non-breaking: `None` → list).
+  Ordered after #59 so the history's `mean_vec_length` is honest from birth.
+- **#52 — `mesh_names` is persisted as ground truth and can be silently wrong.** The
+  names move to where the ordering is defined: `MultiSurfaceSDFSamples(...,
+  mesh_names=None)`, validated at construction against the per-subject surface count
+  (`self.n_meshes`), stored on the instance. The trainer, at its existing
+  `mesh_names` validation site — entry, not save time: the same check, hours
+  earlier, and `save_model_params` then writes what was checked — **adopts** the
+  dataset's names when the config has none and **raises** when both exist and
+  disagree. Deliberately *not* in the cache key: names do not change sampled data,
+  so unlike #19's omissions this one is correct. Single-surface `SDFSamples` is
+  skipped: one surface has no ordering to mis-declare. Config-only names with a
+  dataset that carries none keep today's behaviour — identity has to come from the
+  user; the fix moves the declaration next to the ordering rather than inventing
+  one. Root CLAUDE.md § Multi-Surface Config gains the dataset-side recommendation.
+  CHANGELOG Added.
+
+**Deferred out of this slice, deliberately:** `train_epoch`'s internal decomposition
+(needs its own statement); everything multi_head (#51) and `train/deprecated/` (0b
+quarantine, including the §6.1 `sample_difficulty_lx` port); wandb-optional (#5 —
+`train_deep_sdf` still imports and calls wandb, and `log_latent` still builds
+`wandb.Histogram`s); the two documented-not-fixed Open entries (`enforce_minmax`
+prediction-clamp — SCOPE §2.2 config work; `grad_clip` latent-clipping experiment).
+
+**Size budget:** #42 ≤ +15; #49 ≤ +5; #59 net negative in `NSM/`; the sweep net
+negative; #28 ≤ +25 in the trainer and net negative across the repo (the harness
+wrapper goes); #52 ≤ +45 across both files; the split ≤ +80 net (four signatures +
+docstrings; bodies are moves — and the file's two public functions gain its first
+docstrings). Characterization tests are additive and outside the budget.
+
+**Sequence** (one commit each, suite green at every step):
+1. this statement; 2. characterization — freeze the `NSM.train.train_deep_sdf` public
+namespace (frozen-list import test), pin `resume_epoch=0` and `>1` behaviour, add
+strict-xfails for #42 (a stubbed schedule_free run survives its first checkpoint
+epoch), #49 (`resume_epoch=1` resumes from epoch 1's checkpoint), #59 (logged
+`mean_vec_length` matches the true epoch mean), #52 (dataset-carried names are
+adopted/validated) — #28 is already pinned
+(`TestTrainerContract::test_train_deep_sdf_returns_its_history`); 3. #42 fix +
+unmark; 4. #49 fix + History + unmark; 5. #59 fix + History + CHANGELOG + the
+override-test deletion; 6. the trainer sweep + CHANGELOG; 7. #28 fix + harness
+wrapper deletion + unmark + CHANGELOG; 8. #52 fix + CLAUDE.md + CHANGELOG + unmark;
+9. the split; 10. State update.
+
+**Verification per claim:**
+
+| Claim | Verification |
+|---|---|
+| #42's crash is the trainer's, not schedulefree's | the strict-xfail reproduces the `TypeError` with the stub optimizer — no schedulefree import involved |
+| #42 fixed means the warm-up runs the real forward | the test trains a stubbed schedule_free run through a checkpoint epoch to completion |
+| #49's two boundaries agree | resume test: train, resume with `resume_epoch=1`, assert the epoch-1 checkpoint is loaded (latents match its file) and epochs [2..n] run |
+| #59's `+=` restores the true mean | the logged value is asserted against a mean computed over `latent_vecs` directly — the issue's ×n_batches check, as a test |
+| the sweep deletes only unread parameters | the AST scan (parameter name absent from body) re-run in-commit; full suite green |
+| #28's history is what wandb would have seen | harness baselines (loss trajectory, per-group LR, latent norms) stay green with the wrapper deleted — the same numbers now flow through the return value |
+| #52 catches a wrong declaration | dataset names ≠ config names raises at entry; dataset names + no config names adopts |
+| split changes no behaviour | full suite + harness green; `git diff --color-moved` pure moves; no xfail transitions in the split commit |
+| namespace unchanged | the frozen-list import test written in commit 2, untouched by the split |
 
 ### 8.1 Make the library plural — added 2026-08-15
 
