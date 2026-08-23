@@ -1002,6 +1002,14 @@ class MultiSurfaceSDFSamples(SDFSamples):
             marks a subject's missing surface -- accepted here, but the build path for
             it has never worked end to end (#67).
 
+        mesh_names (list of str, optional): Human-readable names for the surfaces, in
+            the same order as each subject's mesh-path list -- the one place that
+            ordering is defined, which is why the names belong here rather than in a
+            free-floating config key (#52). ``train_deep_sdf`` adopts them into
+            ``config["mesh_names"]`` (and refuses a disagreeing config), so they end up
+            in ``model_params_config.json``. Deliberately NOT in the cache key: names
+            do not change sampled data.
+
         mesh_to_scale (int or list): Index(es) of mesh(es) to use for registration and scaling.
             - If int: Uses single mesh for registration (original behavior)
             - If list: Combines multiple meshes for joint registration
@@ -1069,7 +1077,17 @@ class MultiSurfaceSDFSamples(SDFSamples):
         multiprocessing=True,
         debug_memory=False,
         n_processes=2,
+        mesh_names=None,
     ):
+        # Validate before any file I/O so a bad declaration fails at construction.
+        if mesh_names is not None and len(mesh_names) != len(list_mesh_paths[0]):
+            raise ValueError(
+                f"mesh_names has {len(mesh_names)} entries but each subject has "
+                f"{len(list_mesh_paths[0])} surfaces. The names must match each "
+                f"subject's mesh-path list, in order."
+            )
+        self.mesh_names = mesh_names
+
         # if n_pts is not a list, then make it a list that is
         # the same length as the number of meshes.
         if not isinstance(n_pts, (list, tuple)):

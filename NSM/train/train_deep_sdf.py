@@ -75,6 +75,21 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
     if config.get("eikonal_weight", 0) > 0:
         raise NotImplementedError(EIKONAL_UNSUPPORTED)
 
+    # Surface identity is defined by the order of each subject's mesh-path list, so a
+    # dataset that carries mesh_names is the authority (#52): adopt them when the config
+    # has none, refuse a disagreeing config. Checked here, at entry, so a wrong
+    # declaration cannot survive to save_model_params.
+    dataset_mesh_names = getattr(sdf_dataset, "mesh_names", None)
+    if dataset_mesh_names is not None:
+        if config["mesh_names"] is None:
+            config["mesh_names"] = list(dataset_mesh_names)
+        elif list(config["mesh_names"]) != list(dataset_mesh_names):
+            raise ValueError(
+                f"config mesh_names {config['mesh_names']} disagree with the dataset's "
+                f"{list(dataset_mesh_names)}. The dataset's names follow each subject's "
+                f"mesh-path list order; fix whichever declaration is wrong."
+            )
+
     # Validate mesh_names length matches objects_per_decoder if provided
     if config["mesh_names"] is not None:
         if len(config["mesh_names"]) != config["objects_per_decoder"]:

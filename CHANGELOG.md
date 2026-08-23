@@ -268,6 +268,15 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Added
 
+- **`MultiSurfaceSDFSamples` accepts `mesh_names`, and `train_deep_sdf` trusts the
+  dataset over the config** (#52). Surface identity is defined by the order of each
+  subject's mesh-path list, so the names are declared there: the dataset validates them
+  against its own per-subject surface count at construction, and the trainer adopts
+  them into `config["mesh_names"]` — raising at entry if a config declaration
+  disagrees — before anything is persisted to `model_params_config.json`. A config-only
+  declaration with a nameless dataset behaves as before. Deliberately not in the cache
+  key: names do not change sampled data.
+
 - **`train_deep_sdf` returns its per-epoch history** (#28). One dict per trained epoch:
   the wandb payload (validation metrics included on validation epochs) plus `epoch`,
   per-param-group `lrs`/`targets`, and per-subject `latent_norms`. It used to return
