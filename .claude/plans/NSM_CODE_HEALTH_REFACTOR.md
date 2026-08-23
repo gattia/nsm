@@ -6,13 +6,37 @@
 
 **Updated:** 2026-08-23 · **Status:** open
 
-- **Next:** execute §8.0.D on branch `trainer-decomposition` (the statement is
-  commit 1; closes #28, #42, #49, #52, #59 on merge): characterization → #42 →
-  #49 → #59 → sweep → #28 → #52 → split → State update, one commit per step,
-  maintainer reviews commit-by-commit. Still queued after it: the
+- **Next:** §8.0.D is complete on branch `trainer-decomposition` as a draft PR
+  (closes #28, #42, #49, #52, #59 on merge); maintainer reviews commit-by-commit —
+  one commit per statement step — marks ready, admin-merges. After that, the
+  remaining §8 program is all grouped work awaiting its own statement: the
   evaluation-module split out of `reconstruct/main.py` rides with #5
-  (wandb-optional), and class-side cache/build decomposition stays grouped with
-  #19/#27.
+  (wandb-optional), class-side cache/build decomposition with #19/#27 (one
+  migration release), `train_epoch`'s internal loss-pipeline decomposition only
+  if a statement justifies it, multi_head's repair is #51, and the v0.3.0 cut
+  ("soonish, or at the end of this cleanup") is the maintainer's call.
+- **§8.0.D landed on branch (2026-08-23):** statement → characterization → #42 →
+  #49 → #59 → sweep → #28 → #52 → split → this update, suite green and lint
+  clean at every commit (654→660 passed; 19→12 xfailed — every conversion a fix
+  passing unmarked). #42: the warm-up unpacks the way `train_epoch` does, pinned
+  via a stubbed `schedulefree` (AdamW + `train()`/`eval()`) since the crash was
+  the trainer's, not the library's. #49: one boundary — `resume_epoch` names the
+  last completed epoch, `>= 1` loads (History §11). #59: `+=`, and
+  `add_plain_lr_to_config` loses its positional override (History §12 —
+  wandb-only, ~×n_batches). Sweep: `train_epoch(return_loss, verbose)` deleted
+  live-trainer-only (multi_head is #51's, `deprecated/` is 0b's). #28: history
+  returned (wandb payload + epoch/lrs/targets/latent_norms per epoch, payload
+  byte-identical); the harness's `train_epoch` wrapper deleted, baselines
+  unmoved — the regression suite now tests the public contract. #52: names
+  declared on `MultiSurfaceSDFSamples` in mesh-path-list order, trainer adopts
+  or refuses at entry; deliberately not in the cache key. Split: four private
+  helpers, `train_epoch` whole, net +57 of +80. **Diverged from the statement:**
+  `_schedule_free_eval_warmup` also takes `optimizer` (the statement's signature
+  omitted it, but `optimizer.eval()` lives in the block); #52's fix had to touch
+  the pre-existing validation tests — a bare `MagicMock` dataset auto-creates a
+  truthy `mesh_names` the adoption path would read, so those mocks now pin
+  `mesh_names=None`; a stale `train_deep_sdf.py:401` line-number citation in the
+  clamp characterization docstring rode along (symbols only, per #31).
 - **§8.0.C merged to `main` in PR #74; the #48 remnants in PR #73 (both
   2026-08-23):** #15, #16, #29 closed by the merge.
 - **§8.0.C landed on branch (2026-08-23):** statement → characterization → #15 →
