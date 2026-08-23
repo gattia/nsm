@@ -309,10 +309,10 @@ class TestClampedPredictionGradients:
     """
     Characterization of a live gradient path, not a complaint.
 
-    With ``enforce_minmax``, ``train_epoch`` clamps the PREDICTION as well as the target
-    (``train_deep_sdf.py:401``), and ``torch.clamp`` passes no gradient outside its
-    bounds. Every sample the decoder predicts outside ``+/-clamp_dist`` therefore
-    contributes exactly zero gradient, however wrong it is.
+    With ``enforce_minmax``, ``train_epoch`` clamps the PREDICTION as well as the target,
+    and ``torch.clamp`` passes no gradient outside its bounds. Every sample the decoder
+    predicts outside ``+/-clamp_dist`` therefore contributes exactly zero gradient,
+    however wrong it is.
 
     That makes ``clamp_dist`` a training-dynamics knob and not just a target transform,
     which is not what its name or the docs suggest. The harness uses 1.0, the value both
