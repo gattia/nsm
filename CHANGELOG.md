@@ -110,6 +110,14 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Fixed — affects results
 
+- **`resume_epoch: 1` resumes from the epoch-1 checkpoint** (#49). The resume guard
+  read `> 1` while the epoch loop starts at `resume_epoch + 1`, so such a run loaded
+  nothing and trained a fresh model for epochs 2..`n_epochs` — one epoch short, from
+  random init, silently. `resume_epoch` now uniformly names the last completed epoch:
+  `>= 1` loads that checkpoint and continues at the next; `0` is unchanged. A post-fix
+  `resume_epoch: 1` run actually resumes, so it produces different (correct) weights.
+  See `docs/KNOWN_ISSUES.md` § History §11.
+
 - **`reconstruct_mesh` honours `n_pts_random`** (#16). It forwarded the value as
   `n_pts_random=` to readers whose parameter is `n_pts=`; their `**kwargs` swallowed it,
   so every `get_rand_pts=True` call drew the readers' 200,000-point default per surface

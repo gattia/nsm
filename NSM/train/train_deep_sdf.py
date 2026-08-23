@@ -120,7 +120,11 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
         weight_decay=config["weight_decay"],
     )
 
-    if config["resume_epoch"] > 1:
+    # resume_epoch names the last COMPLETED epoch: its checkpoint is loaded and the epoch
+    # loop continues at resume_epoch + 1. 0 means a fresh run. The two must share this
+    # boundary: a `> 1` guard here once let resume_epoch=1 skip epoch 1 while loading
+    # nothing (KNOWN_ISSUES section History 11).
+    if config["resume_epoch"] >= 1:
         print("Loading model, optimizer, and latent states from epoch", config["resume_epoch"])
         # load each checkpoint once rather than re-reading it per state
         model_checkpoint = torch.load(

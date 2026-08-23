@@ -958,3 +958,33 @@ catch `NoZeroLevelSetError` instead.
 *Pinned by:* `test_reconstruction_regression.TestDecoderWithNoZeroLevelSet` (the raise)
 and `test_reconstruct_mesh_options.TestGetMeanErrorsSurvivesADegenerateModel` (the NaN
 seam).
+
+## 11. `resume_epoch=1` trained a fresh model while claiming to resume
+
+| | |
+|---|---|
+| **Affects** | Any `train_deep_sdf` run launched with `resume_epoch: 1`. The resume guard read `> 1` while the epoch loop starts at `resume_epoch + 1`, so the run loaded **nothing** — fresh model, fresh latents, fresh optimizer — and trained epochs 2..`n_epochs`: one epoch short, from random init, with the learning-rate schedules evaluated one epoch ahead of how many steps had actually run. Dec 2024 (`87c5e88`, the trainer overhaul that introduced `resume_epoch` — born with the `> 1` guard) → Aug 2026 |
+| **Unaffected** | `resume_epoch: 0` (a fresh run, as asked) and `resume_epoch >= 2` (loads correctly); both shipped ShapeMedKnee configs, which do not set the key |
+| **Severity** | Silent — the run printed nothing about resuming, trained, checkpointed and exited 0 |
+| **Fixed in** | `trainer-decomposition`, Aug 2026 ([#49](https://github.com/gattia/nsm/issues/49)) |
+
+### What was wrong
+
+Two boundaries disagreed about what `resume_epoch` means. The epoch loop treats it as
+the last *completed* epoch (it continues at `resume_epoch + 1`); the load guard treated
+`1` as "not really resuming". Both now share the loop's convention: `resume_epoch >= 1`
+loads that epoch's checkpoint and continues at the next.
+
+### How to tell whether one of your runs is affected
+
+Only runs launched with `resume_epoch: 1` qualify (`model_params_config.json` records
+the config). Such a run's earliest saved checkpoint descends from a fresh
+initialization, not from the epoch-1 checkpoint it named.
+
+### Reproducing old behaviour
+
+No switch. The old behaviour was a fresh run whose epoch numbering started at 2 —
+`resume_epoch: 0` is the supported way to train from scratch, with epoch 1 included.
+
+*Pinned by:* `test_training_regression.TestResumeContract` (all three boundaries:
+0 runs every epoch, 1 and 2 load their checkpoints).

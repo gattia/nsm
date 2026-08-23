@@ -397,10 +397,10 @@ def _assert_same_state(state, checkpoint_state):
 
 class TestResumeContract:
     """
-    ``resume_epoch`` names the last *completed* epoch. The two behaviours pinned green
-    here are the ones #49's fix must not disturb; the xfail is the defect itself — the
-    resume guard reads ``> 1`` while the epoch loop starts at ``resume_epoch + 1``, so
-    ``resume_epoch=1`` skips epoch 1 *and* loads nothing.
+    ``resume_epoch`` names the last *completed* epoch: its checkpoint is loaded and the
+    loop continues at ``resume_epoch + 1``. The load guard and the loop boundary must
+    share that convention — they did not, and ``resume_epoch=1`` used to skip epoch 1
+    while loading nothing (#49, ``docs/KNOWN_ISSUES.md`` § History 11).
     """
 
     def test_resume_epoch_0_runs_every_epoch(self, resume_source_run):
@@ -423,9 +423,6 @@ class TestResumeContract:
         checkpoint = torch.load(os.path.join(source_dir, "model", "2.pth"), weights_only=False)
         _assert_same_state(model.state_dict(), checkpoint["model"])
 
-    @pytest.mark.xfail(
-        strict=True, reason="#49: resume_epoch == 1 skips epoch 1 without loading anything"
-    )
     def test_resume_epoch_1_loads_the_epoch_1_checkpoint(self, resume_source_run, training_dataset):
         """Same contract as the test above, one epoch earlier — the boundary #49 names."""
         source_dir = resume_source_run["config"]["experiment_directory"]
