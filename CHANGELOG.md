@@ -126,6 +126,22 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Fixed
 
+- **`predict_val_variables` runs to completion** (#48). `get_mean_errors` handed
+  `Regress.add_latent` the whole result dict rather than the fitted latent, so a run
+  that enabled the latent-to-factor validator died with `TypeError` in `calc_r2` at its
+  first validation pass — after all its reconstructions had run. The seam now passes
+  the latent as a flat float vector. Always crashed, so no results are affected and
+  there is no History entry.
+
+- **`norm_penalty_type='barrier'` raises by name outside its `(min, max)` range instead
+  of returning NaN** (#48). Below the range — where every run starts unless
+  `latent_init_std` puts the initial norm inside it — the log term's value was NaN but
+  its gradient was finite and pushed the norm further *away* from the range; the run
+  completed with `nan` in every loss readout. Strictly inside the range nothing
+  changed, and a single-target barrier still silently computes the quadratic penalty
+  (now stated in the docstring). Neither shipped config sets `latent_norm`, so no
+  production path is affected. See `docs/KNOWN_ISSUES.md` § History §8.
+
 - **`scale_jointly=True` works with `store_data_in_memory=True`** (#69). The in-memory
   branch of `norm_and_scale_all_meshes` read the flattened `new_pts_0`-style keys that
   exist only in the `.npz` cache layout, so the combination raised `KeyError` at

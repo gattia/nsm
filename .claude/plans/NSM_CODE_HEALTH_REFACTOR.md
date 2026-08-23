@@ -6,25 +6,31 @@
 
 **Updated:** 2026-08-23 · **Status:** open
 
-- **Next:** slice B is reviewed (2026-08-23) and up as **draft PR #72** (closes #17
-  and #69 on merge); maintainer approves the PR text, marks it ready, admin-merges.
-  After that:
+- **Next:** the #48 remnants are up as **draft PR #73** (closes #48 on merge);
+  maintainer reviews commit-by-commit, marks ready, admin-merges. After that:
   §8's remaining monoliths (`train_deep_sdf.py`, `reconstruct/main.py`) have no
-  slice statements yet; class-side cache/build decomposition stays grouped with
-  #19/#27; still open from #48: the `barrier` norm-penalty NaN and
-  `Regress.add_latent`.
-- **Slice B is on the branch, unreviewed (2026-08-23):** `read_meshes_get_sampled_pts`
-  orchestrates three private helpers (`_register_to_mean`, `_compute_shared_frame`,
-  `_draw_surface_samples`), split commit +64 net against the ~80 budget, suite
-  green with identical counts before/after the split (498 passed, 14 xfailed).
-  Rode along per the statement: **#17 fixed** (appends `new_pts[new_pts_idx]`;
-  both strict-xfails now plain passes; `KNOWN_ISSUES` § History **§7** + CHANGELOG
-  record the one affected run class — multi-object fits with `get_rand_pts=True`
-  on `scale_jointly=False` models, never training data) and **#69 fixed** by
-  unification (both storage modes compute the shared frame, `__getitem__` applies
-  it per batch; the in-memory mutate-in-place branch deleted, net −48; disk
-  numerics unchanged, regression baselines unmoved). #3 got its structural
-  precondition only: sigma's frame-dependence is stated in
+  slice statements yet — `reconstruct/main.py` is the natural next target (this
+  branch just touched it, and #15/#16/#29 are filed against it); class-side
+  cache/build decomposition stays grouped with #19/#27.
+- **#48 remnants on branch `recon-option-values`, draft PR #73 (2026-08-23):**
+  `norm_penalty_type='barrier'` raises by name outside its `(min, max)` range
+  instead of NaN — pre-fix runs *completed*, with `nan` in every loss readout and
+  a finite gradient pushing the norm **away** from the range (verified by
+  execution; History §8, CHANGELOG); `get_mean_errors` hands `Regress.add_latent`
+  the fitted latent (detached/CPU/flat), not the result dict — born broken in
+  `2811d27` (Jul 2023), never worked, always crashed → no History entry.
+  Ride-alongs the work exposed: the docs-reference checker's `Regress` exemption
+  was dead and its comment false (the class is in this repo) — deleted; SCOPE
+  §2.5's "worth pinning down" question answered (never-worked, not
+  broken-after-the-paper). Suite 505 passed / 14 xfailed.
+- **Slice B landed (2026-08-23):** merged to `main` in PR #72 —
+  `read_meshes_get_sampled_pts` orchestrates three private helpers
+  (`_register_to_mean`, `_compute_shared_frame`, `_draw_surface_samples`); #17 and
+  #69 fixed en route, both closed by the merge (#17: `KNOWN_ISSUES` § History §7
+  records the one affected run class — multi-object fits with `get_rand_pts=True`
+  on `scale_jointly=False` models, never training data; #69: fixed by unification,
+  the in-memory mutate-in-place branch deleted net −48, disk numerics unchanged).
+  #3 got its structural precondition only: sigma's frame-dependence is stated in
   `_draw_surface_samples`' docstring, the single site where sigma is consumed.
 - **Slice A landed (2026-08-22):** merged to `main` in PR #71 — `sdf_dataset.py`
   holds the classes + permanent re-import block, the 13 leaf helpers in

@@ -877,3 +877,39 @@ pre-fix commit if an affected fit must be reproduced exactly.
 *Pinned by:* `test_sampled_pts_readers.TestMultiMeshReader::test_include_surf_in_pts_appends_each_surfaces_own_vertices`
 (and its uniform-cube sibling), strict-xfail pins of the correct behaviour until the
 fix, plain assertions since.
+
+---
+
+## 8. `norm_penalty_type='barrier'` was NaN outside its range, with an inverted gradient
+
+| | |
+|---|---|
+| **Affects** | `reconstruct_latent` / `reconstruct_mesh` calls with `latent_norm` set to a `(min, max)` range, `use_soft_norm_constraint=True` (the default) and `norm_penalty_type='barrier'`, at any step where the latent norm was outside the range — which is where every run starts unless `latent_init_std` is chosen to land inside it (the default 0.01 puts a 256-dim latent at norm ~0.16). Aug 2025 (`d421583`) → Aug 2026 |
+| **Unaffected** | Production and both shipped ShapeMedKnee configs — `latent_norm` is never set, so the whole soft-constraint path is off; `norm_penalty_type` `'quadratic'`/`'huber'`; runs whose latent norm stayed strictly inside the range |
+| **Severity** | Visible but easy to misread — every logged loss read `nan` from the first step, yet the run completed and returned a latent (verified by execution, 2026-08-23) |
+| **Fixed in** | `recon-option-values`, Aug 2026 ([#48](https://github.com/gattia/nsm/issues/48)) |
+
+### What was wrong
+
+Below the range, `-log(current_norm - min_norm + eps)` takes a negative argument: its
+value is NaN, but its gradient `-1/(negative)` is finite and **positive** — so the
+barrier term pushed the norm further *below* the range it was meant to enforce. Above
+the range, the `max` term mirrors this. The NaN poisoned every loss readout (`nan + x`
+is `nan`) without poisoning the gradients, so optimization continued on the finite,
+partly-inverted gradient field to completion.
+
+Outside the open interval the penalty now raises by name at the first step; strictly
+inside, nothing changed.
+
+### How to tell whether one of your runs is affected
+
+The option was never in a shipped config, so only hand-written calls qualify. The
+signature is `nan` loss lines from the run's first step in a run that nevertheless
+finished.
+
+### Reproducing old behaviour
+
+No compatibility switch. Check out a pre-fix commit if an affected fit must be
+reproduced exactly.
+
+*Pinned by:* `test_reconstruct_latent.TestBarrierNormPenalty`.

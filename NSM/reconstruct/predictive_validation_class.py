@@ -27,9 +27,10 @@ class Regress:
 
     def add_latent(self, latent):
         """
-        latent: list of floats, each float is a latent variable
+        latent: 1-D array-like of floats — one subject's fitted latent vector
 
-        Add a latent variable to the list of latents
+        Add one subject's latent vector to the list of latents; ``calc_r2``
+        stacks the list into the (n_subjects, latent_size) regression design.
         """
         self.list_latents.append(latent)
 

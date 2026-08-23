@@ -2,7 +2,7 @@
 
 ## State
 
-**Updated:** 2026-08-22 · **Status:** open
+**Updated:** 2026-08-23 · **Status:** open
 
 > **This is the ideas file.** Per `CLAUDE.md` § Documents and work, new training ideas are
 > appended here rather than given their own plan. An idea graduates to its own plan only
@@ -25,8 +25,8 @@ that can be picked up on its own. Append new ideas as they come up.
 **Created:** 2026-05-18.
 **Repo:** `/dataNAS/people/aagatti/programming/NSM/` (NSM).
 
-> **Common theme.** Every idea here is an **upstream, retraining-required**
-> change to how the SDF decoder is trained. They are deliberately out of scope
+> **Common theme.** Unless an entry says otherwise, ideas here are **upstream,
+> retraining-required** changes to how the SDF decoder is trained. They are deliberately out of scope
 > of `NSM_MESH_INTERPOLATION_IMPROVEMENTS.md` (which is inference-only numerical
 > fixes), but several of them would make that plan's stepping *exact* rather
 > than approximate. Where an idea supports a downstream plan, it is noted.
@@ -217,6 +217,98 @@ treatment of `NSM_CODE_HEALTH_REFACTOR.md` §4.
 models and defaults are untouched (opt-in).
 
 **Status.** Idea — not started.
+
+---
+
+## Idea 7 — Make the barrier norm penalty usable from an infeasible start
+
+**What.** Two candidate designs for `norm_penalty_type='barrier'` (the soft latent-norm
+constraint in `reconstruct_latent`) so it works when the latent starts outside the
+`(min, max)` range — which is the initialization state for any plausible range
+(std 0.01 puts a 256-dim latent at norm ~0.16). Since the #48 fix it raises by name
+there; these designs would make it *work* instead.
+
+- **(a) Relaxed log barrier** (interior-point literature). Splice at a threshold δ
+  *inside* the feasible region: `−log(t)` for `t > δ`, and for `t ≤ δ` a quadratic
+  extension matching value and slope at δ. C¹ and monotone from far outside, through
+  the boundary, into the interior. The naive alternative — true log inside plus a
+  linear tail outside — has a cliff at the boundary: approaching from outside the tail
+  decreases, but the step that crosses lands on the log's +∞ wall, so the optimizer
+  parks just outside forever (maintainer's observation, 2026-08-23). Price of the
+  relaxation: the wall is finite near the edge, so "guarantee" degrades to "stiff
+  spring" exactly where the barrier's selling point was the guarantee.
+- **(b) Range annealing / continuation** (maintainer's suggestion: curriculum). Start
+  with bounds wide enough to contain the init norm and shrink them toward the target
+  range over the first N steps; the true log barrier stays defined at every step and
+  keeps its infinite wall. This is what interior-point solvers do with the barrier
+  coefficient μ → 0. Failure mode to design around: the moving bound must never cross
+  the current norm — that is instant NaN — so if the data term pins the latent against
+  the shrinking wall, a fixed schedule breaks; it wants an adaptive schedule ("never
+  tighten past the current norm"), which is more machinery to get right.
+
+**Why.** The barrier is the only *interior* penalty in the option set — quadratic and
+huber are exterior penalties, zero inside the range and acting only after a violation.
+The property worth wanting is "the fit can never leave the range", which the exterior
+penalties do not give. But a log barrier assumes a feasible start, and reconstruction
+cannot provide one.
+
+**Evaluation bar.** Whether any of the three penalty types beats the others has never
+been measured. The bar for adopting either design is a comparison against `quadratic`
+on real fits — recon error and achieved norm — not merely "no NaN". Without that
+measurement this stays an idea.
+
+**Cost / retrain.** None — reconstruction-time only (the exception to this file's
+common theme), ~10–30 lines either way.
+
+**Status.** Idea — not started. Raised 2026-08-23 while fixing the #48 NaN
+(`docs/KNOWN_ISSUES.md` § History §8). Production never sets `latent_norm`, so there
+is no current user to migrate.
+
+---
+
+## Idea 8 — Supervised / contrastive signal on the latent during training
+
+**What.** Bring subject-level factors (age, OA grade, sex, …) into *training* as an
+auxiliary objective on the latent codes, instead of only probing for them at
+validation time. Today the factor signal touches nothing: `Regress`
+(`reconstruct/predictive_validation_class.py`) is a validation-time linear probe —
+fit latents to held-out meshes, regress factors parsed from filenames, report
+`val_prediction_<factor>` R² — with no gradient to the model. Candidate shapes:
+
+- **Supervised auxiliary loss** — a small head on the latent predicting the factor,
+  weighted into the training loss; organizes latent space along the factor axes.
+- **Contrastive** — SupCon-style (pull latents sharing a label together, push others
+  apart) or CLIP-style alignment against an embedding of non-imaging data, the
+  "language signal helps vision" analogy.
+
+**Why.** Maintainer (2026-08-23): the long-term want is "something akin to `Regress`
+but maybe very different structure", for contrastive/supervised learning on the
+latent. Reported evidence, not reproduced here: Katie tried contrastive objectives in
+her fork — <https://github.com/3D-fossils-Haag/nsm> — and it improved **both**
+reconstruction and downstream predictions — which is the interesting part, since an
+auxiliary factor loss could plausibly have traded recon quality away instead.
+
+**How.** First step is reading Katie's fork (`3D-fossils-Haag/nsm`, link above) before
+designing anything — it is a concrete, reportedly-working implementation, and the
+plan's fork-coordination note
+(`NSM_CODE_HEALTH_REFACTOR.md` §10) already flags that active forks carry modules
+upstream does not have. Mechanically the hook is `train_deep_sdf`'s loss composition;
+latents are an `nn.Embedding`, so a latent-side auxiliary loss is cheap. Two known
+interactions to design around: the `max_norm` clamp saturating training latents onto
+the radius-10 shell (Idea 4 — a contrastive geometry fights a fixed-norm shell), and
+latent gradients scaling with query-point count (ARCHITECTURE §6), which affects the
+balance of any new latent-side term.
+
+**Evaluation.** The repaired `Regress` probe is the natural metric: `val_prediction_*`
+R² with and without the auxiliary signal, alongside recon error — the colleague's
+result predicts both should improve. Implication for current code: `Regress` stays a
+thin evaluator; the training-time mechanism is new code, not an extension of it.
+
+**Cost / retrain.** Full retrain per objective/weight tried; needs factor labels
+available at training time (today they are parsed from validation filenames only).
+
+**Status.** Idea — not started. Raised by the maintainer 2026-08-23 while reviewing
+the #48 `Regress` seam fix (PR #73).
 
 ---
 

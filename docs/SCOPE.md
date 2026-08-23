@@ -206,16 +206,18 @@ Proposed: *research-only, no production caller.* Wrong on the caller half for bo
   `recon_val_func_name`. It also owns the only region-index maps in the repo
   (`CART_REGIONS`, `CART_REGIONS_DICT`). **Production.**
 - `predictive_validation_class.py` is called from `reconstruct/main.py`. It is the only
-  latent-to-factor regression validator. **Research**, and it has a live defect:
-  `reconstruct.get_mean_errors` passes the whole result dict to `Regress.add_latent` instead of
-  `result_["latent"]`.
+  latent-to-factor regression validator. **Research.** Its seam defect —
+  `reconstruct.get_mean_errors` passed the whole result dict to `Regress.add_latent`
+  instead of the fitted latent — was repaired Aug 2026 (#48).
 
 **Maintainer confirmation:** both were used for training and validation in the ShapeMedKnee
 paper, where they were critical. They are clunky and lightly used now, which is what made
 them look disposable from the call graph alone. They are not. This is the clearest case in
-the audit for why importance and recent-usage are different measurements — and the defect
-above means the latent-regression validator has been silently broken since some point after
-that paper, which is worth pinning down.
+the audit for why importance and recent-usage are different measurements — and the seam
+defect above is pinned down (2026-08-23): `reg.add_latent(result_)` was born in that form
+in `2811d27` (Jul 2023, pre-rename `GenerativeAnatomy`), so the validator never worked
+through `get_mean_errors` at any point in this repo's history. How the paper's validation
+actually ran is not answerable from this repo.
 
 ### 2.6 Rulings not yet adjudicated
 

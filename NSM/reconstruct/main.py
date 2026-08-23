@@ -270,7 +270,11 @@ def latent_norm_penalty(latent, target_norm, penalty_weight=1.0, penalty_type="q
         latent: The latent vector
         target_norm: Target norm value or (min_norm, max_norm) tuple
         penalty_weight: Weight for the penalty term
-        penalty_type: "quadratic", "huber", or "barrier"
+        penalty_type: "quadratic", "huber", or "barrier". "barrier" is a log
+            barrier, defined only while the norm is strictly inside a
+            (min_norm, max_norm) range: outside it this raises rather than
+            returning NaN, and with a single target it silently computes the
+            quadratic penalty instead
 
     Returns:
         penalty: Scalar penalty term to add to loss
@@ -303,6 +307,15 @@ def latent_norm_penalty(latent, target_norm, penalty_weight=1.0, penalty_type="q
                 penalty = 0.0
         elif penalty_type == "barrier":
             # Log barrier penalty that becomes infinite at boundaries
+            if not min_norm < current_norm < max_norm:
+                raise ValueError(
+                    f"norm_penalty_type='barrier' is undefined outside the target range: "
+                    f"latent norm is {current_norm.item():.4g}, range is "
+                    f"({min_norm}, {max_norm}). A barrier can only hold the latent inside "
+                    f"a range it starts in (initialization norm is roughly "
+                    f"latent_init_std * sqrt(latent_size)); use 'quadratic' or 'huber' "
+                    f"for a penalty defined everywhere."
+                )
             eps = 1e-6
             penalty = -torch.log(current_norm - min_norm + eps) - torch.log(
                 max_norm - current_norm + eps
@@ -1426,7 +1439,7 @@ def get_mean_errors(
             print("result_", result_)
 
         if predict_val_variables is not None:
-            reg.add_latent(result_)
+            reg.add_latent(result_["latent"].detach().cpu().numpy().ravel())
 
         for mesh_idx in range(len(result_["mesh"])):
             if calc_symmetric_chamfer:
