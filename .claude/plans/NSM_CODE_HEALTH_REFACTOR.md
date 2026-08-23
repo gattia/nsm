@@ -746,6 +746,139 @@ xfail unmarks; 4. #69 fix + xfail unmark + `KNOWN_ISSUES` § Open removal;
 | No namespace change | `test_import_compat` frozen list untouched |
 | No new import or dependency edge | helpers live in `mesh_sampling.py`; module still imports only from `.utils` |
 
+### 8.0.C `reconstruct/main.py` — fixes and first decomposition slice — plan statement (2026-08-23)
+
+The file is 1,509 lines; the three §8 concerns (latent optimization, mesh
+generation, evaluation) live in one module. This slice lands the three issues
+filed against the file (#15, #16, #29) plus the in-package instances of #16's
+class, then moves the latent-optimization stack and the wandb helpers out
+verbatim. **Fixes land before the split**, 8.0.B's pattern: the split commit is
+purely behaviour-preserving.
+
+**Target shape (permanent unless marked):**
+
+- `NSM/reconstruct/latent_fit.py` — the latent-optimization stack, moved
+  verbatim: the four `reconstruct_latent_*` type-check/setup helpers,
+  `reconstruct_latent_preprocess_sdf_gt`, `project_latent`,
+  `latent_norm_penalty`, `reconstruct_latent` (~690 lines). Imports torch/wandb/
+  `NSM.losses`/`.utils` only — leafward, no cycle. The log *format* has no
+  `%(name)s`, so the logger renaming to `NSM.reconstruct.latent_fit` changes no
+  output byte.
+- `NSM/reconstruct/wandb_logging.py` — `_process_meshes_for_wandb`,
+  `prepare_results_for_wandb` (~145 lines). Separate module because
+  `reconstruct_mesh` calls it: parking it in an evaluation module would make
+  `main` import evaluation and evaluation import `main`.
+- `NSM/reconstruct/main.py` — keeps `reconstruct_mesh`, `tune_reconstruction`,
+  `get_mean_errors`, `compute_correlation_coefficient`, the module-scope
+  `logging.basicConfig` (verbatim — its removal is #58's business), and a
+  **permanent re-import block**: `NSM.reconstruct` (star-import namespace) *and*
+  `NSM.reconstruct.main` are both live import paths
+  (`test_predictive_validation.py` monkeypatches `NSM.reconstruct.main`;
+  kneepipeline and the trainers use the package path; forks assumed to use
+  both). Every name currently importable from either path stays importable from
+  both, `_process_meshes_for_wandb` included.
+
+**Deferred out of this slice, deliberately:** moving the evaluation trio
+(`get_mean_errors`, `tune_reconstruction`, `compute_correlation_coefficient`)
+to its own module. It buys nothing now — `main` still imports wandb for
+`reconstruct_mesh`'s own logging, so #5 is not advanced — and costs either an
+import cycle (`main` ⇄ evaluation) or breaking `NSM.reconstruct.main`'s
+namespace. It becomes worth doing as part of #5 (making wandb optional), which
+needs its own statement. Also out: #58 (ungated prints), #56 (the
+`sigma_rand_pts` default is 0.001 in `reconstruct_mesh` and 0.01 in
+`get_mean_errors` — that divergence is #56's class), `reconstruct_latent_S3.py`
+(deferred research, #35).
+
+**The fixes, with the decisions of record:**
+
+- **#15 — unify the readers on `"pts"`.** `read_mesh_get_sampled_pts` writes its
+  draw to `results["xyz"]`; everything first-party reads `"pts"`
+  (`reconstruct_mesh`, `reconstruct_latent_S3`, and both dataset classes via a
+  two-branch probe). Fix in `mesh_sampling.py`: the single reader writes the
+  draw to `"pts"` on every path, keeping `"xyz"` as an alias **bound to the same
+  array** — *transitional*, delete when the 0b fork survey confirms no external
+  `["xyz"]` readers, or at v0.3.0, whichever first. The two probe workarounds in
+  `sdf_dataset.py` (`:608`, `:1331`) collapse to `result_["pts"]` — removing the
+  existing workarounds, not adding a third. Single-object `get_rand_pts=True`
+  always crashed → **no History entry**; cached content is unchanged (same
+  array, new key) → cache tests prove it.
+- **#16 — honour `n_pts_random`.** `reconstruct_mesh` forwards
+  `n_pts_random=` to readers whose parameter is `n_pts=`; both readers'
+  `**kwargs` swallow it and the 200,000-point default runs. Fix: pass
+  `n_pts=n_pts_random` (the multi path already listifies it). This is the
+  accepted-and-ignored shape the memory says to *delete* — but the two deleted
+  precedents (`padding`, `center`/`scale`) would have changed every default run
+  if honoured, and honouring this one is measured to touch only
+  multi-object `get_rand_pts=True` runs (never shipped; single always crashed,
+  #15), while the parameter's intent is unambiguous and config-plumbed
+  (`n_pts_random_recon` → three layers). Honouring changes those runs' draw
+  from 200,000/surface to the requested value → **History entry**. Ride-along:
+  the regression-harness class docstring that documents the swallowed argument
+  (and the measured 400,688) is rewritten, and the seeded tests get ~1000×
+  smaller draws, which is the harness cost §7.1 blamed on this bug.
+- **#16's class, enumerated** (AST scan, every function, parameter name absent
+  from body — run 2026-08-23, both repos' consumers checked): in-package,
+  `compute_recon_loss(n_samples_assd)` — its implementing call is commented
+  out, no caller passes it → **deleted**, and the `batch_size_latent_recon`
+  plumbing — `get_mean_errors` forwards it into `reconstruct_mesh`'s `**kwargs`,
+  so **every validation pass prints the deprecation warning at itself** →
+  parameter deleted from `get_mean_errors`/`tune_reconstruction` and the
+  `train_deep_sdf.py:238` call site; the shim in `reconstruct_mesh` stays (it is
+  the migration surface for external callers). Out of package, recorded not
+  fixed: `models/` instances are #20's annotated parameter half;
+  `train_epoch(return_loss, verbose)` ×4 belongs to the trainer slice;
+  `interpolate.update_positions(verbose)` and S3's `epsilon` noted for their
+  modules' passes; `get_learning_rate(epoch)` on Constant and `__exit__(args)`
+  are interface conformity, not defects.
+- **#29 — raise by name instead of the fake-success dict.** New
+  `NoZeroLevelSetError(RuntimeError)` in `main.py`, raised where the mean mesh
+  comes back `None`; message names the state (zero-latent SDF has no sign
+  change at `n_pts_per_axis_mean_mesh` resolution) and the two causes (model
+  not trained far enough; grid too coarse). `get_mean_errors` catches it
+  per-path and records what it always recorded — nan metrics — plus a **NaN
+  latent row** to `Regress` (today it hands over the zero vector, so the r²
+  is computed against fabricated latents; NaN rows make it an honest nan and
+  keep path↔latent alignment). Training validation therefore still survives a
+  model that has not learned a sign change; the direct caller (kneepipeline)
+  gets a named error instead of a `KeyError` at `result["center"]`. Pre-fix
+  runs recorded zero latents and nan metrics as if fitted → **History entry**
+  (detection: latent exactly all-zero *and* metrics nan).
+  `TestDecoderWithNoZeroLevelSet` is rewritten around the raise; its strict
+  xfail retires with this commit. House precedent: #48's barrier, #41.
+
+**Size budget:** #15 ≤ +5 in `mesh_sampling.py`, net negative in
+`sdf_dataset.py`; #16 is a 2-line call change; the class sweep is net negative;
+#29 ≤ +45 (exception, raise, catch-and-record); the split ≤ +80 net (module
+headers, import blocks, re-import block). Characterization tests are additive
+and outside the budget.
+
+**Sequence** (one commit each, suite green at every step):
+1. this statement; 2. characterization — freeze both namespaces
+(`NSM.reconstruct`, `NSM.reconstruct.main`) as a list-pinned import test, pin
+the unpinned movers (`prepare_results_for_wandb`'s filtering,
+`project_latent`, `latent_norm_penalty`'s quadratic/huber branches, the
+type-check raises, `reconstruct_latent_get_lr_update_freq` arithmetic), pin the
+self-inflicted deprecation print (capsys), add strict-xfails for #15 (single
+sampled path returns) and #16 (the request is honoured); 3. #15 fix + xfail
+unmark; 4. #16 fix + History + harness-doc rewrite; 5. the in-package class
+sweep; 6. #29 fix + History + test rewrite (namespace list gains the exception
+— deliberate, in the same commit); 7. the split + ARCHITECTURE.md §3 ledger
+rows; 8. State update.
+
+**Verification per claim:**
+
+| Claim | Verification |
+|---|---|
+| #15 unification changes no cached data | `test_dataset_cache` green untouched; alias asserted `result["pts"] is result["xyz"]` |
+| #15 single sampled path works | the strict-xfail passes unmarked |
+| #16 honoured | strict-xfail passes unmarked: request 200, receive 200 + appended surface points, not 200,000 |
+| #16 touches only never-shipped runs | both shipped configs `get_rand_pts_recon: false` (re-checked); single path always crashed (#15's evidence) |
+| deprecation print was self-inflicted | capsys pin in commit 2, deleted in commit 5 when the print stops |
+| #29 keeps validation alive | new test: `get_mean_errors` over a no-zero-level-set decoder returns nan metrics and nan r², raises nothing |
+| split changes no behaviour | full suite + harness green; `git diff --color-moved` pure moves; no xfail transitions in the split commit |
+| both import paths keep every name | frozen namespace lists, asserted on both paths, written in commit 2 *before* anything moves |
+| no new import cycle | `latent_fit`/`wandb_logging` import nothing from `.main`; ARCHITECTURE.md §2 ast pass re-run |
+
 ### 8.1 Make the library plural — added 2026-08-15
 
 The name is *neural shape model**s***. Two defects currently make it singular in practice,
