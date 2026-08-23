@@ -91,6 +91,35 @@ class TestDeprecatedBatchSizeLatentRecon:
         assert "batch_size_latent_recon" not in captured
 
 
+class TestGetMeanErrorsSurvivesADegenerateModel:
+    """
+    #29's aggregate seam. ``reconstruct_mesh`` raises ``NoZeroLevelSetError`` when the
+    mean shape has no surface; ``get_mean_errors`` must catch it and score NaN -- a
+    training run has to survive its own early validation epochs. Until Aug 2026 the
+    failure was invisible instead: NaN metrics but a *zero* latent recorded as if
+    fitted, so ``val_prediction_*`` was regressed against fabrications (History §10).
+    """
+
+    def test_nan_scores_and_no_crash(self, monkeypatch):
+        def degenerate_reconstruct_mesh(path=None, **kwargs):
+            raise recon_main.NoZeroLevelSetError("no zero level set (stub)")
+
+        monkeypatch.setattr(recon_main, "reconstruct_mesh", degenerate_reconstruct_mesh)
+        ages = (45, 60)
+        paths = [f"subj{i}_age_{a}-mesh.vtk" for i, a in enumerate(ages)]
+        results = recon_main.get_mean_errors(
+            mesh_paths=paths,
+            decoders=None,
+            latent_size=4,
+            calc_symmetric_chamfer=True,
+            calc_assd=True,
+            predict_val_variables=["age"],
+        )
+        assert np.isnan(results["chamfer_0"])
+        assert np.isnan(results["assd_0"])
+        assert np.isnan(results["val_prediction_age"])
+
+
 class SphereDecoder(torch.nn.Module):
     """
     An analytic sphere SDF (radius 0.5), one output column. ``+ 0.0 * latent.sum()``

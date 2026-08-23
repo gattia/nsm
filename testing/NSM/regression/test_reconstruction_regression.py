@@ -32,6 +32,8 @@ from _harness import (
     train_reconstruction_decoder,
 )
 
+from NSM.reconstruct import NoZeroLevelSetError
+
 #: Which synthetic surface each result index is supposed to be. The bone sphere is
 #: centred on the origin; the cartilage ellipsoid sits above it. See _harness.SUBJECTS.
 BONE, CART = 0, 1
@@ -462,52 +464,18 @@ class NoZeroLevelSetDecoder(torch.nn.Module):
 
 class TestDecoderWithNoZeroLevelSet:
     """
-    What ``reconstruct_mesh`` does when the mean shape has no surface: the state every
-    model is in before it has learnt a sign change, and the first thing anyone wiring up a
-    new architecture will hit.
+    What ``reconstruct_mesh`` does when the mean shape has no surface: raises by name
+    (#29). The state every model is in before it has learnt a sign change, and the
+    first thing anyone wiring up a new architecture will hit.
 
-    It is not an error path. It returns a plausible-looking result dict, and the shape of
-    that dict is different from the successful one -- which is the part worth pinning.
+    Until Aug 2026 it returned a plausible-looking result dict instead -- ``mesh`` of
+    Nones, NaN metrics, the untouched zero ``mean_latent`` under ``"latent"`` -- whose
+    shape also dropped every key the caller asked for (this class pinned that dict, with
+    a strict xfail on the dropped keys, until the fix landed; History §10).
+    ``get_mean_errors`` catches the error and scores NaN so a validation epoch survives;
+    that seam is pinned in ``test_reconstruct_mesh_options``.
     """
 
-    @pytest.fixture(scope="class")
-    def degenerate_result(self, synthetic_meshes):
-        return run_reconstruction(synthetic_meshes[0], NoZeroLevelSetDecoder())
-
-    def test_meshes_are_none_rather_than_empty(self, degenerate_result):
-        assert degenerate_result["mesh"] == [None, None]
-
-    def test_latent_is_returned_as_zeros(self, degenerate_result):
-        """
-        A caller that checks only "is there a latent" sees a valid-looking (1, N) tensor.
-        It is the untouched ``mean_latent``; no fitting ever ran.
-        """
-        from _harness import LATENT_SIZE
-
-        latent = degenerate_result["latent"]
-        assert latent.shape == (1, LATENT_SIZE)
-        assert torch.count_nonzero(latent) == 0
-
-    def test_surface_metrics_are_nan(self, degenerate_result):
-        assert np.isnan(degenerate_result["assd_0"])
-        assert np.isnan(degenerate_result["assd_1"])
-
-    def test_the_result_shape_is_not_the_successful_one(self, degenerate_result):
-        """
-        Evidence, not a defect assertion: recorded so the difference is visible at a glance.
-        """
-        assert set(degenerate_result) == {"mesh", "latent", "assd_0", "assd_1"}
-
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#29: the early return ignores return_registration_params",
-    )
-    def test_registration_params_must_be_returned_when_requested(self, degenerate_result):
-        """
-        ``return_registration_params=True`` was passed and the early return at
-        ``reconstruct/main.py:946-966`` ignores it, along with ``return_timing`` and
-        ``orig_mesh``. The consumer reads ``result["center"]`` unconditionally
-        (``kneepipeline/steps/run_nsm.py:230``), so the two result shapes are not
-        interchangeable and the caller cannot tell which one it has without checking.
-        """
-        assert {"center", "scale", "icp_transform"} <= set(degenerate_result)
+    def test_it_raises_by_name(self, synthetic_meshes):
+        with pytest.raises(NoZeroLevelSetError, match="no zero level set"):
+            run_reconstruction(synthetic_meshes[0], NoZeroLevelSetDecoder())

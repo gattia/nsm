@@ -43,9 +43,6 @@ queue.
 | `xyz_in_all` accepted and never read | Medium — silent no-op | [#20](https://github.com/gattia/nsm/issues/20) |
 | A `None` surface cannot build | Medium — advertised feature, unusable | [#67](https://github.com/gattia/nsm/issues/67) |
 | Every VAE layer stored twice | Medium — 1.92× checkpoints | [#27](https://github.com/gattia/nsm/issues/27) |
-| `reconstruct_mesh` early return drops requested keys | Medium | [#29](https://github.com/gattia/nsm/issues/29) |
-| `reconstruct_mesh` raises `KeyError: 'pts'` on one branch | Medium | [#15](https://github.com/gattia/nsm/issues/15) |
-| `n_pts_random` accepted and discarded | Medium | [#16](https://github.com/gattia/nsm/issues/16) |
 | `sample_difficulty_lx` shipped but unimplemented | Medium | [#18](https://github.com/gattia/nsm/issues/18) |
 | `enforce_minmax` clamps predictions | Medium — config semantics | *none — a docs/design call, see below* |
 | `Pool` deadlocks after an in-process build | Low — hangs, does not corrupt | [#25](https://github.com/gattia/nsm/issues/25) |
@@ -358,21 +355,6 @@ sets `grad_clip`, so this is documented rather than fixed.
 shrug — train with the clip applied to both groups (or one global clip) and compare
 stability and latent-norm trajectories against the current behaviour. If adopted, it
 changes numerics for every run that sets `grad_clip` → § History entry.
-
-## `reconstruct/main.py`
-
-### The early return drops keys the caller asked for
-
-When the decoder's mean shape has no zero level set, `reconstruct_mesh` returns early at
-with only `{mesh, latent, assd_*}`, ignoring `return_registration_params`,
-`return_timing` and `orig_mesh`. The two result shapes are not interchangeable and the
-consumer reads `result["center"]` unconditionally (`kneepipeline/steps/run_nsm.py:230`).
-
-Sharper than the missing keys: **the result looks successful.** `mesh` is `[None, None]`,
-`assd_*` are `nan`, and `latent` is a correctly-shaped `(1, latent_size)` tensor of zeros —
-the untouched `mean_latent`, never fitted. A caller checking "did I get a latent" gets yes.
-*Fix:* [#29](https://github.com/gattia/nsm/issues/29). *Pinned by:*
-`test_reconstruction_regression.TestDecoderWithNoZeroLevelSet` (5 tests).
 
 ## Upstream
 
@@ -941,3 +923,38 @@ Pass `n_pts_random=200000` explicitly.
 
 *Pinned by:* `test_reconstruct_mesh_options.TestNPtsRandomReachesTheReaders` (both
 branches), and the end-to-end `TestSingleObjectSampledBranch`.
+
+## 10. A decoder with no mean surface returned fake success instead of raising
+
+| | |
+|---|---|
+| **Affects** | Every `reconstruct_mesh` call with `register_similarity=True` or `scale_jointly=True` against a decoder whose zero-latent SDF had no zero level set — the state of every model before it learns a sign change, so chiefly `get_mean_errors` validation early in training, and any new architecture being wired up. Aug 2023 (`5188417`) → Aug 2026 |
+| **Unaffected** | Calls without registration/joint scaling (no mean mesh is built, so the state is never tested); any fit against a decoder with a learned surface |
+| **Severity** | Silent — **the result looked successful**: `mesh` of Nones and `nan` metrics, but `latent` a correctly-shaped tensor of *zeros* (the untouched `mean_latent`, never fitted) and every other requested key (`center`, `scale`, `icp_transform`, timing, `orig_mesh`) dropped. `get_mean_errors` fed those zero latents to its predictive validation, so `val_prediction_*` r² was computed against fabrications; the downstream consumer read `result["center"]` unconditionally and died with `KeyError` |
+| **Fixed in** | `recon-main-decomposition`, Aug 2026 ([#29](https://github.com/gattia/nsm/issues/29)) |
+
+### What was wrong
+
+An early return replaced the whole result with `{mesh, chamfer_*/assd_*, latent}`,
+ignoring what the caller asked for — and the "latent" it returned was the zero vector it
+was supposed to fit. `reconstruct_mesh` now raises `NoZeroLevelSetError` (named, with
+the two causes in the message: model not trained far enough, or
+`n_pts_per_axis_mean_mesh` too coarse). `get_mean_errors` catches it and scores the
+subject NaN — per-surface metrics and `val_prediction_*` alike — so a training run still
+survives its own early validation epochs.
+
+### How to tell whether one of your runs is affected
+
+A stored "fit" whose latent is exactly all-zero with `nan` reconstruction metrics was
+never fitted. A `val_prediction_*` series that starts as a plausible number while the
+same epoch's chamfer/ASSD are `nan` was regressed against zero vectors; post-fix those
+epochs report `nan`.
+
+### Reproducing old behaviour
+
+No compatibility switch. The old result carried no information a caller could use —
+catch `NoZeroLevelSetError` instead.
+
+*Pinned by:* `test_reconstruction_regression.TestDecoderWithNoZeroLevelSet` (the raise)
+and `test_reconstruct_mesh_options.TestGetMeanErrorsSurvivesADegenerateModel` (the NaN
+seam).

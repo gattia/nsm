@@ -855,6 +855,20 @@ def reconstruct_latent(
     return loss, latent_
 
 
+class NoZeroLevelSetError(RuntimeError):
+    """
+    The decoder's mean shape (zero latent) has no surface, so registration to the mean
+    -- and everything after it -- cannot run. This is the state of every model before it
+    has learned a sign change, not an exotic error path.
+
+    Until Aug 2026 this state returned a plausible-looking result instead of raising:
+    ``mesh`` of Nones, NaN metrics, and the *untouched zero* ``mean_latent`` under
+    ``"latent"``, with every other requested key dropped (#29;
+    ``docs/KNOWN_ISSUES.md`` § History 10). ``get_mean_errors`` catches this error and
+    scores the subject NaN, so a validation epoch survives an under-trained model.
+    """
+
+
 def reconstruct_mesh(
     path,
     decoders,
@@ -939,6 +953,10 @@ def reconstruct_mesh(
           the ordered mesh list (order = the surface-identity contract above); the
           other keys appear per flag. Every first-party caller takes this branch.
         - Otherwise, the bare list of meshes.
+
+    Raises:
+        NoZeroLevelSetError: with `register_similarity` or `scale_jointly` set, when
+            the decoder's mean shape has no surface (see the exception's docstring).
     """
 
     # warning batch_size_latent_recon is deprecated
@@ -1015,30 +1033,12 @@ def reconstruct_mesh(
                 mean_mesh = mean_mesh[mesh_to_scale]
 
         if mean_mesh is None:
-            # Mean mesh is None if the zero latent vector is not well defined/learned
-            # yet. In this case, the results will be very poor, might as well skip.
-            #
-            # KNOWN DEFECT, #29: this early return ignores
-            # return_registration_params, return_timing and orig_mesh, so its result has a
-            # different SHAPE from the successful one -- and the downstream consumer reads
-            # result["center"] unconditionally. It also returns the untouched zero
-            # mean_latent under the "latent" key, so a caller checking "did I get a latent"
-            # gets a correctly shaped tensor that was never fitted.
-            result = {
-                "mesh": [
-                    None,
-                ]
-                * sum(objects_per_decoder),
-            }
-            if calc_symmetric_chamfer:
-                for idx in range(sum(objects_per_decoder)):
-                    result[f"chamfer_{idx}"] = np.nan
-            if calc_assd:
-                for idx in range(sum(objects_per_decoder)):
-                    result[f"assd_{idx}"] = np.nan
-            if return_latent:
-                result["latent"] = mean_latent
-            return result
+            raise NoZeroLevelSetError(
+                f"The decoder's mean shape has no zero level set: the zero-latent SDF "
+                f"never changes sign on the {n_pts_per_axis_mean_mesh}^3 grid. Either "
+                f"the model has not learned a sign change yet -- the state of every "
+                f"model early in training -- or the grid is too coarse for its surface."
+            )
     else:
         mean_mesh = None
 
@@ -1359,7 +1359,12 @@ def get_mean_errors(
     device="cuda",
 ):
     """
-    Reconstruct meshes & compute errors
+    Reconstruct meshes & compute errors.
+
+    A decoder whose mean shape has no zero level set (``NoZeroLevelSetError`` from
+    ``reconstruct_mesh``) scores NaN — per-surface metrics and ``val_prediction_*``
+    alike — instead of aborting, so a training run survives its own early validation
+    epochs.
     """
 
     loss = {}
@@ -1417,6 +1422,7 @@ def get_mean_errors(
     if predict_val_variables is not None:
         reg = Regress(list_factors=predict_val_variables, list_paths=mesh_paths)
 
+    n_degenerate = 0
     for idx, mesh_path in enumerate(mesh_paths):
         if log_wandb is True:
             config_ = config.copy()
@@ -1432,11 +1438,31 @@ def get_mean_errors(
                 tags=config["tags"],
             )
         reconstruct_inputs["path"] = mesh_path
-        result_ = recon_fx(**reconstruct_inputs)
+        try:
+            result_ = recon_fx(**reconstruct_inputs)
+        except NoZeroLevelSetError as error:
+            # The state of every model before it learns a sign change: score the
+            # subject NaN and keep the validation epoch alive rather than killing the
+            # training run. No latent exists for this subject, so the predictive
+            # validation below reports NaN instead of regressing on fabrications.
+            logger.warning(f"{mesh_path}: {error}")
+            n_degenerate += 1
+            n_decoders = len(decoders) if isinstance(decoders, (list, tuple)) else 1
+            n_surfaces = (
+                sum(objects_per_decoder)
+                if isinstance(objects_per_decoder, (list, tuple))
+                else objects_per_decoder * n_decoders
+            )
+            result_ = {"mesh": [None] * n_surfaces}
+            for mesh_idx in range(n_surfaces):
+                if calc_symmetric_chamfer:
+                    result_[f"chamfer_{mesh_idx}"] = np.nan
+                if calc_assd:
+                    result_[f"assd_{mesh_idx}"] = np.nan
         if verbose is True:
             print("result_", result_)
 
-        if predict_val_variables is not None:
+        if predict_val_variables is not None and "latent" in result_:
             reg.add_latent(result_["latent"].detach().cpu().numpy().ravel())
 
         for mesh_idx in range(len(result_["mesh"])):
@@ -1465,7 +1491,15 @@ def get_mean_errors(
     loss_ = {}
 
     if predict_val_variables is not None:
-        predictive_results = reg.calc_r2()
+        if n_degenerate:
+            # Degeneracy is a property of the decoder, so every subject failed together
+            # and the regressor holds no latents. NaN is the honest score; until Aug
+            # 2026 the r^2 here was computed against zero vectors (History §10).
+            predictive_results = {
+                f"val_prediction_{factor}": np.nan for factor in predict_val_variables
+            }
+        else:
+            predictive_results = reg.calc_r2()
         loss_.update(predictive_results)
 
     for key, item in loss.items():

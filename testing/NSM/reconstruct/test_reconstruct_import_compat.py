@@ -25,6 +25,7 @@ import pytest
 #: so ``_process_meshes_for_wandb`` is listed separately).
 FROM_MAIN = [
     "EIKONAL_UNSUPPORTED",
+    "NoZeroLevelSetError",  # added with the #29 fix -- a deliberate namespace addition
     "Regress",
     "adjust_learning_rate",
     "combine_meshes",

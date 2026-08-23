@@ -46,6 +46,14 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **`reconstruct_mesh` raises `NoZeroLevelSetError` when the decoder's mean shape has no
+  surface** (#29), instead of returning a result that looked successful — `mesh` of
+  Nones, NaN metrics, and the untouched *zero* `mean_latent` under `"latent"`, with
+  every other requested key dropped. `get_mean_errors` catches it and scores the subject
+  NaN (`val_prediction_*` included — it used to regress on the zero vectors), so
+  training-time validation still survives an under-trained model. Direct callers that
+  relied on the soft dict must catch the error; `docs/KNOWN_ISSUES.md` § History 10.
+
 - **`get_mean_errors` no longer takes `batch_size_latent_recon`, and `compute_recon_loss`
   no longer takes `n_samples_assd`** (#16's class — parameters accepted and never used).
   `batch_size_latent_recon` fed a `reconstruct_mesh` parameter that was removed when
