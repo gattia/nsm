@@ -91,6 +91,8 @@ flowchart LR
   subgraph RC["NSM.reconstruct"]
     RCpkg["__init__"]
     RCmain["main"]
+    RClat["latent_fit"]
+    RCwb["wandb_logging"]
     RCcart["cartilage_func"]
     RCs3["reconstruct_latent_S3"]
     RCpred["predictive_validation_class"]
@@ -137,6 +139,8 @@ flowchart LR
   RCpkg -->|star| RCmain
   RCpkg --> RCs3
   RCpkg --> RCcart
+  RCmain --> RClat
+  RCmain --> RCwb
   RCmain --> RCutils
   RCmain --> RCeval
   RCmain --> RCpred
@@ -144,6 +148,8 @@ flowchart LR
   RCmain --> DSsdf
   RCmain --> MEpkg
   RCmain --> Ulosses
+  RClat --> RCutils
+  RClat --> Ulosses
   RCeval --> RCutils
   RCs3 --> DSpkg
   RCs3 --> RCutils
@@ -209,7 +215,9 @@ Modules with no inaccurate docstrings and an unremarkable status are omitted.
 |---|---|---|
 | `datasets/sdf_dataset.py` | 7 | prod — classes only since the §8.0 slice-A move (2026-08-22) |
 | `mesh/refine_mesh.py` | 6 | research — raises on its own defaults |
-| `reconstruct/main.py` | 5 | prod |
+| `reconstruct/main.py` | 5 | prod — `reconstruct_mesh` + the evaluation trio since the §8.0.C move (2026-08-23) |
+| `reconstruct/latent_fit.py` | 0 | prod — the latent-optimization stack, received from `main.py` (§8.0.C) |
+| `reconstruct/wandb_logging.py` | 0 | prod — wandb result preparation, same move |
 | `mesh/main.py` | 5 | prod |
 | `train/utils.py` | 3 | prod |
 | `utils.py` | 2 | prod |

@@ -82,3 +82,12 @@ def test_main_module_keeps_its_underscore_names(name):
 def test_package_keeps_its_sibling_module_names(name):
     module = importlib.import_module("NSM.reconstruct")
     assert hasattr(module, name), f"NSM.reconstruct lost {name}"
+
+
+def test_the_definitions_live_in_the_new_modules():
+    """The re-imports point at the moved definitions, not at copies."""
+    from NSM.reconstruct import latent_fit, main, wandb_logging
+
+    assert main.reconstruct_latent is latent_fit.reconstruct_latent
+    assert main.latent_norm_penalty is latent_fit.latent_norm_penalty
+    assert main.prepare_results_for_wandb is wandb_logging.prepare_results_for_wandb
