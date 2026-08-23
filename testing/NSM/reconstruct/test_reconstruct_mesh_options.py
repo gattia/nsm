@@ -1,14 +1,18 @@
 """
 Pins on what ``reconstruct_mesh`` hands its collaborators, via recorder stubs — no
-meshes are read and no fitting runs, so these cost nothing.
+meshes are read and no fitting runs, so those cost nothing — plus the one end-to-end
+run of the single-object sampled branch, which had never executed before #15/#16
+(its sampler key crashed it, and its draw size was ignored).
 
-The two strict xfails are #16 and its class (plan §8.0.C): ``n_pts_random`` is forwarded
-under a name neither reader has, and ``get_mean_errors`` forwards the deprecated
-``batch_size_latent_recon`` into ``reconstruct_mesh``'s ``**kwargs`` — so every
-validation pass prints the deprecation warning at itself. Both readers accept
-``**kwargs``, which is what makes each of these silent.
+The recorder tests pin #16 and its class (plan §8.0.C): ``n_pts_random`` was forwarded
+under a name neither reader has (fixed; the xfails are unmarked), and ``get_mean_errors``
+still forwards the deprecated ``batch_size_latent_recon`` into ``reconstruct_mesh``'s
+``**kwargs`` — so every validation pass prints the deprecation warning at itself (strict
+xfail until the in-package sweep lands). Both readers accept ``**kwargs``, which is what
+makes each of these silent.
 """
 
+import numpy as np
 import pytest
 import torch
 
@@ -20,7 +24,8 @@ class _Abort(Exception):
 
 
 class TestNPtsRandomReachesTheReaders:
-    @pytest.mark.xfail(strict=True, reason="#16: n_pts_random lands in the reader's **kwargs")
+    """Were the #16 strict xfails: the request reaches the readers as their ``n_pts``."""
+
     def test_the_multi_object_request_is_honoured(self, monkeypatch):
         captured = {}
 
@@ -40,7 +45,6 @@ class TestNPtsRandomReachesTheReaders:
         assert captured.get("n_pts") == [200, 200]
         assert "n_pts_random" not in captured
 
-    @pytest.mark.xfail(strict=True, reason="#16: n_pts_random lands in the reader's **kwargs")
     def test_the_single_object_request_is_honoured(self, monkeypatch):
         captured = {}
 
@@ -88,3 +92,55 @@ class TestDeprecatedBatchSizeLatentRecon:
         monkeypatch.setattr(recon_main, "reconstruct_mesh", fake_reconstruct_mesh)
         recon_main.get_mean_errors(mesh_paths=["a.vtk"], decoders=None, latent_size=4)
         assert "batch_size_latent_recon" not in captured
+
+
+class SphereDecoder(torch.nn.Module):
+    """
+    An analytic sphere SDF (radius 0.5), one output column. ``+ 0.0 * latent.sum()``
+    keeps the output on the latent's graph so ``reconstruct_latent``'s backward has a
+    leaf to reach. Matches the calling convention ``mesh/main.decode_sdf`` inspects for
+    — keyword ``latent``/``xyz`` — like the harness's ``NoZeroLevelSetDecoder``.
+    """
+
+    def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+        pts = xyz if xyz is not None else x[:, -3:]
+        sdf = torch.norm(pts, dim=1, keepdim=True) - 0.5
+        if latent is not None:
+            sdf = sdf + 0.0 * latent.sum()
+        return sdf
+
+
+class TestSingleObjectSampledBranch:
+    """
+    The one end-to-end run of ``reconstruct_mesh`` with a single path and
+    ``get_rand_pts=True``. This branch had never executed: the sampler-key mismatch
+    (#15) crashed it at the handoff, and even reaching it would have drawn 200,000
+    points because ``n_pts_random`` was swallowed (#16). Cheap now precisely because
+    the request is honoured.
+    """
+
+    def test_it_completes_and_returns_the_dict_contract(self, tmp_path):
+        pv = pytest.importorskip("pyvista")
+        sphere = pv.Sphere(radius=0.5, theta_resolution=18, phi_resolution=18).triangulate()
+        path = str(tmp_path / "sphere.vtk")
+        sphere.save(path)
+
+        result = recon_main.reconstruct_mesh(
+            path=path,
+            decoders=SphereDecoder(),
+            latent_size=8,
+            num_iterations=2,
+            get_rand_pts=True,
+            n_pts_random=50,
+            sigma_rand_pts=0.05,
+            seed=3,
+            n_pts_per_axis=32,
+            return_latent=True,
+            fix_mesh=False,
+            device="cpu",
+        )
+
+        assert result["latent"].shape == (1, 8)
+        assert len(result["mesh"]) == 1
+        assert result["mesh"][0] is not None
+        assert np.asarray(result["mesh"][0].point_coords).shape[1] == 3

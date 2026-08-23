@@ -280,9 +280,10 @@ class TestDeliberateBreak:
 #: samplers return early and ``reconstruct_mesh``'s ``seed`` argument reaches nothing at
 #: all. These tests are the only ones in the suite where that argument does any work.
 #:
-#: ``n_pts_random`` is passed and IGNORED; see ``TestSampledReconstructionIsSeeded``. The
-#: draw is 200,000 points per surface either way, which is what each of these
-#: reconstructions ~4s costs and why there are only five of them.
+#: ``n_pts_random`` is honoured since the #16 fix: 200 points per surface, plus the
+#: surface vertices ``include_surf_in_pts`` appends. Before it the value was swallowed
+#: by the readers' ``**kwargs`` and the 200,000-point default ran — the whole reason
+#: each of these reconstructions cost ~4s and there were only five of them.
 SAMPLED = dict(get_rand_pts=True, n_pts_random=200)
 
 SAMPLE_SEED = 7
@@ -302,14 +303,13 @@ class TestSampledReconstructionIsSeeded:
     torch, leave the draw unseeded, and these tests would still pass three times out of
     four while asserting nothing.
 
-    **``n_pts_random`` does not reach the sampler.** ``reconstruct_mesh`` passes it as
-    ``n_pts_random=`` to ``read_meshes_get_sampled_pts``, whose parameter is called
-    ``n_pts``; it lands in ``**kwargs`` and is dropped without a warning, so the draw uses
-    the default 200,000 per surface however small a number is asked for. Measured here as
-    400,688 points from a request for 200: 200,000 x 2, plus the 344 surface points
-    ``include_surf_in_pts`` appends -- twice, because that append reads a leaked loop
-    variable rather than the current surface. Neither is asserted on: they are library
-    defects, recorded so the cost of this class is explained rather than mysterious.
+    **``n_pts_random`` reaches the sampler since the #16 fix** — 200 points per surface
+    here, plus each surface's own vertices from ``include_surf_in_pts`` (its
+    wrong-surface append was #17, fixed in the same era). Before the fix it landed in
+    the readers' ``**kwargs`` and the 200,000-per-surface default ran — measured then
+    as 400,688 points from a request for 200 — which is why this class was documented
+    as expensive. The assertions below never depended on the draw size; only their
+    cost did.
 
     The single-object branch is not covered here: it needs a one-output decoder, which
     this fixture's model is not. (Until #15 unified the sampler keys it was unreachable

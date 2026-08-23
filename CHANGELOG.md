@@ -30,6 +30,12 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Fixed
 
+- **`reconstruct_mesh` honours `n_pts_random`** (#16). It forwarded the value as
+  `n_pts_random=` to readers whose parameter is `n_pts=`; their `**kwargs` swallowed it,
+  so every `get_rand_pts=True` call drew the readers' 200,000-point default per surface
+  regardless of what was asked. **Numerical output changes** for post-fix reruns of such
+  calls (never a shipped configuration) — `docs/KNOWN_ISSUES.md` § History 9.
+
 - **`read_mesh_get_sampled_pts` returns its random draw under `"pts"`, the same key as
   `read_meshes_get_sampled_pts`** (#15). It used `"xyz"`, so every consumer that read
   `"pts"` unconditionally — `reconstruct_mesh`'s single-object branch included — crashed

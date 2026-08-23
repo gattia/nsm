@@ -923,6 +923,8 @@ def reconstruct_mesh(
     Reconstructs mesh at path using decoders.
 
     `seed` seeds the point sampling when `get_rand_pts` is True; None leaves it unseeded.
+    `n_pts_random` is the draw size per surface on that path (honoured since the #16
+    fix — before it the samplers' 200,000-point default ran regardless; § History 9).
 
     NOTES:
     Assumes that length of path = sum(objects_per_decoder)
@@ -1059,7 +1061,7 @@ def reconstruct_mesh(
             get_random=get_rand_pts,
             register_to_mean_first=True if register_similarity else False,
             mean_mesh=mean_mesh if register_similarity else None,
-            n_pts_random=n_pts_random,
+            n_pts=n_pts_random,
             include_surf_in_pts=get_rand_pts,
             fix_mesh=fix_mesh,
             seed=seed,
@@ -1076,7 +1078,7 @@ def reconstruct_mesh(
             get_random=get_rand_pts,
             register_to_mean_first=True if register_similarity else False,
             mean_mesh=mean_mesh,
-            n_pts_random=n_pts_random,
+            n_pts=n_pts_random,
             include_surf_in_pts=get_rand_pts,
             fix_mesh=fix_mesh,
             seed=seed,
