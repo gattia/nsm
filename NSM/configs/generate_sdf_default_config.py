@@ -7,7 +7,9 @@ import os
 # (experiment_directory, list_mesh_paths, path_list_meshes, val_paths), wandb org fields,
 # the knee-specific validation hook (recon_val_func_name) and descriptive metadata
 # (bone/cartilage/tissues), plus keys the trainer derives or writes back itself
-# (checkpoints, the plain *_lr_* logging keys) and the removed `emd` option (#53).
+# (checkpoints, the plain *_lr_* logging keys), the removed `emd` option (#53), and
+# `batch_size_latent_recon` -- dead since batching was removed from reconstruction; the
+# trainers stopped reading it in the #16-class sweep.
 # `mesh_names` is added -- 647 predates the requirement that multi-surface configs name
 # their outputs.
 config = {
@@ -154,7 +156,6 @@ config = {
     "assd": True,
     "convergence_type_recon": "recon_loss",
     "convergence_patience_recon": 50,
-    "batch_size_latent_recon": 300000,
     "get_rand_pts_recon": False,
     "n_pts_random_recon": 100000,
     "sigma_rand_pts_recon": 0.01,

@@ -4,12 +4,12 @@ meshes are read and no fitting runs, so those cost nothing — plus the one end-
 run of the single-object sampled branch, which had never executed before #15/#16
 (its sampler key crashed it, and its draw size was ignored).
 
-The recorder tests pin #16 and its class (plan §8.0.C): ``n_pts_random`` was forwarded
-under a name neither reader has (fixed; the xfails are unmarked), and ``get_mean_errors``
-still forwards the deprecated ``batch_size_latent_recon`` into ``reconstruct_mesh``'s
-``**kwargs`` — so every validation pass prints the deprecation warning at itself (strict
-xfail until the in-package sweep lands). Both readers accept ``**kwargs``, which is what
-makes each of these silent.
+The recorder tests pin #16 and its class (plan §8.0.C), both fixed and their strict
+xfails unmarked: ``n_pts_random`` was forwarded under a name neither reader has, and
+``get_mean_errors`` forwarded the deprecated ``batch_size_latent_recon`` into
+``reconstruct_mesh``'s ``**kwargs`` — so every validation pass printed the deprecation
+warning at itself. Both readers accept ``**kwargs``, which is what made each of these
+silent.
 """
 
 import numpy as np
@@ -78,11 +78,8 @@ class TestDeprecatedBatchSizeLatentRecon:
             )
         assert "batch_size_latent_recon is deprecated" in capsys.readouterr().out
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#16's class: get_mean_errors forwards the deprecated kwarg it never uses",
-    )
     def test_get_mean_errors_does_not_forward_the_deprecated_kwarg(self, monkeypatch):
+        """Was the #16-class strict xfail: the parameter and its plumbing are deleted."""
         captured = {}
 
         def fake_reconstruct_mesh(path=None, **kwargs):

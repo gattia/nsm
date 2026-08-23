@@ -46,6 +46,16 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **`get_mean_errors` no longer takes `batch_size_latent_recon`, and `compute_recon_loss`
+  no longer takes `n_samples_assd`** (#16's class — parameters accepted and never used).
+  `batch_size_latent_recon` fed a `reconstruct_mesh` parameter that was removed when
+  batching was; the only thing forwarding it did was print the deprecation warning at
+  every validation pass. `n_samples_assd`'s implementing call has been commented out
+  since ASSD moved to `get_assd_mesh`. Both now raise `TypeError` if passed; the trainers
+  and the default config no longer carry the key. The `batch_size_latent_recon`
+  deprecation shim in `reconstruct_mesh` itself stays — that is the migration surface.
+  **No numerical output changes.**
+
 - **`read_mesh_get_sampled_pts` and `read_meshes_get_sampled_pts` no longer take
   `mean`.** No code path ever read it — verified by AST scan, and it is the only
   never-read parameter in `sdf_dataset.py` — so at every value it did nothing. Removed
