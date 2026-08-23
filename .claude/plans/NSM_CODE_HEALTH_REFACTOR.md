@@ -6,14 +6,25 @@
 
 **Updated:** 2026-08-22 · **Status:** open
 
-- **Next:** `sdf_dataset.py` decomposition (§8). Per § Plans it opens with a plan
-  statement before any code — permanent vs transitional split, size budget,
-  verification per claim — and per §7.3 the characterization tests come before any
-  extraction. `NSM/datasets/utils.py` is the 2-line stub waiting to receive the
-  pieces. Still open from #48: the `barrier` norm-penalty NaN and
-  `Regress.add_latent`. Also open here: #69 (in-memory joint scaling, pinned
-  strict-xfail) — a natural ride-along when decomposition touches
-  `norm_and_scale_all_meshes`.
+- **Next:** maintainer reviews the `sdf-dataset-decomposition` branch (5 commits,
+  §8.0 slice A — plan statement, characterization tests, a docstring correction,
+  the move, this State update), then PR + admin merge. After that: slice B, the
+  reader-internals split (registration / frame computation / per-surface draws
+  inside `mesh_sampling.py`), which needs its own §8.0-style statement before any
+  code — #69 (in-memory joint scaling, pinned strict-xfail), #3 (sigma coordinate
+  space) and #17 (include_surf_in_pts, now pinned strict-xfail in
+  `test_sampled_pts_readers.py`) ride along there. Still open from #48: the
+  `barrier` norm-penalty NaN and `Regress.add_latent`.
+- **Slice A is on the branch, unreviewed (2026-08-22):** `sdf_dataset.py` is 1,744
+  lines (classes + permanent re-import block), the 13 leaf helpers live in
+  `NSM/datasets/utils.py`, the two readers in `NSM/datasets/mesh_sampling.py` —
+  verbatim moves, +49 lines net against the ~70 budget, full suite green with
+  identical collection (472 nodes). New tests: `test_dataset_helpers.py`,
+  `test_sampled_pts_readers.py` (characterization, one #17 strict-xfail),
+  `test_import_compat.py` (frozen name list on both import paths).
+  Characterization surprise, pinned and docstring-corrected: `unpack_numpy_data`
+  accepts a dict only with `list_additional_keys=[]` — the default reads
+  `data_.files`, NpzFile-only — despite its (now fixed) "NpzFile or dict" claim.
 - **Scale preservation is an idea, not a defect** (maintainer, 2026-08-22): similarity
   registration deliberately matching subjects to the reference's size is a valid
   design; keeping true size is an *additional mode* worth having. It therefore lives
@@ -554,6 +565,67 @@ extracted piece properly.
       separately: `.claude/plans/BREAKING_CHANGE_PROPOSAL.md` +
       `.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` (issue #3).
 - [ ] Close issues #1, #2, #5, #6 as the relevant modules are touched.
+
+### 8.0 `sdf_dataset.py` decomposition — plan statement (2026-08-22)
+
+The file is 2,644 lines: ~900 of module-level functions, ~1,700 of the two Dataset
+classes. Slice A below moves the functions out **verbatim**; restructuring anything
+comes later, each slice with its own statement.
+
+**Slice A — target layout (all permanent, nothing transitional):**
+
+- `NSM/datasets/utils.py` — the 13 leaf helpers, no NSM-internal imports:
+  `derive_seed`, `mesh_content_key`, `get_rand_uniform_pts`,
+  `get_pts_center_and_scale`, `is_zipfile`, `meshfix`, `get_cube_mins_maxs`,
+  `get_buffered_cube_mins_maxs`, `unpack_pts`, `unpack_numpy_data`,
+  `check_probabilities`, `check_probabilities_sum`, `combine_meshes` (~330 lines).
+- `NSM/datasets/mesh_sampling.py` — the two subject-level pipelines,
+  `read_mesh_get_sampled_pts` and `read_meshes_get_sampled_pts` (~580 lines);
+  imports only from `.utils`.
+- `NSM/datasets/sdf_dataset.py` — the two Dataset classes plus a **permanent
+  re-import block**: `NSM.datasets` *and* `NSM.datasets.sdf_dataset` are both live
+  import paths (`reconstruct/main.py` uses both in adjacent lines; downstream forks
+  assumed to as well). The re-import is public API, not a shim — no delete-when.
+  The file's top import block stays verbatim: flake8 ignores F401 globally, and the
+  unused imports (`pcu`, `numpy_to_vtk`, …) leak into `NSM.datasets` via the
+  star-import (ARCHITECTURE.md §5), so removing them would change that namespace.
+  `__all__` stays out of this slice — it is the deferred Phase 0 item and a separate
+  namespace decision.
+
+**Size budget:** moves are verbatim; allowed growth is two module headers + import
+blocks + the re-import block, **~70 lines net**. Beyond that is scope creep.
+
+**Sequence** (one commit each, suite green at every step):
+1. this statement; 2. characterization tests against the *current* file (§7.3);
+3. the move, with the ARCHITECTURE.md §3 ledger rows corrected in the same commit;
+4. State update.
+
+**Characterization targets (commit 2)** — what moves and is unpinned today:
+`unpack_numpy_data` key spellings and raises; `is_zipfile` unreadable-path fallback;
+the probability validators; cube-helper `ValueError`s; reader branches — missing
+path → `None`, `get_random=False` (the `"pts"`-not-`"xyz"` spelling), the no-norm
+branch (`scale=1`, `center=0`), register-without-mean raise (single raises bare
+`Exception`, multi raises `ValueError` — pinned as-is), the deprecated-kwarg print
+contract, `include_surf_in_pts` (single asserts correct behaviour; multi asserts
+the surface's own points and is `xfail(strict=True)` for #17), and the
+`mesh_to_scale` / `scale_all_meshes` / `center_all_meshes` frame math on analytic
+spheres.
+
+**Verification per claim:**
+
+| Claim | Verification |
+|---|---|
+| Verbatim move changes no behaviour | full suite + regression harness green before/after; `git diff --color-moved` shows pure moves |
+| Both import paths keep every symbol | new test importing each moved name from both `NSM.datasets` and `NSM.datasets.sdf_dataset`, list frozen in the test |
+| No import cycle introduced | `utils.py` imports nothing NSM-internal, `mesh_sampling.py` only `.utils`; ARCHITECTURE.md §2 ast pass re-run |
+| Cache keys unaffected | existing `TestHashedParametersChangeTheKey` / `TestCacheRoundTrip` green |
+| Pool pickling unaffected | classes stay in `sdf_dataset`; existing `test_multiprocessing_does_not_change_the_data` green |
+
+**Deferred out of slice A, deliberately:** splitting the reader internals
+(registration / frame computation / per-surface draws) is slice B — that is where
+#69 (`norm_and_scale_all_meshes` in-memory) and #3 (sigma coordinate space) ride
+along, and it gets its own statement first. Class-side cache/build decomposition
+stays grouped with #19/#27 (see State § Deliberately deferred).
 
 ### 8.1 Make the library plural — added 2026-08-15
 

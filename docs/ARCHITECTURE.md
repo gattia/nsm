@@ -1,7 +1,9 @@
 # NSM architecture
 
 **Phase 1 deliverable of `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md`.**
-**Verified:** 2026-08-15, against `main` at commit `73a0326`.
+**Verified:** 2026-08-15, against `main` at commit `73a0326`. The `NSM.datasets`
+subgraph and its §3 rows re-verified 2026-08-22 after the §8.0 slice-A split of
+`sdf_dataset.py` into `datasets/utils.py` + `datasets/mesh_sampling.py`.
 
 > ⚠️ The structural claims below — layering, the single cycle, the star-import surface, the
 > six traps — have not been re-checked since the Aug 2026 seeding work, which changed
@@ -64,7 +66,8 @@ flowchart LR
   subgraph DS["NSM.datasets"]
     DSpkg["__init__"]
     DSsdf["sdf_dataset"]
-    DSutils["utils (stub)"]
+    DSms["mesh_sampling"]
+    DSutils["utils"]
   end
 
   subgraph ME["NSM.mesh"]
@@ -109,6 +112,9 @@ flowchart LR
   Uutils -.->|"deferred import"| Ulrmig
 
   DSpkg -->|star| DSsdf
+  DSsdf --> DSms
+  DSsdf --> DSutils
+  DSms --> DSutils
 
   MEpkg -->|star| MEmain
   MEcorr --> MEtri
@@ -157,7 +163,7 @@ flowchart LR
   TRdep2 --> TRutils
 
   classDef dead stroke-dasharray: 5 5
-  class DSutils,MErefine,TRdep1,TRdep2 dead
+  class MErefine,TRdep1,TRdep2 dead
 ```
 
 **Layering is clean and strictly unidirectional:**
@@ -201,7 +207,7 @@ Modules with no inaccurate docstrings and an unremarkable status are omitted.
 
 | Module | bad | Status |
 |---|---|---|
-| `datasets/sdf_dataset.py` | 7 | prod |
+| `datasets/sdf_dataset.py` | 7 | prod — classes only since the §8.0 slice-A move (2026-08-22) |
 | `mesh/refine_mesh.py` | 6 | research — raises on its own defaults |
 | `reconstruct/main.py` | 5 | prod |
 | `mesh/main.py` | 5 | prod |
@@ -216,7 +222,8 @@ Modules with no inaccurate docstrings and an unremarkable status are omitted.
 | `train/train_deep_sdf_multi_head.py` | 0 | **supported, broken** |
 | `train/deprecated/train_deep_sdf_multi_surface_orig.py` | 0 | **dead → quarantine** |
 | `train/deprecated/train_deep_sdf_orig.py` | 0 | **dead after a 12-line port** |
-| `datasets/utils.py` | 0 | **dead (2-line TODO)** |
+| `datasets/utils.py` | 0 | prod — leaf helpers, received from `sdf_dataset.py` (§8.0, 2026-08-22) |
+| `datasets/mesh_sampling.py` | 0 | prod — the two reader pipelines, same move |
 | `_lr_migration.py` | 0 | prod (transitional — delete-when in its header) |
 
 **Coverage is inverted relative to risk**, and worse than the plan assumed: the four
@@ -284,7 +291,7 @@ The plan flagged one. There are six.
 | **Two `Sine` classes** | `deep_sdf.Sine` (w0 hardcoded, `__init__` misspelled as `__init`, never runs) and `modulated_periodic_activations.Sine` | Incompatible defaults; the star-import decides which one `NSM.models.Sine` means. |
 | **Two edge-ratio implementations** | `correspondence_metrics.triangle_health` and `triangle_metrics.py` | Divergent results from the same-named statistic. |
 | **`train_deep_sdf` defined twice** | `train/train_deep_sdf.py` and `train/train_deep_sdf_multi_head.py` | Same function name in two modules, second parameter is `model` in one and `models` in the other. Tests alias them to disambiguate. |
-| **`unpack_pts` / `unpack_numpy_data`** | `sdf_dataset.py` and duplicated verbatim in a testing script | Encodes the `.npz` cache layout in two places. |
+| **`unpack_pts` / `unpack_numpy_data`** | `datasets/utils.py` (moved from `sdf_dataset.py`, §8.0) and duplicated verbatim in a testing script | Encodes the `.npz` cache layout in two places. |
 | **Latent gradients scale with the query-point count** | `triplanar.UniqueConsecutive` and `triplanar.FastUnique` | Both custom backward passes amplify the latent gradient by N — measured 10.00× at N=10 and 1000.00× at N=1000, **identically on both paths**. It is a long-standing library convention, not a `FastUnique` regression: inside `reconstruct_latent` the reconstruction term reaches the latent through this ×N path while the L2/norm-penalty terms reach the same leaf directly, so an enabled `latent_reg_weight` is effectively divided by the number of query points (`l2reg_recon` is `false` in both shipped configs, so no shipped run is affected). Patching one class alone desynchronises the two decoder interfaces; changing the convention rescales every training run and needs a § History entry. |
 
 ---
