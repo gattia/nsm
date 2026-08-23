@@ -39,7 +39,6 @@ queue.
 | Cache key does not cover what changes cached content | **High** — silently wrong training data | [#19](https://github.com/gattia/nsm/issues/19) |
 | Sigma coordinate space depends on `scale_jointly` | **High** — ~100× over/under-sampling | [#3](https://github.com/gattia/nsm/issues/3) |
 | `padding` absent from checkpoints | **High** — silent wrong-scale sampling | [#26](https://github.com/gattia/nsm/issues/26) |
-| `include_surf_in_pts` appends a leaked loop variable | **High** | [#17](https://github.com/gattia/nsm/issues/17) |
 | Parameters accepted and never read | Medium — **read the traps first** | [#20](https://github.com/gattia/nsm/issues/20) |
 | `xyz_in_all` accepted and never read | Medium — silent no-op | [#20](https://github.com/gattia/nsm/issues/20) |
 | A `None` surface cannot build | Medium — advertised feature, unusable | [#67](https://github.com/gattia/nsm/issues/67) |
@@ -841,3 +840,56 @@ Check out a pre-fix commit, or reuse the pre-fix cache files (see above), if an 
 run must be reproduced exactly.
 
 *Pinned by:* `test_dataset_cache.TestUniformSamplingCube`.
+
+---
+
+## 7. `include_surf_in_pts` on the multi reader appended another surface's points
+
+| | |
+|---|---|
+| **Affects** | `read_meshes_get_sampled_pts` calls with `include_surf_in_pts=True` **and centering on** (`center_pts` or `norm_pts` True) and all-numeric sigmas — the only configuration of the flag that ran to completion. Via `reconstruct_mesh`, that is a multi-object reconstruction with `get_rand_pts=True` on a `scale_jointly=False` model. Aug 2023 (`5188417`) → Aug 2026 |
+| **Unaffected** | The flag off (its default; the dataset classes never pass it, so **no training data is affected**); both shipped ShapeMedKnee configs (`get_rand_pts_recon: false`); `scale_jointly=True` models (centering off → `UnboundLocalError`, always crashed); any `None` sigma (`ValueError`, always crashed); the single reader, whose append block was and is correct |
+| **Severity** | Silent — wrong points in the fitting set, with a plausible link to "enabling it never helped" |
+| **Fixed in** | `sdf-reader-internals`, Aug 2026 ([#17](https://github.com/gattia/nsm/issues/17)) |
+
+### What was wrong
+
+The per-surface sampling loop appended a name it never bound:
+
+```python
+for new_pts_idx, new_mesh_ in enumerate(new_meshes):   # binds new_pts_idx, new_mesh_
+    ...
+    if include_surf_in_pts is True:
+        rand_pts_ = np.concatenate([rand_pts_, new_pts_], axis=0)   # new_pts_ leaked
+```
+
+`new_pts_` held whatever an earlier section left in scope. On the only configuration
+that ran — centering on, numeric sigmas — that was the centering loop's leftover
+binding: the **last** surface's **pre-normalization** vertices, appended once per
+surface. Wrong surface and wrong coordinate frame: an option whose purpose is "give
+the fit this surface's own points to pull against" instead added copies of another
+surface's points lying far outside the normalized domain. Measured on a two-sphere
+subject (2026-08-23): 1,000 requested points came back as 1,580 — `1000 + 2×290`,
+the last surface's vertex count twice — where correct is 1,820 (`1000 + 530 + 290`).
+
+Every other configuration crashed before returning (`UnboundLocalError` with
+centering off; `ValueError` with any `None` sigma, where the leaked name held a
+list), so those paths affect no results. The fix appends `new_pts[new_pts_idx]` —
+each surface's own, normalized vertices — and makes the previously-crashing
+configurations work as documented.
+
+### How to tell whether one of your runs is affected
+
+Only reconstructions/fits, never training. Check the call: multi-surface, the flag on
+(via `reconstruct_mesh`: `get_rand_pts=True`), and a `scale_jointly=False` model. In a
+saved fitting set the signature is the point count: `n_random + n_surfaces × (last
+surface's vertex count)` instead of `n_random + Σ(each surface's vertex count)`.
+
+### Reproducing old behaviour
+
+No compatibility switch — a leaked loop variable, not a semantic option. Check out a
+pre-fix commit if an affected fit must be reproduced exactly.
+
+*Pinned by:* `test_sampled_pts_readers.TestMultiMeshReader::test_include_surf_in_pts_appends_each_surfaces_own_vertices`
+(and its uniform-cube sibling), strict-xfail pins of the correct behaviour until the
+fix, plain assertions since.

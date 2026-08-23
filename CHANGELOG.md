@@ -83,6 +83,16 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Fixed — affects results
 
+- **`include_surf_in_pts` on `read_meshes_get_sampled_pts` appends each surface's own
+  vertices** (#17). It appended a leaked loop variable instead: on the one
+  configuration that ran (centering on, numeric sigmas) that was the *last* surface's
+  *pre-normalization* vertices, once per surface — wrong surface, wrong frame; every
+  other configuration crashed (`UnboundLocalError` / `ValueError`) and now works as
+  documented. Training data is unaffected — the dataset classes never pass the flag —
+  and both shipped ShapeMedKnee configs leave `get_rand_pts_recon: false`. A
+  multi-object reconstruction with `get_rand_pts=True` on a `scale_jointly=False`
+  model now fits against different points. See `docs/KNOWN_ISSUES.md` § History §7.
+
 - **`get_optimizer` now passes `weight_decay` to `Adam`** (#47). It always passed it to
   `AdamW` and `schedule_free_AdamW`; the `Adam` branch silently dropped it, so every
   `optimizer: "Adam"` run trained with zero weight decay whatever the config said. An

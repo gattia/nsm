@@ -6,8 +6,8 @@ before their move to ``NSM/datasets/mesh_sampling.py`` (plan §8.0, slice A).
 Everything asserts behaviour as it stands today, including the warts the docstrings
 already record: the ``"pts"``-vs-``"xyz"`` key asymmetry, the bare-``Exception``-vs-
 ``ValueError`` raise asymmetry between the two readers, and the always-on deprecated
-flags. The one exception is ``include_surf_in_pts`` on the multi reader, which asserts
-the behaviour NSM *should* have and is ``xfail(strict=True)`` until #17 is fixed.
+flags. The ``include_surf_in_pts`` tests on the multi reader were ``xfail(strict=True)``
+pins of #17 until its fix landed; they now assert the fixed behaviour.
 
 Meshes are analytic spheres with known centers and radii, so the frame math
 (``center`` / ``scale`` under each ``mesh_to_scale`` / ``scale_all_meshes`` /
@@ -336,18 +336,14 @@ class TestMultiMeshReader:
             np.testing.assert_array_equal(again["sdf"][surf_idx], first["sdf"][surf_idx])
         assert not np.array_equal(other["pts"], first["pts"])
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#17: include_surf_in_pts appends a leaked loop variable, "
-        "not the surface's own points",
-    )
     def test_include_surf_in_pts_appends_the_vertices_on_the_uniform_cube_path_too(
         self, sphere_paths
     ):
         """
-        Today this configuration cannot even run: the leaked ``new_pts_`` is a *list*
-        on the uniform-cube path, so the append raises ``ValueError`` -- the second of
-        #17's three behaviours (executed determination, plan §8.0.B).
+        Before the #17 fix this configuration could not even run: the leaked
+        ``new_pts_`` was a *list* on the uniform-cube path, so the append raised
+        ``ValueError`` -- the second of #17's three behaviours (executed
+        determination, plan §8.0.B).
         """
         n_random = 10
         result = read_meshes_get_sampled_pts(
@@ -364,11 +360,6 @@ class TestMultiMeshReader:
         np.testing.assert_array_equal(result["pts"][n_random:end_of_surface_0], bone_verts)
         np.testing.assert_array_equal(result["pts"][end_of_surface_0 + n_random :], cart_verts)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#17: include_surf_in_pts appends a leaked loop variable, "
-        "not the surface's own points",
-    )
     def test_include_surf_in_pts_appends_each_surfaces_own_vertices(self, sphere_paths):
         n_random = 10
         result = read_meshes_get_sampled_pts(

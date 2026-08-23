@@ -512,7 +512,7 @@ def read_meshes_get_sampled_pts(
                     )
 
                 if include_surf_in_pts is True:
-                    rand_pts_ = np.concatenate([rand_pts_, new_pts_], axis=0)
+                    rand_pts_ = np.concatenate([rand_pts_, new_pts[new_pts_idx]], axis=0)
 
                 rand_pts.append(rand_pts_)
                 pts_surface.append(np.full(rand_pts_.shape[0], new_pts_idx, dtype=np.int64))
