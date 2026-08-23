@@ -336,7 +336,7 @@ Two things about that surface are load-bearing and undocumented:
 
    The same assumption is admitted in code one layer down (audit ruling, re-verified
    2026-08-22): when a fit has fewer ground-truth surfaces than the decoder has outputs,
-   `main.reconstruct_latent` silently `break`s out of the surface loop under an in-code
+   `latent_fit.reconstruct_latent` silently `break`s out of the surface loop under an in-code
    TODO that says outright "it assumes the first surface is the bone / only of interest".
    A deliberate, written-down design compromise, not a defect to file — it is recorded
    here because it is one more instance of the positional-surface-identity contract this

@@ -71,7 +71,7 @@ def read_mesh_get_sampled_pts(
             under ``"point_cloud"``. Defaults to False.
         fix_mesh (bool, optional): Whether to fix the mesh (using meshfix). Defaults to True.
         include_surf_in_pts (bool, optional): Append the surface vertices to the random
-            points, so ``"xyz"`` holds ``n_pts`` + n_vertices rows. Defaults to False.
+            points, so ``"pts"`` holds ``n_pts`` + n_vertices rows. Defaults to False.
         uniform_pts_buffer (float, optional): Expansion of the uniform sampling cube, as a
             fraction of its span; see get_buffered_cube_mins_maxs. Only used when sigma is
             None. Defaults to 0.0.
@@ -86,10 +86,11 @@ def read_mesh_get_sampled_pts(
           ``read_meshes_get_sampled_pts``'s per-surface layout.
         - ``"scale"``, ``"center"``: the normalization applied (1 and zeros when none).
         - ``"icp_transform"``: the registration transform, or None.
-        - With ``get_random=True``: sample coordinates under ``"xyz"`` (n, 3), signed
-          distances under ``"sdf"`` (n,), and ``"pts_surface"`` (n,) of zeros.
-        - With ``get_random=False``: the surface vertices under ``"pts"`` -- a
-          *different key* than the random path's ``"xyz"`` -- with ``"sdf"`` all zeros.
+        - With ``get_random=True``: sample coordinates under ``"pts"`` (n, 3), signed
+          distances under ``"sdf"`` (n,), and ``"pts_surface"`` (n,) of zeros. (The
+          random path's draw was keyed ``"xyz"`` until #15; the legacy key is gone.)
+        - With ``get_random=False``: the surface vertices under ``"pts"``, with
+          ``"sdf"`` all zeros.
 
     Notes:
         Unknown keyword arguments are swallowed silently, except the historical
@@ -190,7 +191,7 @@ def read_mesh_get_sampled_pts(
 
         rand_sdf = new_mesh.get_sdf_pts(pts=rand_pts, method="pcu")
 
-        results["xyz"] = rand_pts
+        results["pts"] = rand_pts
         results["sdf"] = rand_sdf
         results["pts_surface"] = np.zeros(rand_pts.shape[0], dtype=np.int64)
     else:
@@ -456,12 +457,14 @@ def read_meshes_get_sampled_pts(
     Returns:
         dict or None: None when any path does not exist. Otherwise:
 
-        - ``"pts"`` (n, 3): sample coordinates, all surfaces concatenated. (This
-          function's random path uses ``"pts"`` where the single-mesh one says
-          ``"xyz"``; callers probe both.)
+        - ``"pts"`` (n, 3): sample coordinates, all surfaces concatenated. The same key
+          as the single-mesh reader on every path (#15 unified them).
         - ``"sdf"``: list with one entry per surface -- each surface's signed distance
           to *all* n points, or None for a missing surface. With ``get_random=False``
-          the entries are 0 where the points came from that same surface.
+          the entries are 0 where the points came from that same surface. Signs come
+          from pcu's closest-point pseudonormal, so an open (clipped) mesh yields the
+          same coherent field as its capped counterpart -- beyond a planar cut reads
+          as outside, at the distance to the cut (``test_open_mesh_sdf``).
         - ``"pts_surface"`` (n,): which surface each point was drawn around, numbered
           by position in ``paths`` -- a missing surface leaves a gap in the numbering
           rather than renumbering those after it.

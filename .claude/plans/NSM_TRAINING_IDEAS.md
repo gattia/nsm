@@ -312,6 +312,58 @@ the #48 `Regress` seam fix (PR #73).
 
 ---
 
+## Idea 9 — Specifiable sampling composition for latent reconstruction
+
+**What.** Make the composition of the reconstruction fitting pool an explicit,
+per-surface specification — e.g. fractions or counts for *surface vertices*,
+*near-surface Gaussian draws at sigma*, and *uniform far-field draws* — instead of
+the accident it is today. Currently, with `get_rand_pts=True`, each surface's pool is
+`n_pts_random` random draws plus **all** of that surface's vertices
+(`include_surf_in_pts` is hardwired to `get_rand_pts`), and the per-step batch
+inherits that ratio in expectation: the on/off-surface mix is set by `n_pts_random`
+relative to whatever vertex count the mesh happens to have, and nothing controls it
+directly. Sigma only sets how far off the off-surface points sit.
+
+**Why.** Maintainer (2026-08-23, §8.0.C review discussion): the composition seems
+like it matters, and it has never been an experimental variable. Every historical
+"does random sampling help" run was confounded anyway — `n_pts_random` was dead
+(#16, History §9) and the multi-object appended points were another surface's
+vertices in the wrong frame (#17, History §7) — so the question is open, and
+composition is the natural axis for the rerun. A structural detail that shapes the
+design: every sampled point supervises **every** surface's SDF channel (each
+surface's distances are precomputed at all points), so "on-surface for bone" is
+simultaneously an off-surface constraint for cartilage; composition controls where
+points *concentrate*, not which channels they feed.
+
+**How.** Reader-level, reconstruction-only — no retrain. The pieces that exist:
+per-surface sigma is already a list and a `None` entry already draws uniformly from
+the buffered cube, so "near-surface vs far-field" needs only letting one surface
+contribute *two* draws. Missing pieces: a vertex-count control (subsample the
+appended vertices rather than always taking all of them; make `include_surf_in_pts`
+a count/fraction, not a hardwired bool), and — if per-step ratios should be exact
+rather than in-expectation — a `pts_type` label alongside `pts_surface` so
+`reconstruct_latent`'s balanced draw can stratify by type as well as surface. The
+femur clip is **not** a blocker for the far-field draws: pcu's pseudonormal sign
+gives an open clipped mesh the same coherent field as its capped counterpart, and
+training ran the same clip with the same `fix_mesh: False` — measured and pinned by
+`testing/NSM/datasets/test_open_mesh_sdf.py`.
+
+**Evaluation.** The deferred resampling experiment, now unconfounded (post-#15/#16/
+#17): on/off composition sweep × sigma sweep (informative band is |SDF| <
+`clamp_dist` = 0.1 in normalized units; the shipped 0.001–0.01 defaults hug the
+surface) against `get_rand_pts=False` vertices-only fits. Metrics: recon
+chamfer/ASSD plus `val_prediction_*` R². Watch #75 (per-step sample counts are
+memory-bound) if the sweep pushes `n_samples_latent_recon` up.
+
+**Cost / retrain.** None — reconstruction-side only. Interacts with #3 (sigma's
+coordinate space) and should land after or alongside its migration guard rather than
+adding new sigma semantics on top of ambiguous ones.
+
+**Status.** Idea — not started. Raised by the maintainer 2026-08-23 while reviewing
+the §8.0.C fixes (PR #74).
+
+---
+
 ## Related
 
 - `NSM_MESH_INTERPOLATION_IMPROVEMENTS.md` — inference-only numerical fixes;

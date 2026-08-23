@@ -4,10 +4,11 @@ Characterization tests for the two subject-level reader pipelines,
 before their move to ``NSM/datasets/mesh_sampling.py`` (plan §8.0, slice A).
 
 Everything asserts behaviour as it stands today, including the warts the docstrings
-already record: the ``"pts"``-vs-``"xyz"`` key asymmetry, the bare-``Exception``-vs-
-``ValueError`` raise asymmetry between the two readers, and the always-on deprecated
-flags. The ``include_surf_in_pts`` tests on the multi reader were ``xfail(strict=True)``
-pins of #17 until its fix landed; they now assert the fixed behaviour.
+already record: the bare-``Exception``-vs-``ValueError`` raise asymmetry between the two
+readers, and the always-on deprecated flags. The ``include_surf_in_pts`` tests on the
+multi reader were ``xfail(strict=True)`` pins of #17 until its fix landed, and the
+``"pts"``-vs-``"xyz"`` key asymmetry was pinned here until #15 unified the readers on
+``"pts"``; those now assert the fixed behaviour.
 
 Meshes are analytic spheres with known centers and radii, so the frame math
 (``center`` / ``scale`` under each ``mesh_to_scale`` / ``scale_all_meshes`` /
@@ -60,7 +61,7 @@ class TestSingleMeshReader:
         assert result is None
 
     def test_get_random_false_uses_the_pts_key_with_zero_sdf(self, sphere_paths):
-        """The random path stores coordinates under ``xyz``; this path under ``pts``."""
+        """``pts`` on this path too; ``xyz`` was only ever the random path's key."""
         result = read_mesh_get_sampled_pts(sphere_paths[0], get_random=False, fix_mesh=False)
         assert "pts" in result and "xyz" not in result
         assert np.all(result["sdf"] == 0)
@@ -81,9 +82,19 @@ class TestSingleMeshReader:
             sphere_paths[0], n_pts=n_random, sigma=0.1, include_surf_in_pts=True, fix_mesh=False
         )
         vertices = result["new_pts"][0]
-        assert result["xyz"].shape[0] == n_random + vertices.shape[0]
-        np.testing.assert_array_equal(result["xyz"][n_random:], vertices)
+        assert result["pts"].shape[0] == n_random + vertices.shape[0]
+        np.testing.assert_array_equal(result["pts"][n_random:], vertices)
         assert result["pts_surface"].shape[0] == n_random + vertices.shape[0]
+
+    def test_the_random_path_returns_its_draw_under_pts(self, sphere_paths):
+        """
+        Was the #15 strict xfail: ``pts`` is the one key. The legacy ``xyz`` briefly
+        survived as an alias, deleted before it ever shipped in a release (maintainer,
+        2026-08-23): an external reader gets a loud KeyError, not a silent second name.
+        """
+        result = read_mesh_get_sampled_pts(sphere_paths[0], n_pts=10, sigma=0.1, fix_mesh=False)
+        assert "pts" in result
+        assert "xyz" not in result
 
     def test_registering_without_a_mean_mesh_raises_a_bare_exception(self, sphere_paths):
         """The multi reader raises ValueError for the same mistake; pinned as-is."""

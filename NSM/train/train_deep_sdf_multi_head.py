@@ -143,7 +143,6 @@ def train_deep_sdf(config, models: tuple, sdf_dataset, use_wandb=False):
                     n_lr_updates=config["n_lr_updates_recon"],
                     lr_update_factor=config["lr_update_factor_recon"],
                     convergence_patience=config["convergence_patience_recon"],
-                    batch_size_latent_recon=config["batch_size_latent_recon"],
                     convergence=config["convergence_type_recon"],
                     sigma_rand_pts=config["sigma_rand_pts_recon"],
                     n_samples_latent_recon=config["n_samples_latent_recon"],

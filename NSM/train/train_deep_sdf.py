@@ -235,7 +235,6 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
                     # log_wandb
                     verbose=config["verbose"],
                     objects_per_decoder=config["objects_per_decoder"],
-                    batch_size_latent_recon=config["batch_size_latent_recon"],
                     get_rand_pts=config["get_rand_pts_recon"],
                     n_pts_random=config["n_pts_random_recon"],
                     sigma_rand_pts=config["sigma_rand_pts_recon"],
