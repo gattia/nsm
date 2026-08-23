@@ -75,8 +75,11 @@ class SDFSamples(torch.utils.data.Dataset):
         scale_method (str, optional): Method to scale the points. Defaults to 'max_rad'.
         scale_jointly (bool, optional): Whether to center and scale all subjects together
             after loading (norm_and_scale_all_meshes) instead of per subject; requires
-            center_pts=False and norm_pts=False. Works in either storage mode; the
-            shared frame is applied per batch in ``__getitem__``. Defaults to False.
+            center_pts=False and norm_pts=False. Works whether subjects are held in
+            memory (``store_data_in_memory=True``) or reloaded from the ``.npz`` cache
+            per batch (False): either way the stored data stays in the unscaled frame
+            and the shared frame is applied per batch in ``__getitem__``.
+            Defaults to False.
         joint_scale_buffer (float, optional): Margin added to the joint max radius when
             scale_jointly is True, so unseen subjects slightly larger than the training
             set still fit inside the model's domain. Defaults to 0.1.
