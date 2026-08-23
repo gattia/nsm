@@ -266,6 +266,14 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   in-repo callers each carried a defensive `np.copy(...)`; those are removed, since the
   copy now happens inside. A caller written without one is no longer silently corrupted.
 
+### Added
+
+- **`train_deep_sdf` returns its per-epoch history** (#28). One dict per trained epoch:
+  the wandb payload (validation metrics included on validation epochs) plus `epoch`,
+  per-param-group `lrs`/`targets`, and per-subject `latent_norms`. It used to return
+  `None`, so a caller without a wandb key could learn nothing about a run except by
+  reading checkpoints back off disk. The wandb payload itself is unchanged.
+
 ---
 
 ## v0.2.0

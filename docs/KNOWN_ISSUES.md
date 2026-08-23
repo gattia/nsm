@@ -46,7 +46,6 @@ queue.
 | `sample_difficulty_lx` shipped but unimplemented | Medium | [#18](https://github.com/gattia/nsm/issues/18) |
 | `enforce_minmax` clamps predictions | Medium — config semantics | *none — a docs/design call, see below* |
 | `Pool` deadlocks after an in-process build | Low — hangs, does not corrupt | [#25](https://github.com/gattia/nsm/issues/25) |
-| `train_deep_sdf` returns nothing | Low — blocks observability | [#28](https://github.com/gattia/nsm/issues/28) |
 
 ---
 
@@ -331,16 +330,6 @@ docs describe a target transform while the behaviour is a training-dynamics knob
 documentation-or-decision call, not a bug fix, so it has **no issue** — it belongs with the
 config work in `SCOPE.md` §2.2.
 *Pinned by:* `test_training_regression.TestClampedPredictionGradients`.
-
-### `train_deep_sdf` returns nothing
-
-`train_deep_sdf` ends in a bare `return`. `train_epoch` builds a full `log_dict` per epoch and
-`train_deep_sdf` forwards it only to `wandb`, so a caller without a wandb key can learn
-nothing about a run except by reading checkpoints back off disk. The regression harness has
-to wrap `train_epoch` to observe anything (`testing/NSM/regression/_harness.py`) — fixing
-this deletes that wrapper.
-
-*Fix:* [#28](https://github.com/gattia/nsm/issues/28).
 
 ### `grad_clip` clips the model only, never the latent codes
 

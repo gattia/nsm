@@ -355,13 +355,17 @@ class TestClampedPredictionGradients:
 
 
 class TestTrainerContract:
-    @pytest.mark.xfail(strict=True, reason="#28: train_deep_sdf returns nothing")
     def test_train_deep_sdf_returns_its_history(self, training_run):
         """
-        No loss history is observable from the public entry point, so ``run_training`` has
-        to wrap ``train_epoch`` to see anything. When this goes green that wrapper can go.
+        The public entry point returns what wandb would have seen (#28) — one entry per
+        epoch, carrying the log payload plus ``epoch``/``lrs``/``targets``/
+        ``latent_norms``. This is what lets ``run_training`` read the run instead of
+        wrapping ``train_epoch``.
         """
-        assert training_run["returned"] is not None
+        history = training_run["returned"]
+        assert [entry["epoch"] for entry in history] == list(range(1, N_EPOCHS + 1))
+        for entry in history:
+            assert {"loss", "l1_loss", "lrs", "targets", "latent_norms"} <= entry.keys()
 
     def test_mesh_names_are_carried_but_never_reach_the_model(self, training_run):
         """

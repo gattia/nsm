@@ -49,7 +49,20 @@ loss_l1 = torch.nn.L1Loss(reduction="none")
 
 
 def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
+    """
+    Train ``model`` against ``sdf_dataset`` and return the per-epoch history.
 
+    Returns one dict per trained epoch (``n_epochs - resume_epoch`` entries): the
+    epoch's wandb payload — ``train_epoch``'s ``log_dict``, plus the validation metrics
+    on validation epochs — with four keys the payload does not carry: ``epoch``,
+    ``lrs`` and ``targets`` (per param group, keyed by group ``name``, read after the
+    epoch so they are the rates it actually ran with), and ``latent_norms`` (one norm
+    per training subject). The wandb payload itself is unchanged by the extras.
+
+    The trained weights land in the caller's ``model`` (mutated in place) and in the
+    checkpoints under ``config["experiment_directory"]``; the latent embedding exists
+    only in the checkpoints and the history — it is constructed here and not returned.
+    """
     # add default params for backwards compatibility between
     # train_deep_sdf and train_deep_sdf_multi_surface.
     config.setdefault("objects_per_decoder", 1)
@@ -160,6 +173,8 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
 
         # load the latent vectors
         latent_vecs.load_state_dict(latent_checkpoint["latent_codes"])
+
+    history = []
 
     # profiler that runs if config['profiler'] is True, else a dummy profiler is used and should have no effect
     with get_profiler(config) as profiler:
@@ -279,15 +294,23 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
             if use_wandb is True:
                 wandb.log(log_dict, step=epoch - 1)
 
+            history.append(
+                {
+                    **log_dict,
+                    "epoch": epoch,
+                    # Read AFTER train_epoch: adjust_learning_rate() runs at its top, so
+                    # these are the rates the epoch actually ran with.
+                    "lrs": {group["name"]: group["lr"] for group in optimizer.param_groups},
+                    "targets": {group["name"]: group["target"] for group in optimizer.param_groups},
+                    "latent_norms": torch.norm(latent_vecs.weight.data, dim=1).tolist(),
+                }
+            )
+
             profiler.step()
 
             clear_gpu_cache(config["device"])
 
-    # KNOWN DEFECT, #28: train_epoch builds a full per-epoch log_dict and it goes
-    # only to wandb, so a caller without a wandb key can observe nothing about a run except
-    # by reading checkpoints back off disk. Returning the history would let
-    # testing/NSM/regression drop its train_epoch wrapper.
-    return
+    return history
 
 
 def train_epoch(
