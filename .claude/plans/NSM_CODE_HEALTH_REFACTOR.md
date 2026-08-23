@@ -6,15 +6,23 @@
 
 **Updated:** 2026-08-23 · **Status:** open
 
-- **Next:** the two #48 remnants (`norm_penalty_type='barrier'` NaN,
-  `Regress.add_latent` handed the result dict), both re-verified by execution
-  2026-08-23: barrier is NaN outside `[min,max]` while its *gradient* stays finite
-  and points **away** from the range below it; the `Regress` seam dies with
-  `TypeError` at the first validation epoch's `calc_r2` — after all its
-  reconstructions have run. Fix per the issue's decided bar: work or raise by
-  name; #48 closes when they land. After that: §8's remaining monoliths
-  (`train_deep_sdf.py`, `reconstruct/main.py`) have no slice statements yet;
-  class-side cache/build decomposition stays grouped with #19/#27.
+- **Next:** the #48 remnants are up as **draft PR #73** (closes #48 on merge);
+  maintainer reviews commit-by-commit, marks ready, admin-merges. After that:
+  §8's remaining monoliths (`train_deep_sdf.py`, `reconstruct/main.py`) have no
+  slice statements yet — `reconstruct/main.py` is the natural next target (this
+  branch just touched it, and #15/#16/#29 are filed against it); class-side
+  cache/build decomposition stays grouped with #19/#27.
+- **#48 remnants on branch `recon-option-values`, draft PR #73 (2026-08-23):**
+  `norm_penalty_type='barrier'` raises by name outside its `(min, max)` range
+  instead of NaN — pre-fix runs *completed*, with `nan` in every loss readout and
+  a finite gradient pushing the norm **away** from the range (verified by
+  execution; History §8, CHANGELOG); `get_mean_errors` hands `Regress.add_latent`
+  the fitted latent (detached/CPU/flat), not the result dict — born broken in
+  `2811d27` (Jul 2023), never worked, always crashed → no History entry.
+  Ride-alongs the work exposed: the docs-reference checker's `Regress` exemption
+  was dead and its comment false (the class is in this repo) — deleted; SCOPE
+  §2.5's "worth pinning down" question answered (never-worked, not
+  broken-after-the-paper). Suite 505 passed / 14 xfailed.
 - **Slice B landed (2026-08-23):** merged to `main` in PR #72 —
   `read_meshes_get_sampled_pts` orchestrates three private helpers
   (`_register_to_mean`, `_compute_shared_frame`, `_draw_surface_samples`); #17 and
