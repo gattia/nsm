@@ -6,12 +6,34 @@
 
 **Updated:** 2026-08-23 · **Status:** open
 
-- **Next:** the #48 remnants are up as **draft PR #73** (closes #48 on merge);
-  maintainer reviews commit-by-commit, marks ready, admin-merges. After that:
-  §8's remaining monoliths (`train_deep_sdf.py`, `reconstruct/main.py`) have no
-  slice statements yet — `reconstruct/main.py` is the natural next target (this
-  branch just touched it, and #15/#16/#29 are filed against it); class-side
+- **Next:** §8.0.C is complete on branch `recon-main-decomposition` as a draft PR
+  (closes #15, #16, #29 on merge); maintainer reviews commit-by-commit — one commit
+  per statement step — marks ready, admin-merges. After that: `train_deep_sdf.py`
+  is the last §8 monolith with no slice statement (#28/#42/#49/#52/#59 are filed
+  against it); the evaluation-module split out of `reconstruct/main.py` was
+  deliberately deferred to ride with #5 (wandb-optional), and class-side
   cache/build decomposition stays grouped with #19/#27.
+- **§8.0.C landed on branch (2026-08-23):** statement → characterization → #15 →
+  #16 → class sweep → #29 → split → this update, suite green and lint clean at
+  every commit. #15: readers unified on `"pts"` (`"xyz"` stays as a transitional
+  alias, delete-when at the write site); the two dataset-class probes collapsed,
+  their dead `"gt_sdf"` fallback with them. #16: honoured (History §9) — the
+  memory said delete, but the measured blast radius is only never-shipped
+  multi-object sampled runs and the intent is config-plumbed; the harness's
+  sampled tests shrank ~1000× and the suite dropped ~11s. #29: raises
+  `NoZeroLevelSetError` by name; `get_mean_errors` catches and scores NaN
+  (History §10). The split: `latent_fit.py` + `wandb_logging.py`, `main.py` keeps
+  `reconstruct_mesh` + evaluation + a permanent re-import block, net +67 of the
+  +80 budget, both namespaces frozen by test. **Diverged from the statement:**
+  the sweep had to reach all four trainer call sites and the default-config
+  generator (the statement named only `train_deep_sdf.py:238`) — the plumbing was
+  wider than enumerated; #29's planned NaN-latent-row into `Regress` was replaced
+  by skip-plus-NaN-r² because sklearn refuses NaN design rows and degeneracy is
+  decoder-level, so the failure is all-or-nothing; the three Open table rows
+  retired together in the #29 commit rather than one per fix commit; a
+  single-object end-to-end test rode with #16 (the branch was never runnable
+  before #15+#16, so its first execution belonged with the fix that made it
+  cheap).
 - **#48 remnants on branch `recon-option-values`, draft PR #73 (2026-08-23):**
   `norm_penalty_type='barrier'` raises by name outside its `(min, max)` range
   instead of NaN — pre-fix runs *completed*, with `nan` in every loss readout and
@@ -181,6 +203,15 @@
     any `None` sigma always crashed with `ValueError`. Silent corruption was real but
     confined to multi-object fits on `scale_jointly=False` models; training data was
     never touched because the dataset classes never pass the flag.
+  - **Test module basenames must be unique across `testing/`.** The tree has no
+    `__init__.py` files, so pytest imports test modules flat: a second
+    `test_import_compat.py` in another directory fails collection with "import file
+    mismatch". Cost one amended commit in §8.0.C.
+  - **`Regress` cannot take an honest-NaN latent row** — sklearn's
+    `LinearRegression.fit` refuses NaN design matrices — so #29's "score the failed
+    subject NaN" had to mean *skip the regression and report NaN r²*, not feed NaN
+    rows through it. Safe only because degeneracy is decoder-level: every subject
+    fails together, so there is no partial-alignment case to handle.
   - **#69's "two halves" were one defect, and the fix was net-negative.** The KeyError
     and the missing buffer both came from the in-memory branch reimplementing what the
     disk branch already did. Unifying on the disk branch's semantics (compute the frame,
