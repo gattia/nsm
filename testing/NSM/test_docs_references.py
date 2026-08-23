@@ -38,7 +38,6 @@ FILE_SUFFIXES = {"py", "toml", "yml", "yaml", "json", "md", "cfg", "txt", "in"}
 # legitimately mention that are not NSM classes; adding to this set is a deliberate act.
 NOT_NSM_CLASSES = {
     "NSM",  # the package itself: `NSM.datasets`, `NSM.__version__` are paths, not symbols
-    "Regress",  # lives in the downstream consumer, not in this repo
     "Mesh",  # pymskt
 }
 CAMEL = re.compile(r"^[A-Z][A-Za-z0-9]*$")
