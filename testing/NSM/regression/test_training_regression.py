@@ -441,20 +441,18 @@ class TestResumeContract:
 
 class TestScheduleFreeRuns:
     """
-    #42: the eval warm-up hands the decoder the raw dataloader item (``model(batch)``
-    where ``batch`` is ``(sdf_data, indices)``), so every schedule_free run dies with a
-    ``TypeError`` at its first checkpoint or validation epoch — which every run reaches.
+    The eval warm-up must unpack the batch the way ``train_epoch`` does. It used to hand
+    the decoder the raw dataloader item (``model(batch)`` where ``batch`` is
+    ``(sdf_data, indices)``), so every schedule_free run died with a ``TypeError`` at its
+    first checkpoint or validation epoch — which every run reaches (#42).
 
-    ``schedulefree`` is not installed in ``nsm-dev``, and the crash is in the trainer's
+    ``schedulefree`` is not installed in ``nsm-dev``, and the defect was in the trainer's
     warm-up, not in schedulefree — so the optimizer is stubbed: AdamW plus the
     ``train()``/``eval()`` mode switches, the entire interface the trainer uses. What the
     stub does not exercise is schedulefree's numerics, which ``docs/KNOWN_ISSUES.md`` §1
     already records as needing retuning.
     """
 
-    @pytest.mark.xfail(
-        strict=True, reason="#42: the schedule_free eval warm-up forwards a raw dataloader item"
-    )
     def test_a_schedule_free_run_survives_its_first_checkpoint_epoch(
         self, training_dataset, tmp_path_factory, monkeypatch
     ):

@@ -159,6 +159,14 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Fixed
 
+- **schedule_free training runs survive their checkpoint and validation epochs** (#42).
+  The eval warm-up handed the decoder the raw dataloader item, so every
+  `schedule_free_*` run died with `TypeError` in the decoder's forward at its first
+  checkpoint or validation epoch — which every run reaches. The warm-up now unpacks the
+  batch the way `train_epoch` does (latent lookup, variational sampling, `batch_split`
+  chunking included). Always crashed, so no results are affected and there is no
+  History entry.
+
 - **`predict_val_variables` runs to completion** (#48). `get_mean_errors` handed
   `Regress.add_latent` the whole result dict rather than the fitted latent, so a run
   that enabled the latent-to-factor validator died with `TypeError` in `calc_r2` at its

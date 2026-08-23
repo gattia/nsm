@@ -188,13 +188,30 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
             if val_epoch or checkpoint_epoch:
                 # if validation or checkpoint and
                 # using schedule_free optimizer,
-                # then set the optimizer to eval mode
+                # then set the optimizer to eval mode, then recalibrate normalization-layer
+                # statistics at the averaged weights by running real forward passes:
+                # https://github.com/facebookresearch/schedule_free/issues/44
                 if "schedule_free" in config["optimizer"]:
                     optimizer.eval()
-                    # raise Exception('HOW TO IMPLEMENT BATCH NORM FIX? https://github.com/facebookresearch/schedule_free/issues/44')
                     with torch.no_grad():
-                        for batch in itertools.islice(data_loader, 50):
-                            model(batch)
+                        for sdf_data, indices in itertools.islice(data_loader, 50):
+                            xyz = sdf_data["xyz"].to(config["device"]).reshape(-1, 3)
+                            indices = (
+                                indices.to(config["device"])
+                                .unsqueeze(-1)
+                                .repeat(1, config["samples_per_object_per_batch"])
+                                .view(-1)
+                            )
+                            xyz = torch.chunk(xyz, config["batch_split"])
+                            indices = torch.chunk(indices, config["batch_split"])
+                            for split_idx in range(config["batch_split"]):
+                                batch_vecs = latent_vecs(indices[split_idx])
+                                if "variational" in config and config["variational"] is True:
+                                    mu = batch_vecs[:, : config["latent_size"]]
+                                    logvar = batch_vecs[:, config["latent_size"] :]
+                                    std = torch.exp(0.5 * logvar)
+                                    batch_vecs = std * torch.randn_like(std) + mu
+                                model(torch.cat([batch_vecs, xyz[split_idx]], dim=1), epoch=epoch)
 
             if checkpoint_epoch:
                 save_model_params(config=config, list_mesh_paths=sdf_dataset.list_mesh_paths)
