@@ -4,23 +4,32 @@
 
 ## State
 
-**Updated:** 2026-08-22 · **Status:** open
+**Updated:** 2026-08-23 · **Status:** open
 
-- **Next:** maintainer reviews the `sdf-dataset-decomposition` branch (5 commits,
-  §8.0 slice A — plan statement, characterization tests, a docstring correction,
-  the move, this State update), then PR + admin merge. After that: slice B, the
-  reader-internals split (registration / frame computation / per-surface draws
-  inside `mesh_sampling.py`), which needs its own §8.0-style statement before any
-  code — #69 (in-memory joint scaling, pinned strict-xfail), #3 (sigma coordinate
-  space) and #17 (include_surf_in_pts, now pinned strict-xfail in
-  `test_sampled_pts_readers.py`) ride along there. Still open from #48: the
-  `barrier` norm-penalty NaN and `Regress.add_latent`.
-- **Slice A is on the branch, unreviewed (2026-08-22):** `sdf_dataset.py` is 1,744
-  lines (classes + permanent re-import block), the 13 leaf helpers live in
-  `NSM/datasets/utils.py`, the two readers in `NSM/datasets/mesh_sampling.py` —
-  verbatim moves, +49 lines net against the ~70 budget, full suite green with
-  identical collection (472 nodes). New tests: `test_dataset_helpers.py`,
-  `test_sampled_pts_readers.py` (characterization, one #17 strict-xfail),
+- **Next:** maintainer reviews the `sdf-reader-internals` branch (6 commits, §8.0.B
+  slice B — statement, characterization additions, #17 fix, #69 fix, the split,
+  this State update), then PR closing **#17 and #69** + admin merge. After that:
+  §8's remaining monoliths (`train_deep_sdf.py`, `reconstruct/main.py`) have no
+  slice statements yet; class-side cache/build decomposition stays grouped with
+  #19/#27; still open from #48: the `barrier` norm-penalty NaN and
+  `Regress.add_latent`.
+- **Slice B is on the branch, unreviewed (2026-08-23):** `read_meshes_get_sampled_pts`
+  orchestrates three private helpers (`_register_to_mean`, `_compute_shared_frame`,
+  `_draw_surface_samples`), split commit +64 net against the ~80 budget, suite
+  green with identical counts before/after the split (498 passed, 14 xfailed).
+  Rode along per the statement: **#17 fixed** (appends `new_pts[new_pts_idx]`;
+  both strict-xfails now plain passes; `KNOWN_ISSUES` § History **§7** + CHANGELOG
+  record the one affected run class — multi-object fits with `get_rand_pts=True`
+  on `scale_jointly=False` models, never training data) and **#69 fixed** by
+  unification (both storage modes compute the shared frame, `__getitem__` applies
+  it per batch; the in-memory mutate-in-place branch deleted, net −48; disk
+  numerics unchanged, regression baselines unmoved). #3 got its structural
+  precondition only: sigma's frame-dependence is stated in
+  `_draw_surface_samples`' docstring, the single site where sigma is consumed.
+- **Slice A landed (2026-08-22):** merged to `main` in PR #71 — `sdf_dataset.py`
+  holds the classes + permanent re-import block, the 13 leaf helpers in
+  `NSM/datasets/utils.py`, the two readers in `NSM/datasets/mesh_sampling.py`;
+  characterization in `test_dataset_helpers.py` / `test_sampled_pts_readers.py` /
   `test_import_compat.py` (frozen name list on both import paths).
   Characterization surprise, pinned and docstring-corrected: `unpack_numpy_data`
   accepts a dict only with `list_additional_keys=[]` — the default reads
@@ -159,6 +168,18 @@
     Documenting a function honestly means executing it — the branch had survived #22's
     in-memory fixes and #43's `joint_scale_buffer` work untouched because neither had a
     reason to run that exact combination.
+  - **#17's blast radius was narrower than the issue feared.** The executed determination
+    (§8.0.B) showed only *one* configuration of `include_surf_in_pts` ever returned
+    results — centering on, numeric sigmas; the production-shaped configuration
+    (`scale_jointly=True` → centering off) always crashed with `UnboundLocalError`, and
+    any `None` sigma always crashed with `ValueError`. Silent corruption was real but
+    confined to multi-object fits on `scale_jointly=False` models; training data was
+    never touched because the dataset classes never pass the flag.
+  - **#69's "two halves" were one defect, and the fix was net-negative.** The KeyError
+    and the missing buffer both came from the in-memory branch reimplementing what the
+    disk branch already did. Unifying on the disk branch's semantics (compute the frame,
+    let `__getitem__` apply it) deleted the entire mutate-in-place branch — −48 lines —
+    instead of repairing it.
 
 ---
 
