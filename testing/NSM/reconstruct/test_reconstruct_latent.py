@@ -5,6 +5,7 @@ import pytest
 import torch
 
 from NSM.reconstruct import reconstruct_latent
+from NSM.reconstruct.main import latent_norm_penalty
 
 
 # Mock decoder class. Accept either the legacy concatenated-positional
@@ -147,4 +148,42 @@ def test_second_decoder_reads_its_own_ground_truth():
     assert base != surfaces_2_3_changed
 
 
-# Additional tests can be added for different configurations and edge cases
+class TestBarrierNormPenalty:
+    """#48: ``norm_penalty_type='barrier'`` returned NaN for any latent norm outside
+    ``[min, max]`` — the state at initialization for typical ranges (std 0.01 puts a
+    256-dim latent at norm ~0.16) — while its gradient stayed finite and pushed the
+    norm *away* from the range (below it, d/dnorm of -log(norm - min + eps) is
+    positive for a negative argument). Outside the range it now raises by name.
+    """
+
+    def test_raises_below_range(self):
+        latent = torch.ones(1, 256) * 0.01  # norm ~0.16: the initialization state
+        with pytest.raises(ValueError, match="barrier"):
+            latent_norm_penalty(latent, (0.5, 1.0), penalty_type="barrier")
+
+    def test_raises_above_range(self):
+        latent = torch.ones(1, 16)  # norm 4.0
+        with pytest.raises(ValueError, match="barrier"):
+            latent_norm_penalty(latent, (0.5, 1.0), penalty_type="barrier")
+
+    def test_finite_inside_range(self):
+        latent = torch.ones(1, 16) * (0.75 / 4.0)  # norm 0.75
+        penalty = latent_norm_penalty(latent, (0.5, 1.0), penalty_type="barrier")
+        assert torch.isfinite(penalty)
+
+    def test_reconstruct_latent_surfaces_the_error(self, setup_data):
+        """The default init (std 0.01) starts below any plausible range, so an
+        enabled barrier fails at step 0 with the named error, not a NaN loss."""
+        decoders, xyz, sdf_gt, pts_surface = setup_data
+        with pytest.raises(ValueError, match="barrier"):
+            reconstruct_latent(
+                decoders=decoders,
+                num_iterations=5,
+                latent_size=8,
+                xyz=xyz,
+                sdf_gt=sdf_gt,
+                pts_surface=pts_surface,
+                device="cpu",
+                latent_norm=(0.5, 1.0),
+                norm_penalty_type="barrier",
+            )
