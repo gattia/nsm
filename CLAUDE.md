@@ -51,7 +51,10 @@ Operational facts that are not derivable from the code, and that cost time to re
 - **`main` is protected** — no direct pushes. One approving review and four passing status
   checks. Admins are exempt, deliberately: GitHub forbids approving your own pull request,
   and in a single-maintainer repo that would otherwise be a permanent lock. **An admin merge
-  is the normal path here, not a bypass of last resort.**
+  is the normal path here, not a bypass of last resort.** When merging the base PR of a
+  stack, delete its branch in the same action: GitHub only retargets stacked PRs to main
+  when the base branch is deleted. #78 merged into its surviving stale base instead of
+  main — silently, and #79 had to re-land it.
 - **Fold related commits into one PR.** A docs-only change or a State-block update rides
   along with the work that caused it.
 - **Reading files in tests needs `encoding="utf-8"` explicitly.** Something in the suite
@@ -60,8 +63,13 @@ Operational facts that are not derivable from the code, and that cost time to re
 - **Nothing goes to the public tracker without the maintainer approving the exact text.**
   Draft issues, closes and comments as a reviewable list (in a plan or on a branch); the
   maintainer files, or says "file these". PRs that close issues on merge are fine.
-- **For code changes, the maintainer reviews the edits before they are committed.**
-  Work in the tree, present the diff, commit after approval — one commit per concern.
+- **For code changes, commit as you go — one commit per concern — and the maintainer
+  reviews each commit afterward.** Work on a branch; never one bulk diff carved into
+  commits after review (the pre-2026-08-22 flow, replaced because splitting a reviewed
+  diff into commits afterwards was the painful part). Branch history stays mutable
+  until merge: feedback on a commit is applied by rewriting that commit in place and
+  force-pushing (`--force-with-lease`) — never by stacking "address review" commits
+  on top, which would break the one-commit-per-concern review unit.
 - **Picking up mid-initiative:** read the relevant plan's **State** block
   (`.claude/plans/`) and do its **Next**. That block is the only handoff mechanism —
   do not write handoff files (see § Documents and work).
