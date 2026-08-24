@@ -35,7 +35,8 @@
   `tune_reconstruction` + `compute_correlation_coefficient` deletion to exactly
   this pass, so an amendment (committed before the split) deleted them instead
   (CHANGELOG Breaking; frozen namespace lists narrowed by two with the ruling
-  cited in place; raise sites nine → eight); the histogram-present pin fakes
+  cited in place; raise sites nine → eight; the tuning *intent* is parked as
+  `NSM_TRAINING_IDEAS.md` Idea 12 — maintainer, 2026-08-24); the histogram-present pin fakes
   `reconstruct_mesh` with clean metric values rather than using the #29
   degenerate fixture — NaN metrics make `wandb.Histogram` raise `ValueError`
   and yield `None` even with wandb installed, so the degenerate path cannot pin

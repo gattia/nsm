@@ -2,7 +2,7 @@
 
 ## State
 
-**Updated:** 2026-08-23 · **Status:** open
+**Updated:** 2026-08-24 · **Status:** open
 
 > **This is the ideas file.** Per `CLAUDE.md` § Documents and work, new training ideas are
 > appended here rather than given their own plan. An idea graduates to its own plan only
@@ -14,7 +14,9 @@
   waits on it. Idea 6 gained a measurement question with downstream stakes the same
   day: is scale leaking into the shipped distal-femur latents, and how does the
   scaling choice move the severity task? Ideas 10 (surface-residual training metric)
-  and 11 (hyperparameter re-sweep) added 2026-08-23. Idea 3 (test the Eikonal loss)
+  and 11 (hyperparameter re-sweep) added 2026-08-23. Idea 12 (recon-hyperparameter
+  sweep entry point; inference-side, no retrain) added 2026-08-24, parked by
+  §8.0.E's deletion of `tune_reconstruction`. Idea 3 (test the Eikonal loss)
   keeps its live dependency — `NSM_CODE_HEALTH_REFACTOR.md` §8.2 found three
   independent failures and gated the loss behind `NotImplementedError`.
 - **Blocked on:** nothing. Each entry is independent and can be picked up on its own.
@@ -470,6 +472,42 @@ list by construction. Sweep infrastructure (wandb sweeps or a driver script) is 
 prerequisite decision.
 
 **Status.** Idea — not started. Raised by the maintainer 2026-08-23.
+
+---
+
+## Idea 12 — A reconstruction-hyperparameter sweep entry point, on the shared validation mapping
+
+**What.** A supported way to tune reconstruction hyperparameters (latent-fit lr,
+`num_iterations`, `latent_reg_weight`, convergence settings, sampling composition —
+Idea 9's knobs included): a thin driver that maps a config to `get_mean_errors`
+kwargs, reduces the returned metric dict to a scalar objective (e.g. mean
+chamfer/ASSD over held-out subjects), and reports it to an external search tool
+(wandb sweep, optuna, plain grid) — one run per config.
+
+**Why.** The fitted reconstruction is what the consumer sees (kneepipeline →
+BScore), and its hyperparameters have never been swept independently of training's.
+The previous vehicle, `tune_reconstruction`, was deleted by §8.0.E's pass over
+`reconstruct/main.py` (SCOPE §2 dead ruling; CHANGELOG Unreleased § Breaking) —
+zero callers ever, 22 of its 27 config keys absent from the shipped default, a
+second drifting copy of the config→`get_mean_errors` mapping
+(`register_similarity` hardcoded), the metric dict discarded (returned `None`),
+and wandb plumbing that inits one run per *subject*, the wrong shape for a sweep.
+The capability is worth having; that adapter was not it.
+
+**How / notes.** Three pieces, none built until someone commits: (1) extract
+`_run_validation`'s config→`get_mean_errors` kwarg block into a shared helper so
+the trainer and the tuner drive one mapping — at need, not before; (2) the
+objective is `get_mean_errors`' return value reduced to a scalar — since #28/#29
+the library returns honest values (NaN on degenerate decoders), so no side-channel
+logging is needed; (3) the search loop lives outside NSM, in the driver script.
+Post-#5, wandb stays optional: only the driver asks for it.
+
+**Cost / retrain.** None — inference-side tooling, no retraining. Roughly a 20-line
+driver plus the mapping extraction. (Unlike most entries here, this is *not* an
+upstream retraining-required change.)
+
+**Status.** Idea — not started. Parked 2026-08-24 when §8.0.E deleted
+`tune_reconstruction` (PR #78), so the deletion does not silently drop the intent.
 
 ---
 
