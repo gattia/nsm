@@ -469,48 +469,6 @@ def reconstruct_mesh(
         return meshes
 
 
-def tune_reconstruction(model, config, use_wandb=True):
-    """
-    Tune reconstruction parameters using wandb for logging.
-    """
-    if use_wandb and wandb is None:
-        raise ImportError("use_wandb=True requires wandb, which is not installed")
-    if use_wandb is True:
-        wandb.login(key=os.environ["WANDB_KEY"])
-
-    get_mean_errors(
-        mesh_paths=config["mesh_paths"],
-        decoders=model,
-        num_iterations=config["num_iterations"],
-        register_similarity=True,
-        latent_size=config["latent_size"],
-        lr=config["lr"],
-        loss_weight=config["loss_weight"],
-        loss_type=config["loss_type"],
-        l2reg=config["l2reg"],
-        latent_init_std=config["latent_init_std"],
-        latent_init_mean=config["latent_init_mean"],
-        clamp_dist=config["clamp_dist"],
-        latent_reg_weight=config["latent_reg_weight"],
-        n_lr_updates=config["n_lr_updates"],
-        lr_update_factor=config["lr_update_factor"],
-        calc_symmetric_chamfer=config["chamfer"],
-        calc_assd=config["assd"],
-        convergence=config["convergence"],
-        convergence_patience=config["convergence_patience"],
-        log_wandb=use_wandb,
-        verbose=config["verbose"],
-        objects_per_decoder=config["objects_per_decoder"],
-        get_rand_pts=config["get_rand_pts_recon"],
-        n_pts_random=config["n_pts_random_recon"],
-        sigma_rand_pts=config["sigma_rand_pts_recon"],
-        n_samples_latent_recon=config["n_samples_latent_recon"],
-        difficulty_weight_recon=config["difficulty_weight_recon"],
-        chamfer_norm=config["chamfer_norm"],
-        config=config,
-    )
-
-
 def get_mean_errors(
     mesh_paths,
     decoders,
@@ -729,12 +687,3 @@ def get_mean_errors(
             )
 
     return loss_
-
-
-def compute_correlation_coefficient(x, y):
-    """
-    Compute correlation coefficient between x and y.
-    """
-    x = np.array(x)
-    y = np.array(y)
-    return np.corrcoef(x, y)[0, 1]

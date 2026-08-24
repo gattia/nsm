@@ -111,11 +111,6 @@ class TestExplicitRequestsRaiseWithoutWandb:
                 mesh_paths=["a.vtk"], decoders=None, latent_size=4, log_wandb=True
             )
 
-    def test_tune_reconstruction_use_wandb(self, monkeypatch):
-        self._absent(monkeypatch, recon_main.tune_reconstruction)
-        with pytest.raises(ImportError, match="wandb"):
-            recon_main.tune_reconstruction(model=None, config={}, use_wandb=True)
-
     def test_reconstruct_latent_log_wandb(self, monkeypatch):
         self._absent(monkeypatch, recon_main.reconstruct_latent)
         with pytest.raises(ImportError, match="wandb"):

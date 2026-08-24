@@ -293,9 +293,12 @@ place so its removal happens in one reviewed pass over its module, not as a driv
 | Symbol | Evidence (re-run 2026-08-22) | Delete with |
 |---|---|---|
 | `utils.compute_assd` (reconstruct) | Its only import is commented out (`recon_evaluation` imports `compute_chamfer  # , compute_assd`); the live ASSD path is pymskt's `get_assd_mesh` in `recon_evaluation.compute_recon_loss` | the #20 cleanup of `reconstruct/utils.py` |
-| `main.tune_reconstruction` (reconstruct) | Zero callers; reads 27 config keys of which 22 are absent from the shipped default, so no shipped config can drive it | Phase 4 decomposition of `reconstruct/main.py` |
-| `main.compute_correlation_coefficient` (reconstruct) | A four-line `np.corrcoef` wrapper, zero callers | Phase 4 decomposition of `reconstruct/main.py` |
 | `losses.l1_loss`, `losses.l2_loss` | One-line re-exports of torch's functional l1/mse losses, labelled "legacy aliases"; zero callers | the eikonal repair's pass over `losses.py` (plan §8.2) |
+
+Two rows retired 2026-08-24: `tune_reconstruction` and
+`compute_correlation_coefficient` were deleted by their deferred-to pass — §8.0.E's
+work over `reconstruct/main.py` (branch `wandb-optional`; CHANGELOG Unreleased
+§ Breaking), zero callers re-verified at deletion.
 
 **Ruled kept despite zero callers:**
 

@@ -30,6 +30,15 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **`tune_reconstruction` and `compute_correlation_coefficient` are deleted**
+  (`docs/SCOPE.md` §2's dead ruling, disposition 2026-08-22, executed by the §8.0.E
+  pass over `reconstruct/main.py`). Zero callers, re-verified at deletion:
+  `tune_reconstruction` read 27 config keys of which 22 are absent from the shipped
+  default, so no shipped config could ever drive it; `compute_correlation_coefficient`
+  was a four-line `np.corrcoef` wrapper. Both were importable from `NSM.reconstruct`
+  and `NSM.reconstruct.main`; an import now fails loudly. Call `get_mean_errors` /
+  `np.corrcoef` directly. **No numerical output changes.**
+
 - **`read_mesh_get_sampled_pts` returns its random draw under `"pts"` — the `"xyz"` key
   is gone** (#15). The two readers disagreed on the key, so every consumer that read
   `"pts"` unconditionally — `reconstruct_mesh`'s single-object branch included — crashed
