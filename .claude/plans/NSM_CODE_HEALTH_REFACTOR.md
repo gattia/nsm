@@ -1138,6 +1138,21 @@ move, `main.py` holds `reconstruct_mesh` + `NoZeroLevelSetError` + the re-import
 surface: §8's `reconstruct/main.py` bullet (latent optimization / mesh generation /
 evaluation) is complete.
 
+**Amendment (2026-08-24, caught before the split commit):** the docs-reference
+checker turned the trio move red, and what it surfaced changes the split. SCOPE §2's
+dead table (maintainer-approved disposition, 2026-08-22) rules `tune_reconstruction`
+and `compute_correlation_coefficient` **dead**, deletion deferred to exactly this
+pass ("Phase 4 decomposition of `reconstruct/main.py`"). Moving them would have made
+dead code look load-bearing in a fresh module and left the ruling's venue pointing at
+a completed event. So both are **deleted** per the standing ruling, as their own
+commit between the #5 fix and the split: CHANGELOG Breaking; the frozen namespace
+lists narrow by two names (the deliberate, changelogged decision the freeze exists to
+force); SCOPE's two table rows retire with a pointer. Zero callers re-verified
+2026-08-24 — the only references anywhere were the two defs, the frozen lists, this
+branch's own `tune_reconstruction` raise-site test (deleted with it; raise sites nine
+→ eight), and the SCOPE rows. The split then moves `get_mean_errors` **alone**, and
+SCOPE's `main.get_mean_errors` citation moves with it.
+
 **Deferred out of this slice, deliberately:** packaging (`dependencies = []` is
 repo-wide, not wandb's; declaring extras is its own decision), #58
 (`logging.basicConfig`), S3 beyond its import line (#35), multi_head beyond its
