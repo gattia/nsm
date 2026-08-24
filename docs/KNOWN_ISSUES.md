@@ -36,7 +36,7 @@ queue.
 
 | Defect | Severity | Issue |
 |---|---|---|
-| Cache key does not cover what changes cached content | **High** — silently wrong training data | [#19](https://github.com/gattia/nsm/issues/19) |
+| `subsample`'s index padding is baked into cached files | Medium — batch balance drifts after a `subsample` change | [#19](https://github.com/gattia/nsm/issues/19) |
 | Sigma coordinate space depends on `scale_jointly` | **High** — ~100× over/under-sampling | [#3](https://github.com/gattia/nsm/issues/3) |
 | `padding` absent from checkpoints | **High** — silent wrong-scale sampling | [#26](https://github.com/gattia/nsm/issues/26) |
 | Parameters accepted and never read | Medium — **read the traps first** | [#20](https://github.com/gattia/nsm/issues/20) |
@@ -51,60 +51,27 @@ queue.
 
 ## `datasets/sdf_dataset.py`
 
-### Cache key omits parameters that change what is cached
+### `subsample`'s index padding is baked into cached files
 
-`MultiSurfaceSDFSamples.get_hash_params` does not include `mesh_to_scale`, `uniform_pts_buffer`
-or `subsample`, all of which change what gets written. Two runs differing only in one share an
-`md5`, and with `load_cache=True` — what both shipped configs use — the second silently trains
-on the first's data.
+`sdf_pos_neg_idx` repeats (pads) the pos/neg index arrays far enough for the `subsample`
+in force when a subject is built, and those padded arrays are what `save_data_to_cache`
+writes. `subsample` is deliberately not in the cache key — batch size is a serving
+parameter, and forcing a full resample when it changes would be wrong in the other
+direction — so reloading a cache with a larger `subsample` draws from under-padded
+arrays: `__getitem__` takes what there is and tops the batch up with uniform random
+points, and the `equal_pos_neg=True` guarantee quietly stops holding.
 
-Not equally severe: `mesh_to_scale` invalidates **every** array (it decides which surface
-drives centering and normalization, so the two runs are in different coordinate frames);
-`uniform_pts_buffer` moves the points; `subsample` touches only the index arrays. Fix
-`mesh_to_scale` first.
+**Measured:** 1.6× interior under-representation on the small surface (interior fraction
+0.20 against a fresh 0.32) once the reloaded `subsample` exceeds the cached point count;
+in a real dataset the small surface is the cartilage. The rest of #19 — parameters and
+mesh identity missing from the key entirely — is fixed, see § History 13.
 
-**Measured.** One subject cached at `subsample=64` and reloaded at `512`: the small
-surface's interior fraction in a batch fell 0.258 → 0.059, a **4.4× under-representation**
-of interior samples, with `equal_pos_neg=True` set throughout. `sdf_pos_neg_idx` sizes the
-repeated index arrays for the `subsample` in force when the cache was written
-(`MultiSurfaceSDFSamples.sdf_pos_neg_idx`); reload with a larger one and `__getitem__` tops
-the batch up with uniform random points (`MultiSurfaceSDFSamples.__getitem__`). In a real
-dataset the small surface is the cartilage.
+**How to tell whether you are affected:** you reused a cache directory across runs that
+differed in `subsample`, and the later run's `subsample` was larger.
 
-The reload guard that should have caught this compares `len(data["pos_idx"])` against the
-number of *meshes* (`MultiSurfaceSDFSamples.get_sample_data_dict`), never against the
-subsample the arrays were built for.
-
-**How to tell whether you are affected:** if you reused a cache directory across runs that
-differed in `mesh_to_scale`, `uniform_pts_buffer` or `subsample`, the later run trained on the
-earlier one's data. Different cache directory per configuration, and you are fine.
-
-*Fix:* [#19](https://github.com/gattia/nsm/issues/19), bundled with the two entries below
-because all three invalidate every cached `.npz` — one regeneration, not three. *Pinned by:*
-`test_dataset_cache.TestUnhashedParametersCollide` (5 tests).
-
-### Cache key omits mesh content
-
-The key is `md5(params + mesh paths)`. Edit a mesh in place and the key does not move, so
-the stale `.npz` is served and you train on the old geometry. Same class as the two entries
-either side of it: something that changes cached content is not in the key.
-
-**How to tell whether you are affected:** if you have ever edited or re-exported a mesh
-without moving or renaming it, any run after that reused the pre-edit samples.
-
-*Fix:* [#19](https://github.com/gattia/nsm/issues/19). *Not currently pinned by a test.*
-
-### `reference_mesh` is hashed by memory address
-
-`SDFSamples.create_hash` stringifies every hash parameter, and `reference_mesh` is one of them
-in both classes' `get_hash_params`. `str(Mesh(...))` begins `Mesh (0x7f478a24ce20)`, so the key
-is per-object: two `Mesh` instances from the same file hash differently, and the same instance
-hashes differently in the next process. **The cache can never hit** — you pay full regeneration
-every run. Passing the reference as a path string is stable, and is the workaround people are
-implicitly relying on.
-
-*Fix:* [#19](https://github.com/gattia/nsm/issues/19). *Pinned by:*
-`test_dataset_cache.TestReferenceMeshHashing`.
+*Fix:* [#19](https://github.com/gattia/nsm/issues/19)'s remaining half — cache the raw
+index sets and pad at draw time, so cached bytes stop depending on `subsample`. *Pinned
+by:* `test_dataset_cache.TestFormerlyCollidingParameters` (2 strict xfails).
 
 ### Sigma sampling coordinate space depends on `scale_jointly`
 
@@ -1028,3 +995,65 @@ counts.
 
 *Pinned by:* `test_training_regression.TestLatentNormLogging` (latent LR 0 makes the
 true epoch mean exact).
+
+---
+
+## 13. The dataset cache key omitted parameters and mesh identity that change cached data
+
+One bundle, deliberately — every part invalidates the same cached `.npz` files, so the
+fix costs one regeneration, not several.
+
+| | |
+|---|---|
+| **Affected** | Any run with `load_cache=True` (the production setting) that reused a cache directory across differing configurations, or edited a mesh in place; any run whose `reference_mesh` was a loaded `Mesh` (cache never hit) |
+| **Severity** | Silent — the second run trains on the first run's data, exit 0 |
+| **Fixed in** | `cache-checkpoint-migration`, Aug 2026 ([#19](https://github.com/gattia/nsm/issues/19)) |
+
+### What was wrong
+
+The cache key was `md5` over a positional, stringified list of *some* of the parameters
+that decide what `get_sample_data_dict` writes:
+
+- `mesh_to_scale` (multi-surface) and `uniform_pts_buffer` (both classes) were absent.
+  Two runs differing only in one of them shared a key, and the second silently trained
+  on the first's data. `mesh_to_scale` is the worst: it decides which surface drives
+  centering and normalization, so the two runs' cached points and SDFs are in different
+  coordinate frames entirely.
+- Mesh *content* was absent — the key held path strings alone. Editing or re-exporting
+  a mesh in place left the key standing, so every later run reused the pre-edit samples.
+- A `reference_mesh` passed as a loaded `Mesh` was stringified, and `Mesh.__str__`
+  embeds the memory address: the key was per-object, so such a dataset could never hit
+  its own cache and paid full regeneration every run.
+- The multi-surface list also carried an unexplained `False` literal, inserted the
+  subject's mesh paths in reverse order, and hashed an integer `reference_mesh` as the
+  raw index — reordering `list_mesh_paths` re-aimed the reference while the key stood
+  still. Position carried meaning: the same defect class as the LR-schedule bug (§1).
+
+### What changed
+
+The key is a named canonical mapping (`json.dumps(sort_keys=True)`, then `md5`):
+`mesh_to_scale` and `uniform_pts_buffer` are in it; every mesh path contributes a
+content-stable `(path, size, mtime)` identity, so an in-place edit moves the key
+without any file being read; a `Mesh`-valued reference contributes a digest of its
+geometry; an int or list reference resolves to the underlying path(s) first. A
+`cache_format` entry versions the key, so the next content-affecting change is one
+integer bump instead of a new hashing scheme.
+
+### How to tell whether one of your runs is affected
+
+You reused one cache directory across runs that differed in `mesh_to_scale` or
+`uniform_pts_buffer` — the later run trained on the earlier one's data; or you edited a
+mesh without renaming it — every later run reused the pre-edit samples. One cache
+directory per configuration and unedited meshes, and you are fine.
+
+### Migration
+
+None possible, and none needed: keys are opaque, so a legacy file is indistinguishable
+from another configuration's, and serving wrong data is exactly what stops happening.
+No pre-fix key can ever hit again — the first run per configuration regenerates its
+cache (identical data when `random_seed` is set, §3), and old cache directories are
+reclaimable disk.
+
+*Pinned by:* `test_dataset_cache.TestFormerlyCollidingParameters`,
+`test_dataset_cache.TestMeshContentInTheKey`, `test_dataset_cache.TestReferenceMeshHashing`,
+`test_dataset_cache.TestHashedParametersChangeTheKey`.

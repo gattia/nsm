@@ -30,6 +30,18 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **Every SDF dataset cache key changes**
+  ([#19](https://github.com/gattia/nsm/issues/19)). The key is now a named canonical
+  mapping: `mesh_to_scale` and `uniform_pts_buffer` are finally in it (two runs
+  differing only in one of them used to share a key and silently reuse each other's
+  cached data), every mesh path contributes a content-stable `(path, size, mtime)`
+  identity so an in-place mesh edit is noticed, and a `Mesh`-valued `reference_mesh`
+  hashes by geometry instead of memory address — its cache can hit for the first time.
+  No cached `.npz` from before this change is ever served again: the first run per
+  configuration rebuilds its cache once (identical data when `random_seed` is set —
+  `docs/KNOWN_ISSUES.md` § History 3), and old cache directories are reclaimable disk.
+  A `cache_format` entry in the key versions future changes. Details: § History 13.
+
 - **`tune_reconstruction` and `compute_correlation_coefficient` are deleted**
   (`docs/SCOPE.md` §2's dead ruling, disposition 2026-08-22, executed by the §8.0.E
   pass over `reconstruct/main.py`). Zero callers, re-verified at deletion:

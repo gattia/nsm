@@ -6,12 +6,12 @@ the layer an in-memory harness never touches. Everything here is behaviour as it
 today, bugs included -- several of these tests assert that something *wrong* happens,
 because pinning it is what makes a later fix visible.
 
-The cache is keyed by ``md5("_".join(str(p) for p in get_hash_params() + mesh paths))``.
-Three parameters that change what gets written are missing from that list, so two runs
-differing only in one of them share a key and the second silently reuses the first's data
-(``TestUnhashedParametersCollide``). A fourth, ``reference_mesh``, is hashed by object
-identity when it is a ``Mesh``, so the cache never hits at all
-(``TestReferenceMeshHashing``).
+The cache is keyed by ``md5(json.dumps({name: value}, sort_keys=True))`` -- a named,
+canonical mapping in which every mesh path contributes a content-stable
+``(path, size, mtime)`` identity and a loaded ``Mesh`` contributes a geometry digest
+(#19, fixed Aug 2026). ``TestFormerlyCollidingParameters`` pins the parameters that used
+to change cached content while absent from the key; ``TestReferenceMeshHashing`` pins the
+``Mesh``-valued reference that used to hash by memory address.
 """
 
 import inspect
@@ -57,21 +57,21 @@ def rehash(dataset, mesh_paths, **attributes):
     """
     Recompute the cache key with some constructor parameters changed.
 
-    ``create_hash`` reads ``self.list_hash_params``, which ``__init__`` fills from
+    ``create_hash`` reads ``self.hash_params``, which ``__init__`` fills from
     ``get_hash_params()``. Setting the attributes and refilling it exercises exactly the
     key-derivation path without paying for a rebuild.
     """
     original = {name: getattr(dataset, name) for name in attributes}
-    original_params = dataset.list_hash_params
+    original_params = dataset.hash_params
     try:
         for name, value in attributes.items():
             setattr(dataset, name, value)
-        dataset.list_hash_params = dataset.get_hash_params()
+        dataset.hash_params = dataset.get_hash_params()
         return dataset.create_hash(mesh_paths)
     finally:
         for name, value in original.items():
             setattr(dataset, name, value)
-        dataset.list_hash_params = original_params
+        dataset.hash_params = original_params
 
 
 class TestCacheRoundTrip:
@@ -362,18 +362,17 @@ class TestHashedParametersChangeTheKey:
         assert rehash(dataset, meshes[0], random_seed=7) != dataset.create_hash(meshes[0])
 
 
-class TestUnhashedParametersCollide:
+class TestFormerlyCollidingParameters:
     """
-    ``mesh_to_scale``, ``uniform_pts_buffer`` and ``subsample`` all change what is written
-    into the cache and none of them are in
-    ``MultiSurfaceSDFSamples.get_hash_params``. Two runs differing only in one of them share
-    a key, and with ``load_cache=True`` -- the production setting -- the second silently
-    trains on the first's data.
-
-    **These assert the behaviour NSM should have, and are expected to fail.** Each shows
-    that the cached content genuinely differs first, so the ``xfail`` lands on the cache
-    key rather than on a vacuous premise. Fixing #19 (a) turns them green, which under
-    ``strict=True`` fails the suite until they are un-marked -- see the module docstring.
+    ``mesh_to_scale`` and ``uniform_pts_buffer`` change what is written into the cache
+    and were absent from ``get_hash_params`` until Aug 2026 (#19 (a)): two runs
+    differing only in one of them shared a key, and with ``load_cache=True`` -- the
+    production setting -- the second silently trained on the first's data. Each test
+    still shows the cached content genuinely differs before asserting the keys do, so
+    a parameter that stops mattering shows up as a dead premise rather than a vacuous
+    pass. ``subsample`` is the deliberate exception: it stays OUT of the key, because
+    its only cached-content effect is the index padding (see the xfails below, resolved
+    by decoupling rather than keying).
     """
 
     @staticmethod
@@ -388,10 +387,9 @@ class TestUnhashedParametersCollide:
         }
         return a.create_hash(meshes[0]), b.create_hash(meshes[0]), differing
 
-    @pytest.mark.xfail(strict=True, reason="#19: get_hash_params omits mesh_to_scale")
     def test_mesh_to_scale_must_change_the_cache_key(self, meshes, tmp_path_factory):
         """
-        The worst of the three: ``mesh_to_scale`` decides which surface drives centering
+        The worst of them: ``mesh_to_scale`` decides which surface drives centering
         and normalization, so the two runs' cached points and SDFs are in different
         coordinate frames entirely.
         """
@@ -404,7 +402,6 @@ class TestUnhashedParametersCollide:
         } <= differing, f"premise gone: content no longer differs ({differing})"
         assert key_a != key_b, "the cached content differs but the cache key does not"
 
-    @pytest.mark.xfail(strict=True, reason="#19: get_hash_params omits uniform_pts_buffer")
     def test_uniform_pts_buffer_must_change_the_cache_key(self, meshes, tmp_path_factory):
         """It sets the bounds the uniform points are drawn from, so the samples move."""
         key_a, key_b, differing = self._content_differs(
@@ -436,7 +433,6 @@ class TestUnhashedParametersCollide:
         ), f"premise gone: index arrays no longer differ ({differing})"
         assert key_a != key_b, "the cached index arrays differ but the cache key does not"
 
-    @pytest.mark.xfail(strict=True, reason="#19: colliding runs share a cache file")
     def test_a_changed_parameter_must_not_reuse_the_previous_runs_cache(
         self, meshes, tmp_path_factory
     ):
@@ -495,17 +491,16 @@ class TestUnhashedParametersCollide:
 
 class TestMeshContentInTheKey:
     """
-    The cache key must notice when a mesh file's *content* changes, not only its path
-    (#19 (b), the ``KNOWN_ISSUES`` "Cache key omits mesh content" entry -- until now the
-    one #19 defect with no pin).
+    The cache key notices when a mesh file's *content* changes, not only its path
+    (#19 (b), fixed Aug 2026): each path contributes ``(path, size, mtime)``, so an
+    in-place edit moves the key without any file being read.
     """
 
-    @pytest.mark.xfail(strict=True, reason="#19: an in-place mesh edit does not change the key")
     def test_an_in_place_mesh_edit_must_change_the_key(self, tmp_path_factory):
         """
         Overwrite a subject's mesh at the same path with different geometry: the stale
-        cached samples must not be served, so the key has to move. Today the key hashes
-        the path string alone and stands still through any edit.
+        cached samples must not be served, so the key has to move. Until Aug 2026 the
+        key hashed the path string alone and stood still through any edit.
         """
         import pyvista as pv
 
@@ -521,13 +516,12 @@ class TestMeshContentInTheKey:
 
 class TestReferenceMeshHashing:
     """
-    A ``reference_mesh`` passed as a ``Mesh`` object is stringified into the key, and
-    ``Mesh.__str__`` includes its memory address -- so the key is per-object. The cache
-    can never hit across processes, and inside one process it changes on every
-    construction.
+    A ``reference_mesh`` passed as a ``Mesh`` object contributes a digest of its
+    geometry to the key (#19 (c), fixed Aug 2026). Until then it was stringified, and
+    ``Mesh.__str__`` includes the memory address -- the key was per-object, so a
+    dataset with a ``Mesh`` reference could never hit its own cache.
     """
 
-    @pytest.mark.xfail(strict=True, reason="#19: a Mesh reference_mesh is hashed by memory address")
     def test_two_equal_mesh_objects_must_hash_the_same(self, dataset, meshes):
         """Same geometry, same file, two objects -- the cache key must not care."""
         from pymskt.mesh import Mesh
@@ -537,13 +531,8 @@ class TestReferenceMeshHashing:
             dataset, meshes[0], reference_mesh=two
         )
 
-    def test_the_address_is_what_leaks_in(self, meshes):
-        from pymskt.mesh import Mesh
-
-        assert "0x" in str(Mesh(meshes[0][0])).split("\n")[0]
-
     def test_a_path_string_hashes_stably(self, dataset, meshes):
-        """The same reference given as a path is stable, which is the workaround."""
+        """The same reference given as a path is stable -- formerly the only workaround."""
         assert rehash(dataset, meshes[0], reference_mesh=meshes[0][0]) == rehash(
             dataset, meshes[0], reference_mesh=meshes[0][0]
         )
@@ -595,16 +584,21 @@ class TestSeeding:
 
 
 #: Builds one dataset in a fresh interpreter: ``sys.argv[1]`` is the cache directory,
-#: ``sys.argv[2]`` is "1" for ``multiprocessing=True``, ``sys.argv[3]`` is the mesh
-#: directory. Both invocations share one mesh directory so the two builds produce the same
-#: cache *filenames*, which is what lets the caller pair them up.
+#: ``sys.argv[2]`` is "1" for ``multiprocessing=True``, ``sys.argv[3]`` is a mesh
+#: directory the CALLER has already populated. Both invocations reuse those files
+#: unmodified -- rewriting them per invocation would move their ``(path, size, mtime)``
+#: identity and with it the cache key -- so the two builds produce the same cache
+#: *filenames*, which is what lets the caller pair them up.
 _BUILD_IN_SUBPROCESS = f"""
+import glob
+import os
 import sys
 sys.path.insert(0, {os.path.dirname(os.path.abspath(__file__))!r})
-from _harness import build_dataset, write_synthetic_meshes
+from _harness import build_dataset
 
+bones = sorted(glob.glob(os.path.join(sys.argv[3], "*_bone.vtk")))
 build_dataset(
-    write_synthetic_meshes(sys.argv[3]),
+    [[bone, bone.replace("_bone.vtk", "_cart.vtk")] for bone in bones],
     sys.argv[1],
     random_seed=1234,
     multiprocessing=sys.argv[2] == "1",
@@ -734,6 +728,7 @@ class TestSeedDerivation:
         seeding.
         """
         mesh_dir = str(tmp_path_factory.mktemp("mp_meshes"))
+        write_synthetic_meshes(mesh_dir)
         caches = [str(tmp_path_factory.mktemp("mp_off")), str(tmp_path_factory.mktemp("mp_on"))]
         for cache, flag in zip(caches, ("0", "1")):
             finished = subprocess.run(

@@ -448,15 +448,15 @@ consumers silently.
 | checkpoint `{epoch, model, optimizer}` | `utils.save_model` | `loader.py` (4 possible key layouts), consumer `load_state_dict` | Pre-Aug-2026 refused at load |
 | `latent_codes/{epoch}.pth` | `utils.save_latent_vectors` | `train_deep_sdf` on resume | No |
 | `LearningRateSchedule[].Target` | config author | `utils.resolve_schedule_targets` | Yes — missing key raises with a migration message |
-| SDF cache `.npz` / `.h5` | `sdf_dataset` | `sdf_dataset` | **No, and the hash is wrong** — see below |
+| SDF cache `.npz` | `sdf_dataset` | `sdf_dataset` | **Yes** — `cache_format` entry inside the key (Aug 2026) |
 | `NSM_recon_params.json` → `latent` | consumer, from `reconstruct_mesh` | `steps/compute_bscore.py:72` | No |
 
-The dataset cache hash is the one to act on. `get_hash_params` omits `mesh_to_scale`,
-`uniform_pts_buffer` and `subsample`, all of which change cached content — so two runs
-differing only in `mesh_to_scale` produce the same key and the second silently reuses the
-first's alignment and normalization. Separately, a `Mesh` object passed as `reference_mesh`
-hashes via its memory address, so the cache never hits. Tracked as issue #19 (whose
-fix is deliberately bundled with #27 — see the plan's State block).
+The dataset cache key was rewritten Aug 2026 (#19; `KNOWN_ISSUES.md` § History 13): a
+named canonical mapping with content-stable mesh identities, versioned by a
+`cache_format` entry — the next change to what gets cached is one integer bump, not a
+new hashing scheme, and no pre-rewrite key can hit again. (This row previously also
+listed `.h5`: stale — no h5 path exists in `datasets/`; the cache is one `.npz` per
+subject.)
 
 ---
 

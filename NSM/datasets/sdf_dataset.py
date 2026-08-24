@@ -1,5 +1,6 @@
 import gc
 import hashlib
+import json
 import multiprocessing
 import os
 import time
@@ -50,6 +51,50 @@ from .utils import (  # noqa: F401
     unpack_numpy_data,
     unpack_pts,
 )
+
+#: Version stamp inside every cache key. Bump it when a change alters what gets written
+#: into the cached ``.npz`` while every keyed parameter stands still -- one integer
+#: instead of a fresh #19. Format 2 (Aug 2026): named canonical key, content-stable
+#: identities, unpadded index lists.
+CACHE_FORMAT = 2
+
+
+def _file_identity(path):
+    """
+    A path's identity in the cache key: ``(path, st_size, st_mtime)``.
+
+    The stat is what makes an in-place mesh edit move the key without reading the file
+    -- hashing full contents would read every mesh on every construction, cache hits
+    included, while a stat is free (#19 (b)). A path that cannot be stat'ed (missing, or
+    None for a subject's missing surface, #67) contributes ``(path, None, None)`` rather
+    than raising: the samplers skip that subject a moment later.
+    """
+    try:
+        stat_result = os.stat(path)
+    except (OSError, TypeError, ValueError):
+        return (str(path), None, None)
+    return (str(path), stat_result.st_size, stat_result.st_mtime)
+
+
+def _mesh_geometry_digest(mesh):
+    """
+    A loaded ``Mesh``'s identity in the cache key: md5 over its point and face bytes.
+
+    Object identity -- ``str(mesh)`` embeds the memory address -- made any key holding a
+    ``Mesh`` per-object, so it could never hit across constructions (#19 (c)). The
+    geometry is what the cached samples actually depend on.
+    """
+    digest = hashlib.md5()
+    digest.update(np.ascontiguousarray(np.asarray(mesh.points)).tobytes())
+    digest.update(np.ascontiguousarray(np.asarray(mesh.faces)).tobytes())
+    return digest.hexdigest()
+
+
+def _identity(value):
+    """One cache-key identity token: geometry digest for a ``Mesh``, stat identity else."""
+    if issubclass(type(value), Mesh):
+        return ("geometry", _mesh_geometry_digest(value))
+    return _file_identity(value)
 
 
 class SDFSamples(torch.utils.data.Dataset):
@@ -119,8 +164,7 @@ class SDFSamples(torch.utils.data.Dataset):
             in each disk-backed __getitem__ batch. Optional diagnostics, not batch
             contract: in-memory items never carry them (#22). Defaults to True.
         uniform_pts_buffer (float, optional): Expansion of the uniform sampling cube;
-            see get_buffered_cube_mins_maxs. Not part of the cache key (#19). Defaults
-            to 0.0.
+            see get_buffered_cube_mins_maxs. Part of the cache key. Defaults to 0.0.
 
     Notes:
         ``__getitem__`` returns ``(batch, idx)``: ``batch["xyz"]`` is (subsample, 3)
@@ -129,8 +173,9 @@ class SDFSamples(torch.utils.data.Dataset):
 
         Caches are one ``.npz`` per subject under ``loc_save/<Mon_DD_YYYY>/``, the date
         fixed at import time; lookups search all of ``loc_save`` recursively, so hits
-        cross dates. The cache key does not cover every parameter that changes the data
-        -- see get_hash_params (#19).
+        cross dates. The cache key is a named, content-stable mapping -- see
+        get_hash_params and create_hash; keys from before ``cache_format`` 2 (Aug 2026)
+        never hit again, so an old cache directory is reclaimable disk.
     """
 
     def __init__(
@@ -255,7 +300,10 @@ class SDFSamples(torch.utils.data.Dataset):
         # preprocess inputs before proceeding
         self.preprocess_inputs()
 
-        self.list_hash_params = self.get_hash_params()
+        # Computed BEFORE load_reference_mesh, which mutates reference_mesh (an int or
+        # path becomes a loaded Mesh; under multiprocessing, None plus a spill path) --
+        # _reference_identity resolves the constructor's form.
+        self.hash_params = self.get_hash_params()
 
         if save_cache is True:
             self.cache_folder = os.path.join(self.loc_save, today_date)
@@ -798,70 +846,94 @@ class SDFSamples(torch.utils.data.Dataset):
             self.reference_mesh.save_mesh(self.reference_mesh_path)
             self.reference_mesh = None
 
+    def _reference_identity(self):
+        """
+        ``reference_mesh``'s contribution to the cache key, content-stable.
+
+        Resolution mirrors ``load_reference_mesh``, from the constructor's form: an int
+        indexes ``list_mesh_paths`` (a multi-surface subject resolves to its
+        ``mesh_to_scale`` surface(s)), a list is indexed by ``reference_object``, and
+        the resulting path(s) -- or a directly-passed ``Mesh`` -- go through
+        ``_identity``. A raw int used to be hashed as itself, so reordering
+        ``list_mesh_paths`` re-aimed the reference while the key stood still -- the
+        positional-coupling defect one level up.
+        """
+        reference = self.reference_mesh
+        if reference is None:
+            return None
+        if issubclass(type(reference), Mesh):
+            return _identity(reference)
+        if isinstance(reference, int):
+            subject = self.list_mesh_paths[reference]
+            if isinstance(subject, (list, tuple)):
+                to_scale = self.mesh_to_scale
+                indices = to_scale if isinstance(to_scale, (list, tuple)) else [to_scale]
+                return [_identity(subject[idx]) for idx in indices]
+            return [_identity(subject)]
+        if isinstance(reference, str):
+            return [_identity(reference)]
+        if isinstance(reference, (list, tuple)):
+            return [_identity(reference[self.reference_object])]
+        # Any other type is refused by load_reference_mesh a moment after this runs.
+        return [str(reference)]
+
     def get_hash_params(self):
         """
-        Get the parameters to hash for saving/loading the cache.
+        The named entries of the cache key: everything, besides the subject's own
+        meshes, that changes what ``get_sample_data_dict`` writes into the cache.
 
-        KNOWN DEFECTS, #19 (a) and (c): this list is incomplete, and two runs differing
-        only in an omitted parameter share a cache key -- so with load_cache=True the
-        second silently trains on the first's data. Missing here: `subsample` and
-        `uniform_pts_buffer`. Also, a `reference_mesh` passed as a Mesh object is hashed
-        via str(), which contains its memory address, so that key is per-object.
+        ``cache_format`` versions the key itself (see ``CACHE_FORMAT``). Deliberately
+        absent, settled in the section 8.0.F statement: ``joint_scale_buffer`` (the
+        shared frame is stored on the dataset and applied per batch -- it never touches
+        a cached byte) and ``mesh_names`` (names the surfaces, does not change samples).
 
         Returns:
-            list: List of parameters to hash
+            dict: ``{name: value}``, canonically serialized by ``create_hash``
         """
 
-        list_hash_params = [
-            self.n_pts,
-            self.p_near_surface,
-            self.sigma_near,
-            self.p_further_from_surface,
-            self.sigma_far,
-            self.center_pts,
-            self.norm_pts,
-            self.scale_method,
-            self.rand_function,
-            self.reference_mesh,
-            self.fix_mesh,
-            self.scale_jointly,
-        ]
-
-        return list_hash_params
+        return {
+            "cache_format": CACHE_FORMAT,
+            "n_pts": self.n_pts,
+            "p_near_surface": self.p_near_surface,
+            "p_further_from_surface": self.p_further_from_surface,
+            "sigma_near": self.sigma_near,
+            "sigma_far": self.sigma_far,
+            "center_pts": self.center_pts,
+            "norm_pts": self.norm_pts,
+            "scale_method": self.scale_method,
+            "rand_function": self.rand_function,
+            "reference_mesh": self._reference_identity(),
+            "fix_mesh": self.fix_mesh,
+            "scale_jointly": self.scale_jointly,
+            "uniform_pts_buffer": self.uniform_pts_buffer,
+            "random_seed": self.random_seed,
+        }
 
     def create_hash(self, loc_mesh):
         """
-        The cache key for one subject: md5 over its mesh path(s) plus the hash params.
+        The cache key for one subject: md5 over a canonical, named serialization.
 
-        The path(s) are prepended to ``list_hash_params`` (a list lands in reverse
-        order) and ``random_seed`` is appended when set; everything is stringified,
-        joined and hashed. The mesh *contents* are not part of the key, so overwriting
-        a mesh file in place reuses the stale cache.
+        ``hash_params`` (see ``get_hash_params``) is extended with the subject's
+        ``mesh_paths`` -- one content-stable identity per mesh, in order, so an in-place
+        edit moves the key (``_file_identity``) -- and serialized with
+        ``json.dumps(sort_keys=True)``. No entry's meaning depends on its position.
+        ``subsample`` is not in the key; its one cached-content effect (index padding)
+        is #19's remaining half.
 
         Args:
-            loc_mesh (str or list): Path(s) to the subject's mesh(es)
+            loc_mesh (str, Mesh or list): The subject's mesh(es)
 
         Returns:
             str: Hashed string
         """
 
-        list_hash_params = self.list_hash_params.copy()
-        if isinstance(loc_mesh, str):
-            list_hash_params.insert(0, loc_mesh)
-        elif isinstance(loc_mesh, (list, tuple)):
-            for path in loc_mesh:
-                if self.verbose is True:
-                    print(loc_mesh)
-                list_hash_params.insert(0, path)
-
-        if self.random_seed is not None:
-            list_hash_params.append(self.random_seed)  # random seed state
-        if self.verbose is True:
-            print("List Params", list_hash_params)
-        list_hash_params = [str(x) for x in list_hash_params]
-        file_params_string = "_".join(list_hash_params)
-        hash_str = hashlib.md5(file_params_string.encode()).hexdigest()
-        return hash_str
+        params = dict(self.hash_params)
+        if isinstance(loc_mesh, (list, tuple)):
+            params["mesh_paths"] = [_identity(mesh) for mesh in loc_mesh]
+        else:
+            params["mesh_paths"] = [_identity(loc_mesh)]
+        serialized = json.dumps(params, sort_keys=True, default=str)
+        return hashlib.md5(serialized.encode()).hexdigest()
 
     def __len__(self):
         """Number of subjects that loaded successfully (failures are dropped)."""
@@ -1502,41 +1574,20 @@ class MultiSurfaceSDFSamples(SDFSamples):
         return pt_sample_combos
 
     def get_hash_params(self):
-        # KNOWN DEFECTS, #19 (a) and (c): incomplete. `mesh_to_scale`,
-        # `uniform_pts_buffer` and `subsample` all change what is written to the cache and
-        # none are here, so runs differing only in one of them collide on the same key.
-        # `mesh_to_scale` is the worst -- it decides which surface drives centering and
-        # normalization, so the two runs are in different coordinate frames entirely.
-        # A `reference_mesh` given as a Mesh object also hashes by memory address.
-        list_hash_params = [
-            self.center_pts,
-            self.norm_pts,
-            self.scale_method,
-            self.rand_function,
-            self.scale_all_meshes,
-            self.center_all_meshes,
-            self.reference_mesh,
-            self.reference_object,
-            # Unexplained literal: present since this list was written, origin unknown
-            # (git shows no removed parameter it could stand in for). Its fate is #19's,
-            # which rewrites this list; removing it now would invalidate every cache key.
-            False,
-            self.fix_mesh,
-            self.scale_jointly,
-        ]
-
-        for n_pts_ in self.n_pts:
-            list_hash_params.append(n_pts_)
-        for p_near in self.p_near_surface:
-            list_hash_params.append(p_near)
-        for p_far in self.p_further_from_surface:
-            list_hash_params.append(p_far)
-        for sigma_near in self.sigma_near:
-            list_hash_params.append(sigma_near)
-        for sigma_far in self.sigma_far:
-            list_hash_params.append(sigma_far)
-
-        return list_hash_params
+        """As the parent's (the per-surface lists ride in the shared entries), plus the
+        multi-surface parameters -- ``mesh_to_scale`` above all: it decides which surface
+        drives centering and normalization, so two runs differing in it are in different
+        coordinate frames entirely (#19 (a), unkeyed until Aug 2026)."""
+        params = super().get_hash_params()
+        params.update(
+            {
+                "mesh_to_scale": self.mesh_to_scale,
+                "reference_object": self.reference_object,
+                "scale_all_meshes": self.scale_all_meshes,
+                "center_all_meshes": self.center_all_meshes,
+            }
+        )
+        return params
 
     def sdf_pos_neg_idx(self, data):
         """
