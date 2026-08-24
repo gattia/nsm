@@ -6,18 +6,42 @@
 
 **Updated:** 2026-08-24 · **Status:** open
 
-- **Next:** §8.0.E — wandb-optional (#5) plus the evaluation-module split out of
-  `reconstruct/main.py` — statement below (2026-08-24), landing on branch
-  `wandb-optional`, **stacked on PR #77's branch** (both edit this State block;
-  merge #77 first). After it, the rest of the §8 program still awaits its own
-  statement: class-side cache/build decomposition with #19/#27 (one migration
-  release), `train_epoch`'s internal loss-pipeline decomposition only if a
-  statement justifies it, multi_head's repair is #51, and the v0.3.0 cut
-  ("soonish, or at the end of this cleanup") is the maintainer's call. In review:
-  PR #77 (docs-only — the `enforce_minmax` Open entry gains its full gradient
-  mechanics and stays open by maintainer ruling 2026-08-24; Idea 11 gains the
-  clamp-form axis). Meanwhile the maintainer's research queue points at
-  `NSM_TRAINING_IDEAS.md` Idea 4(a) first (see that file's State).
+- **Next:** §8.0.E is complete on branch `wandb-optional` (closes #5 on merge),
+  **stacked on PR #77's branch** (both edit this State block; merge #77 first,
+  then this branch's PR); maintainer reviews commit-by-commit — one commit per
+  statement step — marks ready, admin-merges. After that, the rest of the §8
+  program still awaits its own statement: class-side cache/build decomposition
+  with #19/#27 (one migration release), `train_epoch`'s internal loss-pipeline
+  decomposition only if a statement justifies it, multi_head's repair is #51,
+  and the v0.3.0 cut ("soonish, or at the end of this cleanup") is the
+  maintainer's call. In review: PR #77 (docs-only — the `enforce_minmax` Open
+  entry gains its full gradient mechanics and stays open by maintainer ruling
+  2026-08-24; Idea 11 gains the clamp-form axis). Meanwhile the maintainer's
+  research queue points at `NSM_TRAINING_IDEAS.md` Idea 4(a) first (see that
+  file's State).
+- **§8.0.E landed on branch (2026-08-24):** statement → characterization → #5
+  fix → amendment → dead-pair deletion → split → this update, suite green and
+  lint clean at every commit (660→664 passed; the #5 probe xfail passes unmarked
+  from the fix commit on). #5: six guarded imports (schedulefree's sentinel
+  pattern), raise-by-name at entry for every explicit request, and the one
+  skip-not-raise — `get_mean_errors`' histogram tail yields `None` without wandb
+  so training validation survives; payload byte-identical with wandb installed
+  (pinned). Split: `get_mean_errors` alone moves to `recon_evaluation.py`, with
+  a call-time import of `reconstruct_mesh`/`NoZeroLevelSetError` (no
+  module-level cycle; the `test_predictive_validation` monkeypatch seam
+  survives, green untouched). **Diverged from the statement:** the "trio move"
+  became delete-two-move-one — the docs-reference checker went red mid-split
+  and SCOPE §2's dead ruling (2026-08-22) had already deferred
+  `tune_reconstruction` + `compute_correlation_coefficient` deletion to exactly
+  this pass, so an amendment (committed before the split) deleted them instead
+  (CHANGELOG Breaking; frozen namespace lists narrowed by two with the ruling
+  cited in place; raise sites nine → eight); the histogram-present pin fakes
+  `reconstruct_mesh` with clean metric values rather than using the #29
+  degenerate fixture — NaN metrics make `wandb.Histogram` raise `ValueError`
+  and yield `None` even with wandb installed, so the degenerate path cannot pin
+  Histogram presence; `recon_evaluation.py`'s split budget (≤ +15) came out
+  ~+27 because the statement's budget line omitted the module docstring that
+  8.0.C-style moves carry.
 - **§8.0.D merged to `main` in PR #76 (2026-08-24):** #28, #42, #49, #52, #59
   closed by the merge.
 - **§8.0.D landed on branch (2026-08-23):** statement → characterization → #42 →
