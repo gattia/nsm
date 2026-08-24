@@ -67,8 +67,10 @@ class TestRoundTrip:
         notices. Without this, ``torch.equal`` on two references to the same buffer would
         look like a passing round trip.
 
-        Every float tensor is perturbed rather than one, because the VAE weights appear in
-        the state dict twice -- see ``TestAliasedCheckpointEntries``.
+        Every float tensor is perturbed rather than one -- originally because the VAE
+        weights appeared in the state dict twice (#27, fixed Aug 2026, see
+        ``TestAliasedCheckpointEntries``); still the right move, since it cannot silently
+        weaken if the checkpoint layout changes again.
         """
         from NSM.models.loader import load_model
 
@@ -117,6 +119,23 @@ class TestRoundTrip:
     def test_the_checkpoint_carries_the_epoch(self, reconstruction_model, tmp_path):
         path = save_checkpoint(reconstruction_model, tmp_path, epoch=7)
         assert torch.load(path, weights_only=False)["epoch"] == 7
+
+    def test_a_bare_load_state_dict_round_trips_bitwise(self, reconstruction_model, tmp_path):
+        """
+        The consumer's documented path (SCOPE section 4) never goes through
+        ``load_model``: it builds the architecture and calls ``model.load_state_dict``
+        with strict defaults. Section 7.1's save/load round-trip box -- the reloaded
+        forward must be bitwise-identical to the in-memory original.
+        (``testing/NSM/models/test_loader.py``'s round trip loads but never compares
+        outputs, which is why the comparison lives here.)
+        """
+        inputs = query_points()
+        before = forward(reconstruction_model, inputs)
+
+        path = save_checkpoint(reconstruction_model, tmp_path)
+        rebuilt = build_model(dict(ARCHITECTURE))
+        rebuilt.load_state_dict(torch.load(path, weights_only=False)["model"])
+        assert torch.equal(before, forward(rebuilt, inputs))
 
 
 class TestPaddingIsNotInTheCheckpoint:
@@ -282,38 +301,26 @@ class TestSavedConfigIsEnoughToReload:
 
 class TestAliasedCheckpointEntries:
     """
-    ``VAEDecoder`` registers every layer twice: once in ``self.layers`` (a ``ModuleList``)
-    and again in ``self.decoder = nn.Sequential(*self.layers)`` (``triplanar.py:58-99``).
-    Both are child modules, so ``state_dict()`` emits each tensor under two names.
-
-    Loading is unaffected -- the two names alias the same parameter, so whichever is
-    applied last wins and it is the same data. Two things are affected:
-
-    * **Checkpoint size.** Every shipped NSM model on disk is roughly twice as large as its
-      parameter count requires.
-    * **Checkpoint surgery.** Editing a checkpoint by key -- pruning, quantizing, patching
-      a layer -- silently loses the edit if only one of the two names is written. That is
-      not hypothetical: it is what the first draft of ``test_the_comparison_can_fail``
-      above did, and it looked like a passing round trip.
+    Until Aug 2026 ``VAEDecoder`` registered every layer twice -- once in ``self.layers``
+    (a ``ModuleList``) and again in ``self.decoder = nn.Sequential(*self.layers)`` -- so
+    ``state_dict()`` emitted each tensor under two aliased names (#27, fixed): shipped
+    checkpoints were 1.92x their parameter count, and a by-key edit that wrote only one
+    name was silently reverted by the other. ``self.decoder`` is now the single
+    registration; a permanent load-time pre-hook on ``VAEDecoder`` drops incoming
+    ``layers.*`` aliases so pre-fix checkpoints keep strict-loading
+    (``TestPreFixCheckpointsStillLoad``).
     """
 
     @pytest.fixture(scope="class")
     def state_dict(self):
         return build_model(dict(ARCHITECTURE)).state_dict()
 
-    @pytest.mark.xfail(strict=True, reason="#27: VAEDecoder registers every layer twice")
     def test_each_parameter_must_appear_once_in_the_state_dict(self, state_dict):
-        aliased = {
-            name
-            for name in state_dict
-            if name.startswith("vae_decoder.layers.")
-            and name.replace("layers.", "decoder.") in state_dict
-        }
+        aliased = {name for name in state_dict if name.startswith("vae_decoder.layers.")}
         assert (
             not aliased
         ), f"{len(aliased)} tensors are stored under two names: {sorted(aliased)[:3]}"
 
-    @pytest.mark.xfail(strict=True, reason="#27: aliasing inflates every checkpoint ~1.92x")
     def test_the_checkpoint_must_not_hold_more_elements_than_the_model_has_parameters(
         self, state_dict
     ):
@@ -322,9 +329,13 @@ class TestAliasedCheckpointEntries:
         parameters = sum(p.numel() for p in model.parameters())
         assert stored == parameters, f"{stored} elements stored for {parameters} parameters"
 
-    @pytest.mark.xfail(strict=True, reason="#27: an edit to one alias is reverted by the other")
     def test_editing_a_checkpoint_by_key_must_take_effect(self, tmp_path):
-        """The failure mode, demonstrated."""
+        """
+        The defect's failure mode, on the surviving key: pre-fix, an edit to one alias
+        was reverted by the other unless both were written -- what the first draft of
+        ``test_the_comparison_can_fail`` did, looking like a passing round trip. With
+        one name per tensor, a by-key edit must land.
+        """
         from NSM.models.loader import load_model
 
         model = build_model(dict(ARCHITECTURE))
@@ -333,15 +344,73 @@ class TestAliasedCheckpointEntries:
 
         path = save_checkpoint(model, tmp_path)
         checkpoint = torch.load(path, weights_only=False)
-        checkpoint["model"]["vae_decoder.layers.0.weight"] = (
-            checkpoint["model"]["vae_decoder.layers.0.weight"] + 1.0
+        checkpoint["model"]["vae_decoder.decoder.0.weight"] = (
+            checkpoint["model"]["vae_decoder.decoder.0.weight"] + 1.0
         )
         torch.save(checkpoint, path)
 
         edited = load_model(dict(ARCHITECTURE), path, model_type="triplanar", device="cpu")
         assert not torch.equal(
             before, forward(edited, inputs)
-        ), "the +1.0 written to vae_decoder.layers.0.weight had no effect on the model"
+        ), "the +1.0 written to vae_decoder.decoder.0.weight had no effect on the model"
+
+
+class TestPreFixCheckpointsStillLoad:
+    """
+    Every shipped NSM model predates the #27 fix and carries both aliases forever,
+    which is why the strip is a PERMANENT pre-hook on ``VAEDecoder`` itself -- the
+    consumer's documented path is a bare ``model.load_state_dict`` (SCOPE section 4),
+    which never goes through ``loader.py``. This is also the in-suite proxy for the
+    section 7.2 checkpoint-compatibility promise; loading a real shipped checkpoint
+    stays a release-time check (the 275 MB downloads do not belong in CI).
+    """
+
+    @staticmethod
+    def _with_aliases(state):
+        """Recreate the pre-fix layout: every ``decoder.*`` tensor also under ``layers.*``."""
+        old = {}
+        for key, value in state.items():
+            if key.startswith("vae_decoder.decoder."):
+                old[key.replace(".decoder.", ".layers.", 1)] = value
+        old.update(state)
+        return old
+
+    def test_a_both_alias_checkpoint_loads_via_both_entry_paths(self, tmp_path):
+        from NSM.models.loader import load_model
+
+        model = build_model(dict(ARCHITECTURE))
+        inputs = query_points()
+        expected = forward(model, inputs)
+        old_state = self._with_aliases(model.state_dict())
+        assert any(key.startswith("vae_decoder.layers.") for key in old_state)
+
+        bare = build_model(dict(ARCHITECTURE))
+        bare.load_state_dict(old_state, strict=True)
+        assert torch.equal(expected, forward(bare, inputs))
+
+        path = str(tmp_path / "old_format.pth")
+        torch.save({"model": old_state}, path)
+        via_loader = load_model(dict(ARCHITECTURE), path, model_type="triplanar", device="cpu")
+        assert torch.equal(expected, forward(via_loader, inputs))
+
+    def test_where_the_aliases_disagree_decoder_wins(self):
+        """
+        Checkpoint surgery that wrote only ``layers.*`` was reverted by ``decoder.*``
+        pre-fix, because registration order applied ``decoder.*`` last. The strip keeps
+        exactly that winner: poisoned ``layers.*`` values must not reach the model.
+        """
+        model = build_model(dict(ARCHITECTURE))
+        inputs = query_points()
+        expected = forward(model, inputs)
+
+        old_state = self._with_aliases(model.state_dict())
+        for key in [name for name in old_state if name.startswith("vae_decoder.layers.")]:
+            if old_state[key].dtype.is_floating_point:
+                old_state[key] = old_state[key] + 1.0
+
+        target = build_model(dict(ARCHITECTURE))
+        target.load_state_dict(old_state, strict=True)
+        assert torch.equal(expected, forward(target, inputs))
 
 
 class TestModelConfigMapping:

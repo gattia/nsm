@@ -54,7 +54,7 @@ class VAEDecoder(nn.Module):
             latent_dim % deep_image_size**2 == 0
         ), "latent_dim must be divisible by deep_image_size**2"
 
-        self.layers = nn.ModuleList()
+        layers = []
 
         if self.start_with_mlp is True:
             self.fc = nn.Linear(latent_dim, hidden_dims[0] * deep_image_size**2)
@@ -70,7 +70,7 @@ class VAEDecoder(nn.Module):
             conv = nn.ConvTranspose2d(
                 in_channels, out_channels, kernel_size=3, stride=2, padding=1, output_padding=1
             )
-            self.layers.append(conv)
+            layers.append(conv)
             # norm = nn.LayerNorm([out_channels, deep_image_size**(i+2), deep_image_size**(i+2)])
             if self.norm is True:
                 if self.norm_type == "batch":
@@ -81,7 +81,7 @@ class VAEDecoder(nn.Module):
                     )
                 else:
                     raise ValueError("norm_type must be 'batch' or 'layer'")
-                self.layers.append(norm)
+                layers.append(norm)
 
             activation = activation_fn()
 
@@ -93,15 +93,41 @@ class VAEDecoder(nn.Module):
             nn.Conv2d(hidden_dims[-1], out_channels=self.out_features, kernel_size=3, padding=1),
             nn.Tanh(),
         )
-        self.layers.append(final_layer)
+        layers.append(final_layer)
 
-        # KNOWN DEFECT, #27: every layer is now registered TWICE -- once in
-        # self.layers and again here -- so state_dict() emits each tensor under two
-        # aliased names. Shipped checkpoints are 1.92x larger than their parameter count,
-        # and editing a checkpoint by key loses the edit unless both names are written.
-        # Removing one is a checkpoint-format break in both directions (old checkpoints
-        # get "Unexpected key(s)", new ones "Missing key(s)") and needs a migration shim.
-        self.decoder = nn.Sequential(*self.layers)
+        # The construction list is a plain list on purpose: until Aug 2026 it was a
+        # registered ModuleList alongside self.decoder, so state_dict() emitted every
+        # tensor under two aliased names and shipped checkpoints were 1.92x their
+        # parameter count (#27). self.decoder is the single registration -- it is what
+        # forward calls; parameters()/named_parameters() always deduplicated, so the
+        # optimizer and resume never saw the duplicate.
+        self.decoder = nn.Sequential(*layers)
+
+        # PERMANENT alias strip, deliberately not a _lr_migration-style delete-when
+        # module: all three shipped model releases are pre-fix checkpoints carrying
+        # "layers.*" aliases forever, so a delete-when condition would be a promise to
+        # break them. It lives on this module rather than in loader.py because the
+        # consumer's documented path is a bare model.load_state_dict (SCOPE section 4)
+        # and must strict-load old checkpoints too. Where the two aliases disagree
+        # (checkpoint surgery), "decoder.*" wins -- the same winner as before the fix,
+        # when registration order applied it last. The reverse direction cannot be
+        # shimmed: a post-fix checkpoint fails in pre-fix NSM with "Missing key(s)".
+        self.register_load_state_dict_pre_hook(self._drop_layer_aliases)
+
+    @staticmethod
+    def _drop_layer_aliases(
+        module,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ):
+        """Drop a pre-#27 checkpoint's ``<prefix>layers.*`` aliases before loading."""
+        for key in [name for name in state_dict if name.startswith(prefix + "layers.")]:
+            del state_dict[key]
 
     def forward(self, x):
         # reshape x into a 2D tensor

@@ -30,6 +30,22 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **The checkpoint format changes: `VAEDecoder` tensors appear once, not twice**
+  ([#27](https://github.com/gattia/nsm/issues/27)). Until now every VAE layer was
+  registered in both `self.layers` and `self.decoder`, so `state_dict()` emitted each
+  tensor under two aliased names and checkpoints were 1.92× their parameter count
+  (the shipped 275 MB models would be ~143 MB). `self.decoder` is now the single
+  registration. **Old checkpoints keep loading**, through `load_model` and bare
+  `model.load_state_dict(strict=True)` alike — a permanent load-time hook on
+  `VAEDecoder` drops the `layers.*` aliases, and where the two disagree `decoder.*`
+  wins, the same winner as before. **The reverse is not shimmable:** a checkpoint
+  saved by this version fails in older NSM with `Missing key(s)`. Results are
+  unaffected — the aliases shared one storage, so this costs disk, not accuracy
+  (no `KNOWN_ISSUES` History entry for the same reason). Tooling that edits
+  checkpoints by key no longer needs to write both names. Re-exporting the shipped
+  model checkpoints at the halved size is follow-on coordination with the model
+  releases, not part of this change.
+
 - **Every SDF dataset cache key changes**
   ([#19](https://github.com/gattia/nsm/issues/19)). The key is now a named canonical
   mapping: `mesh_to_scale` and `uniform_pts_buffer` are finally in it (two runs

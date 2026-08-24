@@ -41,7 +41,6 @@ queue.
 | Parameters accepted and never read | Medium — **read the traps first** | [#20](https://github.com/gattia/nsm/issues/20) |
 | `xyz_in_all` accepted and never read | Medium — silent no-op | [#20](https://github.com/gattia/nsm/issues/20) |
 | A `None` surface cannot build | Medium — advertised feature, unusable | [#67](https://github.com/gattia/nsm/issues/67) |
-| Every VAE layer stored twice | Medium — 1.92× checkpoints | [#27](https://github.com/gattia/nsm/issues/27) |
 | `sample_difficulty_lx` shipped but unimplemented | Medium | [#18](https://github.com/gattia/nsm/issues/18) |
 | `enforce_minmax` clamps predictions | Medium — config semantics | *none — a docs/design call, see below* |
 | `Pool` deadlocks after an in-process build | Low — hangs, does not corrupt | [#25](https://github.com/gattia/nsm/issues/25) |
@@ -195,28 +194,6 @@ together rather than one at a time.
 
 *Pinned by:*
 `test_model_roundtrip...::test_normalize_coordinates_must_honour_its_padding_argument`.
-
-### Every VAE layer is stored twice in the state dict
-
-`VAEDecoder.__init__` registers each layer twice — once in `self.layers`, a `ModuleList`,
-and again in `self.decoder = nn.Sequential(*self.layers)`. Both are child modules,
-so `state_dict()` emits every VAE tensor under two aliased names.
-
-Loading is unaffected — the names alias one parameter. Two things are:
-
-- **Checkpoint size.** All three shipped models store 39.96M elements for 20.80M
-  parameters, **1.92×**. The 275 MB files would be about 143 MB.
-- **Checkpoint surgery.** Editing by key silently loses the edit if only one name is
-  written. Not hypothetical: the first draft of `test_the_comparison_can_fail` did exactly
-  that and looked like a passing round trip.
-
-**How to tell whether you are affected:** every NSM checkpoint is. Your models are correct —
-this costs disk, not accuracy — but any tooling that edits a checkpoint by key needs to write
-both names.
-
-*Fix:* [#27](https://github.com/gattia/nsm/issues/27), which is a checkpoint-format break in
-both directions and needs a migration shim. *Pinned by:*
-`test_model_roundtrip.TestAliasedCheckpointEntries`.
 
 ### Latent gradients are summed over query points, so the reg balance depends on N
 
