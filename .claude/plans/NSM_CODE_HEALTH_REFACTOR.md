@@ -6,15 +6,18 @@
 
 **Updated:** 2026-08-23 · **Status:** open
 
-- **Next:** §8.0.D is complete on branch `trainer-decomposition` as a draft PR
-  (closes #28, #42, #49, #52, #59 on merge); maintainer reviews commit-by-commit —
-  one commit per statement step — marks ready, admin-merges. After that, the
-  remaining §8 program is all grouped work awaiting its own statement: the
-  evaluation-module split out of `reconstruct/main.py` rides with #5
-  (wandb-optional), class-side cache/build decomposition with #19/#27 (one
+- **Next:** the remaining §8 program is all grouped work awaiting its own
+  statement: the evaluation-module split out of `reconstruct/main.py` rides with
+  #5 (wandb-optional), class-side cache/build decomposition with #19/#27 (one
   migration release), `train_epoch`'s internal loss-pipeline decomposition only
   if a statement justifies it, multi_head's repair is #51, and the v0.3.0 cut
-  ("soonish, or at the end of this cleanup") is the maintainer's call.
+  ("soonish, or at the end of this cleanup") is the maintainer's call. In review:
+  PR #77 (docs-only — the `enforce_minmax` Open entry gains its full gradient
+  mechanics and stays open by maintainer ruling 2026-08-24; Idea 11 gains the
+  clamp-form axis). Meanwhile the maintainer's research queue points at
+  `NSM_TRAINING_IDEAS.md` Idea 4(a) first (see that file's State).
+- **§8.0.D merged to `main` in PR #76 (2026-08-24):** #28, #42, #49, #52, #59
+  closed by the merge.
 - **§8.0.D landed on branch (2026-08-23):** statement → characterization → #42 →
   #49 → #59 → sweep → #28 → #52 → split → this update, suite green and lint
   clean at every commit (654→660 passed; 19→12 xfailed — every conversion a fix

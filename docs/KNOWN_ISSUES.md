@@ -318,17 +318,48 @@ reading, not by a failure.
 
 `train_epoch` clamps `pred_sdf` as well as the target, and `torch.clamp` passes no
 gradient outside its bounds. Every sample predicted outside ±`clamp_dist` therefore
-contributes **exactly zero gradient**, however wrong it is.
+contributes **exactly zero gradient**, however wrong it is. Inherited from the original
+DeepSDF loss, which clamps both sides too — standard practice, not something NSM added.
+
+**The three regimes** (the first is why the clamp exists; the third is the hazard):
+
+- *Prediction and truth both beyond ±δ, same side* — loss 0, gradient 0. Intended:
+  this is how DeepSDF concentrates capacity near the surface instead of fitting exact
+  far-field distances.
+- *Prediction inside the band* — normal gradient toward the clamped target.
+- *Prediction outside the band while the truth is inside it* — the model is badly
+  wrong about a near-surface point: **nonzero loss, zero gradient**. The sample shows
+  up in the logged loss and contributes nothing to learning (a loss curve can sit high
+  while nothing moves the samples that keep it there); it recovers only via
+  generalization from live samples. The subject's **latent code** gets its gradient
+  through the same clamped path, so a subject whose samples are mostly dead also has a
+  mostly-frozen latent that epoch.
 
 **Measured.** On a freshly built triplanar decoder, **44.6%** of predictions already fall
 outside ±0.1 before the first step. The shipped `default_config.json` uses `clamp_dist: 0.1`;
 both ShapeMedKnee configs use `1.0`.
 
+**Why the shipped models are largely immune.** The triplanar output is `tanh`-bounded to
+(−1, 1) (measured in the `padding` entry above), so at the production `clamp_dist: 1.0`
+the prediction-side clamp **never binds** — the tanh acts as a soft clamp whose gradients
+shrink smoothly instead of cutting to zero, and the target-side clamp still provides the
+intended don't-care-beyond-the-band behaviour. The trap is training from the shipped
+default config, whose DeepSDF-inherited `0.1` puts a fresh decoder's samples 44.6% dead
+at initialization.
+
 Whether that stalls a given run is configuration-dependent — an earlier claim that it always
 does was **false**, and was withdrawn after being run. The defect is that the name and the
 docs describe a target transform while the behaviour is a training-dynamics knob. This is a
 documentation-or-decision call, not a bug fix, so it has **no issue** — it belongs with the
-config work in `SCOPE.md` §2.2.
+config work in `SCOPE.md` §2.2. **Deliberately kept open** (maintainer, 2026-08-24): this
+has real effects and should stay in view until the decision is made.
+
+**The untested alternative:** clamp only the *target* — `|pred − clamp(gt, δ)|` — which
+keeps gradient everywhere at the cost of forcing far-field predictions to sit exactly at
+±δ (a different learned function: plateaus at the band edge). The experiment — double
+clamp vs. target-only clamp vs. tanh-plus-loose-clamp at matched δ — is a named axis of
+`NSM_TRAINING_IDEAS.md` Idea 11, judged with the regression harness and Idea 10's
+surface-residual metric.
 *Pinned by:* `test_training_regression.TestClampedPredictionGradients`.
 
 ### `grad_clip` clips the model only, never the latent codes

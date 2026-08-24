@@ -448,6 +448,13 @@ the ideas above introduce.
   suggests — KNOWN_ISSUES § Open measured 44.6% of a fresh decoder's predictions
   outside ±0.1, each contributing zero gradient — so it deserves an axis, not an
   inherited constant (the shipped default is 0.1; both production configs use 1.0).
+  The axis is the *form* of the clamp as well as δ (maintainer, 2026-08-24): double
+  clamp (status quo, inherited from DeepSDF), **target-only clamp**
+  (`|pred − clamp(gt, δ)|` — gradient everywhere, far field forced to ±δ plateaus),
+  and tanh-plus-loose-clamp (the de-facto production regime: the tanh-bounded output
+  makes a ±1.0 prediction clamp inert). Judge with the harness and Idea 10's
+  surface-residual metric; the full regime breakdown is in the KNOWN_ISSUES § Open
+  entry.
 - Never swept in this repo's memory: the curriculum knobs (`surface_accuracy_e`,
   `sample_difficulty_weight` and their schedules), `latent_bound` (Idea 4), and the
   code-regularization family beyond its current values.
