@@ -6,19 +6,22 @@
 
 **Updated:** 2026-08-24 · **Status:** open
 
-- **Next:** land §8.0.E on `main` by merging **PR #79** (closes #5 on merge) —
-  the re-land: PR #77 merged to `main` 2026-08-24, but PR #78, stacked on #77's
-  branch, was merged into that branch instead of being retargeted to `main`
-  first, so `main` never received the slice (issue #5 staying open was the
-  tell). #79 carries the same eight commits from the same branch, reviewed on
-  #78; after it merges, delete both `wandb-optional` and
-  `clamp-gradient-known-issue`. Then the rest of the §8 program still awaits
-  its own statement: class-side cache/build decomposition with #19/#27 (one
-  migration release), `train_epoch`'s internal loss-pipeline decomposition only
-  if a statement justifies it, multi_head's repair is #51, and the v0.3.0 cut
-  ("soonish, or at the end of this cleanup") is the maintainer's call.
-  Meanwhile the maintainer's research queue points at `NSM_TRAINING_IDEAS.md`
-  Idea 4(a) first (see that file's State).
+- **Next:** write the §8 plan statement for the class-side cache/build
+  decomposition of the two Dataset classes, grouped with #19 (cache key) and
+  #27 (checkpoint aliasing) as one migration release (see § Deliberately
+  deferred) — unless the maintainer redirects first: the research queue
+  points at `NSM_TRAINING_IDEAS.md` Idea 4(a) before more refactor (see that
+  file's State), and the v0.3.0 cut ("soonish, or at the end of this
+  cleanup") is the maintainer's call, with nothing gating it. The other open
+  §8 threads, for when their modules come up: `train_epoch`'s internal
+  loss-pipeline decomposition only if a statement justifies it; multi_head's
+  repair is #51.
+- **§8.0.E merged to `main` in PR #79 (2026-08-24):** #5 closed by the merge;
+  `wandb-optional` and `clamp-gradient-known-issue` both deleted. The first
+  landing attempt — PR #78, stacked on #77's branch — merged into its
+  surviving stale base instead of `main` (issue #5 staying open was the
+  tell); #79 re-landed the same eight commits, reviewed on #78, and the trap
+  is now a working convention in CLAUDE.md (PR #80).
 - **PR #77 merged to `main` (2026-08-24):** the `enforce_minmax` Open entry has
   its full gradient mechanics; Idea 11 carries the clamp-form axis.
 - **§8.0.E landed on branch (2026-08-24):** statement → characterization → #5
