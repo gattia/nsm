@@ -1,6 +1,11 @@
 import numpy as np
 import torch
-import wandb
+
+# Optional (#5): every wandb use is behind an explicit request that raises when absent.
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 from NSM.datasets import (
     get_pts_center_and_scale,
@@ -92,6 +97,8 @@ def reconstruct_latent_S3(
     Extending DeepSDF for automatic 3D shape retrieval and similarity transform estimation
     https://arxiv.org/abs/2004.09048
     """
+    if log_wandb and wandb is None:
+        raise ImportError("log_wandb=True requires wandb, which is not installed")
 
     if convergence != "num_iterations":
         num_iterations = max(num_iterations, 10000)
