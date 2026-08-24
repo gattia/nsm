@@ -22,10 +22,8 @@
   surviving stale base instead of `main` (issue #5 staying open was the
   tell); #79 re-landed the same eight commits, reviewed on #78, and the trap
   is now a working convention in CLAUDE.md (PR #80).
-- **PR #77 merged to `main` (2026-08-24):** the `enforce_minmax` Open entry has
-  its full gradient mechanics; Idea 11 carries the clamp-form axis.
-- **§8.0.E landed on branch (2026-08-24):** statement → characterization → #5
-  fix → amendment → dead-pair deletion → split → this update, suite green and
+  The work: statement → characterization → #5
+  fix → amendment → dead-pair deletion → split, suite green and
   lint clean at every commit (660→664 passed; the #5 probe xfail passes unmarked
   from the fix commit on). #5: six guarded imports (schedulefree's sentinel
   pattern), raise-by-name at entry for every explicit request, and the one
@@ -48,10 +46,12 @@
   Histogram presence; `recon_evaluation.py`'s split budget (≤ +15) came out
   ~+27 because the statement's budget line omitted the module docstring that
   8.0.C-style moves carry.
+- **PR #77 merged to `main` (2026-08-24):** the `enforce_minmax` Open entry has
+  its full gradient mechanics; Idea 11 carries the clamp-form axis.
 - **§8.0.D merged to `main` in PR #76 (2026-08-24):** #28, #42, #49, #52, #59
   closed by the merge.
-- **§8.0.D landed on branch (2026-08-23):** statement → characterization → #42 →
-  #49 → #59 → sweep → #28 → #52 → split → this update, suite green and lint
+  The work: statement → characterization → #42 →
+  #49 → #59 → sweep → #28 → #52 → split, suite green and lint
   clean at every commit (654→660 passed; 19→12 xfailed — every conversion a fix
   passing unmarked). #42: the warm-up unpacks the way `train_epoch` does, pinned
   via a stubbed `schedulefree` (AdamW + `train()`/`eval()`) since the crash was
@@ -72,10 +72,10 @@
   truthy `mesh_names` the adoption path would read, so those mocks now pin
   `mesh_names=None`; a stale `train_deep_sdf.py:401` line-number citation in the
   clamp characterization docstring rode along (symbols only, per #31).
-- **§8.0.C merged to `main` in PR #74; the #48 remnants in PR #73 (both
-  2026-08-23):** #15, #16, #29 closed by the merge.
-- **§8.0.C landed on branch (2026-08-23):** statement → characterization → #15 →
-  #16 → class sweep → #29 → split → this update, suite green and lint clean at
+- **§8.0.C merged to `main` in PR #74 (2026-08-23):** #15, #16, #29 closed by
+  the merge.
+  The work: statement → characterization → #15 →
+  #16 → class sweep → #29 → split, suite green and lint clean at
   every commit. #15: readers unified on `"pts"`; the two dataset-class probes
   collapsed, their dead `"gt_sdf"` fallback with them. The `"xyz"` transitional
   alias was then **deleted on the same branch** (maintainer, 2026-08-23:
@@ -98,7 +98,7 @@
   single-object end-to-end test rode with #16 (the branch was never runnable
   before #15+#16, so its first execution belonged with the fix that made it
   cheap).
-- **#48 remnants on branch `recon-option-values`, draft PR #73 (2026-08-23):**
+- **#48 remnants merged to `main` in PR #73 (2026-08-23):**
   `norm_penalty_type='barrier'` raises by name outside its `(min, max)` range
   instead of NaN — pre-fix runs *completed*, with `nan` in every loss readout and
   a finite gradient pushing the norm **away** from the range (verified by
@@ -140,7 +140,11 @@
   nothing gates it now that the `"xyz"` alias is gone rather than
   waiting-to-be-deleted. §10.1's setuptools-scm item (derive the version from the
   tag) is still open and would naturally ride with the v0.3.0 release PR.
-- **Blocked on:** nothing.
+- **Blocked on:** nothing for the Next. Standing exception, so it stops
+  re-deferring silently: **0b** (the nsosim/fork consumer survey, §3) has needed
+  maintainer input since Phase 0 — nsosim is not available locally — and gates
+  the `train/deprecated/` quarantine (#18); every re-import-surface decision so
+  far has substituted "forks assumed to use both paths" for its answer.
 - **Context for whoever picks this up:** PR #68 carried one commit per concern, so
   `git log NSM/datasets/sdf_dataset.py` explains each fix. Decisions of record are in
   the PR body ("Of note"): the single-mesh clip was removed, not copied; the timing keys
