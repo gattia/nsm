@@ -7,17 +7,20 @@
 **Updated:** 2026-08-24 · **Status:** open
 
 - **Next:** execute §8.0.F from commit 2 (characterization) on branch
-  `cache-checkpoint-migration`, growing PR #82 into the slice PR — review is
-  per commit after the slice lands, as for every previous slice — unless the
-  maintainer redirects first: the research queue points at
-  `NSM_TRAINING_IDEAS.md` Idea 4(a) before more refactor (see that file's
+  `cache-checkpoint-migration`, landing the finished slice as its **own PR** —
+  review is per commit after the slice lands, as for every previous slice.
+  (The State previously said "growing PR #82 into the slice PR"; #82 — the
+  statement, commit 1 — was reviewed and merged to `main` on 2026-08-24
+  before execution started, so the slice continues on the same branch and
+  lands separately.) The research queue still points at
+  `NSM_TRAINING_IDEAS.md` Idea 4(a) after this slice (see that file's
   State). The v0.3.0 cut ("soonish, or at the end of this cleanup") stays
   the maintainer's call; §8.0.F adds one constraint — #19 and #27 ship in
   the same release, so either the cut waits for that branch or the branch
   ships in the release after it. The other open §8 threads, for when their
   modules come up: `train_epoch`'s internal loss-pipeline decomposition only
   if a statement justifies it; multi_head's repair is #51.
-- **§8.0.F statement written (2026-08-24), branch `cache-checkpoint-migration`:**
+- **§8.0.F statement merged to `main` in PR #82 (2026-08-24):**
   every claim in it re-run against `main` at `8ae0081` first (suite 664 passed /
   12 xfailed; the aliasing probe, the `parameters()` dedup, the `forward` path,
   the hash-machinery caller grep). Two design calls that diverge from the issues'
