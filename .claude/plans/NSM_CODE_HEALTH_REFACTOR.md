@@ -6,16 +6,28 @@
 
 **Updated:** 2026-08-24 · **Status:** open
 
-- **Next:** write the §8 plan statement for the class-side cache/build
-  decomposition of the two Dataset classes, grouped with #19 (cache key) and
-  #27 (checkpoint aliasing) as one migration release (see § Deliberately
-  deferred) — unless the maintainer redirects first: the research queue
-  points at `NSM_TRAINING_IDEAS.md` Idea 4(a) before more refactor (see that
-  file's State), and the v0.3.0 cut ("soonish, or at the end of this
-  cleanup") is the maintainer's call, with nothing gating it. The other open
-  §8 threads, for when their modules come up: `train_epoch`'s internal
-  loss-pipeline decomposition only if a statement justifies it; multi_head's
-  repair is #51.
+- **Next:** execute §8.0.F from commit 2 (characterization) on branch
+  `cache-checkpoint-migration`, growing PR #82 into the slice PR — review is
+  per commit after the slice lands, as for every previous slice — unless the
+  maintainer redirects first: the research queue points at
+  `NSM_TRAINING_IDEAS.md` Idea 4(a) before more refactor (see that file's
+  State). The v0.3.0 cut ("soonish, or at the end of this cleanup") stays
+  the maintainer's call; §8.0.F adds one constraint — #19 and #27 ship in
+  the same release, so either the cut waits for that branch or the branch
+  ships in the release after it. The other open §8 threads, for when their
+  modules come up: `train_epoch`'s internal loss-pipeline decomposition only
+  if a statement justifies it; multi_head's repair is #51.
+- **§8.0.F statement written (2026-08-24), branch `cache-checkpoint-migration`:**
+  every claim in it re-run against `main` at `8ae0081` first (suite 664 passed /
+  12 xfailed; the aliasing probe, the `parameters()` dedup, the `forward` path,
+  the hash-machinery caller grep). Two design calls that diverge from the issues'
+  first framing, argued in the statement: `subsample` is *decoupled* from cache
+  content (raw indices cached, padding at draw) rather than keyed — so the
+  subsample-key xfail gets rewritten, not unmarked — and #27's alias-strip hook
+  is deliberately permanent rather than a delete-when module, because the three
+  shipped model checkpoints are pre-fix forever. Rebased onto `main` post-#84
+  (clean); commit 5's scope gains §7.1's save/load round-trip, the venue #84's
+  annotations name.
 - **§8.0.E merged to `main` in PR #79 (2026-08-24):** #5 closed by the merge;
   `wandb-optional` and `clamp-gradient-known-issue` both deleted. The first
   landing attempt — PR #78, stacked on #77's branch — merged into its
@@ -1238,6 +1250,165 @@ merge); 4. the split + ARCHITECTURE §3 ledger rows; 5. State update.
 | both namespaces keep every name | `test_reconstruct_import_compat.py` frozen lists, untouched |
 | the monkeypatch seam survives the move | `test_predictive_validation.py` green, untouched |
 | no module-level cycle | `recon_evaluation.py`'s top imports stay `.utils`-only; the `main` import is call-time, stated in place; ARCHITECTURE §2 ast pass re-run |
+
+### 8.0.F Class-side cache/build split + #19 + #27, one migration release — plan statement (2026-08-24)
+
+Every claim below was re-run on `main` at `8ae0081` (2026-08-24) before being written.
+Suite baseline: 664 passed, 1 skipped, 12 xfailed — six of the xfails are #19's
+(`TestUnhashedParametersCollide` ×5, `TestReferenceMeshHashing` ×1), three are #27's
+(`TestAliasedCheckpointEntries`).
+
+**Why one slice.** Both fixes force a downstream migration — any change to the cache
+key orphans every cached `.npz`, and #27 changes the checkpoint format in both
+directions — so they land together and **ship in the same release** (the State's
+"Deliberately deferred" argument). Whether that release is v0.3.0 or a later cut is
+still the maintainer's timing call; the only constraint this adds is that no release
+boundary falls between the two fixes. The class-side decomposition rides with them
+because #19 rewrites exactly the code the decomposition reorganizes.
+
+**The defects, re-verified.** #19: `get_hash_params` omits `mesh_to_scale` and
+`uniform_pts_buffer` (and `subsample`'s only content effect is index padding, below);
+the multi list carries an unexplained `False` literal and `create_hash` gives position
+meaning (paths inserted in reverse); a `Mesh`-valued `reference_mesh` hashes by memory
+address; mesh *content* is nowhere in the key. #27, probed today on a small
+`VAEDecoder`: `state_dict()` emits 16,020 elements for 10,024 parameters,
+`layers.0.weight` and `decoder.0.weight` share one storage, and — decisive for the fix
+— `parameters()`/`named_parameters()` already deduplicate (12 tensors, Adam sees 12),
+so removing the duplicate registration cannot touch optimizer state or resume.
+`forward` runs through `self.decoder`; nothing else in `NSM/` reads `.layers`.
+
+**The #19 fix (permanent).** Four decisions of record:
+
+- **The key becomes a canonical named mapping.** `create_hash(loc_mesh) -> str` keeps
+  its signature but hashes a `{name: value}` dict (canonically serialized, one shared
+  implementation for both classes); `get_hash_params` returns that dict — no external
+  callers (re-grepped: tests only). Position stops carrying meaning — the LR bug's
+  shape — and the `False` literal and the reversed insertion die with it. A
+  `cache_format` version entry makes the *next* content-affecting change one integer
+  bump instead of a fresh #19; SCOPE §4's cache row turns "Versioned? Yes" (and drops
+  its stale `.h5` mention — no h5 path exists in `datasets/`).
+- **Coverage:** `mesh_to_scale` and `uniform_pts_buffer` enter the key.
+  `joint_scale_buffer` stays out **permanently**, settled: post-#69 it never touches a
+  cached byte (`norm_and_scale_all_meshes` stores the frame, `__getitem__` applies it)
+  — same class as `mesh_names`. `subsample` also stays out, by the next bullet.
+- **Index decoupling instead of keying on `subsample`.** The cache stores the *raw*
+  per-sign index sets; the repeat-padding (`samples_per_sign // n + 1`) moves to the
+  draw site (`__getitem__`, both classes, both storage modes), sized by the subsample
+  in force. `subsample`'s only content effect is that padding (`save_data_to_cache`'s
+  key list read against `sdf_pos_neg_idx`), so cached bytes stop depending on it and
+  the measured stale-padding defect (4.4×/1.6× interior under-representation) dies
+  with the coupling rather than being keyed around. Batch size is a serving parameter;
+  forcing a full resample when it changes would be wrong in the other direction. For
+  an unchanged subsample the padded array `randperm` sees is byte-identical to today's
+  cached one, so batches are bit-identical; `sdf_pos_neg_idx`'s raise/empty semantics
+  (#41, `TestEmptySignedSamples`) are unchanged. The issue's reload-guard item
+  dissolves: the guard was only ever needed against stale padding.
+- **Identity routing — fix the class, not the instance.** The class is "an identity in
+  the key that is not content-stable". Every path in the key contributes
+  `(path, st_size, st_mtime)`; every `Mesh` object contributes a digest of its
+  geometry (point/face bytes); an int or list `reference_mesh` is resolved to the
+  underlying path(s) *first* — today the raw int is hashed, so reordering
+  `list_mesh_paths` re-aims the reference while the key stands still, the same defect
+  one level up. Full-bytes hashing (`mesh_content_key`) is rejected for the key: it
+  would read every mesh on every construction, cache hits included; stat is free and
+  catches the in-place-edit case the issue names. The seed's bytes key stays what it
+  is — build-time only, meshes already in hand.
+
+Old caches never hit the new keys: one regeneration, no corruption, and regenerated
+data is identical when seeded (History §3). No migration guard is possible or needed —
+keys are opaque, a legacy file is indistinguishable from another config's, and serving
+wrong data is exactly what stops happening. CHANGELOG tells users the one-time cost
+and that stale cache directories are reclaimable disk. The three KNOWN_ISSUES Open
+entries retire into **one History bundle entry** (issue #19's own instruction), and
+the defect-describing docstrings (`get_hash_params`, `uniform_pts_buffer`, the class
+Notes) are corrected in the same commits.
+
+**The #27 fix (permanent, hook included).** `self.decoder = nn.Sequential(...)` stays
+the single registration — it is what `forward` calls; the construction list stops
+being a `ModuleList`. A load-time state-dict pre-hook registered on `VAEDecoder`
+*itself* drops incoming `<prefix>layers.*` aliases — on the module, not in
+`loader.py`, because the consumer's documented path is a bare `model.load_state_dict`
+(SCOPE §4) and must strict-load old checkpoints too. Where the two aliases disagree
+(checkpoint surgery, the issue's case), `decoder.*` wins — the same winner as today,
+where registration order applies it last. **Deliberately permanent, not a
+`_lr_migration`-style delete-when module:** all three shipped model releases are
+pre-fix checkpoints, so a delete-when condition would be a promise to break them;
+~15 lines in `triplanar.py`, reasoned in place. The reverse direction cannot be
+shimmed — a post-fix checkpoint fails in pre-fix NSM with `Missing key(s)` — and
+CHANGELOG says so. **No History entry:** the aliases share one storage, so results
+were never wrong; this costs disk, not accuracy. Re-exporting the shipped checkpoints
+(halving the 275 MB downloads) is follow-on coordination with the model releases, not
+this slice. Commit 5 also closes §7.1's open **save/load round-trip** box — `main`'s
+annotations (PR #84) name it the venue, since #27 changes the format being
+round-tripped: save a post-fix model, reload via `load_model` *and* bare
+`load_state_dict`, assert the forward bitwise-identical to the in-memory original
+(`test_loader.py`'s existing round trip loads but never compares outputs). §7.2's
+checkpoint-compat promise is proxied in-suite by the both-alias test; loading a real
+shipped checkpoint stays a release-time check (also per #84's annotation).
+
+**The split (permanent).** The two `get_sample_data_dict` bodies are the same
+~150-line shell twice — hit path (bad-zip deletion, load+unpack, layout upgrade,
+resave), miss path (build), store-mode coercion — with class-specific innards. Target:
+the orchestrator lives once, in `SDFSamples`; the class-specific parts become private
+hooks — `_build_subject(loc_mesh, ...)` (the combos loop) and
+`_upgrade_cached_layout(data, ...)` (single: `pos_idx` backfill; multi: overlap pass +
+index-range guard, keeping the delete-and-rebuild semantics). Private, so the frozen
+namespace lists do not change (they are hasattr-based; additions don't trip them,
+deletions do). `__getitem__` stays per-class — the per-surface draw is not this
+slice's business beyond the pad-at-draw line. Commit 2 also *determines* whether a
+subject passed as an in-memory `Mesh` (the `isinstance(..., (str, Mesh))` branches)
+builds end to end at all: if yes, its key identity routes through the geometry
+digest; if it never worked (a #67-shaped discovery), it is filed and pinned, and the
+routing covers what runs.
+
+**Deferred out of this slice, deliberately:** `find_hash`'s recursive first-match,
+cross-date search (unchanged, now pinned); content-only keys that survive dataset
+moves (paths stay in the key; a move regenerates, as today); `__getitem__`
+unification; any cache-file layout change beyond unpadded indices (same npz keys,
+same spellings); re-exporting shipped checkpoints; multi_head (#51), `deprecated/`
+(0b).
+
+**Size budget:** #19 key rewrite ≤ +60 net in `sdf_dataset.py` (identity routing +
+named key; the literal, the reversed insertion, and the KNOWN-DEFECTS docstring
+blocks all die); index decoupling ≤ +10 net; #27 ≤ +25 in `triplanar.py` (hook +
+in-place reasoning, −2 registration); the split ≤ +20 net with the expectation of
+negative (one duplicated shell deleted; hook signatures + docstrings added).
+Characterization tests are additive and outside the budget.
+
+**Sequence** (one commit each, suite green and lint clean at every step):
+1. this statement; 2. characterization — pin the unpinned cache-hit machinery
+(bad-zip deletion, single's `pos_idx` backfill + resave, multi's overlap-upgrade
+resave, index-range delete-and-rebuild, store-mode coercion, started-loading log),
+run the Mesh-subject determination, and add a strict-xfail: an in-place mesh edit
+must change the key (#19 (b), the Open entry's "not currently pinned"); 3. #19 key
+rewrite + unmarks (mesh_to_scale, uniform_pts_buffer, collision-reuse,
+reference-mesh, in-place edit) + History bundle entry + Open retires + CHANGELOG +
+SCOPE §4 row; 4. index decoupling + the equal-pos-neg unmark + the subsample-key
+xfail rewritten to its true form (cached bytes byte-equal across subsamples — the
+old premise inverted into a plain assertion); 5. #27 fix + hook + tests + the §7.1
+save→load→bitwise round-trip + three unmarks + CHANGELOG + Open retires; 6. the
+split + ARCHITECTURE §3 ledger rows; 7. State update (ticks §7.1's round-trip box).
+
+**Verification per claim:**
+
+| Claim | Verification |
+|---|---|
+| the key covers mesh_to_scale / uniform_pts_buffer | both strict-xfails pass unmarked; the colliding-runs xfail passes unmarked |
+| an in-place mesh edit changes the key | the commit-2 strict-xfail passes unmarked |
+| a Mesh reference hashes by geometry, stably | `TestReferenceMeshHashing` xfail passes unmarked; the path-string test stays green |
+| the named key still covers what it covered | `TestHashedParametersChangeTheKey` (14 params) green untouched |
+| cached bytes no longer depend on subsample | commit-4 assertion: builds differing only in subsample write byte-equal `.npz` |
+| equal_pos_neg survives a subsample change | its strict-xfail passes unmarked |
+| unchanged subsample ⇒ bit-identical batches | training regression baselines + `test_reloaded_items_match_the_freshly_built_ones` green untouched |
+| pad-at-draw keeps #41's raise semantics | `TestEmptySignedSamples` green untouched |
+| joint_scale_buffer touches no cached byte | `TestScaleJointlyInMemory` + cache round-trip green untouched |
+| #27 single registration | the three strict-xfails pass unmarked |
+| old checkpoints load, both entry paths | new test: both-alias state dict loads via `load_model` *and* bare `model.load_state_dict(strict=True)`; outputs bitwise-equal |
+| an edit to a surviving key takes effect | `test_editing_a_checkpoint_by_key_must_take_effect` passes unmarked |
+| a saved post-fix model reloads bitwise | the §7.1 round-trip: save → reload via both entry paths → forward bitwise-equal to the in-memory original |
+| optimizer/resume untouched by #27 | probe (run 2026-08-24): `parameters()` yields each tensor once, aliases share storage — the optimizer never saw the duplicate; resume tests green |
+| split changes no behaviour | full suite + harness green; no xfail transitions in the split commit |
+| namespace unchanged | frozen lists on both import paths untouched |
 
 ### 8.1 Make the library plural — added 2026-08-15
 
