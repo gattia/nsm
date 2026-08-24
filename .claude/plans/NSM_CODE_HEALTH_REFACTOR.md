@@ -22,10 +22,8 @@
   surviving stale base instead of `main` (issue #5 staying open was the
   tell); #79 re-landed the same eight commits, reviewed on #78, and the trap
   is now a working convention in CLAUDE.md (PR #80).
-- **PR #77 merged to `main` (2026-08-24):** the `enforce_minmax` Open entry has
-  its full gradient mechanics; Idea 11 carries the clamp-form axis.
-- **§8.0.E landed on branch (2026-08-24):** statement → characterization → #5
-  fix → amendment → dead-pair deletion → split → this update, suite green and
+  The work: statement → characterization → #5
+  fix → amendment → dead-pair deletion → split, suite green and
   lint clean at every commit (660→664 passed; the #5 probe xfail passes unmarked
   from the fix commit on). #5: six guarded imports (schedulefree's sentinel
   pattern), raise-by-name at entry for every explicit request, and the one
@@ -48,10 +46,12 @@
   Histogram presence; `recon_evaluation.py`'s split budget (≤ +15) came out
   ~+27 because the statement's budget line omitted the module docstring that
   8.0.C-style moves carry.
+- **PR #77 merged to `main` (2026-08-24):** the `enforce_minmax` Open entry has
+  its full gradient mechanics; Idea 11 carries the clamp-form axis.
 - **§8.0.D merged to `main` in PR #76 (2026-08-24):** #28, #42, #49, #52, #59
   closed by the merge.
-- **§8.0.D landed on branch (2026-08-23):** statement → characterization → #42 →
-  #49 → #59 → sweep → #28 → #52 → split → this update, suite green and lint
+  The work: statement → characterization → #42 →
+  #49 → #59 → sweep → #28 → #52 → split, suite green and lint
   clean at every commit (654→660 passed; 19→12 xfailed — every conversion a fix
   passing unmarked). #42: the warm-up unpacks the way `train_epoch` does, pinned
   via a stubbed `schedulefree` (AdamW + `train()`/`eval()`) since the crash was
@@ -72,10 +72,10 @@
   truthy `mesh_names` the adoption path would read, so those mocks now pin
   `mesh_names=None`; a stale `train_deep_sdf.py:401` line-number citation in the
   clamp characterization docstring rode along (symbols only, per #31).
-- **§8.0.C merged to `main` in PR #74; the #48 remnants in PR #73 (both
-  2026-08-23):** #15, #16, #29 closed by the merge.
-- **§8.0.C landed on branch (2026-08-23):** statement → characterization → #15 →
-  #16 → class sweep → #29 → split → this update, suite green and lint clean at
+- **§8.0.C merged to `main` in PR #74 (2026-08-23):** #15, #16, #29 closed by
+  the merge.
+  The work: statement → characterization → #15 →
+  #16 → class sweep → #29 → split, suite green and lint clean at
   every commit. #15: readers unified on `"pts"`; the two dataset-class probes
   collapsed, their dead `"gt_sdf"` fallback with them. The `"xyz"` transitional
   alias was then **deleted on the same branch** (maintainer, 2026-08-23:
@@ -98,7 +98,7 @@
   single-object end-to-end test rode with #16 (the branch was never runnable
   before #15+#16, so its first execution belonged with the fix that made it
   cheap).
-- **#48 remnants on branch `recon-option-values`, draft PR #73 (2026-08-23):**
+- **#48 remnants merged to `main` in PR #73 (2026-08-23):**
   `norm_penalty_type='barrier'` raises by name outside its `(min, max)` range
   instead of NaN — pre-fix runs *completed*, with `nan` in every loss readout and
   a finite gradient pushing the norm **away** from the range (verified by
@@ -140,7 +140,11 @@
   nothing gates it now that the `"xyz"` alias is gone rather than
   waiting-to-be-deleted. §10.1's setuptools-scm item (derive the version from the
   tag) is still open and would naturally ride with the v0.3.0 release PR.
-- **Blocked on:** nothing.
+- **Blocked on:** nothing for the Next. Standing exception, so it stops
+  re-deferring silently: **0b** (the nsosim/fork consumer survey, §3) has needed
+  maintainer input since Phase 0 — nsosim is not available locally — and gates
+  the `train/deprecated/` quarantine (#18); every re-import-surface decision so
+  far has substituted "forks assumed to use both paths" for its answer.
 - **Context for whoever picks this up:** PR #68 carried one commit per concern, so
   `git log NSM/datasets/sdf_dataset.py` explains each fix. Decisions of record are in
   the PR body ("Of note"): the single-mesh clip was removed, not copied; the timing keys
@@ -554,12 +558,20 @@ Only over modules that survived Phase 1.
 - [ ] Docstrings on every surviving public function/class: purpose, args, returns, raises,
       **and any silent convention** (index orderings, coordinate spaces, units).
       `[0]=model, [1]=latent` is precisely the kind of thing that must be written down.
+      *(Partial, through the per-module passes: PR #37 — docstrings contradicting their
+      signatures; PR #66 — the 62 prose corrections plus the `train/`/`utils` conventions;
+      PR #70 — the `sdf_dataset.py` semantic pass. Modules no pass has reached remain.)*
 - [ ] Verify each existing docstring against the implementation — 48% coverage says
-      nothing about whether those 48% are *true*.
+      nothing about whether those 48% are *true*. *(Same per-module status: the passes
+      above verified what they touched, nothing else.)*
 - [ ] Enforce mechanically so it cannot rot: add `flake8-docstrings` (or `pydocstyle`) to
-      `make lint`, failing on missing docstrings in public API.
+      `make lint`, failing on missing docstrings in public API. *(Re-checked 2026-08-24:
+      `make lint` runs flake8 with no docstring plugin — fully open, and the accuracy paid
+      for above can rot silently until this lands.)*
 - [ ] Rewrite `CLAUDE.md` §Architecture from the Phase 1 map; drop the stale
       "EIKONAL LOSS HAS NOT BEEN TESTED" shout-comment into a tracked issue instead.
+      *(Still open. The shout's substance now lives in §8.2's gate — both entry points
+      raise `NotImplementedError` — but the comment itself still stands in `CLAUDE.md`.)*
 
 ### 6.1 Warnings, not just docstrings
 
@@ -567,22 +579,29 @@ Phase 1 found capabilities that are real but unready. A docstring is the wrong i
 for those — the user who needs the warning is the one who did not read the docstring. Each
 of these is small and independent of the decomposition work:
 
-- [ ] **Rewrite the `train_deep_sdf_multi_head` deprecation text** (`:30`). It currently
+- [x] **Rewrite the `train_deep_sdf_multi_head` deprecation text** (`:30`). It currently
       says "Use `NSM.train.train_deep_sdf` with `'objects_per_decoder' > 1` instead" —
       advice that silently hands the user a different architecture (`docs/SCOPE.md` §2.1).
       Say broken-and-unfixed; name no replacement. Keep it out of the documented surface:
-      its hyperparameters have never been tuned.
-- [ ] **Warn on the Eikonal loss at the point of use.** Never run by its author, never
+      its hyperparameters have never been tuned. *(Done in PR #66: the module now warns
+      broken-and-unfixed at call time, names no replacement, and says why
+      `objects_per_decoder > 1` is not one.)*
+- [x] **Warn on the Eikonal loss at the point of use.** Never run by its author, never
       executed by a test. See §3 below — the warning's wording depends on whether it works.
+      *(Superseded 2026-08-15 by the §8.2 gate: `eikonal_weight > 0` raises
+      `NotImplementedError` at both entry points — stronger than a warning.)*
 - [ ] **Fix, then warn, then document `mesh/refine_mesh.py`,** in that order. It raises
       `UnboundLocalError` on its own defaults (`:399`), so documentation written today
       describes something nobody can run. `docs/SCOPE.md` §2.3 lists the three conditions.
 - [ ] **Guard `sample_difficulty_lx` when porting it** out of `train/deprecated/`. Its
       off-state has never been exercised; a feature whose disabled path is untested turns
       itself on eventually. Document it at the config key, not only in code.
+      *(= #18; rides with the 0b quarantine.)*
 - [ ] **Find the config keys that silently do nothing** because their implementing branch is
       commented out. These read as working features and produce no error — the inverse of
-      the hazard above, and harder to notice.
+      the hazard above, and harder to notice. *(One instance found and deleted by 8.0.C's
+      sweep — `compute_recon_loss(n_samples_assd)`, its implementing call commented out.
+      The systematic hunt is still open.)*
 
 **Deliverable:** docstring coverage ≥90% on surviving public API, lint-enforced.
 
@@ -630,11 +649,13 @@ worst findings untouched, so add:
 - [ ] **Model save/load round-trip.** `testing/NSM/models/test_loader.py:232` loads a saved
       model and never compares its output to the original's, so a wrong-but-same-shaped
       forward passes every assertion. Train → save → load → assert bitwise-identical.
+      *(Venue: §8.0.F commit 5, PR #82 — #27 changes the checkpoint format, so the
+      round-trip belongs with it.)*
 - [ ] **Name the CPU/GPU gap rather than discovering it later.** A <2-minute CI harness is
       CPU; production is CUDA. Add a separate opt-in GPU test asserting the seed-ordering
       constraint `kneepipeline` depends on (`torch.manual_seed` *after* `.cuda()`, per
       `docs/KNOWN_ISSUES.md`), and state in the harness that CPU baselines do not
-      bound GPU divergence.
+      bound GPU divergence. *(Attach to the v0.3.0 release PR.)*
 
 Roughly 30–40% more than the original four items, still one bounded artifact, still under
 two minutes.
@@ -657,6 +678,10 @@ are both inferred and on the production path are the highest-value targets.
 - [ ] `reconstruct_mesh` — end-to-end on a synthetic model, asserted against baseline
 - [ ] Checkpoint backward compatibility: load a real historical checkpoint and assert it
       still reconstructs identically. Non-negotiable — this is the promise to `nsosim`.
+      *(§8.0.F commit 5's old-checkpoint test — a both-alias state dict through
+      `load_model` and bare `load_state_dict(strict=True)`, outputs bitwise-equal — is
+      the in-suite proxy; loading a real shipped checkpoint stays a release-time check,
+      since the 275 MB downloads do not belong in CI.)*
 
 ### 7.3 Characterization tests, written just-in-time
 
@@ -1329,22 +1354,26 @@ is the string literal `"0.0.1"` and has never been bumped, so there is no `v1` a
 would invent history. Phase 1 ran without a tag; the tag is now a Phase 3 prerequisite
 instead, since it is Phase 4 that breaks things.
 
-- [ ] **Tag `v0.1.0` — "the state before the refactor."** Have `kneepipeline` and `nsosim`
+- [x] **Tag `v0.1.0` — "the state before the refactor."** Have `kneepipeline` and `nsosim`
       pin it. This is the rollback point and it decouples their release cadence from this
-      work.
-- [ ] **Not `1.0.0`.** That is a stability promise, and Phase 1 found 71 landmines with 30
+      work. *(Tagged — the `Target` requirement is in it, see Surprises. The
+      consumer-pinning half never happened: kneepipeline consumes a checked-out working
+      tree (`DEPENDENCIES/nsm`), not a tag; nsosim is 0b's question.)*
+- [x] **Not `1.0.0`.** That is a stability promise, and Phase 1 found 71 landmines with 30
       of them unverified on the production path. Claiming 1.0 and then breaking things in
       Phase 4 makes the number meaningless. `0.x` is honest and gives the same rollback
-      guarantee.
-- [ ] **Bump on release, not on commit.** Under `0.x`: breaking changes bump the minor
-      (`0.2.0` after Phase 4), additive changes bump the patch.
+      guarantee. *(Holding: v0.1.0 and v0.2.0 both shipped under `0.x`.)*
+- [x] **Bump on release, not on commit.** Under `0.x`: breaking changes bump the minor
+      (`0.2.0` after Phase 4), additive changes bump the patch. *(Practiced: v0.2.0
+      (PR #36); the pending Breaking set makes the next cut v0.3.0 — State § Versioning.)*
 - [ ] **Move to `1.0.0` when there is something to promise** — when `__all__` exists (§3)
       and the §7.1 harness is green. That ties the version to a milestone rather than a date.
 - [ ] **Derive the version from git tags.** `pyproject.toml` already lists `setuptools-scm`
       in `build-requires` with `[tool.setuptools_scm]` commented out. Uncommenting it makes
       the tag the single source of truth. A hand-edited literal is exactly why the version
       sat at `0.0.1` for years, and re-deciding the scheme without fixing that mechanism
-      leaves it free to go stale again.
+      leaves it free to go stale again. *(Rides with the v0.3.0 release PR — State
+      § Versioning.)*
 
 **Coordinate with downstream forks throughout.** At least one active fork carries modules
 that do not exist upstream, so every week of unmerged refactor makes its merge worse.
