@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from NSM.datasets import MultiSurfaceSDFSamples
 from NSM.train.train_deep_sdf import train_deep_sdf as train_single
 from NSM.train.train_deep_sdf_multi_head import train_deep_sdf as train_multi_head
 
@@ -38,7 +39,7 @@ class TestSingleHeadMeshNamesValidation:
             mesh_names=["bone"],
         )
         with pytest.raises(ValueError, match="mesh_names has 1 entries"):
-            train_single(config, model=MagicMock(), sdf_dataset=MagicMock())
+            train_single(config, model=MagicMock(), sdf_dataset=MagicMock(mesh_names=None))
 
     def test_mesh_names_matching_length_no_error(self):
         config = _make_single_config(
@@ -47,7 +48,7 @@ class TestSingleHeadMeshNamesValidation:
         )
         with patch(PATCH_SINGLE, side_effect=StopIteration):
             with pytest.raises(StopIteration):
-                train_single(config, model=MagicMock(), sdf_dataset=MagicMock())
+                train_single(config, model=MagicMock(), sdf_dataset=MagicMock(mesh_names=None))
         # If we got here, no ValueError was raised — validation passed
 
     def test_no_warning_when_single_surface(self):
@@ -56,7 +57,7 @@ class TestSingleHeadMeshNamesValidation:
             with warnings.catch_warnings(record=True) as w:
                 warnings.simplefilter("always")
                 with pytest.raises(StopIteration):
-                    train_single(config, model=MagicMock(), sdf_dataset=MagicMock())
+                    train_single(config, model=MagicMock(), sdf_dataset=MagicMock(mesh_names=None))
                 mesh_warnings = [x for x in w if "mesh_names" in str(x.message)]
                 assert len(mesh_warnings) == 0
 
@@ -66,7 +67,7 @@ class TestSingleHeadMeshNamesValidation:
             with warnings.catch_warnings(record=True) as w:
                 warnings.simplefilter("always")
                 with pytest.raises(StopIteration):
-                    train_single(config, model=MagicMock(), sdf_dataset=MagicMock())
+                    train_single(config, model=MagicMock(), sdf_dataset=MagicMock(mesh_names=None))
                 mesh_warnings = [x for x in w if "mesh_names" in str(x.message)]
                 assert len(mesh_warnings) == 1
 
@@ -103,3 +104,39 @@ class TestMultiHeadMeshNamesValidation:
                     train_multi_head(config, models=models, sdf_dataset=MagicMock())
                 mesh_warnings = [x for x in w if "mesh_names" in str(x.message)]
                 assert len(mesh_warnings) == 1
+
+
+class TestDatasetCarriedMeshNames:
+    """
+    #52: surface identity is defined by the order of each subject's mesh-path list, so
+    that is where the names are declared — ``MultiSurfaceSDFSamples`` accepts
+    ``mesh_names`` and validates it against its own per-subject surface count, and
+    ``train_deep_sdf`` adopts the dataset's names (or refuses a disagreeing config) at
+    entry, before anything is persisted to ``model_params_config.json``. A config-only
+    declaration with a nameless dataset keeps the old behaviour: identity has to come
+    from the user, and the fix moves the declaration next to the ordering rather than
+    inventing one.
+    """
+
+    def test_dataset_validates_names_against_its_own_surface_count(self):
+        """One name for a two-surface subject list is refused at construction."""
+        with pytest.raises(ValueError, match="mesh_names"):
+            MultiSurfaceSDFSamples(
+                list_mesh_paths=[["a.vtk", "b.vtk"]], subsample=4, mesh_names=["bone"]
+            )
+
+    def test_trainer_adopts_the_datasets_names_when_config_has_none(self):
+        config = _make_single_config(objects_per_decoder=2, mesh_names=None)
+        dataset = MagicMock()
+        dataset.mesh_names = ["bone", "cart"]
+        with patch(PATCH_SINGLE, side_effect=StopIteration):
+            with pytest.raises(StopIteration):
+                train_single(config, model=MagicMock(), sdf_dataset=dataset)
+        assert config["mesh_names"] == ["bone", "cart"]
+
+    def test_disagreeing_declarations_raise_at_entry(self):
+        config = _make_single_config(objects_per_decoder=2, mesh_names=["bone", "cart"])
+        dataset = MagicMock()
+        dataset.mesh_names = ["cart", "bone"]
+        with pytest.raises(ValueError, match="mesh_names"):
+            train_single(config, model=MagicMock(), sdf_dataset=dataset)

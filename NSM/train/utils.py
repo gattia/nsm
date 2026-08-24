@@ -78,29 +78,24 @@ def get_kld(array, samples_dim=0):
     return kld
 
 
-def add_plain_lr_to_config(config, idx_model=None, idx_latent=None):
+def add_plain_lr_to_config(config):
     """
     Flatten the two LearningRateSchedule entries into scalar config keys for logging.
 
     Which entry is the model and which is the latent comes from each entry's declared
     ``Target``, not from its position, so logged ``model_lr_*`` / ``latent_lr_*`` values
-    always carry the correct labels. Explicit indices override the lookup.
+    always carry the correct labels.
 
     Mutates the caller's ``config`` in place and returns that same object (the return
     value is a convenience, not a copy).
     """
-    if idx_model is None or idx_latent is None:
-        targets = resolve_schedule_targets(
-            config["LearningRateSchedule"], optimizer=config.get("optimizer", "Adam")
-        )
-        if idx_model is None:
-            idx_model = targets.index(LR_TARGET_MODEL)
-        if idx_latent is None:
-            idx_latent = targets.index(LR_TARGET_LATENT)
+    targets = resolve_schedule_targets(
+        config["LearningRateSchedule"], optimizer=config.get("optimizer", "Adam")
+    )
 
     schedules = {
-        "model": idx_model,
-        "latent": idx_latent,
+        "model": targets.index(LR_TARGET_MODEL),
+        "latent": targets.index(LR_TARGET_LATENT),
     }
 
     schedule_specs = config["LearningRateSchedule"]

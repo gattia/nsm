@@ -261,8 +261,9 @@ surface, all three subjects come out near 3110 positive / 890 negative for the b
   because NSM has no public "build the model this config describes" call. That keeps the
   model the harness trains identical to the model `load_model` builds. When the decoder
   registry of plan §8.1 lands, this import is what should fail loudly.
-- `run_training` wraps `train_epoch` because `train_deep_sdf` returns `None` — no loss
-  history is observable from the public entry point. If that ever changes, the wrapper can go.
+- `run_training` reads the history `train_deep_sdf` returns (#28) and maps it into the
+  record shape the baselines pin. It used to wrap `train_epoch` because the trainer
+  returned `None`; the suite now regression-tests the public contract itself.
 - `loc_save` is always passed explicitly. The constructor default is
   `os.environ.get("LOC_SDF_CACHE", ...)` evaluated as a *default argument*, so it is bound
   when `sdf_dataset` is imported and setting the variable inside a test comes too late —

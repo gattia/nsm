@@ -8,9 +8,15 @@
 > appended here rather than given their own plan. An idea graduates to its own plan only
 > when someone commits to executing it.
 
-- **Next:** nothing scheduled. Idea 3 (test the Eikonal loss) is the one with a live
-  dependency — it is `NSM_CODE_HEALTH_REFACTOR.md` §8.2, which found three independent
-  failures and gated the loss behind `NotImplementedError`.
+- **Next:** Idea 4(a) — the no-retrain latent-norm diagnostic — is first in line
+  (maintainer, 2026-08-23): the max_norm/capacity question and the recon norm-gap
+  (fitted ~6–7 vs trained 10) are one coupled decision, and the re-sweep (Idea 11)
+  waits on it. Idea 6 gained a measurement question with downstream stakes the same
+  day: is scale leaking into the shipped distal-femur latents, and how does the
+  scaling choice move the severity task? Ideas 10 (surface-residual training metric)
+  and 11 (hyperparameter re-sweep) added 2026-08-23. Idea 3 (test the Eikonal loss)
+  keeps its live dependency — `NSM_CODE_HEALTH_REFACTOR.md` §8.2 found three
+  independent failures and gated the loss behind `NotImplementedError`.
 - **Blocked on:** nothing. Each entry is independent and can be picked up on its own.
 - **Done:** nothing from this list has been executed.
 - **Surprises:** the Eikonal loss turned out to be unrunnable rather than untested — it
@@ -161,7 +167,13 @@ training run per bound setting.
 the audit disposition (register since retired; the filed issues are #40–#61). Related
 trap: latent *gradients*
 scale with query-point count (ARCHITECTURE §6), which affects any soft-penalty
-balance chosen in (b).
+balance chosen in (b). **Re-raised and prioritized 2026-08-23: this goes first.** The
+recon-side norm-gap fix and the training-side bound are one coupled decision — what
+reconstruction should do about landing at norm 6–7 only makes sense against a decision
+about why training pins codes at 10 — so (a)'s diagnostic precedes both, and it also
+precedes the re-sweep (Idea 11), since the bound decision changes the latent geometry
+every other knob is tuned against. Idea 7 (the barrier penalty) is the existing
+recon-side lever if the answer is "constrain the fit toward the training shell".
 
 ---
 
@@ -215,6 +227,19 @@ treatment of `NSM_CODE_HEALTH_REFACTOR.md` §4.
 
 **Cost / retrain.** Full retrain for any model that wants size sensitivity; existing
 models and defaults are untouched (opt-in).
+
+**Downstream stakes — measure before designing (maintainer, 2026-08-23).** For the
+distal femur models the suspicion now runs in *both* directions: size may carry signal
+this pipeline erases (above), but scale may also be **leaking into the latent
+uncontrolled** ("it seems like we're sneaking scale in"), and either failure — erased
+when it carries signal, or leaking when it should be controlled — moves the
+disease-severity predictions (BScore) built on these latents. So the first step is a
+measurement, not the mode: for the shipped femur models, determine what actually
+reaches the latent today (correlate fitted latents against subject size on data with
+known sizes, across the registration/scaling paths kneepipeline really uses), and
+quantify how the scaling choice moves the downstream severity task. This raises the
+idea's priority: it is not only a capability gap but a potential confounder in the
+pipeline's primary output.
 
 **Status.** Idea — not started.
 
@@ -361,6 +386,83 @@ adding new sigma semantics on top of ambiguous ones.
 
 **Status.** Idea — not started. Raised by the maintainer 2026-08-23 while reviewing
 the §8.0.C fixes (PR #74).
+
+---
+
+## Idea 10 — A surface-residual metric during training: |f(z, x)| on true surface points
+
+**What.** A cheap, frequent training-time proxy for reconstruction quality: evaluate
+the decoder at points *on* each training subject's surface — where the true SDF is 0
+by definition — using the subject's current training latent, and log the mean
+`|f(z_i, x_surf)|` into the epoch's `log_dict`. Forward-only under `no_grad`, no
+latent optimization, no marching cubes; a subsample of each subject's mesh vertices
+suffices, and the dataset holds every mesh (in the training frame — vertices there
+*are* the zero level set) at build time.
+
+**Why.** Today the only reconstruction signal during training is the full validation
+run every 50–100 epochs (`get_mean_errors`: latent optimization + marching cubes +
+chamfer/ASSD per subject) — the right measurement, but so expensive it is sparse. The
+training loss itself is dominated by off-surface points, so it can improve while the
+zero level set — the only thing mesh extraction uses — drifts. The surface residual is
+exactly the quantity the training loss under-weights, and it is dense: a per-epoch
+curve instead of a point every 50 epochs. It is deliberately one-directional
+(prediction error *at* the true surface; it cannot see surface the decoder
+hallucinates elsewhere, so it is not ASSD and does not replace the validation runs —
+it complements them between their samples).
+
+**How / notes.** Compute on the raw prediction, not the clamped one —
+`enforce_minmax` clamps predictions during loss computation (KNOWN_ISSUES § Open),
+and a clamp would only mask large residuals, though near the surface most values sit
+inside the band anyway. With #28 landed, anything added to `log_dict` reaches both
+wandb and the returned history with no new plumbing. The same evaluation on *held-out*
+subjects still requires a fitted latent, so the dense curve is training-subjects-only;
+that is the point — it tracks whether the decoder is representing what it has already
+been shown.
+
+**Cost / retrain.** None — a diagnostic, not a loss term. Negligible per-epoch cost
+(one forward pass per subject over a few thousand points).
+
+**Status.** Idea — not started. Raised by the maintainer 2026-08-23.
+
+---
+
+## Idea 11 — Re-sweep the training hyperparameters on the repaired trainer
+
+**What.** A structured hyperparameter sweep over the training knobs — rerun, because
+the values in the shipped configs were tuned on a trainer whose semantics have since
+changed under them, plus axes for knobs that have never been swept and the new ones
+the ideas above introduce.
+
+**Why — the tuned values are optimal for bugs that are now fixed.**
+
+- Every Adam/AdamW config was tuned under the swapped LR mapping (KNOWN_ISSUES §1):
+  the chosen schedule values were optimal for latents-under-the-model-schedule and
+  vice versa. The §9 assessment deferred retuning as "a separate exercise" — this is
+  that exercise.
+- The `schedule_free_*` configs were tuned against the Adam path (§1) and, until #42,
+  died at their first checkpoint epoch — as configured they have effectively never
+  been evaluated end to end.
+- `weight_decay` under `Adam` was silently dropped (History §4); it is now honoured,
+  which changes the landscape for any Adam axis.
+- `clamp_dist` is a training-dynamics knob, not the target transform its name
+  suggests — KNOWN_ISSUES § Open measured 44.6% of a fresh decoder's predictions
+  outside ±0.1, each contributing zero gradient — so it deserves an axis, not an
+  inherited constant (the shipped default is 0.1; both production configs use 1.0).
+- Never swept in this repo's memory: the curriculum knobs (`surface_accuracy_e`,
+  `sample_difficulty_weight` and their schedules), `latent_bound` (Idea 4), and the
+  code-regularization family beyond its current values.
+
+**Sequencing.** After Idea 4(a) — the norm-bound decision changes the latent geometry
+every other knob is tuned against (maintainer, 2026-08-23: the norm test goes first).
+Idea 10's surface-residual metric would make sweep evaluation denser than per-run
+`get_mean_errors` alone; #28's returned history means a sweep harness can read every
+run programmatically instead of scraping wandb.
+
+**Cost / retrain.** One training run per configuration — the expensive idea on this
+list by construction. Sweep infrastructure (wandb sweeps or a driver script) is a
+prerequisite decision.
+
+**Status.** Idea — not started. Raised by the maintainer 2026-08-23.
 
 ---
 

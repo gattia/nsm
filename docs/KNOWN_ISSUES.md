@@ -46,7 +46,6 @@ queue.
 | `sample_difficulty_lx` shipped but unimplemented | Medium | [#18](https://github.com/gattia/nsm/issues/18) |
 | `enforce_minmax` clamps predictions | Medium — config semantics | *none — a docs/design call, see below* |
 | `Pool` deadlocks after an in-process build | Low — hangs, does not corrupt | [#25](https://github.com/gattia/nsm/issues/25) |
-| `train_deep_sdf` returns nothing | Low — blocks observability | [#28](https://github.com/gattia/nsm/issues/28) |
 
 ---
 
@@ -331,16 +330,6 @@ docs describe a target transform while the behaviour is a training-dynamics knob
 documentation-or-decision call, not a bug fix, so it has **no issue** — it belongs with the
 config work in `SCOPE.md` §2.2.
 *Pinned by:* `test_training_regression.TestClampedPredictionGradients`.
-
-### `train_deep_sdf` returns nothing
-
-`train_deep_sdf` ends in a bare `return`. `train_epoch` builds a full `log_dict` per epoch and
-`train_deep_sdf` forwards it only to `wandb`, so a caller without a wandb key can learn
-nothing about a run except by reading checkpoints back off disk. The regression harness has
-to wrap `train_epoch` to observe anything (`testing/NSM/regression/_harness.py`) — fixing
-this deletes that wrapper.
-
-*Fix:* [#28](https://github.com/gattia/nsm/issues/28).
 
 ### `grad_clip` clips the model only, never the latent codes
 
@@ -958,3 +947,53 @@ catch `NoZeroLevelSetError` instead.
 *Pinned by:* `test_reconstruction_regression.TestDecoderWithNoZeroLevelSet` (the raise)
 and `test_reconstruct_mesh_options.TestGetMeanErrorsSurvivesADegenerateModel` (the NaN
 seam).
+
+## 11. `resume_epoch=1` trained a fresh model while claiming to resume
+
+| | |
+|---|---|
+| **Affects** | Any `train_deep_sdf` run launched with `resume_epoch: 1`. The resume guard read `> 1` while the epoch loop starts at `resume_epoch + 1`, so the run loaded **nothing** — fresh model, fresh latents, fresh optimizer — and trained epochs 2..`n_epochs`: one epoch short, from random init, with the learning-rate schedules evaluated one epoch ahead of how many steps had actually run. Dec 2024 (`87c5e88`, the trainer overhaul that introduced `resume_epoch` — born with the `> 1` guard) → Aug 2026 |
+| **Unaffected** | `resume_epoch: 0` (a fresh run, as asked) and `resume_epoch >= 2` (loads correctly); both shipped ShapeMedKnee configs, which do not set the key |
+| **Severity** | Silent — the run printed nothing about resuming, trained, checkpointed and exited 0 |
+| **Fixed in** | `trainer-decomposition`, Aug 2026 ([#49](https://github.com/gattia/nsm/issues/49)) |
+
+### What was wrong
+
+Two boundaries disagreed about what `resume_epoch` means. The epoch loop treats it as
+the last *completed* epoch (it continues at `resume_epoch + 1`); the load guard treated
+`1` as "not really resuming". Both now share the loop's convention: `resume_epoch >= 1`
+loads that epoch's checkpoint and continues at the next.
+
+### How to tell whether one of your runs is affected
+
+Only runs launched with `resume_epoch: 1` qualify (`model_params_config.json` records
+the config). Such a run's earliest saved checkpoint descends from a fresh
+initialization, not from the epoch-1 checkpoint it named.
+
+### Reproducing old behaviour
+
+No switch. The old behaviour was a fresh run whose epoch numbering started at 2 —
+`resume_epoch: 0` is the supported way to train from scratch, with epoch 1 included.
+
+*Pinned by:* `test_training_regression.TestResumeContract` (all three boundaries:
+0 runs every epoch, 1 and 2 load their checkpoints).
+
+## 12. The logged latent-norm stats were the last batch's, scaled down by the batch count
+
+| | |
+|---|---|
+| **Affects** | The `mean_vec_length` and `std_vec_length` metrics in every wandb run since the metric existed. `train_epoch` assigned (`=`) where every surrounding accumulator adds (`+=`), then divided by `len(data_loader)` — so the logged value was the last batch's stat over the batch count, wrong by roughly ×n_batches (issue verification on a real 2-batch run: true mean 0.0107, logged 0.0053). Nov 2024 (`0638e31`, the commit that added the metric — born with the `=`) → Aug 2026 |
+| **Unaffected** | Weights, gradients, checkpoints, every other logged metric — the two stats were computed and discarded outside the loss path. Single-batch epochs (`objects_per_batch >= n_subjects`), where `=` and `+=` agree |
+| **Severity** | Silent, wandb-only. Anyone who read the metric to judge latent-code scale saw a value shrunk by their batch count |
+| **Fixed in** | `trainer-decomposition`, Aug 2026 ([#59](https://github.com/gattia/nsm/issues/59)) |
+
+### How to tell whether one of your runs is affected
+
+Every pre-fix run with more than one batch per epoch. The stored series is a scaled
+proxy, not garbage: within a run with a fixed batch count, multiplying by
+`ceil(n_subjects / objects_per_batch)` recovers the last-batch stat (still one batch's
+value, not the epoch mean). Do not compare the metric across runs with different batch
+counts.
+
+*Pinned by:* `test_training_regression.TestLatentNormLogging` (latent LR 0 makes the
+true epoch mean exact).

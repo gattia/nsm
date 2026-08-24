@@ -605,50 +605,32 @@ def build_model(config, seed=42):
 
 def run_training(config, model, dataset, seed=42):
     """
-    Run ``train_deep_sdf`` and return ``(records, return_value)``.
+    Run ``train_deep_sdf`` and return ``(records, history)``.
 
-    One record per epoch: loss, its components, every param group's learning rate, and the
-    latent norms. ``train_deep_sdf`` returns ``None``, so none of that is observable from
-    the public entry point; the harness wraps ``train_epoch`` rather than re-implementing
-    the loop, so what is recorded is what the real trainer did.
+    One record per epoch: loss, its components, every param group's learning rate, and
+    the latent norms — all read from the history ``train_deep_sdf`` returns (#28),
+    mapped into the record shape the baselines pin. ``history`` is the trainer's return
+    value, untouched.
     """
-    import NSM.train.train_deep_sdf as module
+    from NSM.train.train_deep_sdf import train_deep_sdf
 
-    records = []
-    original = module.train_epoch
-
-    def recording_train_epoch(*args, **kwargs):
-        # train_deep_sdf passes optimizer/config/epoch by keyword; take them from the call
-        # rather than restating the signature, so a signature change is not silently
-        # absorbed here.
-        log = original(*args, **kwargs)
-        latent_vecs = args[2] if len(args) > 2 else kwargs["latent_vecs"]
-        optimizer = kwargs["optimizer"]
-        epoch = kwargs["epoch"]
-        records.append(
-            {
-                "epoch": epoch,
-                "loss": log["loss"],
-                "l1_loss": log["l1_loss"],
-                "code_reg_loss": log["latent_code_regularization_loss"],
-                # Read AFTER the epoch: adjust_learning_rate() runs at the top of
-                # train_epoch, so these are the rates the epoch actually ran with.
-                "lrs": {group["name"]: group["lr"] for group in optimizer.param_groups},
-                "targets": {group["name"]: group["target"] for group in optimizer.param_groups},
-                "latent_norms": torch.norm(latent_vecs.weight.data, dim=1).tolist(),
-            }
-        )
-        return log
-
-    module.train_epoch = recording_train_epoch
-    try:
-        torch.manual_seed(seed)
-        np.random.seed(seed)
-        with quiet():
-            returned = module.train_deep_sdf(config, model, dataset, use_wandb=False)
-    finally:
-        module.train_epoch = original
-    return records, returned
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    with quiet():
+        history = train_deep_sdf(config, model, dataset, use_wandb=False)
+    records = [
+        {
+            "epoch": entry["epoch"],
+            "loss": entry["loss"],
+            "l1_loss": entry["l1_loss"],
+            "code_reg_loss": entry["latent_code_regularization_loss"],
+            "lrs": entry["lrs"],
+            "targets": entry["targets"],
+            "latent_norms": entry["latent_norms"],
+        }
+        for entry in history
+    ]
+    return records, history
 
 
 # ---------------------------------------------------------------------------

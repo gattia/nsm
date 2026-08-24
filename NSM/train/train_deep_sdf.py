@@ -49,7 +49,20 @@ loss_l1 = torch.nn.L1Loss(reduction="none")
 
 
 def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
+    """
+    Train ``model`` against ``sdf_dataset`` and return the per-epoch history.
 
+    Returns one dict per trained epoch (``n_epochs - resume_epoch`` entries): the
+    epoch's wandb payload — ``train_epoch``'s ``log_dict``, plus the validation metrics
+    on validation epochs — with four keys the payload does not carry: ``epoch``,
+    ``lrs`` and ``targets`` (per param group, keyed by group ``name``, read after the
+    epoch so they are the rates it actually ran with), and ``latent_norms`` (one norm
+    per training subject). The wandb payload itself is unchanged by the extras.
+
+    The trained weights land in the caller's ``model`` (mutated in place) and in the
+    checkpoints under ``config["experiment_directory"]``; the latent embedding exists
+    only in the checkpoints and the history — it is constructed here and not returned.
+    """
     # add default params for backwards compatibility between
     # train_deep_sdf and train_deep_sdf_multi_surface.
     config.setdefault("objects_per_decoder", 1)
@@ -61,6 +74,21 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
 
     if config.get("eikonal_weight", 0) > 0:
         raise NotImplementedError(EIKONAL_UNSUPPORTED)
+
+    # Surface identity is defined by the order of each subject's mesh-path list, so a
+    # dataset that carries mesh_names is the authority (#52): adopt them when the config
+    # has none, refuse a disagreeing config. Checked here, at entry, so a wrong
+    # declaration cannot survive to save_model_params.
+    dataset_mesh_names = getattr(sdf_dataset, "mesh_names", None)
+    if dataset_mesh_names is not None:
+        if config["mesh_names"] is None:
+            config["mesh_names"] = list(dataset_mesh_names)
+        elif list(config["mesh_names"]) != list(dataset_mesh_names):
+            raise ValueError(
+                f"config mesh_names {config['mesh_names']} disagree with the dataset's "
+                f"{list(dataset_mesh_names)}. The dataset's names follow each subject's "
+                f"mesh-path list order; fix whichever declaration is wrong."
+            )
 
     # Validate mesh_names length matches objects_per_decoder if provided
     if config["mesh_names"] is not None:
@@ -82,9 +110,6 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
     config = add_plain_lr_to_config(config)
     config["checkpoints"] = get_checkpoints(config)
     config["lr_schedules"] = get_learning_rate_schedules(config)
-
-    if "resume_epoch" not in config:
-        config["resume_epoch"] = 0
 
     model = model.to(config["device"])
 
@@ -120,45 +145,9 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
         weight_decay=config["weight_decay"],
     )
 
-    if config["resume_epoch"] > 1:
-        print("Loading model, optimizer, and latent states from epoch", config["resume_epoch"])
-        # load each checkpoint once rather than re-reading it per state
-        model_checkpoint = torch.load(
-            os.path.join(config["experiment_directory"], "model", f'{config["resume_epoch"]}.pth')
-        )
-        latent_checkpoint = torch.load(
-            os.path.join(
-                config["experiment_directory"], "latent_codes", f'{config["resume_epoch"]}.pth'
-            )
-        )
+    _resume_from_checkpoint(config, model, latent_vecs, optimizer)
 
-        model.load_state_dict(model_checkpoint["model"])
-
-        # load the optimizer states. Checkpoints saved without an optimizer hold None (or
-        # the string "None", written before Sep 2026); load_state_dict would raise an
-        # opaque TypeError on either.
-        if model_checkpoint["optimizer"] in (None, "None"):
-            raise ValueError(
-                f"Checkpoint at epoch {config['resume_epoch']} was saved without optimizer "
-                f"state, so training cannot resume from it."
-            )
-        optimizer.load_state_dict(model_checkpoint["optimizer"])
-        # state_dict() retains custom param-group keys and load_state_dict() restores
-        # them, but it adopts the checkpoint's metadata wholesale -- so a checkpoint saved
-        # before Aug 2026 leaves the groups with no 'target' and schedules cannot be
-        # mapped. Fail here rather than downstream: adjust_learning_rate() would catch it
-        # at epoch 1, but it is skipped for schedule_free_*, which would then run to the
-        # first checkpoint save before failing.
-        if any(group.get("target") is None for group in optimizer.param_groups):
-            raise ValueError(
-                f"Checkpoint at epoch {config['resume_epoch']} carries no optimizer "
-                f"param-group targets, so it predates Aug 2026 and its learning-rate "
-                f"schedules cannot be mapped. Resuming it is not supported; start a "
-                f"fresh run. See docs/KNOWN_ISSUES.md section 1."
-            )
-
-        # load the latent vectors
-        latent_vecs.load_state_dict(latent_checkpoint["latent_codes"])
+    history = []
 
     # profiler that runs if config['profiler'] is True, else a dummy profiler is used and should have no effect
     with get_profiler(config) as profiler:
@@ -173,7 +162,6 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
                 optimizer=optimizer,
                 config=config,
                 epoch=epoch,
-                return_loss=True,
                 n_surfaces=config["objects_per_decoder"],
             )
             val_epoch = (
@@ -186,91 +174,197 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
             )
 
             if val_epoch or checkpoint_epoch:
-                # if validation or checkpoint and
-                # using schedule_free optimizer,
-                # then set the optimizer to eval mode
-                if "schedule_free" in config["optimizer"]:
-                    optimizer.eval()
-                    # raise Exception('HOW TO IMPLEMENT BATCH NORM FIX? https://github.com/facebookresearch/schedule_free/issues/44')
-                    with torch.no_grad():
-                        for batch in itertools.islice(data_loader, 50):
-                            model(batch)
+                _schedule_free_eval_warmup(
+                    model, latent_vecs, data_loader, optimizer, config, epoch
+                )
 
             if checkpoint_epoch:
-                save_model_params(config=config, list_mesh_paths=sdf_dataset.list_mesh_paths)
-
-                save_latent_vectors(
-                    config=config,
-                    epoch=epoch,
-                    latent_vec=latent_vecs,
-                )
-                save_model(config=config, epoch=epoch, decoder=model, optimizer=optimizer)
+                _save_checkpoint(config, epoch, model, latent_vecs, optimizer, sdf_dataset)
 
             if val_epoch:
-                clear_gpu_cache(config["device"])
-
-                # TODO: Change this to just accept the config?
-                # or... update all parameters to be the same in the config and the function call?
-                # this will just allow unpacking of the config dict.
-                dict_loss = get_mean_errors(
-                    mesh_paths=config["val_paths"],
-                    decoders=model,
-                    num_iterations=config["num_iterations_recon"],
-                    register_similarity=True,
-                    latent_size=config["latent_size"],
-                    lr=config["lr_recon"],
-                    # loss_weight
-                    # loss_type
-                    l2reg=config["l2reg_recon"],
-                    # latent_init_std
-                    # latent_init_mean
-                    clamp_dist=config["clamp_dist_recon"],
-                    # latent_reg_weight
-                    n_lr_updates=config["n_lr_updates_recon"],
-                    lr_update_factor=config["lr_update_factor_recon"],
-                    calc_symmetric_chamfer=config["chamfer"],
-                    calc_assd=config["assd"],
-                    convergence=config["convergence_type_recon"],
-                    convergence_patience=config["convergence_patience_recon"],
-                    # log_wandb
-                    verbose=config["verbose"],
-                    objects_per_decoder=config["objects_per_decoder"],
-                    get_rand_pts=config["get_rand_pts_recon"],
-                    n_pts_random=config["n_pts_random_recon"],
-                    sigma_rand_pts=config["sigma_rand_pts_recon"],
-                    n_samples_latent_recon=config["n_samples_latent_recon"],
-                    # difficulty_weight_recon
-                    # chamfer_norm
-                    scale_all_meshes=True,
-                    recon_func=(
-                        None
-                        if (("recon_val_func_name" not in config))
-                        else DICT_VALIDATION_FUNCS[config["recon_val_func_name"]]
-                    ),
-                    predict_val_variables=(
-                        None
-                        if ("predict_val_variables" not in config)
-                        else config["predict_val_variables"]
-                    ),
-                    scale_jointly=config["scale_jointly"],
-                    fix_mesh=config["fix_mesh_recon"],
-                    device=config["device"],
-                )
-
-                log_dict.update(dict_loss)
+                log_dict.update(_run_validation(config, model))
 
             if use_wandb is True:
                 wandb.log(log_dict, step=epoch - 1)
+
+            history.append(
+                {
+                    **log_dict,
+                    "epoch": epoch,
+                    # Read AFTER train_epoch: adjust_learning_rate() runs at its top, so
+                    # these are the rates the epoch actually ran with.
+                    "lrs": {group["name"]: group["lr"] for group in optimizer.param_groups},
+                    "targets": {group["name"]: group["target"] for group in optimizer.param_groups},
+                    "latent_norms": torch.norm(latent_vecs.weight.data, dim=1).tolist(),
+                }
+            )
 
             profiler.step()
 
             clear_gpu_cache(config["device"])
 
-    # KNOWN DEFECT, #28: train_epoch builds a full per-epoch log_dict and it goes
-    # only to wandb, so a caller without a wandb key can observe nothing about a run except
-    # by reading checkpoints back off disk. Returning the history would let
-    # testing/NSM/regression drop its train_epoch wrapper.
-    return
+    return history
+
+
+def _resume_from_checkpoint(config, model, latent_vecs, optimizer):
+    """
+    Load the ``resume_epoch`` checkpoint into ``model``, ``latent_vecs`` and ``optimizer``.
+
+    ``resume_epoch`` names the last COMPLETED epoch: its checkpoint is loaded and the
+    epoch loop continues at ``resume_epoch + 1``. 0 means a fresh run — a no-op here.
+    This guard and the loop boundary must share that convention: a ``> 1`` guard here
+    once let ``resume_epoch=1`` skip epoch 1 while loading nothing (KNOWN_ISSUES
+    section History 11).
+
+    Raises ``ValueError`` for a checkpoint saved without optimizer state, or one from
+    before Aug 2026 whose param groups carry no ``target`` (KNOWN_ISSUES section 1).
+    """
+    if config["resume_epoch"] < 1:
+        return
+    print("Loading model, optimizer, and latent states from epoch", config["resume_epoch"])
+    # load each checkpoint once rather than re-reading it per state
+    model_checkpoint = torch.load(
+        os.path.join(config["experiment_directory"], "model", f'{config["resume_epoch"]}.pth')
+    )
+    latent_checkpoint = torch.load(
+        os.path.join(
+            config["experiment_directory"], "latent_codes", f'{config["resume_epoch"]}.pth'
+        )
+    )
+
+    model.load_state_dict(model_checkpoint["model"])
+
+    # load the optimizer states. Checkpoints saved without an optimizer hold None (or
+    # the string "None", written before Sep 2026); load_state_dict would raise an
+    # opaque TypeError on either.
+    if model_checkpoint["optimizer"] in (None, "None"):
+        raise ValueError(
+            f"Checkpoint at epoch {config['resume_epoch']} was saved without optimizer "
+            f"state, so training cannot resume from it."
+        )
+    optimizer.load_state_dict(model_checkpoint["optimizer"])
+    # state_dict() retains custom param-group keys and load_state_dict() restores
+    # them, but it adopts the checkpoint's metadata wholesale -- so a checkpoint saved
+    # before Aug 2026 leaves the groups with no 'target' and schedules cannot be
+    # mapped. Fail here rather than downstream: adjust_learning_rate() would catch it
+    # at epoch 1, but it is skipped for schedule_free_*, which would then run to the
+    # first checkpoint save before failing.
+    if any(group.get("target") is None for group in optimizer.param_groups):
+        raise ValueError(
+            f"Checkpoint at epoch {config['resume_epoch']} carries no optimizer "
+            f"param-group targets, so it predates Aug 2026 and its learning-rate "
+            f"schedules cannot be mapped. Resuming it is not supported; start a "
+            f"fresh run. See docs/KNOWN_ISSUES.md section 1."
+        )
+
+    # load the latent vectors
+    latent_vecs.load_state_dict(latent_checkpoint["latent_codes"])
+
+
+def _schedule_free_eval_warmup(model, latent_vecs, data_loader, optimizer, config, epoch):
+    """
+    Put a schedule_free optimizer into eval mode, then recalibrate normalization-layer
+    statistics at the averaged weights by running real forward passes:
+    https://github.com/facebookresearch/schedule_free/issues/44
+
+    A no-op for every other optimizer family. The batch is unpacked exactly the way
+    ``train_epoch`` unpacks it — latent lookup, variational sampling, ``batch_split``
+    chunking — which is what #42 was about: this warm-up used to forward the raw
+    dataloader item, so every schedule_free run died at its first checkpoint or
+    validation epoch.
+    """
+    if "schedule_free" not in config["optimizer"]:
+        return
+    optimizer.eval()
+    with torch.no_grad():
+        for sdf_data, indices in itertools.islice(data_loader, 50):
+            xyz = sdf_data["xyz"].to(config["device"]).reshape(-1, 3)
+            indices = (
+                indices.to(config["device"])
+                .unsqueeze(-1)
+                .repeat(1, config["samples_per_object_per_batch"])
+                .view(-1)
+            )
+            xyz = torch.chunk(xyz, config["batch_split"])
+            indices = torch.chunk(indices, config["batch_split"])
+            for split_idx in range(config["batch_split"]):
+                batch_vecs = latent_vecs(indices[split_idx])
+                if "variational" in config and config["variational"] is True:
+                    mu = batch_vecs[:, : config["latent_size"]]
+                    logvar = batch_vecs[:, config["latent_size"] :]
+                    std = torch.exp(0.5 * logvar)
+                    batch_vecs = std * torch.randn_like(std) + mu
+                model(torch.cat([batch_vecs, xyz[split_idx]], dim=1), epoch=epoch)
+
+
+def _save_checkpoint(config, epoch, model, latent_vecs, optimizer, sdf_dataset):
+    """
+    Persist the epoch: ``model_params_config.json`` (first write wins), the latent
+    embedding, and the model+optimizer checkpoint.
+    """
+    save_model_params(config=config, list_mesh_paths=sdf_dataset.list_mesh_paths)
+    save_latent_vectors(
+        config=config,
+        epoch=epoch,
+        latent_vec=latent_vecs,
+    )
+    save_model(config=config, epoch=epoch, decoder=model, optimizer=optimizer)
+
+
+def _run_validation(config, model):
+    """
+    Reconstruct the ``val_paths`` subjects and return ``get_mean_errors``' metric dict.
+
+    The kwarg block is the config→``get_mean_errors`` mapping; the commented-out lines
+    name parameters deliberately left at their defaults.
+    """
+    clear_gpu_cache(config["device"])
+
+    # TODO: Change this to just accept the config?
+    # or... update all parameters to be the same in the config and the function call?
+    # this will just allow unpacking of the config dict.
+    return get_mean_errors(
+        mesh_paths=config["val_paths"],
+        decoders=model,
+        num_iterations=config["num_iterations_recon"],
+        register_similarity=True,
+        latent_size=config["latent_size"],
+        lr=config["lr_recon"],
+        # loss_weight
+        # loss_type
+        l2reg=config["l2reg_recon"],
+        # latent_init_std
+        # latent_init_mean
+        clamp_dist=config["clamp_dist_recon"],
+        # latent_reg_weight
+        n_lr_updates=config["n_lr_updates_recon"],
+        lr_update_factor=config["lr_update_factor_recon"],
+        calc_symmetric_chamfer=config["chamfer"],
+        calc_assd=config["assd"],
+        convergence=config["convergence_type_recon"],
+        convergence_patience=config["convergence_patience_recon"],
+        # log_wandb
+        verbose=config["verbose"],
+        objects_per_decoder=config["objects_per_decoder"],
+        get_rand_pts=config["get_rand_pts_recon"],
+        n_pts_random=config["n_pts_random_recon"],
+        sigma_rand_pts=config["sigma_rand_pts_recon"],
+        n_samples_latent_recon=config["n_samples_latent_recon"],
+        # difficulty_weight_recon
+        # chamfer_norm
+        scale_all_meshes=True,
+        recon_func=(
+            None
+            if (("recon_val_func_name" not in config))
+            else DICT_VALIDATION_FUNCS[config["recon_val_func_name"]]
+        ),
+        predict_val_variables=(
+            None if ("predict_val_variables" not in config) else config["predict_val_variables"]
+        ),
+        scale_jointly=config["scale_jointly"],
+        fix_mesh=config["fix_mesh_recon"],
+        device=config["device"],
+    )
 
 
 def train_epoch(
@@ -280,10 +374,26 @@ def train_epoch(
     optimizer,
     config,
     epoch,
-    return_loss=True,
-    verbose=False,
     n_surfaces=2,
 ):
+    """
+    Run one optimization epoch and return its log dict.
+
+    ``adjust_learning_rate`` runs at the TOP for Adam/AdamW — each param group's lr is
+    set from its ``target``'s schedule before the first step, so rates read after this
+    returns are the rates the epoch actually ran with. schedule_free optimizers skip it
+    and get ``optimizer.train()`` instead.
+
+    Returns a flat dict: ``loss``, ``epoch_time_s``, ``l1_loss``,
+    ``latent_code_regularization_loss``, ``mean_vec_length``/``std_vec_length`` (epoch
+    means over batches), per-surface ``l1_loss_{i}``, the four load-timing keys only
+    when the dataset actually timed a disk load (#22), ``eikonal_loss`` only when the
+    (gated) eikonal weight is on, and ``latent_{i}`` wandb histograms with their
+    mean/std when ``config["log_latent"]`` is set.
+
+    ``n_surfaces`` must match the decoder's ``objects_per_decoder`` and the dataset's
+    per-subject surface count: ``gt_sdf`` columns are read positionally by surface.
+    """
     # n_surfaces = len(models)
     start = time.time()
     # for model in models:
@@ -578,8 +688,8 @@ def train_epoch(
         for l1_idx, l1_loss_ in enumerate(batch_l1_losses):
             step_l1_losses[l1_idx] += l1_loss_  # l1_loss_
 
-        step_mean_vec_length = mean_vec_length.item()
-        step_std_vec_length = std_vec_length.item()
+        step_mean_vec_length += mean_vec_length.item()
+        step_std_vec_length += std_vec_length.item()
 
         if config["grad_clip"] is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), config["grad_clip"])

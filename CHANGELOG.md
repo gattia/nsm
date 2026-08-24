@@ -108,7 +108,35 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   joint normalization on a warm one — so construction now refuses anything but a
   positive int, by name. No working call changes.
 
+- **`add_plain_lr_to_config` no longer takes `idx_model` / `idx_latent`** (#59). The
+  two parameters let a caller override the `Target`-based lookup by position — the
+  exact back door the Aug 2026 LR fix exists to forbid — and their only caller was a
+  test asserting deliberately swapped labels. Passing them now raises `TypeError`.
+  **No numerical output changes.**
+
+- **`train_epoch` no longer takes `return_loss` or `verbose`** (#16's class — parameters
+  accepted and never read). The body returns its `log_dict` unconditionally and reads
+  `config["verbose"]`, so neither parameter did anything at any value. Passing them now
+  raises `TypeError`; `config["verbose"]` remains the way to get verbose output. The
+  copies in `train_deep_sdf_multi_head` and `train/deprecated/` are untouched — the
+  former belongs to #51's repair, the latter to the quarantine decision (`SCOPE.md` §2).
+  **No numerical output changes.**
+
 ### Fixed — affects results
+
+- **The logged `mean_vec_length` / `std_vec_length` are epoch means** (#59). They were
+  assigned (`=` for `+=`) and then divided by the batch count, so every wandb run since
+  Nov 2024 logged the last batch's stat shrunk by ~×n_batches. Weights, gradients and
+  checkpoints were never affected — the two stats sat outside the loss path. See
+  `docs/KNOWN_ISSUES.md` § History §12.
+
+- **`resume_epoch: 1` resumes from the epoch-1 checkpoint** (#49). The resume guard
+  read `> 1` while the epoch loop starts at `resume_epoch + 1`, so such a run loaded
+  nothing and trained a fresh model for epochs 2..`n_epochs` — one epoch short, from
+  random init, silently. `resume_epoch` now uniformly names the last completed epoch:
+  `>= 1` loads that checkpoint and continues at the next; `0` is unchanged. A post-fix
+  `resume_epoch: 1` run actually resumes, so it produces different (correct) weights.
+  See `docs/KNOWN_ISSUES.md` § History §11.
 
 - **`reconstruct_mesh` honours `n_pts_random`** (#16). It forwarded the value as
   `n_pts_random=` to readers whose parameter is `n_pts=`; their `**kwargs` swallowed it,
@@ -158,6 +186,14 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   Python list. See `docs/KNOWN_ISSUES.md` § History §6.
 
 ### Fixed
+
+- **schedule_free training runs survive their checkpoint and validation epochs** (#42).
+  The eval warm-up handed the decoder the raw dataloader item, so every
+  `schedule_free_*` run died with `TypeError` in the decoder's forward at its first
+  checkpoint or validation epoch — which every run reaches. The warm-up now unpacks the
+  batch the way `train_epoch` does (latent lookup, variational sampling, `batch_split`
+  chunking included). Always crashed, so no results are affected and there is no
+  History entry.
 
 - **`predict_val_variables` runs to completion** (#48). `get_mean_errors` handed
   `Regress.add_latent` the whole result dict rather than the fitted latent, so a run
@@ -229,6 +265,23 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 - **`get_pts_center_and_scale` no longer mutates its input.** It copies first. The three
   in-repo callers each carried a defensive `np.copy(...)`; those are removed, since the
   copy now happens inside. A caller written without one is no longer silently corrupted.
+
+### Added
+
+- **`MultiSurfaceSDFSamples` accepts `mesh_names`, and `train_deep_sdf` trusts the
+  dataset over the config** (#52). Surface identity is defined by the order of each
+  subject's mesh-path list, so the names are declared there: the dataset validates them
+  against its own per-subject surface count at construction, and the trainer adopts
+  them into `config["mesh_names"]` — raising at entry if a config declaration
+  disagrees — before anything is persisted to `model_params_config.json`. A config-only
+  declaration with a nameless dataset behaves as before. Deliberately not in the cache
+  key: names do not change sampled data.
+
+- **`train_deep_sdf` returns its per-epoch history** (#28). One dict per trained epoch:
+  the wandb payload (validation metrics included on validation epochs) plus `epoch`,
+  per-param-group `lrs`/`targets`, and per-subject `latent_norms`. It used to return
+  `None`, so a caller without a wandb key could learn nothing about a run except by
+  reading checkpoints back off disk. The wandb payload itself is unchanged.
 
 ---
 

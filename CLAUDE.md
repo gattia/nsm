@@ -267,6 +267,8 @@ When training models that decode multiple surfaces (e.g., bone + cartilage + men
 
 **Always include `mesh_names` in new training configs.** Without it, downstream consumers (e.g., nsosim) must infer mesh identity from the output count, which is fragile. A warning is emitted during training if `objects_per_decoder > 1` and `mesh_names` is not provided — a single-surface config with no `mesh_names` trains silently.
 
+**Prefer declaring the names on the dataset** (#52, Aug 2026): `MultiSurfaceSDFSamples(..., mesh_names=[...])` names the surfaces in each subject's mesh-path-list order — the one place that ordering is defined. `train_deep_sdf` adopts the dataset's names into `config["mesh_names"]` and raises if the two disagree, so `model_params_config.json` cannot silently persist names in the wrong order. A config-only declaration still works but is unchecked against the data.
+
 Example config snippet:
 ```json
 {
