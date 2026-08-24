@@ -370,9 +370,11 @@ class TestFormerlyCollidingParameters:
     production setting -- the second silently trained on the first's data. Each test
     still shows the cached content genuinely differs before asserting the keys do, so
     a parameter that stops mattering shows up as a dead premise rather than a vacuous
-    pass. ``subsample`` is the deliberate exception: it stays OUT of the key, because
-    its only cached-content effect is the index padding (see the xfails below, resolved
-    by decoupling rather than keying).
+    pass. ``subsample`` is the deliberate exception: it stays OUT of the key, and its
+    one cached-content effect -- the index padding -- was removed instead (Aug 2026):
+    the cache stores raw index sets and the padding happens at draw time, sized by the
+    subsample then in force. Batch size is a serving parameter; forcing a full
+    resample when it changes would have been wrong in the other direction.
     """
 
     @staticmethod
@@ -413,25 +415,22 @@ class TestFormerlyCollidingParameters:
         } <= differing, f"premise gone: content no longer differs ({differing})"
         assert key_a != key_b, "the cached content differs but the cache key does not"
 
-    @pytest.mark.xfail(strict=True, reason="#19: get_hash_params omits subsample")
-    def test_subsample_must_change_the_cache_key(self, meshes, tmp_path_factory):
+    def test_cached_bytes_do_not_depend_on_subsample(self, meshes, tmp_path_factory):
         """
-        Milder but still real: ``subsample`` sets ``samples_per_sign_``, which decides how
-        many times ``sdf_pos_neg_idx`` repeats the index arrays -- and those arrays are
-        cached. The points themselves are unaffected.
-
-        The repeat count is ``samples_per_sign // available + 1``, so the two subsamples
-        have to straddle a multiple of the number of samples of that sign for the arrays to
-        differ at all. Near-surface sampling leaves ~240 negatives per surface here, so 64
-        vs 512 both round to a repeat of 1 and the premise assertion below would go off.
+        The old xfail's premise, inverted into the contract. This test used to assert
+        that ``subsample`` must change the key, premised on the cached index arrays
+        differing -- ``sdf_pos_neg_idx`` repeated them far enough for the build-time
+        ``subsample`` and cached the result. The premise dissolved rather than the key
+        growing: index sets are cached raw and the padding happens at draw, so two
+        builds differing only in ``subsample`` share both the key and every cached
+        byte. If index arrays start differing again, some build-time parameter has
+        leaked back into cached content.
         """
         key_a, key_b, differing = self._content_differs(
             meshes, tmp_path_factory, "sub", subsample=2048
         )
-        assert any(
-            key.startswith(("pos_idx", "neg_idx")) for key in differing
-        ), f"premise gone: index arrays no longer differ ({differing})"
-        assert key_a != key_b, "the cached index arrays differ but the cache key does not"
+        assert key_a == key_b, "subsample must not move the cache key"
+        assert differing == set(), f"cached content depends on subsample again: {differing}"
 
     def test_a_changed_parameter_must_not_reuse_the_previous_runs_cache(
         self, meshes, tmp_path_factory
@@ -443,32 +442,20 @@ class TestFormerlyCollidingParameters:
 
         assert second.data[0] != first.data[0], "the second run was handed the first run's file"
 
-    @pytest.mark.xfail(
-        strict=True, reason="#19: a subsample collision silently unbalances the batch"
-    )
     def test_equal_pos_neg_must_hold_after_a_subsample_change(self, meshes, tmp_path_factory):
         """
-        What the ``subsample`` collision costs, measured.
+        What the stale padding used to cost, kept as the guard on the decoupling.
 
-        ``sdf_pos_neg_idx`` repeats the negative-index array just far enough for the
-        ``subsample`` in force when the cache was written. Reload with a larger one and
-        there are not enough entries: ``MultiSurfaceSDFSamples.__getitem__`` takes what
-        there is, then tops the batch up with uniformly random points. The
-        ``equal_pos_neg=True`` guarantee quietly stops holding, and the surface with the
-        fewest interior samples -- the small one, i.e. cartilage in a real dataset -- loses
-        the most.
-
-        Measured at 1.6x under-representation (interior fraction 0.20 against a fresh
-        0.32), and the gap only opens once the reloaded ``subsample`` exceeds the cached
-        point count. On the uniform sampling path this harness used to run on it was 4.4x
-        at a far smaller subsample, because uniform points rarely land inside a small
-        ellipsoid; near-surface sampling puts ~20% of them inside, which is both more
-        realistic and a much softer landing for this bug.
-
-        The reload check that would have caught this
-        (``MultiSurfaceSDFSamples.get_sample_data_dict``) compares ``len(data["pos_idx"])``
-        against the number of *meshes*, never against the subsample the arrays were
-        built for.
+        Until Aug 2026 ``sdf_pos_neg_idx`` repeated the index arrays just far enough
+        for the ``subsample`` in force when the cache was written, and cached the
+        result. Reloading with a larger one found too few entries:
+        ``MultiSurfaceSDFSamples.__getitem__`` took what there was and topped the
+        batch up with uniform random points, so ``equal_pos_neg=True`` quietly stopped
+        holding -- measured at 1.6x interior under-representation on the small surface
+        (0.20 against a fresh 0.32), and worst exactly where it matters, since in a
+        real dataset the small surface is the cartilage. Now the cache stores raw
+        index sets and ``_draw_sign_share`` pads at draw for the subsample in force,
+        so the reused cache and the fresh build draw identically-balanced batches.
         """
         import torch
 

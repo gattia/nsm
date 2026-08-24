@@ -36,7 +36,6 @@ queue.
 
 | Defect | Severity | Issue |
 |---|---|---|
-| `subsample`'s index padding is baked into cached files | Medium — batch balance drifts after a `subsample` change | [#19](https://github.com/gattia/nsm/issues/19) |
 | Sigma coordinate space depends on `scale_jointly` | **High** — ~100× over/under-sampling | [#3](https://github.com/gattia/nsm/issues/3) |
 | `padding` absent from checkpoints | **High** — silent wrong-scale sampling | [#26](https://github.com/gattia/nsm/issues/26) |
 | Parameters accepted and never read | Medium — **read the traps first** | [#20](https://github.com/gattia/nsm/issues/20) |
@@ -50,28 +49,6 @@ queue.
 ---
 
 ## `datasets/sdf_dataset.py`
-
-### `subsample`'s index padding is baked into cached files
-
-`sdf_pos_neg_idx` repeats (pads) the pos/neg index arrays far enough for the `subsample`
-in force when a subject is built, and those padded arrays are what `save_data_to_cache`
-writes. `subsample` is deliberately not in the cache key — batch size is a serving
-parameter, and forcing a full resample when it changes would be wrong in the other
-direction — so reloading a cache with a larger `subsample` draws from under-padded
-arrays: `__getitem__` takes what there is and tops the batch up with uniform random
-points, and the `equal_pos_neg=True` guarantee quietly stops holding.
-
-**Measured:** 1.6× interior under-representation on the small surface (interior fraction
-0.20 against a fresh 0.32) once the reloaded `subsample` exceeds the cached point count;
-in a real dataset the small surface is the cartilage. The rest of #19 — parameters and
-mesh identity missing from the key entirely — is fixed, see § History 13.
-
-**How to tell whether you are affected:** you reused a cache directory across runs that
-differed in `subsample`, and the later run's `subsample` was larger.
-
-*Fix:* [#19](https://github.com/gattia/nsm/issues/19)'s remaining half — cache the raw
-index sets and pad at draw time, so cached bytes stop depending on `subsample`. *Pinned
-by:* `test_dataset_cache.TestFormerlyCollidingParameters` (2 strict xfails).
 
 ### Sigma sampling coordinate space depends on `scale_jointly`
 
@@ -1028,6 +1005,14 @@ that decide what `get_sample_data_dict` writes:
   subject's mesh paths in reverse order, and hashed an integer `reference_mesh` as the
   raw index — reordering `list_mesh_paths` re-aimed the reference while the key stood
   still. Position carried meaning: the same defect class as the LR-schedule bug (§1).
+- `subsample` was also absent — but its only cached-content effect was that
+  `sdf_pos_neg_idx` padded (repeated) the pos/neg index arrays for the build-time
+  `subsample` and cached the result. Reloading with a larger one found too few
+  entries: `__getitem__` took what there was and topped the batch up with uniform
+  random points, so `equal_pos_neg=True` quietly stopped holding. Measured: 1.6×
+  interior under-representation on the small surface (interior fraction 0.20 against
+  a fresh 0.32) once the reloaded `subsample` exceeded the cached point count — and
+  in a real dataset the small surface is the cartilage.
 
 ### What changed
 
@@ -1039,12 +1024,22 @@ geometry; an int or list reference resolves to the underlying path(s) first. A
 `cache_format` entry versions the key, so the next content-affecting change is one
 integer bump instead of a new hashing scheme.
 
+`subsample` was decoupled instead of keyed — batch size is a serving parameter, and
+forcing a full resample when it changes would be wrong in the other direction. The
+cache stores the raw per-sign index sets; the padding happens at draw time
+(`_draw_sign_share`), sized by the subsample in force, so cached bytes no longer
+depend on it and a reused cache draws identically-balanced batches. For an unchanged
+subsample the padded array the draw permutes is byte-identical to what the cache used
+to store, so batches are bit-identical across the change.
+
 ### How to tell whether one of your runs is affected
 
 You reused one cache directory across runs that differed in `mesh_to_scale` or
-`uniform_pts_buffer` — the later run trained on the earlier one's data; or you edited a
-mesh without renaming it — every later run reused the pre-edit samples. One cache
-directory per configuration and unedited meshes, and you are fine.
+`uniform_pts_buffer` — the later run trained on the earlier one's data; you reloaded a
+cache with a larger `subsample` than it was built at — that run's batches were
+unbalanced; or you edited a mesh without renaming it — every later run reused the
+pre-edit samples. One cache directory per configuration and unedited meshes, and you
+are fine.
 
 ### Migration
 

@@ -40,7 +40,12 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   No cached `.npz` from before this change is ever served again: the first run per
   configuration rebuilds its cache once (identical data when `random_seed` is set —
   `docs/KNOWN_ISSUES.md` § History 3), and old cache directories are reclaimable disk.
-  A `cache_format` entry in the key versions future changes. Details: § History 13.
+  A `cache_format` entry in the key versions future changes. Cached files now store
+  the raw (unpadded) per-sign index sets — the equal-share padding happens at draw
+  time, sized by the `subsample` in force — so a cache reloaded under a different
+  `subsample` keeps `equal_pos_neg` exact instead of quietly unbalancing batches;
+  for an unchanged `subsample`, batches are bit-identical to before. Details:
+  § History 13.
 
 - **`tune_reconstruction` and `compute_correlation_coefficient` are deleted**
   (`docs/SCOPE.md` §2's dead ruling, disposition 2026-08-22, executed by the §8.0.E

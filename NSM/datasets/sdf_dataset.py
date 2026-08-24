@@ -97,6 +97,25 @@ def _identity(value):
     return _file_identity(value)
 
 
+def _draw_sign_share(indices, samples_per_sign):
+    """
+    Draw one sign's share of a batch from its RAW index set.
+
+    The set is tiled (``repeat``) until it holds at least ``samples_per_sign`` entries
+    -- sized by the subsample in force NOW, not the one at build time, which is what
+    decouples cached bytes from ``subsample`` (#19) -- then permuted and truncated.
+    For an unchanged subsample the tiled array is byte-identical to what the cache
+    used to store, so batches are bit-identical to the padded-cache era. An empty set
+    (a surface nothing draws from: missing, or all one sign under a zero share) draws
+    nothing, exactly as before -- ``randperm(0)`` runs either way, so the RNG stream
+    does not shift.
+    """
+    if indices.numel() > 0:
+        indices = indices.repeat(samples_per_sign // indices.numel() + 1)
+    perm = torch.randperm(indices.size(0))[:samples_per_sign]
+    return indices[perm]
+
+
 class SDFSamples(torch.utils.data.Dataset):
     """
     Dataset class for sampling SDFs from meshes.
@@ -719,11 +738,11 @@ class SDFSamples(torch.utils.data.Dataset):
 
     def sdf_pos_neg_idx(self, data):
         """
-        Index the samples by SDF sign, padded for equal-share batch draws.
+        Index the samples by SDF sign.
 
-        ``pos_idx`` and ``neg_idx`` are tiled (``repeat``) until each holds at least
-        ``subsample / 2`` entries, so a scarce sign is drawn with repetition rather
-        than exhausted. ``surf_idx`` (exact zeros) is returned unpadded.
+        The RAW index sets, not padded ones: the equal-share tiling happens at draw
+        time (``_draw_sign_share``), sized by the subsample then in force, so cached
+        bytes do not depend on ``subsample`` (#19).
 
         Args:
             data (dict): Dictionary of sampled points and SDFs
@@ -734,7 +753,8 @@ class SDFSamples(torch.utils.data.Dataset):
         Raises:
             ValueError: If every sample has the same sign -- equal batches cannot be
                 drawn, and a mesh with no interior or no exterior samples is degenerate
-                or unclosed (#41).
+                or unclosed (#41). Raising here keeps the failure at build time rather
+                than a silent one-sign draw later.
         """
 
         pos_idx = (data["gt_sdf"] > 0).nonzero(as_tuple=True)[0]
@@ -743,17 +763,10 @@ class SDFSamples(torch.utils.data.Dataset):
 
         for sign, idx_ in (("positive", pos_idx), ("negative", neg_idx)):
             if idx_.numel() == 0:
-                # The repeat below would divide by zero (#41), and a mesh whose samples
-                # are all one sign has no interior/exterior to learn from.
                 raise ValueError(
                     f"The mesh yielded no {sign} SDF samples, so equal positive/negative "
                     f"batches cannot be drawn from it. Is the mesh degenerate or unclosed?"
                 )
-
-        # Repeat +/- indices if either of them does not have enough for a full batch.
-        samples_per_sign = int(self.subsample / 2)
-        pos_idx = pos_idx.repeat(samples_per_sign // pos_idx.size(0) + 1)
-        neg_idx = neg_idx.repeat(samples_per_sign // neg_idx.size(0) + 1)
 
         return pos_idx, neg_idx, surf_idx
 
@@ -917,8 +930,9 @@ class SDFSamples(torch.utils.data.Dataset):
         ``mesh_paths`` -- one content-stable identity per mesh, in order, so an in-place
         edit moves the key (``_file_identity``) -- and serialized with
         ``json.dumps(sort_keys=True)``. No entry's meaning depends on its position.
-        ``subsample`` is not in the key; its one cached-content effect (index padding)
-        is #19's remaining half.
+        ``subsample`` is deliberately not in the key: it no longer changes cached
+        bytes -- index sets are stored raw and padded at draw (``_draw_sign_share``)
+        -- and batch size is a serving parameter, not a property of the data.
 
         Args:
             loc_mesh (str, Mesh or list): The subject's mesh(es)
@@ -988,26 +1002,17 @@ class SDFSamples(torch.utils.data.Dataset):
                 tic_rand_sample = time.time()
                 samples_per_sign = int(self.subsample / 2)
 
-                # idx_pos = data_['pos_idx'].repeat(data_['pos_idx'].size(0)//samples_per_sign + 1)
-                # perm_pos = torch.randperm(idx_pos.size(0))
                 if isinstance(data_["pos_idx"], list):
-                    perm_pos = torch.randperm(data_["pos_idx"][0].size(0))[:samples_per_sign]
-                    idx_pos = data_["pos_idx"][0][perm_pos]
+                    idx_pos = _draw_sign_share(data_["pos_idx"][0], samples_per_sign)
                 elif isinstance(data_["pos_idx"], torch.Tensor):
-                    perm_pos = torch.randperm(data_["pos_idx"].size(0))[:samples_per_sign]
-                    idx_pos = data_["pos_idx"][perm_pos]
+                    idx_pos = _draw_sign_share(data_["pos_idx"], samples_per_sign)
                 else:
                     raise ValueError("pos_idx must be a list or tensor")
 
-                # idx_neg = data_['neg_idx'].repeat(data_['neg_idx'].size(0)//samples_per_sign + 1)
-                # perm_neg = torch.randperm(idx_neg.size(0))
-                # idx_neg = perm_neg[:samples_per_sign]
                 if isinstance(data_["neg_idx"], list):
-                    perm_neg = torch.randperm(data_["neg_idx"][0].size(0))[:samples_per_sign]
-                    idx_neg = data_["neg_idx"][0][perm_neg]
+                    idx_neg = _draw_sign_share(data_["neg_idx"][0], samples_per_sign)
                 elif isinstance(data_["neg_idx"], torch.Tensor):
-                    perm_neg = torch.randperm(data_["neg_idx"].size(0))[:samples_per_sign]
-                    idx_neg = data_["neg_idx"][perm_neg]
+                    idx_neg = _draw_sign_share(data_["neg_idx"], samples_per_sign)
                 else:
                     raise ValueError("neg_idx must be a list or tensor")
                 toc_rand_sample = time.time()
@@ -1591,12 +1596,13 @@ class MultiSurfaceSDFSamples(SDFSamples):
 
     def sdf_pos_neg_idx(self, data):
         """
-        Per-surface sign indices, padded for each surface's batch share.
+        Per-surface sign indices.
 
-        As the parent's, per surface: each surface's ``pos_idx``/``neg_idx`` are tiled
-        up to its ``samples_per_sign_`` share. A surface nothing is drawn from -- a
-        zero share, or the all-NaN column of a missing surface -- keeps empty index
-        lists instead of raising.
+        As the parent's, per surface, and RAW like the parent's: the equal-share
+        tiling happens at draw time (``_draw_sign_share``), so cached bytes do not
+        depend on ``subsample`` (#19). A surface nothing is drawn from -- a zero
+        share, or the all-NaN column of a missing surface -- keeps empty index lists
+        instead of raising.
 
         Args:
             data (dict): Sample dict with ``gt_sdf`` of shape (n, n_surfaces)
@@ -1634,17 +1640,15 @@ class MultiSurfaceSDFSamples(SDFSamples):
             if surface_is_drawn_from:
                 for sign, idx_ in (("positive", pos_idx_), ("negative", neg_idx_)):
                     if idx_.numel() == 0:
-                        # The repeat below would divide by zero (#41), and a surface
-                        # with no interior samples trains to garbage.
+                        # A surface with no interior samples trains to garbage (#41);
+                        # raising here keeps the failure at build time rather than a
+                        # silent one-sign draw later.
                         raise ValueError(
                             f"Surface {mesh_idx} has no {sign} SDF samples, so its "
                             f"equal positive/negative batch share cannot be drawn. A "
                             f"surface nested inside another loses every interior point "
                             f"to remove_overlapping_points."
                         )
-                # Repeat +/- indices if either does not have enough for a full batch.
-                pos_idx_ = pos_idx_.repeat(samples_per_sign // pos_idx_.size(0) + 1)
-                neg_idx_ = neg_idx_.repeat(samples_per_sign // neg_idx_.size(0) + 1)
 
             pos_idx.append(pos_idx_)
             neg_idx.append(neg_idx_)
@@ -1725,13 +1729,8 @@ class MultiSurfaceSDFSamples(SDFSamples):
                         continue
 
                     # get random indices for positive and negative points
-                    # idx_pos = data_['pos_idx'][mesh_idx].repeat(data_['pos_idx'][mesh_idx].size(0)//samples_per_sign + 1)
-                    perm_pos = torch.randperm(data_["pos_idx"][mesh_idx].size(0))[:samples_per_sign]
-                    idx_pos = data_["pos_idx"][mesh_idx][perm_pos]
-
-                    # idx_neg = data_['neg_idx'][mesh_idx].repeat(data_['neg_idx'][mesh_idx].size(0)//samples_per_sign + 1)
-                    perm_neg = torch.randperm(data_["neg_idx"][mesh_idx].size(0))[:samples_per_sign]
-                    idx_neg = data_["neg_idx"][mesh_idx][perm_neg]
+                    idx_pos = _draw_sign_share(data_["pos_idx"][mesh_idx], samples_per_sign)
+                    idx_neg = _draw_sign_share(data_["neg_idx"][mesh_idx], samples_per_sign)
 
                     # combine positive and negative indices
                     idx_ += [idx_pos, idx_neg]
