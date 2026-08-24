@@ -127,6 +127,208 @@ class TestCacheRoundTrip:
         assert found and os.path.basename(found[0]) == cache_file
 
 
+class TestCacheHitMachinery:
+    """
+    What the cache-hit path does beyond loading: repair, upgrade, and refuse.
+
+    ``get_sample_data_dict`` in both classes wraps the same shell around a hit --
+    delete unreadable files, upgrade old layouts in place, coerce to the storage mode
+    in force -- and none of it was pinned before the section 8.0.F class-side work
+    restructures exactly this code. Each test here is one branch of that shell.
+    """
+
+    def test_a_corrupt_cache_file_is_deleted_and_rebuilt(self, meshes, tmp_path_factory):
+        """
+        ``is_zipfile`` guards the hit before ``np.load`` touches it: a truncated or
+        garbage ``.npz`` (a crash mid-write) is deleted and the subject rebuilt, not
+        crashed on and not dropped.
+        """
+        cache = tmp_path_factory.mktemp("badzip")
+        first = build_dataset(meshes, cache, **SMALL)
+        path = first.data[0]
+        with open(path, "wb") as f:
+            f.write(b"not a zipfile")
+
+        second = build_dataset(meshes, cache, load_cache=True, **SMALL)
+
+        assert len(second) == len(meshes), "the subject was dropped instead of rebuilt"
+        assert second.data[0] == path, "the rebuild landed at a different path"
+        rebuilt = cached_arrays(second)
+        assert rebuilt["pts"].shape == (sum(SMALL["n_pts"]), 3)
+
+    def test_the_single_surface_class_also_deletes_corrupt_files(
+        self, bone_meshes, tmp_path_factory
+    ):
+        """``SDFSamples.get_sample_data_dict`` is a separate copy of the same shell."""
+        cache = tmp_path_factory.mktemp("badzip_single")
+        first = build_single_surface_dataset(bone_meshes[:1], cache, **SMALL_SINGLE)
+        path = first.data[0]
+        with open(path, "wb") as f:
+            f.write(b"junk")
+
+        second = build_single_surface_dataset(
+            bone_meshes[:1], cache, load_cache=True, **SMALL_SINGLE
+        )
+        assert len(second) == 1 and second.data[0] == path
+        assert cached_arrays(second)["pts"].shape == (SMALL_SINGLE["n_pts"], 3)
+
+    def test_a_pre_overlap_pass_cache_is_upgraded_and_resaved(self, meshes, tmp_path_factory):
+        """
+        ``remove_overlapping_points`` runs on every hit, so a cache written before the
+        overlap pass existed is shrunk and resaved in place. The index lists are NOT
+        recomputed on this path: the resave condition that would recompute them compares
+        ``len(data["pos_idx"])`` against the number of surfaces, which overlap removal
+        does not change. The poisoned row here is the last one, pruned from every index
+        list first, precisely so the in-range guard below stays out of the way and the
+        resave branch is what this test exercises.
+        """
+        cache = tmp_path_factory.mktemp("overlap_upgrade")
+        first = build_dataset(meshes, cache, **SMALL)
+        path = first.data[0]
+        arrays = dict(np.load(path))
+        n = arrays["sdfs"].shape[0]
+        arrays["sdfs"] = arrays["sdfs"].copy()
+        arrays["sdfs"][-1, :] = -0.05  # inside BOTH surfaces: anatomically impossible
+        for key in [k for k in arrays if k.startswith(("pos_idx", "neg_idx", "surf_idx"))]:
+            arrays[key] = arrays[key][arrays[key] != n - 1]
+        np.savez(path, **arrays)
+
+        second = build_dataset(meshes, cache, load_cache=True, **SMALL)
+
+        assert second.data[0] == path, "the upgrade should hit, not rebuild"
+        upgraded = dict(np.load(path))
+        assert upgraded["sdfs"].shape[0] == n - 1, "the overlapping row was not removed on disk"
+        assert np.array_equal(upgraded["pos_idx_0"], arrays["pos_idx_0"]), (
+            "the index lists were recomputed -- the length-based resave condition "
+            "must have changed"
+        )
+
+    def test_out_of_range_cached_indices_delete_and_rebuild(self, meshes, tmp_path_factory):
+        """
+        ``test_if_idx_in_range`` guards against index lists that outlived their point
+        set (an overlap pass shrank ``xyz`` after they were computed). Such a file is
+        deleted and the subject rebuilt from the meshes -- served as-is, those indices
+        would read the wrong rows or step off the end of the array.
+        """
+        cache = tmp_path_factory.mktemp("out_of_range")
+        first = build_dataset(meshes, cache, **SMALL)
+        path = first.data[0]
+        arrays = dict(np.load(path))
+        poisoned = arrays["pos_idx_0"].copy()
+        poisoned[0] = arrays["pts"].shape[0] + 100
+        arrays["pos_idx_0"] = poisoned
+        np.savez(path, **arrays)
+
+        second = build_dataset(meshes, cache, load_cache=True, **SMALL)
+
+        assert len(second) == len(meshes)
+        rebuilt = cached_arrays(second)
+        assert rebuilt["pos_idx_0"].max() < rebuilt["pts"].shape[0], "the poison survived"
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="single's pos_idx backfill condition is dead: unpack_numpy_data always sets the key",
+    )
+    def test_a_pre_index_layout_cache_must_be_upgraded_on_the_single_surface_class(
+        self, bone_meshes, tmp_path_factory
+    ):
+        """
+        The upgrade ``SDFSamples.get_sample_data_dict`` documents -- "caches from before
+        the ``pos_idx`` layout are upgraded in place" -- has never fired: its condition is
+        ``"pos_idx" not in data``, and ``unpack_numpy_data`` puts the key there
+        unconditionally, as an EMPTY list when the group is absent from the file
+        (``unpack_pts``). A pre-index-layout cache is therefore served untouched and
+        ``__getitem__`` dies on it with ``IndexError: list index out of range`` (verified
+        by execution, 2026-08-24). ``MultiSurfaceSDFSamples`` does not share the defect:
+        its condition also compares ``len(data["pos_idx"])`` against the surface count,
+        which an empty list fails.
+        """
+        cache = tmp_path_factory.mktemp("backfill_single")
+        first = build_single_surface_dataset(bone_meshes[:1], cache, **SMALL_SINGLE)
+        path = first.data[0]
+        arrays = dict(np.load(path))
+        stripped = {
+            k: v for k, v in arrays.items() if not k.startswith(("pos_idx", "neg_idx", "surf_idx"))
+        }
+        np.savez(path, **stripped)
+
+        second = build_single_surface_dataset(
+            bone_meshes[:1], cache, load_cache=True, **SMALL_SINGLE
+        )
+
+        upgraded = dict(np.load(path))
+        assert np.array_equal(upgraded["pts"], arrays["pts"]), "the subject was resampled"
+        assert np.array_equal(
+            upgraded["pos_idx_0"], arrays["pos_idx_0"]
+        ), "the backfilled indices differ from the originally computed ones"
+        item, _ = second[0]
+        assert {"xyz", "gt_sdf"} <= set(item)
+
+    def test_the_multi_class_backfills_missing_index_lists(self, meshes, tmp_path_factory):
+        """The working counterpart of the xfail above, pinned so it stays working."""
+        cache = tmp_path_factory.mktemp("backfill_multi")
+        first = build_dataset(meshes, cache, **SMALL)
+        path = first.data[0]
+        arrays = dict(np.load(path))
+        stripped = {
+            k: v for k, v in arrays.items() if not k.startswith(("pos_idx", "neg_idx", "surf_idx"))
+        }
+        np.savez(path, **stripped)
+
+        second = build_dataset(meshes, cache, load_cache=True, **SMALL)
+
+        upgraded = dict(np.load(path))
+        assert np.array_equal(upgraded["pts"], arrays["pts"]), "the subject was resampled"
+        for key in ("pos_idx_0", "pos_idx_1", "neg_idx_0", "neg_idx_1"):
+            assert np.array_equal(upgraded[key], arrays[key]), key
+        item, _ = second[0]
+        assert {"xyz", "gt_sdf"} <= set(item)
+
+    def test_a_disk_built_cache_reloads_into_either_storage_mode(self, meshes, tmp_path_factory):
+        """
+        ``store_data_in_memory`` is a serving choice, not a property of the cache: the
+        same ``.npz`` serves a disk-backed dataset (``data`` holds the path) and an
+        in-memory one (``data`` holds the unpacked dict), and the batches drawn from
+        the two are identical.
+        """
+        import torch
+
+        cache = tmp_path_factory.mktemp("store_modes")
+        disk = build_dataset(meshes, cache, **SMALL)
+        memory = build_dataset(meshes, cache, load_cache=True, store_data_in_memory=True, **SMALL)
+
+        assert isinstance(disk.data[0], str)
+        assert isinstance(memory.data[0], dict)
+
+        torch.manual_seed(0)
+        from_disk, _ = disk[0]
+        torch.manual_seed(0)
+        from_memory, _ = memory[0]
+        assert torch.equal(from_disk["xyz"], from_memory["xyz"])
+        assert torch.equal(from_disk["gt_sdf"], from_memory["gt_sdf"])
+
+    def test_every_subject_started_is_logged(self, tmp_path_factory):
+        """
+        ``MultiSurfaceSDFSamples.get_sample_data_dict`` appends each subject to
+        ``list_meshes_started_loading.log`` in ``loc_save`` before doing anything else,
+        so a crash mid-build names its subject. The log appends across builds, cache
+        hits included.
+        """
+        subjects = write_synthetic_meshes(tmp_path_factory.mktemp("logged_meshes"))[:2]
+        cache = tmp_path_factory.mktemp("logged")
+        build_dataset(subjects, cache, **SMALL)
+
+        log = os.path.join(str(cache), "list_meshes_started_loading.log")
+        assert os.path.exists(log)
+        with open(log, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        assert lines == [str(subject) for subject in subjects]
+
+        build_dataset(subjects, cache, load_cache=True, **SMALL)
+        with open(log, encoding="utf-8") as f:
+            assert len(f.read().splitlines()) == 2 * len(subjects)
+
+
 class TestHashedParametersChangeTheKey:
     """The parameters that are correctly part of the cache key."""
 
@@ -293,6 +495,32 @@ class TestUnhashedParametersCollide:
 
         # Surface 1 is the small ellipsoid: fewest interior points, so it is hit hardest.
         assert interior_fraction(reused, 1) == pytest.approx(interior_fraction(fresh, 1), rel=0.25)
+
+
+class TestMeshContentInTheKey:
+    """
+    The cache key must notice when a mesh file's *content* changes, not only its path
+    (#19 (b), the ``KNOWN_ISSUES`` "Cache key omits mesh content" entry -- until now the
+    one #19 defect with no pin).
+    """
+
+    @pytest.mark.xfail(strict=True, reason="#19: an in-place mesh edit does not change the key")
+    def test_an_in_place_mesh_edit_must_change_the_key(self, tmp_path_factory):
+        """
+        Overwrite a subject's mesh at the same path with different geometry: the stale
+        cached samples must not be served, so the key has to move. Today the key hashes
+        the path string alone and stands still through any edit.
+        """
+        import pyvista as pv
+
+        subject = write_synthetic_meshes(tmp_path_factory.mktemp("editable"))[:1]
+        dataset = build_dataset(subject, tmp_path_factory.mktemp("edit_cache"), **SMALL)
+        key_before = dataset.create_hash(subject[0])
+
+        edited = pv.Sphere(radius=0.5, theta_resolution=30, phi_resolution=30).triangulate()
+        edited.save(subject[0][0])
+
+        assert dataset.create_hash(subject[0]) != key_before
 
 
 class TestReferenceMeshHashing:
@@ -1034,6 +1262,61 @@ class TestConstructorContract:
         wide = build_dataset(meshes, cache, load_cache=True, joint_scale_buffer=0.25, **joint)
 
         assert wide.max_radius / narrow.max_radius == pytest.approx(1.25 / 1.1, rel=1e-6)
+
+
+class TestMeshSubjects:
+    """
+    A subject passed as an in-memory ``Mesh`` -- which the ``isinstance(..., (str, Mesh))``
+    branches in ``preprocess_inputs`` and ``load_reference_mesh`` advertise -- has never
+    built end to end in either class (determined by execution, 2026-08-24):
+
+    * Both readers gate on ``os.path.exists(path)``, which returns ``False`` for a
+      ``Mesh`` object, so the subject is "skipped" as a missing path: the reader returns
+      None and ``__init__`` silently drops it. The dataset comes back shorter than the
+      subject list -- possibly empty -- with no error.
+    * Seeded (``random_seed`` set), the single class dies even earlier:
+      ``mesh_content_key`` iterates what it is given when it is not a path, and
+      iterating a ``Mesh`` raises ``KeyError: 'Index (0) not understood...'``.
+    * The multi class stringifies each ``Mesh`` into the cache key, i.e. by memory
+      address -- moot while the subject never builds, but it means fixing the build
+      alone would resurrect the ``TestReferenceMeshHashing`` defect one level down.
+
+    Both pins assert the behaviour the branches advertise. Issue text is drafted in the
+    section 8.0.F slice PR for the maintainer to file; #19's identity routing covers
+    what runs today, which is paths.
+    """
+
+    @pytest.mark.xfail(strict=True, reason="a Mesh subject has never built (draft issue, slice PR)")
+    def test_a_mesh_subject_must_build_on_the_single_surface_class(
+        self, bone_meshes, tmp_path_factory
+    ):
+        from pymskt.mesh import Mesh
+
+        dataset = build_single_surface_dataset(
+            [Mesh(bone_meshes[0])],
+            tmp_path_factory.mktemp("mesh_subject_single"),
+            store_data_in_memory=True,
+            save_cache=False,
+            **SMALL_SINGLE,
+        )
+        assert len(dataset) == 1, "the Mesh subject was silently dropped"
+        item, _ = dataset[0]
+        assert {"xyz", "gt_sdf"} <= set(item)
+
+    @pytest.mark.xfail(strict=True, reason="a Mesh subject has never built (draft issue, slice PR)")
+    def test_a_mesh_subject_must_build_on_the_multi_surface_class(self, meshes, tmp_path_factory):
+        from pymskt.mesh import Mesh
+
+        dataset = build_dataset(
+            [[Mesh(path) for path in meshes[0]]],
+            tmp_path_factory.mktemp("mesh_subject_multi"),
+            store_data_in_memory=True,
+            save_cache=False,
+            **SMALL,
+        )
+        assert len(dataset) == 1, "the Mesh subject was silently dropped"
+        item, _ = dataset[0]
+        assert {"xyz", "gt_sdf"} <= set(item)
 
 
 class TestReferenceMeshFromSubjectIndex:
