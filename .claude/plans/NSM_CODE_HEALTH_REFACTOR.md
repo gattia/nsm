@@ -4,13 +4,15 @@
 
 ## State
 
-**Updated:** 2026-08-23 · **Status:** open
+**Updated:** 2026-08-24 · **Status:** open
 
-- **Next:** the remaining §8 program is all grouped work awaiting its own
-  statement: the evaluation-module split out of `reconstruct/main.py` rides with
-  #5 (wandb-optional), class-side cache/build decomposition with #19/#27 (one
-  migration release), `train_epoch`'s internal loss-pipeline decomposition only
-  if a statement justifies it, multi_head's repair is #51, and the v0.3.0 cut
+- **Next:** §8.0.E — wandb-optional (#5) plus the evaluation-module split out of
+  `reconstruct/main.py` — statement below (2026-08-24), landing on branch
+  `wandb-optional`, **stacked on PR #77's branch** (both edit this State block;
+  merge #77 first). After it, the rest of the §8 program still awaits its own
+  statement: class-side cache/build decomposition with #19/#27 (one migration
+  release), `train_epoch`'s internal loss-pipeline decomposition only if a
+  statement justifies it, multi_head's repair is #51, and the v0.3.0 cut
   ("soonish, or at the end of this cleanup") is the maintainer's call. In review:
   PR #77 (docs-only — the `enforce_minmax` Open entry gains its full gradient
   mechanics and stays open by maintainer ruling 2026-08-24; Idea 11 gains the
@@ -1080,6 +1082,92 @@ wrapper deletion + unmark + CHANGELOG; 8. #52 fix + CLAUDE.md + CHANGELOG + unma
 | #52 catches a wrong declaration | dataset names ≠ config names raises at entry; dataset names + no config names adopts |
 | split changes no behaviour | full suite + harness green; `git diff --color-moved` pure moves; no xfail transitions in the split commit |
 | namespace unchanged | the frozen-list import test written in commit 2, untouched by the split |
+
+### 8.0.E wandb-optional (#5) and the evaluation-module split — plan statement (2026-08-24)
+
+Every claim below was re-run on `main` at `aae5979` (2026-08-24) before being written.
+
+**The defect, reproduced.** `import wandb` sits at module top in six non-deprecated
+modules — `reconstruct/main.py`, `reconstruct/latent_fit.py`,
+`reconstruct/wandb_logging.py`, `reconstruct/reconstruct_latent_S3.py`,
+`train/train_deep_sdf.py`, `train/train_deep_sdf_multi_head.py` — so with wandb
+absent, `import NSM.reconstruct` **and** `import NSM.train` die with #5's exact
+`ModuleNotFoundError` (subprocess with a blocked `wandb`). wandb appears nowhere in
+`pyproject.toml` (`dependencies = []`), so the consumer's two-symbol surface
+(`TriplanarDecoder`, `reconstruct_mesh` — SCOPE §3) depends at import time on a
+package nothing declares. Every wandb *call* is behind an explicit request
+(`log_wandb` / `use_wandb` / `config["log_latent"]`) except one: `get_mean_errors`'
+metric tail builds `wandb.Histogram(item)` per key unconditionally (its only guard is
+`except ValueError`), and the trainer's `_run_validation` never passes `log_wandb` —
+so training validation needs wandb at **runtime** even with `use_wandb=False`.
+
+**The #5 fix (permanent; schedulefree's pattern, `NSM/utils.py`):** per-module guarded
+import — `try/except ModuleNotFoundError` → `wandb = None`. The module attribute
+survives as a monkeypatch seam (as `NSM.utils.schedulefree` is for #42's stub). At
+each explicit-request gate, raise `ImportError` by name when `wandb is None`:
+`reconstruct_mesh`'s `log_wandb` block, `tune_reconstruction`'s login,
+`get_mean_errors`' init, `reconstruct_latent`'s log block, S3's log block,
+`train_deep_sdf`'s login, multi_head's login (the import line and that one site only —
+the rest of the module is #51's), `log_latent`'s histogram block, and
+`prepare_results_for_wandb`'s entry (for external callers who bypass the in-repo
+gates). The one **skip-not-raise**: `get_mean_errors`' histogram tail sets
+`hist = None` when wandb is `None` — nothing requested wandb there, and raising would
+break exactly the run #5 protects (training validation without wandb). With wandb
+installed nothing changes — payload and #28 history byte-identical — and wandb-absent
+runs could never start before (import crash) → **no History entry**.
+
+**The split (permanent).** 8.0.C deferred moving the evaluation trio because it cost
+"an import cycle (`main` ⇄ evaluation) or breaking `NSM.reconstruct.main`'s
+namespace". Re-scoped by execution, the cycle is smaller than feared:
+`recon_evaluation.py` already exists, is leafward (`logging`/`numpy`/`.utils` only),
+and the trio's only `main` symbols are `reconstruct_mesh` and `NoZeroLevelSetError`
+(AST free-variable scan; the rest is `os`/`np`/`fnmatch`/`Regress`/`logger`/`wandb`).
+So `tune_reconstruction`, `get_mean_errors` and `compute_correlation_coefficient`
+move **verbatim** into the existing `recon_evaluation.py` — no new module — and the
+cycle reduces to one **call-time** import inside `get_mean_errors`
+(`from .main import reconstruct_mesh, NoZeroLevelSetError`), stated in place.
+Call-time is load-bearing, not cosmetic: `test_predictive_validation.py` monkeypatches
+`NSM.reconstruct.main.reconstruct_mesh`, and a call-time lookup keeps that seam alive.
+`main.py`'s existing `from .recon_evaluation import compute_recon_loss` extends to
+re-import the trio, so both frozen namespaces (`NSM.reconstruct`,
+`NSM.reconstruct.main`) keep every name — `test_reconstruct_import_compat.py`'s lists
+untouched — and the trainer's package-path import of `get_mean_errors` is unaffected.
+The trio leaves `main.py`'s module `logger` for `recon_evaluation.py`'s; the log
+format has no `%(name)s` (8.0.C's argument), so no output byte changes. After the
+move, `main.py` holds `reconstruct_mesh` + `NoZeroLevelSetError` + the re-import
+surface: §8's `reconstruct/main.py` bullet (latent optimization / mesh generation /
+evaluation) is complete.
+
+**Deferred out of this slice, deliberately:** packaging (`dependencies = []` is
+repo-wide, not wandb's; declaring extras is its own decision), #58
+(`logging.basicConfig`), S3 beyond its import line (#35), multi_head beyond its
+import line (#51), `train/deprecated/` (0b).
+
+**Size budget:** #5 ≤ +55 across the six modules (six guarded imports, nine two-line
+raises, one histogram guard); the split net ≤ +15 in `recon_evaluation.py`
+(call-time import + cycle note + `Regress`/`fnmatch` imports), `main.py` net ≈ −270.
+Characterization tests are additive and outside the budget.
+
+**Sequence** (one commit each, suite green at every step):
+1. this statement; 2. characterization — a single-subprocess wandb-blocked probe
+(strict-xfail for #5: `import NSM.reconstruct` and `import NSM.train` both succeed
+and the sentinels are `None`), and a wandb-present pin: `get_mean_errors`' `_hist`
+values are `wandb.Histogram` (stays green across the fix); 3. #5 fix + per-site
+raise tests + the no-wandb validation test + xfail unmark + CHANGELOG (closes #5 on
+merge); 4. the split + ARCHITECTURE §3 ledger rows; 5. State update.
+
+**Verification per claim:**
+
+| Claim | Verification |
+|---|---|
+| both packages import without wandb | the subprocess probe passes unmarked; asserts the sentinel is `None` on `main`, `latent_fit`, `train_deep_sdf` |
+| nothing changes with wandb installed | full suite + regression harness green at every commit; the histogram pin green across the fix |
+| every explicit request fails loudly | per-site sentinel-`None` tests, `pytest.raises(ImportError)` naming wandb |
+| training validation survives without wandb | `get_mean_errors` over the #29 fixture with sentinel `None`: nan metrics, `_hist` `None`, no raise |
+| the split changes no behaviour | full suite + harness green; `git diff --color-moved` pure moves; no xfail transitions in the split commit |
+| both namespaces keep every name | `test_reconstruct_import_compat.py` frozen lists, untouched |
+| the monkeypatch seam survives the move | `test_predictive_validation.py` green, untouched |
+| no module-level cycle | `recon_evaluation.py`'s top imports stay `.utils`-only; the `main` import is call-time, stated in place; ARCHITECTURE §2 ast pass re-run |
 
 ### 8.1 Make the library plural — added 2026-08-15
 
