@@ -151,6 +151,8 @@ flowchart LR
   RClat --> RCutils
   RClat --> Ulosses
   RCeval --> RCutils
+  RCeval --> RCpred
+  RCeval -.->|"deferred import"| RCmain
   RCs3 --> DSpkg
   RCs3 --> RCutils
 
@@ -215,9 +217,10 @@ Modules with no inaccurate docstrings and an unremarkable status are omitted.
 |---|---|---|
 | `datasets/sdf_dataset.py` | 7 | prod — classes only since the §8.0 slice-A move (2026-08-22) |
 | `mesh/refine_mesh.py` | 6 | research — raises on its own defaults |
-| `reconstruct/main.py` | 5 | prod — `reconstruct_mesh` + the evaluation trio since the §8.0.C move (2026-08-23) |
+| `reconstruct/main.py` | 5 | prod — `reconstruct_mesh` only since §8.0.E (2026-08-24: `get_mean_errors` moved, the dead pair deleted); re-import surface for all three split-off modules |
 | `reconstruct/latent_fit.py` | 0 | prod — the latent-optimization stack, received from `main.py` (§8.0.C) |
 | `reconstruct/wandb_logging.py` | 0 | prod — wandb result preparation, same move |
+| `reconstruct/recon_evaluation.py` | 0 | prod — per-subject losses + `get_mean_errors`, received from `main.py` (§8.0.E, 2026-08-24) |
 | `mesh/main.py` | 5 | prod |
 | `train/utils.py` | 3 | prod |
 | `utils.py` | 2 | prod |

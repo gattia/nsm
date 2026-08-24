@@ -357,7 +357,7 @@ Two things about that surface are load-bearing and undocumented:
 **Deprecated, with a delete-when (audit ruling, re-verified 2026-08-22):**
 `batch_size_latent_recon`. `reconstruct_mesh` dropped the parameter, absorbs it via
 `**kwargs`, and prints a deprecation warning on every call — while the consumer still
-passes it (`steps/run_nsm.py`) and `main.get_mean_errors` still takes it as a real
+passes it (`steps/run_nsm.py`) and `recon_evaluation.get_mean_errors` still takes it as a real
 parameter. The shim behaves correctly; what the audit flagged is that it is inline and
 undated, indistinguishable from permanent API (the failure shape CLAUDE.md § "Separate
 permanent from transitional" names). **Delete the shim when kneepipeline stops passing
