@@ -569,19 +569,21 @@ class SDFSamples(torch.utils.data.Dataset):
         """
         Build or load one subject's samples; return them, or the path they are cached at.
 
-        On a cache hit (``load_cache=True``): unreadable ``.npz`` files are deleted and
-        the next candidate tried; caches from before the ``pos_idx`` layout are upgraded
-        in place (indices computed, file resaved). On a miss: each ``pt_sample_combos``
-        entry is sampled via ``read_mesh_get_sampled_pts``, with a per-combo seed
-        derived from ``random_seed`` and keyed on the mesh contents.
+        This shell runs once, for both classes; the class-specific halves are two
+        private hooks. On a cache hit (``load_cache=True``): unreadable ``.npz`` files
+        are deleted and the next candidate tried, then ``_upgrade_cached_layout``
+        brings old cache layouts up to date -- resaving the file in place, or deleting
+        it to force a rebuild. On a miss: ``_build_subject`` samples the subject from
+        its mesh(es). The result is coerced to the storage mode in force: the sample
+        dict itself (``store_data_in_memory=True``) or its cache path (False, the
+        default).
 
         Args:
-            loc_mesh (str): Path to mesh
+            loc_mesh (str or list): The subject's mesh path(s)
 
         Returns:
-            dict, str or None: The sample dict (``store_data_in_memory=True``), the
-            path of its cached ``.npz`` (False, the default), or None when the mesh
-            failed to load -- ``__init__`` then drops the subject.
+            dict, str or None: Sample dict, cache path, or None when the mesh failed
+            to load -- ``__init__`` then drops the subject.
         """
 
         # Create hash and filename
@@ -591,114 +593,40 @@ class SDFSamples(torch.utils.data.Dataset):
         file_loaded = False
 
         if (len(cached_file) > 0) and (self.load_cache is True):
-            for cached_file_ in cached_file:
-                if not is_zipfile(cached_file_):
-                    print("DELETING BAD ZIP FILE:", cached_file_)
-                    os.remove(cached_file_)
+            if self.verbose is True:
+                print("Loading cached file")
+            for cache_path in cached_file:
+                if not is_zipfile(cache_path):
+                    print("DELETING BAD ZIP FILE:", cache_path)
+                    os.remove(cache_path)
                     continue
 
                 # if hashed file exists, load it.
                 try:
-                    data_ = np.load(cached_file_)
-                    data = unpack_numpy_data(data_)
+                    data = unpack_numpy_data(np.load(cache_path))
                 except zipfile.BadZipFile:
-                    print("DELETING BAD ZIP FILE:", cached_file_)
-                    os.remove(cached_file_)
+                    print("DELETING BAD ZIP FILE:", cache_path)
+                    os.remove(cache_path)
                     continue
 
-                # unpack_numpy_data always sets the index keys -- an absent group comes
-                # back as an EMPTY list -- so key presence can never detect a
-                # pre-index-layout cache; the length can (same idea as the multi
-                # class's n_meshes length check).
-                if (
-                    len(data["pos_idx"]) == 0
-                    or len(data["neg_idx"]) == 0
-                    or len(data["surf_idx"]) == 0
-                ):
-                    pos_idx, neg_idx, surf_idx = self.sdf_pos_neg_idx(data)
-                    data["pos_idx"] = pos_idx
-                    data["neg_idx"] = neg_idx
-                    data["surf_idx"] = surf_idx
-                    self.save_data_to_cache(data, file_hash, filepath=cached_file_)
+                data, resave_data, rebuild = self._upgrade_cached_layout(data, cache_path)
+
+                if rebuild:
+                    print("\tDeleting file...")
+                    os.remove(cache_path)
+                    break
+
+                if resave_data:
+                    # resave data to cache - overwriting original.
+                    self.save_data_to_cache(data, file_hash, filepath=cache_path)
 
                 file_loaded = True
-                cache_path = cached_file_
                 break
 
         if file_loaded is False:
-            # otherwise, load the mesh and create SDF samples.
-            print("Creating SDF Samples")
-            if self.print_filename is True:
-                print(loc_mesh)
-            data = {
-                "xyz": torch.zeros((self.n_pts, 3)),
-                "gt_sdf": torch.zeros((self.n_pts)),
-            }
-            pts_idx = 0
-
-            if self.multiprocessing is True:
-                if self.reference_mesh_path is not None:
-                    reference_mesh = Mesh(self.reference_mesh_path)
-                else:
-                    reference_mesh = None
-            else:
-                reference_mesh = self.reference_mesh
-
-            if self.verbose is True:
-                print("type of reference mesh:", type(reference_mesh))
-                print("ref mesh path:", self.reference_mesh_path)
-
-            # Keyed on the mesh contents, not on the subject's index and not on the cache
-            # hash: an index would resample every subject when the list is reordered, and
-            # the cache hash contains the mesh path, so it would resample everyone when
-            # the data is moved. Read once here rather than per combo.
-            content_key = mesh_content_key(loc_mesh) if self.random_seed is not None else None
-
-            for idx_, (n_pts_, sigma_) in enumerate(self.pt_sample_combos):
-                # A zero-count combo (p_near_surface=0, p_further_from_surface=0, or the
-                # two summing to 1) samples nothing; passing it through would crash in
-                # point_cloud_utils on an empty point cloud (#23). The seed key stays
-                # idx_, so skipping one combo does not re-seed the others.
-                if n_pts_ == 0:
-                    continue
-                result_ = read_mesh_get_sampled_pts(
-                    loc_mesh,
-                    sigma=sigma_,
-                    n_pts=n_pts_,
-                    rand_function=self.rand_function,
-                    center_pts=self.center_pts,
-                    norm_pts=self.norm_pts,
-                    scale_method=self.scale_method,
-                    get_random=True,
-                    fix_mesh=self.fix_mesh,
-                    register_to_mean_first=False if reference_mesh is None else True,
-                    mean_mesh=reference_mesh,
-                    uniform_pts_buffer=self.uniform_pts_buffer,
-                    seed=derive_seed(self.random_seed, content_key, idx_),
-                )
-
-                if result_ is None:
-                    return None
-
-                xyz_ = result_["pts"]
-                sdfs_ = result_["sdf"]
-
-                data["xyz"][pts_idx : pts_idx + n_pts_, :] = torch.from_numpy(xyz_).float()
-                data["gt_sdf"][pts_idx : pts_idx + n_pts_] = torch.from_numpy(sdfs_).float()
-                pts_idx += n_pts_
-
-                if "orig_pts" not in data:
-                    # First combo that actually ran -- not necessarily combo 0, which a
-                    # zero count skips. Convert list of arrays to tensors.
-                    data["orig_pts"] = [
-                        torch.from_numpy(pts).float() for pts in result_["orig_pts"]
-                    ]
-                    data["new_pts"] = [torch.from_numpy(pts).float() for pts in result_["new_pts"]]
-
-            pos_idx, neg_idx, surf_idx = self.sdf_pos_neg_idx(data)
-            data["pos_idx"] = pos_idx
-            data["neg_idx"] = neg_idx
-            data["surf_idx"] = surf_idx
+            data = self._build_subject(loc_mesh)
+            if data is None:
+                return None
 
             if self.save_cache is True:
                 self.save_data_to_cache(data, file_hash)
@@ -709,6 +637,109 @@ class SDFSamples(torch.utils.data.Dataset):
                 print("updating data to be cache path")
             # change the data to be the path to the saved cache file
             data = cache_path
+
+        return data
+
+    def _upgrade_cached_layout(self, data, cache_path):
+        """
+        Bring one cached subject up to the current layout, on a hit.
+
+        Returns ``(data, resave, rebuild)``: ``resave`` asks the shell to overwrite
+        the cache file with the upgraded ``data``; ``rebuild`` asks it to delete the
+        file and rebuild from the meshes. Here: a cache from before the index-list
+        layout gets its sign indices computed and resaved. ``unpack_numpy_data``
+        always sets the index keys -- an absent group comes back as an EMPTY list --
+        so the check is on length, not presence.
+        """
+        if len(data["pos_idx"]) == 0 or len(data["neg_idx"]) == 0 or len(data["surf_idx"]) == 0:
+            pos_idx, neg_idx, surf_idx = self.sdf_pos_neg_idx(data)
+            data["pos_idx"] = pos_idx
+            data["neg_idx"] = neg_idx
+            data["surf_idx"] = surf_idx
+            return data, True, False
+        return data, False, False
+
+    def _build_subject(self, loc_mesh):
+        """
+        Sample one subject cold -- the per-combo sampling loop, the class-specific
+        half of ``get_sample_data_dict``. Each ``pt_sample_combos`` entry is drawn
+        via ``read_mesh_get_sampled_pts``, with a per-combo seed derived from
+        ``random_seed`` and keyed on the mesh contents.
+
+        Returns:
+            dict or None: The sample dict, indices included; None when the mesh
+            failed to load.
+        """
+        print("Creating SDF Samples")
+        if self.print_filename is True:
+            print(loc_mesh)
+        data = {
+            "xyz": torch.zeros((self.n_pts, 3)),
+            "gt_sdf": torch.zeros((self.n_pts)),
+        }
+        pts_idx = 0
+
+        if self.multiprocessing is True:
+            if self.reference_mesh_path is not None:
+                reference_mesh = Mesh(self.reference_mesh_path)
+            else:
+                reference_mesh = None
+        else:
+            reference_mesh = self.reference_mesh
+
+        if self.verbose is True:
+            print("type of reference mesh:", type(reference_mesh))
+            print("ref mesh path:", self.reference_mesh_path)
+
+        # Keyed on the mesh contents, not on the subject's index and not on the cache
+        # hash: an index would resample every subject when the list is reordered, and
+        # the cache hash contains the mesh path, so it would resample everyone when
+        # the data is moved. Read once here rather than per combo.
+        content_key = mesh_content_key(loc_mesh) if self.random_seed is not None else None
+
+        for idx_, (n_pts_, sigma_) in enumerate(self.pt_sample_combos):
+            # A zero-count combo (p_near_surface=0, p_further_from_surface=0, or the
+            # two summing to 1) samples nothing; passing it through would crash in
+            # point_cloud_utils on an empty point cloud (#23). The seed key stays
+            # idx_, so skipping one combo does not re-seed the others.
+            if n_pts_ == 0:
+                continue
+            result_ = read_mesh_get_sampled_pts(
+                loc_mesh,
+                sigma=sigma_,
+                n_pts=n_pts_,
+                rand_function=self.rand_function,
+                center_pts=self.center_pts,
+                norm_pts=self.norm_pts,
+                scale_method=self.scale_method,
+                get_random=True,
+                fix_mesh=self.fix_mesh,
+                register_to_mean_first=False if reference_mesh is None else True,
+                mean_mesh=reference_mesh,
+                uniform_pts_buffer=self.uniform_pts_buffer,
+                seed=derive_seed(self.random_seed, content_key, idx_),
+            )
+
+            if result_ is None:
+                return None
+
+            xyz_ = result_["pts"]
+            sdfs_ = result_["sdf"]
+
+            data["xyz"][pts_idx : pts_idx + n_pts_, :] = torch.from_numpy(xyz_).float()
+            data["gt_sdf"][pts_idx : pts_idx + n_pts_] = torch.from_numpy(sdfs_).float()
+            pts_idx += n_pts_
+
+            if "orig_pts" not in data:
+                # First combo that actually ran -- not necessarily combo 0, which a
+                # zero count skips. Convert list of arrays to tensors.
+                data["orig_pts"] = [torch.from_numpy(pts).float() for pts in result_["orig_pts"]]
+                data["new_pts"] = [torch.from_numpy(pts).float() for pts in result_["new_pts"]]
+
+        pos_idx, neg_idx, surf_idx = self.sdf_pos_neg_idx(data)
+        data["pos_idx"] = pos_idx
+        data["neg_idx"] = neg_idx
+        data["surf_idx"] = surf_idx
 
         return data
 
@@ -1274,15 +1305,12 @@ class MultiSurfaceSDFSamples(SDFSamples):
 
     def get_sample_data_dict(self, loc_meshes):
         """
-        Build or load one subject's samples; return them, or the path they are cached at.
-
-        The multi-surface differences from ``SDFSamples.get_sample_data_dict``:
-        ``gt_sdf`` is built (sum(n_pts), n_surfaces), with a missing (None) surface's
-        column all-NaN; ``remove_overlapping_points`` runs on fresh builds *and* on
-        cache hits, so pre-overlap-pass caches are upgraded and resaved; cached index
-        lists that fail ``test_if_idx_in_range`` delete the cache and force a rebuild;
-        and each subject started is appended to ``list_meshes_started_loading.log`` in
-        ``loc_save``, so a crash mid-build names its subject.
+        The parent's shell, after three multi-surface pre-steps: normalize
+        ``loc_meshes`` to a list, append the subject to
+        ``list_meshes_started_loading.log`` in ``loc_save`` (a crash mid-build names
+        its subject), and refresh the per-sign batch shares. The class-specific
+        halves are ``_build_subject`` (per-surface sampling) and
+        ``_upgrade_cached_layout``.
 
         Args:
             loc_meshes (list or str): The subject's per-surface mesh path(s).
@@ -1300,172 +1328,149 @@ class MultiSurfaceSDFSamples(SDFSamples):
         # get the number of points to sample per mesh / sign(in/out or pos/neg)
         self.get_samples_per_sign()
 
-        # Create hash and filename
-        file_hash = self.create_hash(loc_meshes)
-        cached_file = self.find_hash(filename=f"{file_hash}.npz")
+        return super().get_sample_data_dict(loc_meshes)
 
-        file_loaded = False
+    def _upgrade_cached_layout(self, data, cache_path):
+        """
+        As the parent's, for the multi-surface cache layout: the overlap pass runs on
+        every hit, so a pre-overlap-pass cache shrinks and resaves (without touching
+        the index lists -- overlap removal does not change how many surfaces there
+        are, which is what the recompute condition checks); index lists missing or of
+        the wrong surface count are recomputed; and indices that outlived their point
+        set -- an overlap pass shrank ``xyz`` after they were computed -- ask for
+        delete-and-rebuild, because served as-is they would read the wrong rows or
+        step off the end of the array.
+        """
+        # if previous pre-processing not yet done, do it now
+        # and update/resave the data to cache.
+        resave_data = False
 
-        if (len(cached_file) > 0) and (self.load_cache is True):
-            if self.verbose is True:
-                print("Loading cached file")
-            for cache_path in cached_file:
-                if not is_zipfile(cache_path):
-                    print("DELETEING BAD ZIP FILE:", cache_path)
-                    os.remove(cache_path)
-                    continue
+        data, in_in = self.remove_overlapping_points(data)
 
-                try:
-                    data = np.load(cache_path)
-                    data = unpack_numpy_data(data)
-                except zipfile.BadZipFile:
-                    print("DELETEING BAD ZIP FILE:", cache_path)
-                    os.remove(cache_path)
-                    continue
+        if in_in > 0:
+            resave_data = True
 
-                # if previous pre-processing not yet done, do it now
-                # and update/resave the data to cache.
-                resave_data = False
-
-                data, in_in = self.remove_overlapping_points(data)
-
-                if in_in > 0:
-                    resave_data = True
-
-                if (
-                    ("pos_idx" not in data)
-                    or (len(data["pos_idx"]) != self.n_meshes)
-                    or ("neg_idx" not in data)
-                    or (len(data["neg_idx"]) != self.n_meshes)
-                    or ("surf_idx" not in data)
-                    or (len(data["surf_idx"]) != self.n_meshes)
-                ):
-                    print("getting pos/neg")
-                    pos_idx, neg_idx, surf_idx = self.sdf_pos_neg_idx(data)
-                    data["pos_idx"] = pos_idx
-                    data["neg_idx"] = neg_idx
-                    data["surf_idx"] = surf_idx
-
-                    resave_data = True
-
-                if self.test_if_idx_in_range(data) is False:
-                    print("Indices out of range!", cache_path)
-                    print("\tDeleting file...")
-                    os.remove(cache_path)
-                    break
-
-                if resave_data is True:
-                    self.save_data_to_cache(
-                        data, file_hash, filepath=cache_path
-                    )  # resave data to cache - overwriting original.
-
-                file_loaded = True
-                break
-
-        if file_loaded is False:
-            # otherwise, load the mesh and create SDF samples.
-            print("Creating SDF Samples")
-            if self.print_filename is True:
-                print(loc_meshes)
-
-            data = {
-                "xyz": torch.zeros((sum(self.n_pts), 3)),
-                "gt_sdf": torch.zeros((sum(self.n_pts), len(loc_meshes))),
-            }
-            pts_idx = 0
-            icp_transform = None
-
-            if self.multiprocessing is True:
-                if self.reference_mesh_path is not None:
-                    reference_mesh = Mesh(self.reference_mesh_path)
-                else:
-                    reference_mesh = None
-            else:
-                reference_mesh = self.reference_mesh
-
-            if self.verbose is True:
-                print("type of reference mesh:", type(reference_mesh))
-                print("ref mesh path:", self.reference_mesh_path)
-
-            content_key = mesh_content_key(loc_meshes) if self.random_seed is not None else None
-
-            for idx_, (n_pts_, sigma_) in enumerate(self.pt_sample_combos):
-                # A combo asked to sample nothing anywhere would crash in
-                # point_cloud_utils on an empty point cloud (#23). The seed key stays
-                # idx_, so skipping one combo does not re-seed the others.
-                if sum(n_pts_) == 0:
-                    continue
-                tic = time.time()
-                result_ = read_meshes_get_sampled_pts(
-                    loc_meshes,
-                    sigma=sigma_,
-                    n_pts=n_pts_,
-                    rand_function=self.rand_function,
-                    center_pts=self.center_pts,
-                    norm_pts=self.norm_pts,
-                    scale_method=self.scale_method,
-                    get_random=True,
-                    fix_mesh=self.fix_mesh,
-                    register_to_mean_first=False if reference_mesh is None else True,  #
-                    mean_mesh=reference_mesh,  #
-                    uniform_pts_buffer=self.uniform_pts_buffer,
-                    # Multi surface specific
-                    mesh_to_scale=self.mesh_to_scale,
-                    scale_all_meshes=self.scale_all_meshes,
-                    center_all_meshes=self.center_all_meshes,
-                    icp_transform=icp_transform,
-                    seed=derive_seed(self.random_seed, content_key, idx_),
-                )
-
-                if result_ is None:
-                    return None
-
-                icp_transform = result_["icp_transform"]
-
-                toc = time.time()
-                print(f"{idx_} - {sigma_}: {toc - tic}s")
-
-                if "orig_pts" not in data:
-                    # First combo that actually ran -- not necessarily combo 0,
-                    # which a zero count skips.
-                    data["orig_pts"] = result_["orig_pts"]
-                    data["new_pts"] = result_["new_pts"]
-
-                xyz_ = result_["pts"]
-                sdfs_ = result_["sdf"]
-
-                data["xyz"][pts_idx : pts_idx + sum(n_pts_), :] = torch.from_numpy(xyz_).float()
-
-                for mesh_idx, _sdfs_ in enumerate(sdfs_):
-                    if _sdfs_ is None:
-                        # If mesh was None, fill with NaN to indicate missing data
-                        # don't need this now.. but can handle training on incomplete data in the future.
-                        data["gt_sdf"][pts_idx : pts_idx + sum(n_pts_), mesh_idx] = float("nan")
-                    else:
-                        data["gt_sdf"][pts_idx : pts_idx + sum(n_pts_), mesh_idx] = (
-                            torch.from_numpy(_sdfs_).float()
-                        )
-                pts_idx += sum(n_pts_)
-
-            # Drop points that have are labeled as being inside
-            # 2 objects - clearly this is an error.
-            data, in_in = self.remove_overlapping_points(data)
-
+        if (
+            ("pos_idx" not in data)
+            or (len(data["pos_idx"]) != self.n_meshes)
+            or ("neg_idx" not in data)
+            or (len(data["neg_idx"]) != self.n_meshes)
+            or ("surf_idx" not in data)
+            or (len(data["surf_idx"]) != self.n_meshes)
+        ):
             print("getting pos/neg")
             pos_idx, neg_idx, surf_idx = self.sdf_pos_neg_idx(data)
             data["pos_idx"] = pos_idx
             data["neg_idx"] = neg_idx
             data["surf_idx"] = surf_idx
 
-            if (data is not None) and (self.save_cache is True):
-                self.save_data_to_cache(data, file_hash)
-                cache_path = os.path.join(self.cache_folder, f"{file_hash}.npz")
+            resave_data = True
 
-        if self.store_data_in_memory is False:
-            if self.verbose is True:
-                print("updating data to be cache path")
-            # change the data to be the path to the saved cache file
-            data = cache_path
+        if self.test_if_idx_in_range(data) is False:
+            print("Indices out of range!", cache_path)
+            return data, False, True
+
+        return data, resave_data, False
+
+    def _build_subject(self, loc_meshes):
+        """
+        As the parent's, per surface: ``gt_sdf`` is built (sum(n_pts), n_surfaces),
+        with a missing (None) surface's column all-NaN; the ICP transform from the
+        first combo carries into the rest; and ``remove_overlapping_points`` drops
+        points labeled inside two or more surfaces before the indices are computed.
+        """
+        print("Creating SDF Samples")
+        if self.print_filename is True:
+            print(loc_meshes)
+
+        data = {
+            "xyz": torch.zeros((sum(self.n_pts), 3)),
+            "gt_sdf": torch.zeros((sum(self.n_pts), len(loc_meshes))),
+        }
+        pts_idx = 0
+        icp_transform = None
+
+        if self.multiprocessing is True:
+            if self.reference_mesh_path is not None:
+                reference_mesh = Mesh(self.reference_mesh_path)
+            else:
+                reference_mesh = None
+        else:
+            reference_mesh = self.reference_mesh
+
+        if self.verbose is True:
+            print("type of reference mesh:", type(reference_mesh))
+            print("ref mesh path:", self.reference_mesh_path)
+
+        content_key = mesh_content_key(loc_meshes) if self.random_seed is not None else None
+
+        for idx_, (n_pts_, sigma_) in enumerate(self.pt_sample_combos):
+            # A combo asked to sample nothing anywhere would crash in
+            # point_cloud_utils on an empty point cloud (#23). The seed key stays
+            # idx_, so skipping one combo does not re-seed the others.
+            if sum(n_pts_) == 0:
+                continue
+            tic = time.time()
+            result_ = read_meshes_get_sampled_pts(
+                loc_meshes,
+                sigma=sigma_,
+                n_pts=n_pts_,
+                rand_function=self.rand_function,
+                center_pts=self.center_pts,
+                norm_pts=self.norm_pts,
+                scale_method=self.scale_method,
+                get_random=True,
+                fix_mesh=self.fix_mesh,
+                register_to_mean_first=False if reference_mesh is None else True,  #
+                mean_mesh=reference_mesh,  #
+                uniform_pts_buffer=self.uniform_pts_buffer,
+                # Multi surface specific
+                mesh_to_scale=self.mesh_to_scale,
+                scale_all_meshes=self.scale_all_meshes,
+                center_all_meshes=self.center_all_meshes,
+                icp_transform=icp_transform,
+                seed=derive_seed(self.random_seed, content_key, idx_),
+            )
+
+            if result_ is None:
+                return None
+
+            icp_transform = result_["icp_transform"]
+
+            toc = time.time()
+            print(f"{idx_} - {sigma_}: {toc - tic}s")
+
+            if "orig_pts" not in data:
+                # First combo that actually ran -- not necessarily combo 0,
+                # which a zero count skips.
+                data["orig_pts"] = result_["orig_pts"]
+                data["new_pts"] = result_["new_pts"]
+
+            xyz_ = result_["pts"]
+            sdfs_ = result_["sdf"]
+
+            data["xyz"][pts_idx : pts_idx + sum(n_pts_), :] = torch.from_numpy(xyz_).float()
+
+            for mesh_idx, _sdfs_ in enumerate(sdfs_):
+                if _sdfs_ is None:
+                    # If mesh was None, fill with NaN to indicate missing data
+                    # don't need this now.. but can handle training on incomplete data in the future.
+                    data["gt_sdf"][pts_idx : pts_idx + sum(n_pts_), mesh_idx] = float("nan")
+                else:
+                    data["gt_sdf"][pts_idx : pts_idx + sum(n_pts_), mesh_idx] = torch.from_numpy(
+                        _sdfs_
+                    ).float()
+            pts_idx += sum(n_pts_)
+
+        # Drop points that have are labeled as being inside
+        # 2 objects - clearly this is an error.
+        data, in_in = self.remove_overlapping_points(data)
+
+        print("getting pos/neg")
+        pos_idx, neg_idx, surf_idx = self.sdf_pos_neg_idx(data)
+        data["pos_idx"] = pos_idx
+        data["neg_idx"] = neg_idx
+        data["surf_idx"] = surf_idx
 
         return data
 
