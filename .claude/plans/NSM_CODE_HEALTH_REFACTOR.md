@@ -6,19 +6,21 @@
 
 **Updated:** 2026-08-24 · **Status:** open
 
-- **Next:** §8.0.E is complete on branch `wandb-optional` (closes #5 on merge),
-  **stacked on PR #77's branch** (both edit this State block; merge #77 first,
-  then this branch's PR); maintainer reviews commit-by-commit — one commit per
-  statement step — marks ready, admin-merges. After that, the rest of the §8
-  program still awaits its own statement: class-side cache/build decomposition
-  with #19/#27 (one migration release), `train_epoch`'s internal loss-pipeline
-  decomposition only if a statement justifies it, multi_head's repair is #51,
-  and the v0.3.0 cut ("soonish, or at the end of this cleanup") is the
-  maintainer's call. In review: PR #77 (docs-only — the `enforce_minmax` Open
-  entry gains its full gradient mechanics and stays open by maintainer ruling
-  2026-08-24; Idea 11 gains the clamp-form axis). Meanwhile the maintainer's
-  research queue points at `NSM_TRAINING_IDEAS.md` Idea 4(a) first (see that
-  file's State).
+- **Next:** land §8.0.E on `main` by merging **PR #79** (closes #5 on merge) —
+  the re-land: PR #77 merged to `main` 2026-08-24, but PR #78, stacked on #77's
+  branch, was merged into that branch instead of being retargeted to `main`
+  first, so `main` never received the slice (issue #5 staying open was the
+  tell). #79 carries the same eight commits from the same branch, reviewed on
+  #78; after it merges, delete both `wandb-optional` and
+  `clamp-gradient-known-issue`. Then the rest of the §8 program still awaits
+  its own statement: class-side cache/build decomposition with #19/#27 (one
+  migration release), `train_epoch`'s internal loss-pipeline decomposition only
+  if a statement justifies it, multi_head's repair is #51, and the v0.3.0 cut
+  ("soonish, or at the end of this cleanup") is the maintainer's call.
+  Meanwhile the maintainer's research queue points at `NSM_TRAINING_IDEAS.md`
+  Idea 4(a) first (see that file's State).
+- **PR #77 merged to `main` (2026-08-24):** the `enforce_minmax` Open entry has
+  its full gradient mechanics; Idea 11 carries the clamp-form axis.
 - **§8.0.E landed on branch (2026-08-24):** statement → characterization → #5
   fix → amendment → dead-pair deletion → split → this update, suite green and
   lint clean at every commit (660→664 passed; the #5 probe xfail passes unmarked
