@@ -225,23 +225,19 @@ class TestCacheHitMachinery:
         rebuilt = cached_arrays(second)
         assert rebuilt["pos_idx_0"].max() < rebuilt["pts"].shape[0], "the poison survived"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="single's pos_idx backfill condition is dead: unpack_numpy_data always sets the key",
-    )
-    def test_a_pre_index_layout_cache_must_be_upgraded_on_the_single_surface_class(
+    def test_a_pre_index_layout_cache_is_upgraded_on_the_single_surface_class(
         self, bone_meshes, tmp_path_factory
     ):
         """
         The upgrade ``SDFSamples.get_sample_data_dict`` documents -- "caches from before
-        the ``pos_idx`` layout are upgraded in place" -- has never fired: its condition is
-        ``"pos_idx" not in data``, and ``unpack_numpy_data`` puts the key there
-        unconditionally, as an EMPTY list when the group is absent from the file
-        (``unpack_pts``). A pre-index-layout cache is therefore served untouched and
-        ``__getitem__`` dies on it with ``IndexError: list index out of range`` (verified
-        by execution, 2026-08-24). ``MultiSurfaceSDFSamples`` does not share the defect:
-        its condition also compares ``len(data["pos_idx"])`` against the surface count,
-        which an empty list fails.
+        the ``pos_idx`` layout are upgraded in place" -- never fired until Aug 2026: its
+        condition was ``"pos_idx" not in data``, and ``unpack_numpy_data`` puts the key
+        there unconditionally, as an EMPTY list when the group is absent from the file
+        (``unpack_pts``). A pre-index-layout cache was served untouched and
+        ``__getitem__`` died on it with ``IndexError: list index out of range`` (verified
+        by execution, 2026-08-24) -- always a crash, never wrong results, so no History
+        entry. The condition now checks the unpacked length, the same idea as the multi
+        class's ``n_meshes`` length check, which never had the defect.
         """
         cache = tmp_path_factory.mktemp("backfill_single")
         first = build_single_surface_dataset(bone_meshes[:1], cache, **SMALL_SINGLE)

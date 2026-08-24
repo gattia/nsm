@@ -539,7 +539,15 @@ class SDFSamples(torch.utils.data.Dataset):
                     os.remove(cached_file_)
                     continue
 
-                if ("pos_idx" not in data) or ("neg_idx" not in data) or ("surf_idx" not in data):
+                # unpack_numpy_data always sets the index keys -- an absent group comes
+                # back as an EMPTY list -- so key presence can never detect a
+                # pre-index-layout cache; the length can (same idea as the multi
+                # class's n_meshes length check).
+                if (
+                    len(data["pos_idx"]) == 0
+                    or len(data["neg_idx"]) == 0
+                    or len(data["surf_idx"]) == 0
+                ):
                     pos_idx, neg_idx, surf_idx = self.sdf_pos_neg_idx(data)
                     data["pos_idx"] = pos_idx
                     data["neg_idx"] = neg_idx
