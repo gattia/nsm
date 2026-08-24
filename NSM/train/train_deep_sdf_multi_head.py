@@ -4,7 +4,12 @@ import warnings
 
 import numpy as np
 import torch
-import wandb
+
+# Optional (#5): every wandb use is behind an explicit request that raises when absent.
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 from NSM.reconstruct import get_mean_errors
 from NSM.train.utils import add_plain_lr_to_config, calc_weight, cyclic_anneal_linear, get_kld
@@ -34,6 +39,9 @@ def train_deep_sdf(config, models: tuple, sdf_dataset, use_wandb=False):
         DeprecationWarning,
         stacklevel=2,
     )
+
+    if use_wandb and wandb is None:
+        raise ImportError("use_wandb=True requires wandb, which is not installed")
 
     config.setdefault("mesh_names", None)
 

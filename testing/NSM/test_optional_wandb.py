@@ -2,11 +2,13 @@
 #5: wandb must be optional — needed when a caller explicitly asks for wandb logging,
 never at import time.
 
-``import wandb`` sits at module top across the reconstruct and train packages, so with
-wandb absent, ``import NSM.reconstruct`` (the consumer path — kneepipeline's
-``reconstruct_mesh``) and ``import NSM.train`` both die with ``ModuleNotFoundError``,
-and wandb appears nowhere in ``pyproject.toml``. Plan §8.0.E; the import probe is
-strict-xfail until the fix commit.
+Until the #5 fix (plan §8.0.E), ``import wandb`` sat at module top across the
+reconstruct and train packages, so with wandb absent, ``import NSM.reconstruct`` (the
+consumer path — kneepipeline's ``reconstruct_mesh``) and ``import NSM.train`` both died
+with ``ModuleNotFoundError`` — and wandb appears nowhere in ``pyproject.toml``. Each
+module now guards the import behind a ``wandb = None`` sentinel; every explicit request
+(``log_wandb`` / ``use_wandb`` / ``config["log_latent"]``) raises ``ImportError`` by
+name, at entry, when wandb is absent.
 
 The probe runs in a subprocess: wandb is installed in the dev environment and already
 imported by the suite, so absence can only be simulated in a fresh interpreter, via a
@@ -51,10 +53,6 @@ print("OK")
 
 
 class TestImportWithoutWandb:
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#5: top-level `import wandb` in reconstruct/ and train/ modules",
-    )
     def test_both_packages_import_without_wandb(self):
         result = subprocess.run(
             [sys.executable, "-c", _PROBE],
@@ -87,3 +85,99 @@ class TestHistogramTailWithWandbPresent:
         )
         assert results["chamfer_0"] == 0.5
         assert isinstance(results["chamfer_0_hist"], wandb.Histogram)
+
+
+class TestExplicitRequestsRaiseWithoutWandb:
+    """
+    Each explicit wandb request fails loudly, at entry, when wandb is absent. Absence
+    is simulated by patching the sentinel to ``None`` in the module hosting the
+    function — looked up via ``__module__`` where §8.0.E's split will move the
+    function, so these tests survive the move without edits.
+    """
+
+    @staticmethod
+    def _absent(monkeypatch, func):
+        monkeypatch.setattr(sys.modules[func.__module__], "wandb", None)
+
+    def test_reconstruct_mesh_log_wandb(self, monkeypatch):
+        self._absent(monkeypatch, recon_main.reconstruct_mesh)
+        with pytest.raises(ImportError, match="wandb"):
+            recon_main.reconstruct_mesh(path=None, decoders=None, latent_size=4, log_wandb=True)
+
+    def test_get_mean_errors_log_wandb(self, monkeypatch):
+        self._absent(monkeypatch, recon_main.get_mean_errors)
+        with pytest.raises(ImportError, match="wandb"):
+            recon_main.get_mean_errors(
+                mesh_paths=["a.vtk"], decoders=None, latent_size=4, log_wandb=True
+            )
+
+    def test_tune_reconstruction_use_wandb(self, monkeypatch):
+        self._absent(monkeypatch, recon_main.tune_reconstruction)
+        with pytest.raises(ImportError, match="wandb"):
+            recon_main.tune_reconstruction(model=None, config={}, use_wandb=True)
+
+    def test_reconstruct_latent_log_wandb(self, monkeypatch):
+        self._absent(monkeypatch, recon_main.reconstruct_latent)
+        with pytest.raises(ImportError, match="wandb"):
+            recon_main.reconstruct_latent(
+                decoders=None,
+                num_iterations=1,
+                latent_size=2,
+                xyz=None,
+                sdf_gt=None,
+                log_wandb=True,
+            )
+
+    def test_prepare_results_for_wandb(self, monkeypatch):
+        self._absent(monkeypatch, recon_main.prepare_results_for_wandb)
+        with pytest.raises(ImportError, match="wandb"):
+            recon_main.prepare_results_for_wandb({})
+
+    def test_reconstruct_latent_S3_log_wandb(self, monkeypatch):
+        from NSM.reconstruct.reconstruct_latent_S3 import reconstruct_latent_S3
+
+        self._absent(monkeypatch, reconstruct_latent_S3)
+        with pytest.raises(ImportError, match="wandb"):
+            reconstruct_latent_S3(
+                decoder=None, num_iterations=1, latent_size=2, new_sdf=None, log_wandb=True
+            )
+
+    def test_train_deep_sdf_use_wandb(self, monkeypatch):
+        import NSM.train.train_deep_sdf as trainer
+
+        monkeypatch.setattr(trainer, "wandb", None)
+        with pytest.raises(ImportError, match="wandb"):
+            trainer.train_deep_sdf(config={}, model=None, sdf_dataset=None, use_wandb=True)
+
+    def test_train_deep_sdf_multi_head_use_wandb(self, monkeypatch):
+        import NSM.train.train_deep_sdf_multi_head as multi_head
+
+        monkeypatch.setattr(multi_head, "wandb", None)
+        with pytest.warns(DeprecationWarning):
+            with pytest.raises(ImportError, match="wandb"):
+                multi_head.train_deep_sdf(config={}, models=(), sdf_dataset=None, use_wandb=True)
+
+
+class TestValidationSurvivesWithoutWandb:
+    """
+    The one wandb use with *no* explicit request — ``get_mean_errors``' histogram
+    tail — skips instead of raising when wandb is absent: a training run's validation
+    epochs (which never ask for wandb) must complete in a wandb-less environment. The
+    metric scalars are unaffected; the ``*_hist`` values become ``None``.
+    """
+
+    def test_hist_none_metrics_intact(self, monkeypatch):
+        monkeypatch.setattr(sys.modules[recon_main.get_mean_errors.__module__], "wandb", None)
+
+        def fake_reconstruct_mesh(path=None, **kwargs):
+            return {"mesh": [None], "chamfer_0": 0.5}
+
+        monkeypatch.setattr(recon_main, "reconstruct_mesh", fake_reconstruct_mesh)
+        results = recon_main.get_mean_errors(
+            mesh_paths=["a.vtk", "b.vtk"],
+            decoders=None,
+            latent_size=4,
+            calc_symmetric_chamfer=True,
+        )
+        assert results["chamfer_0"] == 0.5
+        assert results["chamfer_0_hist"] is None

@@ -10,7 +10,12 @@ import logging
 
 import numpy as np
 import torch
-import wandb
+
+# Optional (#5): every wandb use is behind an explicit request that raises when absent.
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 from NSM.losses import EIKONAL_UNSUPPORTED, eikonal_loss
 
@@ -258,6 +263,9 @@ def reconstruct_latent(
     Returns:
         (loss, latent): the final loss value and the fitted latent tensor.
     """
+    if log_wandb and wandb is None:
+        raise ImportError("log_wandb=True requires wandb, which is not installed")
+
     # Check for deprecated parameters
     if "max_batch_size" in kwargs:
         print(

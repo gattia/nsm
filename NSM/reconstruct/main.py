@@ -8,7 +8,12 @@ from fnmatch import fnmatch
 import numpy as np
 import pymskt as mskt
 import torch
-import wandb
+
+# Optional (#5): every wandb use is behind an explicit request that raises when absent.
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 from NSM.datasets import read_mesh_get_sampled_pts, read_meshes_get_sampled_pts
 from NSM.datasets.sdf_dataset import combine_meshes
@@ -143,6 +148,9 @@ def reconstruct_mesh(
         NoZeroLevelSetError: with `register_similarity` or `scale_jointly` set, when
             the decoder's mean shape has no surface (see the exception's docstring).
     """
+
+    if log_wandb and wandb is None:
+        raise ImportError("log_wandb=True requires wandb, which is not installed")
 
     # warning batch_size_latent_recon is deprecated
     if "batch_size_latent_recon" in kwargs:
@@ -465,6 +473,8 @@ def tune_reconstruction(model, config, use_wandb=True):
     """
     Tune reconstruction parameters using wandb for logging.
     """
+    if use_wandb and wandb is None:
+        raise ImportError("use_wandb=True requires wandb, which is not installed")
     if use_wandb is True:
         wandb.login(key=os.environ["WANDB_KEY"])
 
@@ -551,6 +561,8 @@ def get_mean_errors(
     alike — instead of aborting, so a training run survives its own early validation
     epochs.
     """
+    if log_wandb and wandb is None:
+        raise ImportError("log_wandb=True requires wandb, which is not installed")
 
     loss = {}
 
@@ -692,8 +704,10 @@ def get_mean_errors(
         mean = np.mean(item)
         std = np.std(item)
         median = np.median(item)
+        # Skip, not raise, when wandb is absent: training validation reaches here with
+        # no wandb request (the metric scalars below are unaffected).
         try:
-            hist = wandb.Histogram(item)
+            hist = wandb.Histogram(item) if wandb is not None else None
         except ValueError:
             hist = None
         loss_[key] = mean

@@ -5,7 +5,12 @@ import warnings
 
 import numpy as np
 import torch
-import wandb
+
+# Optional (#5): every wandb use is behind an explicit request that raises when absent.
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 from NSM.losses import EIKONAL_UNSUPPORTED, eikonal_loss
 from NSM.reconstruct import (
@@ -63,6 +68,9 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
     checkpoints under ``config["experiment_directory"]``; the latent embedding exists
     only in the checkpoints and the history — it is constructed here and not returned.
     """
+    if use_wandb and wandb is None:
+        raise ImportError("use_wandb=True requires wandb, which is not installed")
+
     # add default params for backwards compatibility between
     # train_deep_sdf and train_deep_sdf_multi_surface.
     config.setdefault("objects_per_decoder", 1)
@@ -749,6 +757,8 @@ def train_epoch(
         log_dict["l1_loss_{}".format(l1_idx)] = l1_loss_
 
     if config["log_latent"] is not None:
+        if wandb is None:
+            raise ImportError("config['log_latent'] requires wandb, which is not installed")
         vecs = latent_vecs.weight.data.cpu().numpy()
         for latent_idx in range(config["log_latent"]):
             log_dict[f"latent_{latent_idx}"] = wandb.Histogram(vecs[:, latent_idx])

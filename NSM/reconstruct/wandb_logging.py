@@ -12,7 +12,12 @@ import copy
 
 import numpy as np
 import torch
-import wandb
+
+# Optional (#5): every wandb use is behind an explicit request that raises when absent.
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 
 def _process_meshes_for_wandb(meshes, mesh_prefix, max_points_3d, log_faces, verbose):
@@ -80,6 +85,8 @@ def prepare_results_for_wandb(result, max_points_3d=10000, log_faces=True, verbo
     Returns:
         dict: Dictionary ready for wandb logging (JSON serializable + 3D objects)
     """
+    if wandb is None:
+        raise ImportError("prepare_results_for_wandb requires wandb, which is not installed")
     if verbose:
         print("Preparing results for wandb logging...")
 

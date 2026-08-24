@@ -187,6 +187,16 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Fixed
 
+- **wandb is optional** (#5). It was an undeclared import-time dependency: without it,
+  `import NSM.reconstruct` — the inference path, which never logs — and
+  `import NSM.train` both died with `ModuleNotFoundError`. Both packages now import
+  without wandb; every wandb use is behind an explicit request (`log_wandb`,
+  `use_wandb`, `config["log_latent"]`), which raises `ImportError` by name, at entry,
+  when wandb is absent. One deliberate skip instead of a raise: `get_mean_errors`'
+  per-metric histograms (nothing requests wandb on that path) become `None` without
+  wandb — which is what lets a training run's validation epochs complete in a
+  wandb-less environment. With wandb installed, nothing changes.
+
 - **schedule_free training runs survive their checkpoint and validation epochs** (#42).
   The eval warm-up handed the decoder the raw dataloader item, so every
   `schedule_free_*` run died with `TypeError` in the decoder's forward at its first
