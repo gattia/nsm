@@ -611,22 +611,27 @@ class SDFSamples(torch.utils.data.Dataset):
             to load -- ``__init__`` then drops the subject.
         """
 
-        # Create hash and filename
+        # The subject's cache key names its file: <key>.npz, searched recursively
+        # across every date folder under loc_save (find_hash stops at the first match).
         file_hash = self.create_hash(loc_mesh)
         cached_file = self.find_hash(filename=f"{file_hash}.npz")
 
         file_loaded = False
 
+        # --- Hit path: try to serve the subject from its cached .npz. -------------
         if (len(cached_file) > 0) and (self.load_cache is True):
             if self.verbose is True:
                 print("Loading cached file")
             for cache_path in cached_file:
+                # A corrupt file (a crash mid-write) is deleted rather than crashed
+                # on; with no candidate left, the subject rebuilds below. Two guards
+                # because both fail modes exist: not-a-zip-at-all, and a zip whose
+                # central directory is broken (np.load raises BadZipFile).
                 if not is_zipfile(cache_path):
                     print("DELETING BAD ZIP FILE:", cache_path)
                     os.remove(cache_path)
                     continue
 
-                # if hashed file exists, load it.
                 try:
                     data = unpack_numpy_data(np.load(cache_path))
                 except zipfile.BadZipFile:
@@ -634,6 +639,11 @@ class SDFSamples(torch.utils.data.Dataset):
                     os.remove(cache_path)
                     continue
 
+                # The class-specific upgrade decides one of three outcomes:
+                #   rebuild -> the file is beyond repair: delete it and fall through
+                #              to the miss path
+                #   resave  -> data was upgraded in memory: rewrite the file, use it
+                #   neither -> the file is current: use it as-is
                 data, resave_data, rebuild = self._upgrade_cached_layout(data, cache_path)
 
                 if rebuild:
@@ -648,6 +658,7 @@ class SDFSamples(torch.utils.data.Dataset):
                 file_loaded = True
                 break
 
+        # --- Miss path: no usable cache, so sample the subject from its mesh(es). --
         if file_loaded is False:
             data = self._build_subject(loc_mesh)
             if data is None:
@@ -657,6 +668,9 @@ class SDFSamples(torch.utils.data.Dataset):
                 self.save_data_to_cache(data, file_hash)
                 cache_path = os.path.join(self.cache_folder, f"{file_hash}.npz")
 
+        # --- Storage-mode coercion: hand back the sample dict itself (in-memory
+        # datasets keep it) or the file's path (disk-backed datasets reload the
+        # .npz on every __getitem__). ----------------------------------------------
         if self.store_data_in_memory is False:
             if self.verbose is True:
                 print("updating data to be cache path")
@@ -676,6 +690,10 @@ class SDFSamples(torch.utils.data.Dataset):
         always sets the index keys -- an absent group comes back as an EMPTY list --
         so the check is on length, not presence.
         """
+        # Only one legacy layout exists for this class: caches written before sign
+        # indices were stored at all. An empty unpacked list means the file has no
+        # index group -- compute the indices now and ask the shell to resave, so the
+        # upgrade is paid once per file, not on every load.
         if len(data["pos_idx"]) == 0 or len(data["neg_idx"]) == 0 or len(data["surf_idx"]) == 0:
             pos_idx, neg_idx, surf_idx = self.sdf_pos_neg_idx(data)
             data["pos_idx"] = pos_idx
@@ -1382,15 +1400,24 @@ class MultiSurfaceSDFSamples(SDFSamples):
         delete-and-rebuild, because served as-is they would read the wrong rows or
         step off the end of the array.
         """
-        # if previous pre-processing not yet done, do it now
-        # and update/resave the data to cache.
+        # Three checks, and the order matters: `resave_data` accumulates across the
+        # first two, and the in-range guard runs LAST so a file that fails it is
+        # deleted, never resaved.
         resave_data = False
 
+        # (1) Overlap pass. Caches written before remove_overlapping_points existed
+        # still hold points labeled inside two surfaces; dropping them shrinks
+        # xyz/gt_sdf. The pass is idempotent, so on a current cache it removes
+        # nothing (in_in == 0) and costs one scan.
         data, in_in = self.remove_overlapping_points(data)
 
         if in_in > 0:
             resave_data = True
 
+        # (2) Index lists absent, or built for a different number of surfaces:
+        # recompute them. The comparison is per-surface list length against
+        # n_meshes -- note this deliberately does NOT fire when (1) shrank the
+        # point set, because overlap removal changes row counts, not surface counts.
         if (
             ("pos_idx" not in data)
             or (len(data["pos_idx"]) != self.n_meshes)
@@ -1407,6 +1434,10 @@ class MultiSurfaceSDFSamples(SDFSamples):
 
             resave_data = True
 
+        # (3) Every index must still point inside xyz. Exactly because (2) does not
+        # recompute after an overlap shrink, a pre-overlap cache upgraded by (1) can
+        # carry indices that now step past the smaller point set; served as-is they
+        # would read the wrong rows, so the whole file is rebuilt from the meshes.
         if self.test_if_idx_in_range(data) is False:
             print("Indices out of range!", cache_path)
             return data, False, True
