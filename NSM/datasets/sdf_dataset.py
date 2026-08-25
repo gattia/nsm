@@ -52,6 +52,31 @@ from .utils import (  # noqa: F401
     unpack_pts,
 )
 
+# --- Cache-key machinery ---------------------------------------------------------
+#
+# A subject's cache key answers one question: "would this exact configuration write
+# these exact bytes?" It is built in three steps:
+#
+#   1. get_hash_params() -> a {name: value} dict of every constructor parameter that
+#      changes cached content. Computed once in __init__ and stored as
+#      self.hash_params (MultiSurfaceSDFSamples extends the same dict with its four
+#      extra parameters).
+#   2. create_hash(loc_mesh) copies that dict and adds "mesh_paths": the subject's
+#      own mesh(es), each reduced to an identity token by _identity().
+#   3. The dict is serialized with json.dumps(sort_keys=True) and md5'd. Sorting by
+#      name is what makes the key positionless -- no entry's meaning depends on
+#      where it sits, so adding or reordering entries can never silently swap two
+#      parameters' roles (the LR-bug shape).
+#
+# An identity token is whichever of these fits what was passed:
+#
+#   a path        -> ("/data/subject0_bone.vtk", 51284, 1756071234.56)  # size, mtime
+#   a loaded Mesh -> ("geometry", "303a4609...")                # md5 of points+faces
+#   missing/None  -> ("/gone.vtk", None, None)
+#
+# so editing a mesh file in place moves the key (its stat changes) without anything
+# re-reading mesh bytes on a cache hit.
+
 #: Version stamp inside every cache key. Bump it when a change alters what gets written
 #: into the cached ``.npz`` while every keyed parameter stands still -- one integer
 #: instead of a fresh #19. Format 2 (Aug 2026): named canonical key, content-stable
@@ -904,19 +929,28 @@ class SDFSamples(torch.utils.data.Dataset):
         """
         reference = self.reference_mesh
         if reference is None:
+            # No registration happens, so there is nothing to key.
             return None
         if issubclass(type(reference), Mesh):
+            # A loaded mesh: key its geometry, not its object id.
             return _identity(reference)
         if isinstance(reference, int):
+            # An index into list_mesh_paths: resolve to that subject's actual file(s),
+            # so the key follows the file rather than the list position.
             subject = self.list_mesh_paths[reference]
             if isinstance(subject, (list, tuple)):
+                # Multi-surface subject: the reference is the surface(s) that drive
+                # registration, i.e. mesh_to_scale (an int, or a list to combine).
                 to_scale = self.mesh_to_scale
                 indices = to_scale if isinstance(to_scale, (list, tuple)) else [to_scale]
                 return [_identity(subject[idx]) for idx in indices]
+            # Single-surface subject: one path.
             return [_identity(subject)]
         if isinstance(reference, str):
+            # A path, given directly.
             return [_identity(reference)]
         if isinstance(reference, (list, tuple)):
+            # A list of per-surface paths: the reference is the reference_object'th.
             return [_identity(reference[self.reference_object])]
         # Any other type is refused by load_reference_mesh a moment after this runs.
         return [str(reference)]
@@ -972,11 +1006,18 @@ class SDFSamples(torch.utils.data.Dataset):
             str: Hashed string
         """
 
+        # The parameter half of the key, computed once in __init__ (a copy, so the
+        # stored dict is never mutated here)...
         params = dict(self.hash_params)
+        # ...plus the subject half: one identity token per mesh, in surface order --
+        # order is meaningful here ([bone, cart] is not [cart, bone]), which a plain
+        # JSON list preserves.
         if isinstance(loc_mesh, (list, tuple)):
             params["mesh_paths"] = [_identity(mesh) for mesh in loc_mesh]
         else:
             params["mesh_paths"] = [_identity(loc_mesh)]
+        # sort_keys makes the serialization canonical; default=str catches any stray
+        # non-JSON value (e.g. a numpy scalar) rather than crashing the build.
         serialized = json.dumps(params, sort_keys=True, default=str)
         return hashlib.md5(serialized.encode()).hexdigest()
 
