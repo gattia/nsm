@@ -30,6 +30,39 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **The checkpoint format changes: `VAEDecoder` tensors appear once, not twice**
+  ([#27](https://github.com/gattia/nsm/issues/27)). Until now every VAE layer was
+  registered in both `self.layers` and `self.decoder`, so `state_dict()` emitted each
+  tensor under two aliased names and checkpoints were 1.92× their parameter count
+  (the shipped 275 MB models would be ~143 MB). `self.decoder` is now the single
+  registration. **Old checkpoints keep loading**, through `load_model` and bare
+  `model.load_state_dict(strict=True)` alike — a permanent load-time hook on
+  `VAEDecoder` drops the `layers.*` aliases, and where the two disagree `decoder.*`
+  wins, the same winner as before. **The reverse is not shimmable:** a checkpoint
+  saved by this version fails in older NSM with `Missing key(s)`. Results are
+  unaffected — the aliases shared one storage, so this costs disk, not accuracy
+  (no `KNOWN_ISSUES` History entry for the same reason). Tooling that edits
+  checkpoints by key no longer needs to write both names. Re-exporting the shipped
+  model checkpoints at the halved size is follow-on coordination with the model
+  releases, not part of this change.
+
+- **Every SDF dataset cache key changes**
+  ([#19](https://github.com/gattia/nsm/issues/19)). The key is now a named canonical
+  mapping: `mesh_to_scale` and `uniform_pts_buffer` are finally in it (two runs
+  differing only in one of them used to share a key and silently reuse each other's
+  cached data), every mesh path contributes a content-stable `(path, size, mtime)`
+  identity so an in-place mesh edit is noticed, and a `Mesh`-valued `reference_mesh`
+  hashes by geometry instead of memory address — its cache can hit for the first time.
+  No cached `.npz` from before this change is ever served again: the first run per
+  configuration rebuilds its cache once (identical data when `random_seed` is set —
+  `docs/KNOWN_ISSUES.md` § History 3), and old cache directories are reclaimable disk.
+  A `cache_format` entry in the key versions future changes. Cached files now store
+  the raw (unpadded) per-sign index sets — the equal-share padding happens at draw
+  time, sized by the `subsample` in force — so a cache reloaded under a different
+  `subsample` keeps `equal_pos_neg` exact instead of quietly unbalancing batches;
+  for an unchanged `subsample`, batches are bit-identical to before. Details:
+  § History 13.
+
 - **`tune_reconstruction` and `compute_correlation_coefficient` are deleted**
   (`docs/SCOPE.md` §2's dead ruling, disposition 2026-08-22, executed by the §8.0.E
   pass over `reconstruct/main.py`). Zero callers, re-verified at deletion:

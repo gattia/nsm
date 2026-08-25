@@ -215,7 +215,7 @@ Modules with no inaccurate docstrings and an unremarkable status are omitted.
 
 | Module | bad | Status |
 |---|---|---|
-| `datasets/sdf_dataset.py` | 7 | prod — classes only since the §8.0 slice-A move (2026-08-22) |
+| `datasets/sdf_dataset.py` | 7 | prod — classes only since the §8.0 slice-A move (2026-08-22); since §8.0.F (2026-08-24) the cache shell (`get_sample_data_dict`) runs once in `SDFSamples`, with the class-specific halves in the private `_build_subject` / `_upgrade_cached_layout` hooks, and the cache key is the named `hash_params` mapping |
 | `mesh/refine_mesh.py` | 6 | research — raises on its own defaults |
 | `reconstruct/main.py` | 5 | prod — `reconstruct_mesh` only since §8.0.E (2026-08-24: `get_mean_errors` moved, the dead pair deleted); re-import surface for all three split-off modules |
 | `reconstruct/latent_fit.py` | 0 | prod — the latent-optimization stack, received from `main.py` (§8.0.C) |

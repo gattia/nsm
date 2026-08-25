@@ -6,18 +6,40 @@
 
 **Updated:** 2026-08-24 · **Status:** open
 
-- **Next:** execute §8.0.F from commit 2 (characterization) on branch
-  `cache-checkpoint-migration`, growing PR #82 into the slice PR — review is
-  per commit after the slice lands, as for every previous slice — unless the
-  maintainer redirects first: the research queue points at
-  `NSM_TRAINING_IDEAS.md` Idea 4(a) before more refactor (see that file's
-  State). The v0.3.0 cut ("soonish, or at the end of this cleanup") stays
-  the maintainer's call; §8.0.F adds one constraint — #19 and #27 ship in
-  the same release, so either the cut waits for that branch or the branch
-  ships in the release after it. The other open §8 threads, for when their
-  modules come up: `train_epoch`'s internal loss-pipeline decomposition only
-  if a statement justifies it; multi_head's repair is #51.
-- **§8.0.F statement written (2026-08-24), branch `cache-checkpoint-migration`:**
+- **Next:** maintainer review of **PR #85** (the executed §8.0.F slice), per
+  commit as for every previous slice — feedback lands by rewriting the commit
+  in place. Two maintainer calls ride with it: **file the drafted Mesh-subject
+  issue** (text in the PR body, approved-text gate) and the v0.3.0 timing
+  ("soonish, or at the end of this cleanup") — §8.0.F's one constraint stands:
+  #19 and #27 ship in the same release, and both are on this branch, so no
+  release boundary falls between them. After the merge the research queue
+  points at `NSM_TRAINING_IDEAS.md` Idea 4(a) before more refactor (see that
+  file's State). The other open §8 threads, for when their modules come up:
+  `train_epoch`'s internal loss-pipeline decomposition only if a statement
+  justifies it; multi_head's repair is #51.
+- **§8.0.F executed (2026-08-24), PR #85 open:** commits 2–7 whole, per the
+  recalibrated /next (#83) — characterization, the dead-backfill fix, the #19
+  key rewrite, the index decoupling, #27, the shell split, this update. Suite
+  664→678 passed; 12→5 xfailed (every #19/#27 xfail passes unmarked; two new
+  Mesh-subject pins). All 16 verification-table rows green. #19's three Open
+  entries → History §13; #27's Open entry retired with no History entry
+  (aliases shared one storage — disk, not accuracy); CHANGELOG carries both
+  Breaking entries; SCOPE §4's cache row is versioned. **Diverged from the
+  statement:** the single class's pos_idx backfill condition was DEAD
+  (`unpack_numpy_data` always sets the key; pre-index-layout caches crashed
+  `__getitem__` with IndexError) — fixed as its own commit, no History entry
+  (always a crash); a Mesh subject has never built end to end in either class
+  (silently dropped via the readers' `os.path.exists` gate, or `KeyError` in
+  `mesh_content_key` when seeded) — pinned strict-xfail
+  (`TestMeshSubjects`), issue drafted in the PR body, and `_identity` already
+  routes a Mesh through the geometry digest so a later build fix cannot
+  resurrect the per-object key; docs retirement split across the two #19
+  commits so each commit's docs stay true; the multiprocessing determinism
+  test now writes its meshes once in the parent (rewriting per subprocess
+  moved the mtime-bearing key its pairing depends on); budgets: sdf_dataset
+  +63 net of ≤+90, triplanar +26 of ≤+25 (black's wrapping of the 8-argument
+  hook signature).
+- **§8.0.F statement merged to `main` in PR #82 (2026-08-24):**
   every claim in it re-run against `main` at `8ae0081` first (suite 664 passed /
   12 xfailed; the aliasing probe, the `parameters()` dedup, the `forward` path,
   the hash-machinery caller grep). Two design calls that diverge from the issues'
@@ -165,10 +187,10 @@
   The one results-affecting change is `docs/KNOWN_ISSUES.md` § History 6 (sampling cube),
   including the trap that pre-fix caches keep serving old points because the buffer is
   not in the cache key.
-- **Deliberately deferred:** #19 (cache key, 6 xfails) and #27 (checkpoint aliasing). Both
-  force downstream regeneration or migration, so they land together as one release rather
-  than making consumers migrate twice. This is the argument that grouped #19 in the first
-  place, applied one level up.
+- **Formerly deferred, now executed (PR #85):** #19 (cache key) and #27 (checkpoint
+  aliasing). Both force downstream regeneration or migration, so they were held to land
+  together as one release rather than making consumers migrate twice — that release
+  constraint still binds the v0.3.0 timing (see Next).
 - **Done:**
   - Phase 0 scope — `docs/SCOPE.md`
   - Phase 1 map — `docs/ARCHITECTURE.md`, `docs/AUDIT_FINDINGS.md`
@@ -304,6 +326,12 @@
     disk branch already did. Unifying on the disk branch's semantics (compute the frame,
     let `__getitem__` apply it) deleted the entire mutate-in-place branch — −48 lines —
     instead of repairing it.
+  - **`unpack_numpy_data` makes key-presence checks dead.** It sets every requested
+    group unconditionally — an absent group comes back as an *empty list* — so
+    `"pos_idx" not in data` can never be True on a loaded cache. The single class's
+    documented pre-index-layout upgrade had never fired (pre-layout caches crashed
+    `__getitem__` with IndexError instead); found by §8.0.F's characterization,
+    2026-08-24. A check against an unpacked cache must test length, not presence.
 
 ---
 
@@ -658,11 +686,13 @@ worst findings untouched, so add:
       exactly one executed line in the current suite — its `def`. Assert the returned
       `mesh` list **order** too: index 0 = bone, 1 = cartilage is a load-bearing contract
       that nothing in the signature, docstring or result dict names.
-- [ ] **Model save/load round-trip.** `testing/NSM/models/test_loader.py:232` loads a saved
+- [x] **Model save/load round-trip.** `testing/NSM/models/test_loader.py:232` loads a saved
       model and never compares its output to the original's, so a wrong-but-same-shaped
       forward passes every assertion. Train → save → load → assert bitwise-identical.
-      *(Venue: §8.0.F commit 5, PR #82 — #27 changes the checkpoint format, so the
-      round-trip belongs with it.)*
+      *(Closed in §8.0.F commit 5, PR #85:
+      `test_model_roundtrip.TestRoundTrip::test_a_bare_load_state_dict_round_trips_bitwise`
+      covers the consumer's bare path; `test_a_trained_model_round_trips_bitwise` the
+      `load_model` path — both bitwise against the in-memory original.)*
 - [ ] **Name the CPU/GPU gap rather than discovering it later.** A <2-minute CI harness is
       CPU; production is CUDA. Add a separate opt-in GPU test asserting the seed-ordering
       constraint `kneepipeline` depends on (`torch.manual_seed` *after* `.cuda()`, per
@@ -690,10 +720,12 @@ are both inferred and on the production path are the highest-value targets.
 - [ ] `reconstruct_mesh` — end-to-end on a synthetic model, asserted against baseline
 - [ ] Checkpoint backward compatibility: load a real historical checkpoint and assert it
       still reconstructs identically. Non-negotiable — this is the promise to `nsosim`.
-      *(§8.0.F commit 5's old-checkpoint test — a both-alias state dict through
-      `load_model` and bare `load_state_dict(strict=True)`, outputs bitwise-equal — is
-      the in-suite proxy; loading a real shipped checkpoint stays a release-time check,
-      since the 275 MB downloads do not belong in CI.)*
+      *(In-suite proxy landed in PR #85:
+      `test_model_roundtrip.TestPreFixCheckpointsStillLoad` — a both-alias state dict
+      through `load_model` and bare `load_state_dict(strict=True)`, outputs
+      bitwise-equal, plus the decoder-wins-on-disagreement rule; loading a real
+      shipped checkpoint stays a release-time check, since the 275 MB downloads do
+      not belong in CI.)*
 
 ### 7.3 Characterization tests, written just-in-time
 
