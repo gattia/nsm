@@ -4,19 +4,27 @@
 
 ## State
 
-**Updated:** 2026-08-24 · **Status:** open
+**Updated:** 2026-08-25 · **Status:** open
 
-- **Next:** maintainer review of **PR #85** (the executed §8.0.F slice), per
-  commit as for every previous slice — feedback lands by rewriting the commit
-  in place. Two maintainer calls ride with it: **file the drafted Mesh-subject
-  issue** (text in the PR body, approved-text gate) and the v0.3.0 timing
-  ("soonish, or at the end of this cleanup") — §8.0.F's one constraint stands:
-  #19 and #27 ship in the same release, and both are on this branch, so no
-  release boundary falls between them. After the merge the research queue
-  points at `NSM_TRAINING_IDEAS.md` Idea 4(a) before more refactor (see that
-  file's State). The other open §8 threads, for when their modules come up:
-  `train_epoch`'s internal loss-pipeline decomposition only if a statement
-  justifies it; multi_head's repair is #51.
+- **Next:** three maintainer calls: (1) **file the drafted Mesh-subject issue**
+  — the approved-text draft is in PR #85's body, and the tracker still has no
+  such issue (checked 2026-08-25); (2) the v0.3.0 timing ("soonish, or at the
+  end of this cleanup") — latest tag is still v0.2.0, nothing gates the cut,
+  and §8.0.F's ship-together constraint is now satisfied *inside* `main`, #19
+  and #27 both merged; (3) the Idea 4 coupled decision (training-side norm
+  bound + recon-side gap response), for which 4(a)'s diagnostic now exists —
+  see `NSM_TRAINING_IDEAS.md` State. If the call is more refactor first, the
+  open §8 threads stand unchanged: `train_epoch`'s internal loss-pipeline
+  decomposition only if a statement justifies it; multi_head's repair is #51.
+- **PR #85 merged to `main` (2026-08-25):** #19 and #27 closed by the merge,
+  no review comments to apply, branch deleted. That consumed this plan's
+  "review of #85" Next; the research-queue item behind it —
+  `NSM_TRAINING_IDEAS.md` Idea 4(a), the no-retrain latent-norm diagnostic —
+  was executed the same day (results and provenance in that file's Idea 4
+  entry; summary: training-shell saturation confirmed on the one shipped
+  latent-code file, fitted production norms median ~7.3 against a bound of 10,
+  and the error–norm correlation has opposite signs within vs across
+  subjects).
 - **§8.0.F executed (2026-08-24), PR #85 open:** commits 2–7 whole, per the
   recalibrated /next (#83) — characterization, the dead-backfill fix, the #19
   key rewrite, the index decoupling, #27, the shell split, this update. Suite
