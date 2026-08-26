@@ -127,6 +127,16 @@ def _get_triplanar_params(config: Dict[str, Any]) -> tuple:
             "trained before then ran at the constructor default -- for those, "
             '"padding": 0.1 reproduces the model exactly.'
         )
+    if "conv_activation" not in config:
+        raise KeyError(
+            "conv_activation is missing from this triplanar config, and it decides the "
+            "architecture, not a hyperparameter: null means the historical stack, which "
+            "has NO pointwise activation because one was built and never appended until "
+            "Aug 2026 (docs/ARCHITECTURE.md section 7.1). Every model trained before then "
+            'is that one, so add "conv_activation": null to load an existing checkpoint. '
+            'Any other value -- "leaky_relu", "relu", "swish" -- builds a different module '
+            "layout that no existing checkpoint fits."
+        )
     if "conv_norm_type" not in config:
         raise KeyError(
             "conv_norm_type is missing from this triplanar config. It decides the VAE's "
@@ -146,6 +156,7 @@ def _get_triplanar_params(config: Dict[str, Any]) -> tuple:
         "conv_norm": config.get("conv_norm", True),
         "conv_norm_type": config["conv_norm_type"],
         "conv_start_with_mlp": config.get("conv_start_with_mlp", True),
+        "conv_activation": config["conv_activation"],
         "sdf_latent_size": config.get("sdf_latent_size", 128),
         "sdf_hidden_dims": config.get("sdf_hidden_dims", [512, 512, 512]),
         "sdf_weight_norm": config.get("weight_norm", True),
@@ -212,18 +223,21 @@ def _get_two_stage_params(config: Dict[str, Any]) -> tuple:
         triplanar_params = config["triplanar_params"].copy()
     else:
         # Use default triplanar params with config overrides
-        if "conv_norm_type" not in config:
-            raise KeyError(
-                "conv_norm_type is missing from this two_stage config. State it here or "
-                'inside "triplanar_params"; it used to default to "layer" on this branch '
-                'and "batch" on the triplanar one, for the same underlying class.'
-            )
+        for key in ("conv_norm_type", "conv_activation"):
+            if key not in config:
+                raise KeyError(
+                    f"{key} is missing from this two_stage config. State it here or inside "
+                    f'"triplanar_params"; both decide what TriplanarDecoder builds and '
+                    f"neither can be recovered from a checkpoint. _get_triplanar_params "
+                    f"documents what each one means."
+                )
         triplanar_params = {
             "conv_hidden_dims": config.get("conv_hidden_dims", [512, 512, 512, 512, 512]),
             "conv_deep_image_size": config.get("conv_deep_image_size", 2),
             "conv_norm": config.get("conv_norm", True),
             "conv_norm_type": config["conv_norm_type"],
             "conv_start_with_mlp": config.get("conv_start_with_mlp", True),
+            "conv_activation": config["conv_activation"],
             "sdf_latent_size": config.get("sdf_latent_size", 128),
             "sdf_hidden_dims": config.get("sdf_hidden_dims", [512, 512, 512]),
             "sdf_weight_norm": config.get("weight_norm", True),
@@ -341,6 +355,11 @@ def get_model_config_template(model_type: str) -> Dict[str, Any]:
             # docs/ARCHITECTURE.md section 7.1.
             "conv_norm_type": "layer",  # 'batch' or 'layer'
             "conv_start_with_mlp": True,
+            # null is the HISTORICAL architecture -- no pointwise activation in the conv
+            # stack, which is what every model trained before Aug 2026 is. Any other value
+            # ('relu', 'leaky_relu', 'swish', ...) builds a layout no existing checkpoint
+            # fits. See docs/ARCHITECTURE.md section 7.1 and NSM_TRAINING_IDEAS Idea 13.
+            "conv_activation": None,
             "sdf_latent_size": 128,
             "sdf_hidden_dims": [512, 512, 512],
             "weight_norm": True,
@@ -383,6 +402,7 @@ def get_model_config_template(model_type: str) -> Dict[str, Any]:
                 "conv_norm": True,
                 "conv_norm_type": "layer",
                 "conv_start_with_mlp": True,
+                "conv_activation": None,
                 "sdf_latent_size": 128,
                 "sdf_hidden_dims": [512, 512, 512],
                 "sdf_weight_norm": True,

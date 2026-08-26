@@ -401,6 +401,11 @@ ARCHITECTURE = {
     "conv_norm": True,
     "conv_norm_type": "layer",
     "conv_start_with_mlp": True,
+    #: None is the historical architecture: no pointwise activation in the conv stack,
+    #: which is what every shipped model is. Stated rather than defaulted because
+    #: ``loader`` requires it -- and stating the historical value keeps every baseline in
+    #: this directory measuring the same network it always did.
+    "conv_activation": None,
     "sdf_latent_size": 16,
     "sdf_hidden_dims": [32, 32],
     "weight_norm": True,

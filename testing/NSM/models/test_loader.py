@@ -360,6 +360,25 @@ class TestConvNormTypeMustBeStated:
         two_stage = get_model_config_template("two_stage")["triplanar_params"]["conv_norm_type"]
         assert triplanar == two_stage == "layer"
 
+    def test_a_triplanar_config_without_conv_activation_is_refused(self):
+        """
+        Same contract, different key: ``conv_activation`` decides the module *layout*, so a
+        config that does not state it does not describe an architecture. ``null`` is the
+        historical stack -- see ``TestTheOptInConvActivation``.
+        """
+        stripped = {
+            k: v
+            for k, v in get_model_config_template("triplanar").items()
+            if k != "conv_activation"
+        }
+        with pytest.raises(KeyError, match="conv_activation"):
+            load_model(stripped, "/nonexistent.pt", model_type="triplanar")
+
+    def test_the_triplanar_template_defaults_to_the_historical_architecture(self):
+        """``null``, not an activation: a template that flipped the architecture would make
+        every checkpoint anyone owns unloadable from it."""
+        assert get_model_config_template("triplanar")["conv_activation"] is None
+
     def test_the_loader_keeps_no_silent_default_for_it(self):
         """
         The structural half, and the one that stops this regressing: a fix that only
@@ -380,9 +399,9 @@ class TestConvNormTypeMustBeStated:
             and node.func.attr == "get"
             and len(node.args) == 2
             and isinstance(node.args[0], ast.Constant)
-            and node.args[0].value == "conv_norm_type"
+            and node.args[0].value in ("conv_norm_type", "conv_activation")
         ]
-        assert defaulted == [], f"{len(defaulted)} silent default(s) for conv_norm_type"
+        assert defaulted == [], f"{len(defaulted)} silent default(s) for an architecture key"
 
 
 if __name__ == "__main__":

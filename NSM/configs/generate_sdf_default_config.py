@@ -31,6 +31,8 @@ config = {
     "conv_norm_type": "layer",
     "conv_pred_sdf": False,
     "conv_start_with_mlp": True,
+    # The 647 run this file snapshots predates the activation being appendable.
+    "conv_activation": None,
     "sum_conv_output_features": True,
     "sdf_latent_size": 128,
     "sdf_hidden_dims": [512, 512, 512],

@@ -44,30 +44,32 @@ def additivity_error(vae, alpha=0.3):
         final[1] = saved
 
 
+ACTIVATION_TYPES = (nn.ReLU, nn.LeakyReLU, nn.Tanh, nn.Sigmoid, nn.GELU, nn.SiLU, nn.ELU)
+
+
+def conv_stack_activations(vae):
+    """The pointwise activations inside the conv stack, excluding the final ``Tanh``."""
+    return [m for m in vae.decoder[:-1].modules() if isinstance(m, ACTIVATION_TYPES)]
+
+
 class TestTheVAEHasNoActivation:
     """
     ``VAEDecoder.__init__`` used to build ``activation = activation_fn()`` and never append
-    it, while the two lines above it appended -- a leaked loop variable. The argument is
-    deleted (#20); the shape it left behind is not. The stack is ``ConvTranspose2d -> norm``
-    x N then ``Conv2d -> Tanh``; ``LeakyReLU`` appears nowhere.
+    it, while the two lines above it appended -- a leaked loop variable, present from the
+    first triplanar commit onwards. The dead argument is deleted (#20) and a working
+    ``conv_activation`` replaces it (see :class:`TestTheOptInConvActivation`), but **the
+    default is still no activation**, because that is the architecture every existing
+    checkpoint was fitted as.
 
-    **It cannot be added unconditionally, only opt-in.** Inserting the activations shifts
-    every later module's index inside ``nn.Sequential``, so all three shipped checkpoints
-    stop loading -- and the weights were fitted without them regardless, so remapping the
-    keys would load a model that computes something else. A ``conv_activation`` flag
-    defaulting to off builds the identical module list and changes nothing, which is what
-    makes the fix available at all; what it needs beyond that is a retrain to show it is
-    worth having. ``docs/ARCHITECTURE.md`` section 7.1 holds the full account; these
-    assertions are what stops someone closing the gap by reflex.
+    So the stack these assertions describe is what you get by default and what every
+    shipped model is: ``ConvTranspose2d -> norm`` x N then ``Conv2d -> Tanh``.
+    ``docs/ARCHITECTURE.md`` section 7.1 holds the full account.
     """
 
-    def test_no_pointwise_activation_is_registered_in_the_conv_stack(self):
-        activations = [
-            module
-            for module in build_vae().decoder[:-1].modules()
-            if isinstance(module, (nn.ReLU, nn.LeakyReLU, nn.Tanh, nn.Sigmoid, nn.GELU, nn.SiLU))
-        ]
-        assert activations == [], "an activation was added; every shipped checkpoint moves"
+    def test_no_pointwise_activation_is_registered_by_default(self):
+        assert (
+            conv_stack_activations(build_vae()) == []
+        ), "the DEFAULT gained an activation; every existing checkpoint stops loading"
 
     def test_the_only_nonlinearity_is_the_final_tanh(self):
         final = build_vae().decoder[-1]
@@ -108,6 +110,76 @@ class TestTheVAEHasNoActivation:
         """
         with pytest.raises(TypeError, match="activation"):
             build_vae(activation="relu")
+
+
+class TestTheOptInConvActivation:
+    """
+    ``conv_activation`` is the repair for the leaked loop variable, and it is opt-in for a
+    structural reason rather than a cautious one: ``nn.Sequential`` names its children by
+    position, so inserting a parameterless activation renumbers every later key. The
+    default therefore has to remain "no activation" for as long as any pre-Aug-2026
+    checkpoint exists -- which is forever.
+
+    ``loader`` requires the config to state which architecture it means; these assert that
+    both are real and that the boundary between them is exactly where it should be.
+    """
+
+    def test_the_default_is_byte_for_byte_the_historical_architecture(self):
+        torch.manual_seed(6)
+        historical = build_vae()
+        torch.manual_seed(6)
+        explicit = build_vae(conv_activation=None)
+
+        assert list(historical.state_dict()) == list(explicit.state_dict())
+        x = torch.randn(2, LATENT)
+        with torch.no_grad():
+            assert torch.equal(historical(x), explicit(x))
+
+    def test_a_pre_existing_checkpoint_loads_at_the_default_and_not_otherwise(self):
+        """
+        The whole reason this is a flag and not a fix. Same weights, same config, one key
+        different -- and the second model cannot be given them.
+        """
+        torch.manual_seed(7)
+        checkpoint = build_vae().state_dict()
+
+        torch.manual_seed(7)
+        build_vae(conv_activation=None).load_state_dict(checkpoint, strict=True)
+
+        with pytest.raises(RuntimeError, match="Missing key"):
+            build_vae(conv_activation="leaky_relu").load_state_dict(checkpoint, strict=True)
+
+    @pytest.mark.parametrize("activation", ["relu", "leaky_relu", "swish", "elu"])
+    def test_an_activation_is_appended_once_per_block_and_forwards(self, activation):
+        vae = build_vae(hidden_dims=[8, 8, 8], conv_activation=activation)
+        assert len(conv_stack_activations(vae)) == 3, [type(m).__name__ for m in vae.decoder]
+        with torch.no_grad():
+            assert vae(torch.randn(2, LATENT)).shape[1] == vae.out_features
+
+    def test_it_goes_after_the_norm(self):
+        """
+        Placement is ``conv -> norm -> activation`` and is provisional -- which of the two
+        orderings is right is part of what the retrain settles
+        (``NSM_TRAINING_IDEAS.md`` Idea 13). Pinned so that changing it is a decision
+        someone makes, not a diff someone lands.
+        """
+        order = [type(m).__name__ for m in build_vae(conv_activation="leaky_relu").decoder[:3]]
+        assert order == ["ConvTranspose2d", "BatchNorm2d", "LeakyReLU"], order
+
+    def test_an_unknown_activation_is_refused_by_name(self):
+        """
+        The deleted argument raised ``UnboundLocalError`` from a half-assigned local for
+        anything outside its two-value vocabulary. This one goes through ``get_activation``,
+        so ``models/`` has one activation vocabulary rather than two.
+        """
+        with pytest.raises(ValueError, match="Unknown activation"):
+            build_vae(conv_activation="not_an_activation")
+
+    def test_linear_is_refused_and_points_at_none(self):
+        """``get_activation('linear')`` returns ``None``, which would silently mean the
+        historical stack under a name that reads like a choice."""
+        with pytest.raises(ValueError, match="None"):
+            build_vae(conv_activation="linear")
 
 
 class TestWhatLayerNormActuallySupplies:

@@ -12,6 +12,7 @@ default_triplanar_params = {
     "conv_norm": True,
     "conv_norm_type": "layer",
     "conv_start_with_mlp": True,
+    "conv_activation": None,
     "sdf_latent_size": 128,
     "sdf_hidden_dims": [512, 512, 512],
     "sdf_weight_norm": True,

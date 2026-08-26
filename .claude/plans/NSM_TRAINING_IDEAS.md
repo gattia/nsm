@@ -575,9 +575,9 @@ upstream retraining-required change.)
 
 **What.** `VAEDecoder`'s conv stack has **no pointwise activation**. `__init__` built one
 and never appended it, from the first triplanar commit (`71df387`, Aug 2023) onwards, so no
-triplanar model NSM has ever produced has had one. Add `conv_activation`, defaulting to off
-so every existing checkpoint keeps loading, and train a matched pair to find out whether it
-is worth the retrain.
+triplanar model NSM has ever produced has had one. `conv_activation` now exists and defaults
+to off (§8.0.H); what this idea is, is the matched pair that says whether turning it on is
+worth a retrain.
 
 **Why it is not obvious either way.** The stack is not degenerate — LayerNorm supplies a
 nonlinearity — but a narrow one: a radial projection that preserves direction and rescales
@@ -608,9 +608,13 @@ harness scale — that is the finding above, not an assumption.
 **Priority.** Below triplane resolution and feature dimension. Expect a modest gain rather
 than a step change; the honest position is that nobody knows, and the shipped models work.
 
-**Status.** Idea — not started. The dead `activation=` argument was deleted and the current
-shape pinned in §8.0.H (PR #90); the issue text for the defect itself is drafted in that
-PR's body, awaiting the maintainer.
+**Status.** Idea — not started, and **the code no longer blocks it** (§8.0.H, PR #90):
+`conv_activation` exists, defaults to `None` (the historical stack, byte-identical and
+loading every existing checkpoint), and `load_model` requires the config to state which
+architecture it means. What is left is purely the experiment — two production-scale runs
+with the learning rates retuned. No tracker issue remains: the defect's code half shipped
+in that PR, and this entry is the research half (per the docs rules, an experiment is not
+a fixable defect and does not meet the tracker bar).
 
 ---
 

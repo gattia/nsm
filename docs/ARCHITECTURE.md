@@ -331,7 +331,7 @@ instance" asks for. The LR bug's class is the largest group.
 | **Silent in-place mutation of caller data** | 7 | `get_pts_center_and_scale` mutates the passed array; all three in-repo callers pass `np.copy()` defensively, so the convention exists only as a habit at the call sites. |
 | **Cache key omits a parameter that changes cached content** | 4 | *Fixed by [#19](https://github.com/gattia/nsm/issues/19) in PR #85 (§8.0.F).* `mesh_to_scale` and `uniform_pts_buffer` are in the key; `subsample` was decoupled from cached content instead of keyed; the key is a named canonical mapping with a `cache_format` version. Kept as a defect *class* because it is the one that silently served another run's data — see `KNOWN_ISSUES.md` § History 13. |
 | **Import-time side effect** | 10 | §4 above. |
-| **Constructed and discarded / leaked loop variable** | 3 | `train_deep_sdf_multi_head.train_deep_sdf` (only the last decoder trains), `read_meshes_get_sampled_pts`, `VAEDecoder.__init__` (the activation is built and never appended — the VAE decoder has no pointwise nonlinearity; see §7.1). *§8.0.H deleted the dead `activation=` argument and pinned the stack's shape with `testing/NSM/models/test_model_structure.py`; the missing activation itself is not fixed. Adding it **unconditionally** is not available — it moves every index inside `self.decoder` and no shipped checkpoint would load — but an opt-in flag defaulting to off builds the identical module list, so the fix is a retrain question rather than a compatibility one: `NSM_TRAINING_IDEAS.md` Idea 13.* |
+| **Constructed and discarded / leaked loop variable** | 3 | `train_deep_sdf_multi_head.train_deep_sdf` (only the last decoder trains), `read_meshes_get_sampled_pts`, `VAEDecoder.__init__` (the activation is built and never appended — the VAE decoder has no pointwise nonlinearity; see §7.1). *§8.0.H deleted the dead `activation=` argument and shipped the working replacement: `conv_activation`, opt-in because inserting a parameterless activation renumbers every later key inside `self.decoder`. The default (`None`) is the historical no-activation stack — the only layout any existing checkpoint fits — and is pinned by `testing/NSM/models/test_model_structure.py`. Whether turning it on helps is the retrain question, `NSM_TRAINING_IDEAS.md` Idea 13.* |
 | **Constructible-but-uncallable configuration** | 5 | *Closed in `models/` by [#46](https://github.com/gattia/nsm/issues/46) (§8.0.H): `Decoder(activation='linear')` and `norm_layers` now refuse at construction, `progressive_add_depth=True` works below its last `start_epoch`, and `TwoStageDecoder()` builds — it had never been constructible, `[latent_size + 3] + dims` being a list plus a tuple. `refine_mesh.get_target_cells()` with its own defaults is the surviving instance and belongs to §8.0.I.* Kept as a defect *class* because it is what an option matrix catches and nothing else does: `testing/NSM/models/test_model_options.py` is that matrix for this package. |
 
 **71 of the 216 are landmines** — wrong behaviour that raises nothing and returns a
@@ -343,10 +343,21 @@ asserts "it ran" catches almost none of them.
 Included because the first draft of this document got it wrong, and the correction is more
 interesting than the original claim.
 
-**The defect is real.** `VAEDecoder.__init__` builds `activation = activation_fn()` and never
-appends it, while the two lines above it do `self.layers.append(...)`. The resulting stack
-is `ConvTranspose2d → norm` × N, then `Conv2d → Tanh`. `LeakyReLU` appears nowhere; the
-only pointwise nonlinearity in the entire feature-plane generator is the final `Tanh`.
+**The defect was real.** `VAEDecoder.__init__` built `activation = activation_fn()` and never
+appended it, while the two lines above it did `self.layers.append(...)` — a leaked loop
+variable present from the first triplanar commit (`71df387`, Aug 2023), so no triplanar model
+NSM has ever produced has had a pointwise activation. The resulting stack is
+`ConvTranspose2d → norm` × N, then `Conv2d → Tanh`. `LeakyReLU` appears nowhere; the only
+pointwise nonlinearity in the entire feature-plane generator is the final `Tanh`.
+
+**`conv_activation` is the repair, and it is opt-in for a structural reason** (§8.0.H):
+activations carry no parameters, but `nn.Sequential` names its children by position, so
+inserting them renumbers every later key — measured on 647, `conv_activation="leaky_relu"`
+fails with `Missing key(s): vae_decoder.decoder.10.weight`. The default is therefore `None`,
+the historical architecture, **forever**: it is what every existing checkpoint was fitted as.
+`load_model` requires the config to say which, so neither can be reached by omission. What
+remains open is whether an activation *helps* — `NSM_TRAINING_IDEAS.md` Idea 13, which the
+rest of this section is the argument for.
 
 **The first draft then claimed this leaves the decoder "an affine map." That is false for
 the shipped models,** and the correction matters:

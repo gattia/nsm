@@ -54,6 +54,21 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   config carries — are still accepted. `get_model_config_template` no longer advertises
   either key; `default_config.json` keeps `xyz_in_all: false`, which is inert.
 
+- **`conv_activation` exists, and is a required key for `load_model` on the `triplanar` and
+  `two_stage` branches.** `VAEDecoder` built a pointwise activation and never appended it,
+  from the first triplanar commit (Aug 2023) onwards, so the conv stack has never had one and
+  the only nonlinearity in the feature-plane generator is the final `Tanh`
+  (`ARCHITECTURE.md` §7.1). `conv_activation` now selects it, through the same vocabulary as
+  `get_activation` — and **`null` is the default and the historical architecture**, because
+  `nn.Sequential` names children by position, so inserting a parameterless activation
+  renumbers every later state-dict key. `null` builds a byte-identical module list and loads
+  every existing checkpoint; any other value builds a layout no existing checkpoint fits, and
+  says so with `Missing key(s)`. The key is required rather than defaulted so a config
+  describes exactly one architecture. **Migration: add `"conv_activation": null`** — every
+  model trained before Aug 2026 is that one, including both shipped ShapeMedKnee models.
+  *Placement is `conv → norm → activation` and is provisional until the retrain in
+  `NSM_TRAINING_IDEAS.md` Idea 13; a naive drop-in measured worse on the synthetic harness.*
+
 - **`conv_norm_type` is a required key for `load_model` on the `triplanar` and `two_stage`
   branches, and the templates now say `"layer"`.** Four places defaulted it and disagreed:
   `"batch"` in the `VAEDecoder`/`TriplanarDecoder` signatures, `_get_triplanar_params` and

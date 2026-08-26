@@ -35,6 +35,21 @@
   `testing/NSM/test_observability.py` hold all of that: no `print`, no log call
   that builds its first argument, and a `getLogger(__name__)` in every module
   that speaks.
+- **§8.0.H, review round 3 (maintainer, 2026-08-26): the VAE activation is now
+  *repairable*, not just documented.** The maintainer's objection was that the slice
+  left the library unable to do what it was written to do, and it was right.
+  `conv_activation` lands, `None` by default — byte-identical module list, every
+  existing checkpoint loads, verified against 647 and 551 — and `load_model` requires
+  the config to state which architecture it means, the third instance of that pattern
+  after `padding` and `conv_norm_type`. **Not a version number, deliberately:** the
+  maintainer proposed one, and a `version: 1|2` bundles this change with whatever the
+  next architecture change is, needs a lookup table to read, and asserts that v2 is
+  better — which Idea 13 says nobody has measured. A named field says what differs and
+  lets the retrain pick the value. Placement (`conv → norm → activation`) is pinned by
+  a test *as provisional*, so changing it is a decision rather than a diff. **Three
+  required keys now land in one release**, all needing the same one-line edit to the
+  same files; a combined "this config predates v0.3.0, here are the lines to add"
+  message is worth considering at the release, and is not in this slice.
 - **§8.0.H, review round 2 (maintainer, 2026-08-26): `conv_norm_type` had four
   defaults and they disagreed.** Asking what the ShapeMedKnee config actually says
   turned up the divergence: `"batch"` in the `VAEDecoder`/`TriplanarDecoder`
