@@ -329,7 +329,7 @@ def sdf_grid_to_mesh(
     voxel_origin,
     voxel_size,
     verbose=False,
-    narrow_band=False,
+    narrow_band=True,
     band_width=3.0,
     pad_voxels=2,
 ):
@@ -349,19 +349,12 @@ def sdf_grid_to_mesh(
     Returns:
         mskt Mesh: the extracted surface.
     """
-    sdf_values = sdf_values.cpu().numpy()
-
     if verbose is True:
         logger.debug("Starting marching cubes... ")
 
-    # Apply narrow band optimization if requested
-    if narrow_band:
-        sub_sdf, crop_origin = crop_sdf_to_narrow_band(
-            sdf_values, voxel_origin, voxel_size, band_width, pad_voxels, verbose
-        )
-    else:
-        sub_sdf = sdf_values
-        crop_origin = voxel_origin
+    sub_sdf, crop_origin = _volume_and_origin(
+        sdf_values, voxel_origin, voxel_size, narrow_band, band_width, pad_voxels, verbose
+    )
 
     verts, faces, normals, values = marching_cubes(
         sub_sdf, level=0, spacing=(voxel_size, voxel_size, voxel_size)
@@ -447,6 +440,30 @@ def crop_sdf_to_narrow_band(
     return sub_sdf, crop_origin
 
 
+def _volume_and_origin(
+    sdf_values, voxel_origin, voxel_size, narrow_band, band_width, pad_voxels, verbose
+):
+    """The input handling both extraction twins share, in one place so it cannot drift.
+
+    It drifted once (#60): the VTK twin guarded the tensor conversion with ``hasattr``
+    and defaulted ``narrow_band`` to True, the skimage twin called ``.cpu()``
+    unconditionally and defaulted it to False -- so ``use_vtk``, which is meant to pick
+    an extraction backend, also picked an accepted input type and a cropping policy.
+
+    Returns:
+        tuple: (numpy volume in array[x, y, z] layout, world origin of its index 0).
+    """
+    if hasattr(sdf_values, "cpu"):
+        sdf_values = sdf_values.cpu().numpy()
+
+    if not narrow_band:
+        return sdf_values, voxel_origin
+
+    return crop_sdf_to_narrow_band(
+        sdf_values, voxel_origin, voxel_size, band_width, pad_voxels, verbose
+    )
+
+
 @honour_verbose
 def sdf_grid_to_mesh_vtk(
     sdf_values,
@@ -461,7 +478,7 @@ def sdf_grid_to_mesh_vtk(
     Create mesh from SDF values using VTK Flying Edges algorithm instead of marching cubes.
 
     Args:
-        sdf_values: PyTorch tensor containing SDF values
+        sdf_values: torch tensor or numpy array containing SDF values
         voxel_origin: Origin point of the voxel grid (x, y, z)
         voxel_size: Size of each voxel
         verbose: Whether to print progress messages
@@ -472,21 +489,12 @@ def sdf_grid_to_mesh_vtk(
     Returns:
         mskt.mesh.Mesh object
     """
-    # Convert to numpy if needed
-    if hasattr(sdf_values, "cpu"):
-        sdf_values = sdf_values.cpu().numpy()
-
     if verbose:
         logger.debug("Starting VTK Flying Edges mesh extraction...")
 
-    # Apply narrow band optimization if requested
-    if narrow_band:
-        sub_sdf, crop_origin = crop_sdf_to_narrow_band(
-            sdf_values, voxel_origin, voxel_size, band_width, pad_voxels, verbose
-        )
-    else:
-        sub_sdf = sdf_values
-        crop_origin = voxel_origin
+    sub_sdf, crop_origin = _volume_and_origin(
+        sdf_values, voxel_origin, voxel_size, narrow_band, band_width, pad_voxels, verbose
+    )
 
     # Get grid dimensions (cropped or original)
     nx, ny, nz = sub_sdf.shape

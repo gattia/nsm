@@ -223,18 +223,15 @@ TWINS = {"skimage": sdf_grid_to_mesh, "vtk": sdf_grid_to_mesh_vtk}
 @pytest.mark.parametrize(
     "twin",
     [
-        pytest.param(
-            "skimage",
-            marks=broken(ISSUE_60, "#60: sdf_grid_to_mesh calls .cpu() unguarded"),
-        ),
+        "skimage",
         "vtk",
     ],
 )
 def test_both_twins_accept_numpy(twin):
     """``use_vtk`` selects an extraction backend; it must not also select an input type.
 
-    Only the skimage twin is marked: the VTK one already guards with ``hasattr``, and
-    the whole defect is that the two differ.
+    Was a strict #60 xfail on the skimage twin only, which is the shape of the defect:
+    the VTK one always guarded with ``hasattr``, and the two differed.
     """
     mesh = TWINS[twin](sphere_sdf_grid(), ORIGIN, VOXEL_SIZE)
     assert mesh.point_coords.shape[0] > 0
@@ -246,8 +243,8 @@ def test_both_twins_accept_torch(twin):
     assert mesh.point_coords.shape[0] > 0
 
 
-@broken(ISSUE_60, "#60: the twins ship different narrow_band defaults")
 def test_twins_share_their_narrow_band_default():
+    """Was a strict #60 xfail: False on the skimage twin, True on the VTK one."""
     import inspect
 
     def default(fn):
