@@ -12,6 +12,7 @@ default_triplanar_params = {
     "conv_norm": True,
     "conv_norm_type": "layer",
     "conv_start_with_mlp": True,
+    "conv_activation": None,
     "sdf_latent_size": 128,
     "sdf_hidden_dims": [512, 512, 512],
     "sdf_weight_norm": True,
@@ -25,10 +26,8 @@ default_mlp_params = {
     "n_objects": 2,
     "dropout": None,
     "dropout_prob": 0.0,
-    "norm_layers": (0, 1, 2, 3, 4, 5, 6, 7),  # DEPRECATED
     "latent_in": (),
     "weight_norm": True,
-    "xyz_in_all": None,
     "activation": "relu",  # "relu" or "sin"
     "final_activation": "tanh",  # "sin", "linear"
     "concat_latent_input": True,
@@ -61,6 +60,11 @@ class TwoStageDecoder(nn.Module):
         assert latent_size % 2 == 0, "latent_size must be even"
 
         self.n_objects = n_objects
+
+        # Copied before they are written to: both defaults are module-level dicts, so one
+        # construction used to rewrite what every later default construction meant (#46).
+        triplanar_params = dict(triplanar_params)
+        mlp_params = dict(mlp_params)
 
         triplanar_params["latent_dim"] = self.model_latent_size
         triplanar_params["n_objects"] = self.n_objects

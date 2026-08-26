@@ -293,10 +293,12 @@ non-underscore name in the source module, including its imported third-party mod
 `read_meshes_get_sampled_pts` and `adjust_learning_rate` — 138 de-facto exports across the
 package in total.
 
-`NSM.models` inherits a subtler problem: `from .deep_sdf import *` runs *before* the
-explicit imports, and `deep_sdf` defines a `Sine` with a hardcoded `w0=30` while
-`modulated_periodic_activations` defines a different `Sine` taking `w0` as an argument.
-`NSM.models.Sine` resolves to the hardcoded one.
+`NSM.models` inherited a subtler problem: `from .deep_sdf import *` runs *before* the
+explicit imports, and `deep_sdf` defined its own `Sine` with a hardcoded `w0=30` while
+`modulated_periodic_activations` defines a different `Sine` taking `w0` as an argument, so
+`NSM.models.Sine` resolved to the hardcoded one. *Closed in §8.0.H — there is one `Sine`,
+and `deep_sdf` imports it.* The star-import that decided which one is still there, and is
+still the reason the ordering mattered.
 
 ---
 
@@ -308,7 +310,7 @@ The plan flagged one. There are six.
 |---|---|---|
 | **Two `adjust_learning_rate`** | `utils.adjust_learning_rate` (target-keyed, per-epoch) and `reconstruct/utils.py` (step decay for latent fitting) | Unrelated signatures, same name, and the second is *leaked into `NSM.reconstruct`'s namespace* by the star-import — so `from NSM.reconstruct import adjust_learning_rate` silently gets the wrong one. |
 | **Four `loss_l1 = torch.nn.L1Loss(...)`** | module-level `loss_l1` in `train_deep_sdf.py`, `train_deep_sdf_multi_head.py`, and both `deprecated/` trainers | Four copies of a shared import-time module. |
-| **Two `Sine` classes** | `deep_sdf.Sine` (w0 hardcoded, `__init__` misspelled as `__init`, never runs) and `modulated_periodic_activations.Sine` | Incompatible defaults; the star-import decides which one `NSM.models.Sine` means. |
+| ~~**Two `Sine` classes**~~ | *Closed in §8.0.H.* The `deep_sdf` copy (w0 hardcoded, `__init__` misspelled as `__init` and so name-mangled to `_Sine__init`, never ran) is deleted; `deep_sdf` imports `modulated_periodic_activations.Sine` and `get_activation("sin")` returns `Sine(w0=30)`. Both computed `sin(30 * x)`, so no run's arithmetic changed. | Kept as an entry because *why* it was hard to see is the durable part: the star-import ordering, not the duplication. |
 | **Two edge-ratio implementations** | `correspondence_metrics.triangle_health` and `triangle_metrics.py` | Divergent results from the same-named statistic. |
 | **`train_deep_sdf` defined twice** | `train/train_deep_sdf.py` and `train/train_deep_sdf_multi_head.py` | Same function name in two modules, second parameter is `model` in one and `models` in the other. Tests alias them to disambiguate. |
 | **`unpack_pts` / `unpack_numpy_data`** | `datasets/utils.py` (moved from `sdf_dataset.py`, §8.0) and duplicated verbatim in a testing script | Encodes the `.npz` cache layout in two places. |
@@ -325,12 +327,12 @@ instance" asks for. The LR bug's class is the largest group.
 | Class | Count | Representative |
 |---|---|---|
 | **Undocumented positional/index ordering** — the LR bug's exact shape | ~12 | `reconstruct_mesh`: reconstructed mesh order *is* the surface identity contract, named nowhere, hardcoded by the consumer. `losses.compute_sdf_gradients`: `cat([latent, points])` with nothing validating the width. `mesh.create_mesh_adaptive`: 17 positional args into `create_mesh`. |
-| **Parameter accepted and silently ignored** | ~10 | `get_pts_center_and_scale`: `center=` / `scale=` are rebound before they are read, so both operations happen unconditionally. `n_pts_random` swallowed by `**kwargs` — the consumer passes 100,000 for it. |
+| **Parameter accepted and silently ignored** | ~10 | `get_pts_center_and_scale`: `center=` / `scale=` are rebound before they are read, so both operations happen unconditionally. `n_pts_random` swallowed by `**kwargs` — the consumer passes 100,000 for it. *`models/` is swept ([#20](https://github.com/gattia/nsm/issues/20), §8.0.H): `normalize_coordinates`' `padding`, `Decoder`'s `xyz_in_all` and `latent_noise_sigma`, and `VAEDecoder`'s `activation` are deleted.* **Deleting the name is only half the fix where the function keeps `**kwargs`** — `Decoder` does, so each deleted argument raises when set truthy rather than going back to being ignored. |
 | **Silent in-place mutation of caller data** | 7 | `get_pts_center_and_scale` mutates the passed array; all three in-repo callers pass `np.copy()` defensively, so the convention exists only as a habit at the call sites. |
 | **Cache key omits a parameter that changes cached content** | 4 | *Fixed by [#19](https://github.com/gattia/nsm/issues/19) in PR #85 (§8.0.F).* `mesh_to_scale` and `uniform_pts_buffer` are in the key; `subsample` was decoupled from cached content instead of keyed; the key is a named canonical mapping with a `cache_format` version. Kept as a defect *class* because it is the one that silently served another run's data — see `KNOWN_ISSUES.md` § History 13. |
 | **Import-time side effect** | 10 | §4 above. |
-| **Constructed and discarded / leaked loop variable** | 3 | `train_deep_sdf_multi_head.train_deep_sdf` (only the last decoder trains), `read_meshes_get_sampled_pts`, `VAEDecoder.__init__` (the activation is built and never appended — the VAE decoder has no pointwise nonlinearity; see §7.1). |
-| **Constructible-but-uncallable configuration** | 5 | `Decoder(activation='linear')`, `progressive_add_depth=True`, `refine_mesh.get_target_cells()` with its own defaults — each builds fine and raises on first use. Two entries deviate, verified by execution: `TwoStageDecoder()` with its own defaults raises in `__init__` (tuple + list concat), so it never builds; and `Decoder(norm_layers=...)` builds *and forwards without error* under the shipped contiguous default with weight-norm on (the norm layers are silently ignored) — it raises on first use only for a norm set not starting at layer 0 with weight-norm off. |
+| **Constructed and discarded / leaked loop variable** | 3 | `train_deep_sdf_multi_head.train_deep_sdf` (only the last decoder trains), `read_meshes_get_sampled_pts`, `VAEDecoder.__init__` (the activation is built and never appended — the VAE decoder has no pointwise nonlinearity; see §7.1). *§8.0.H deleted the dead `activation=` argument and shipped the working replacement: `conv_activation`, opt-in because inserting a parameterless activation renumbers every later key inside `self.decoder`. The default (`None`) is the historical no-activation stack — the only layout any existing checkpoint fits — and is pinned by `testing/NSM/models/test_model_structure.py`. Whether turning it on helps is the retrain question, `NSM_TRAINING_IDEAS.md` Idea 13.* |
+| **Constructible-but-uncallable configuration** | 5 | *Closed in `models/` by [#46](https://github.com/gattia/nsm/issues/46) (§8.0.H): `Decoder(activation='linear')` and `norm_layers` now refuse at construction, `progressive_add_depth=True` works below its last `start_epoch`, and `TwoStageDecoder()` builds — it had never been constructible, `[latent_size + 3] + dims` being a list plus a tuple. `refine_mesh.get_target_cells()` with its own defaults is the surviving instance and belongs to §8.0.I.* Kept as a defect *class* because it is what an option matrix catches and nothing else does: `testing/NSM/models/test_model_options.py` is that matrix for this package. |
 
 **71 of the 216 are landmines** — wrong behaviour that raises nothing and returns a
 plausible number. This is the empirical argument for the plan's §7.1 ordering: a test that
@@ -341,10 +343,21 @@ asserts "it ran" catches almost none of them.
 Included because the first draft of this document got it wrong, and the correction is more
 interesting than the original claim.
 
-**The defect is real.** `VAEDecoder.__init__` builds `activation = activation_fn()` and never
-appends it, while the two lines above it do `self.layers.append(...)`. The resulting stack
-is `ConvTranspose2d → norm` × N, then `Conv2d → Tanh`. `LeakyReLU` appears nowhere; the
-only pointwise nonlinearity in the entire feature-plane generator is the final `Tanh`.
+**The defect was real.** `VAEDecoder.__init__` built `activation = activation_fn()` and never
+appended it, while the two lines above it did `self.layers.append(...)` — a leaked loop
+variable present from the first triplanar commit (`71df387`, Aug 2023), so no triplanar model
+NSM has ever produced has had a pointwise activation. The resulting stack is
+`ConvTranspose2d → norm` × N, then `Conv2d → Tanh`. `LeakyReLU` appears nowhere; the only
+pointwise nonlinearity in the entire feature-plane generator is the final `Tanh`.
+
+**`conv_activation` is the repair, and it is opt-in for a structural reason** (§8.0.H):
+activations carry no parameters, but `nn.Sequential` names its children by position, so
+inserting them renumbers every later key — measured on 647, `conv_activation="leaky_relu"`
+fails with `Missing key(s): vae_decoder.decoder.10.weight`. The default is therefore `None`,
+the historical architecture, **forever**: it is what every existing checkpoint was fitted as.
+`load_model` requires the config to say which, so neither can be reached by omission. What
+remains open is whether an activation *helps* — `NSM_TRAINING_IDEAS.md` Idea 13, which the
+rest of this section is the argument for.
 
 **The first draft then claimed this leaves the decoder "an affine map." That is false for
 the shipped models,** and the correction matters:
@@ -359,14 +372,65 @@ LayerNorm divides by a standard deviation computed from its own input, so it is 
 in its own right and silently supplies the nonlinearity the missing activation was meant
 to. The production models work, and they work by accident.
 
+**But it is a narrow kind of nonlinearity, and the difference is what decides how much the
+missing activation costs.** Only the division is nonlinear, and it is a radial projection:
+direction preserved, magnitude rescaled. It cannot zero a feature out, cannot form a
+decision boundary, cannot make the function piecewise. What an activation would add is
+*selectivity*, and none of it is present. Three properties, each measured and each pinned by
+`test_model_structure.TestWhatLayerNormActuallySupplies`, because each is one a reader will
+otherwise get wrong from theory:
+
+- **Normalization is over the whole `(C, H, W)` feature map**, so each sample gets *one*
+  scale for the entire map — verified on 647: `(512,4,4) … (512,64,64)`. The ConvNeXt
+  convention (over channels at each spatial position) would give a per-location gain the
+  next conv could mix into multiplicative interactions across space. This is the weaker of
+  the two.
+- **The latent magnitude is *not* discarded.** LayerNorm is degree-0 homogeneous, so a stack
+  whose first LayerNorm saw only linear maps would be blind to `‖z‖` — and then the L2 latent
+  prior could shrink latents at no reconstruction cost, and interpolation would belong on the
+  sphere rather than the line. Neither follows here: `fc` and the first `ConvTranspose2d`
+  both carry biases, which break the homogeneity first. Measured on 647, `vae(z)` against
+  `vae(2z)` differs by **1.33** on a `tanh`-bounded output.
+- **The gain's data-dependence attenuates with depth.** A σ that never moves across inputs is
+  a fixed affine map wearing a normalization layer's name. Over latents spanning the fitted
+  production norm range (4.0 → 10.0), 647's five σ spreads are **1.71×, 1.30×, 1.15×, 1.02×,
+  1.00×** — real at the first layer, gone by the last, so the deeper layers are close to fixed
+  affine maps. Freezing all five statistics moves the feature planes ~20% of output range,
+  but that is five layers of compounding, not a large per-layer nonlinearity.
+
+*(Method note, since the first version of that sweep was wrong: latents drawn all at the same
+norm remove the variation by construction and report 1.00× at every layer. The norms have to
+vary for the measurement to mean anything.)*
+
 **The sharper hazard the correction exposes:** with `norm_type="batch"` the model *trains*
 nonlinear — batch statistics couple samples, additivity error 4.08 — and *evaluates* affine
 once BatchNorm switches to running statistics. The function being fit is not in the same
-expressive class as the function being deployed. `batch` is the constructor default, so any
-config omitting `conv_norm_type` gets it.
+expressive class as the function being deployed.
 
-In every configuration the depth is still largely wasted: five stacked `ConvTranspose2d`
-with no activation between them buy much less than five layers of a normal decoder.
+**`batch` was also the default in three of the four places that had one** — the `VAEDecoder`
+and `TriplanarDecoder` signatures, `_get_triplanar_params` and the triplanar template —
+against `layer` in `_get_two_stage_params`, `two_stage`'s default triplanar params and
+`NSM/configs/default_config.json`. The value that won three of them is the one **nothing has
+ever been trained with**: 647, 551, `ShapeMedKnee_2024_config.json` and the regenerated
+default all say `layer`, and the default only says `layer` at all because `651a810`
+regenerated it as a snapshot of the 647 run — before that the key was absent, so anything
+built from the shipped default fell through to `batch`.
+
+*Closed in §8.0.H:* `load_model` **requires** `conv_norm_type` on both branches that build a
+`TriplanarDecoder`, so no config can reach a default by omission, and the templates say
+`layer`. The signature defaults are untouched — changing `TriplanarDecoder`'s is a breaking
+change to a public-stable class and belongs to the release slice. Note what this does *not*
+fix, because torch already does: a mismatch against a checkpoint is loud, since `BatchNorm2d`
+and `LayerNorm` differ in key set *and* shape. What the silent default cost was a **fresh**
+run started from the template, inheriting a configuration nobody had trained.
+
+In every configuration the depth buys much less than it reads as — but **not nothing, and
+the distinction matters.** Composing affine maps gives an affine map, so under `"batch"`
+the five-layer stack can only express what *one* transposed convolution could. The
+parameters are not idle: they still decide *which* affine map, and the stacked strides give
+it a large effective kernel and receptive field. What is missing is nonlinear expressivity,
+not the parameters. The right statement is that the stack is over-parameterised for the
+function class it can represent, not that 20M weights compute nothing.
 
 **Method note.** The original claim came from reading the code and was reported as verified.
 It took ~20 lines of `torch` to falsify. This is exactly `CLAUDE.md`'s "run the claim before

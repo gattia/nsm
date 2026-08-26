@@ -21,7 +21,7 @@ from torch import nn
 from torch.nn.functional import grid_sample
 
 from .._verbose_deprecation import honour_verbose
-from .deep_sdf import Decoder
+from .deep_sdf import Decoder, get_activation
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +35,29 @@ class VAEDecoder(nn.Module):
         deep_image_size=2,
         norm=True,
         norm_type="batch",
-        activation="leakyrelu",
         start_with_mlp=True,
+        conv_activation=None,
     ):
+        """
+        ``conv_activation`` selects the stack's pointwise nonlinearity, and **None is the
+        historical architecture**: no activation at all.
+
+        That is not a taste default. Until Aug 2026 ``__init__`` built an activation and
+        never appended it, from the first triplanar commit onwards, so *every* model NSM
+        has produced was fitted without one and the only pointwise nonlinearity in the
+        whole feature-plane generator is the final ``Tanh``
+        (``docs/ARCHITECTURE.md`` section 7.1). The activations carry no parameters, but
+        ``nn.Sequential`` names its children by position, so inserting them renumbers every
+        later key: ``None`` builds the identical module list and loads every existing
+        checkpoint bitwise, and any other value builds an architecture no existing
+        checkpoint fits. ``loader`` therefore REQUIRES the config to say which.
+
+        Placement is ``conv -> norm -> activation`` and is **provisional**: whether that or
+        ``conv -> activation -> norm`` is right, and which activation, is what the retrain
+        in ``NSM_TRAINING_IDEAS.md`` Idea 13 settles. A naive drop-in measured *worse* on
+        the synthetic harness -- LayerNorm's scale invariance is normalizing the gradients
+        today, so both learning rates want retuning before any comparison means anything.
+        """
         super(VAEDecoder, self).__init__()
 
         # self.fc = nn.Linear(latent_dim, hidden_dims[0] * deep_image_size**2)
@@ -49,11 +69,13 @@ class VAEDecoder(nn.Module):
         self.norm = norm
         self.norm_type = norm_type
         self.start_with_mlp = start_with_mlp
+        self.conv_activation = conv_activation
 
-        if activation == "leakyrelu":
-            activation_fn = nn.LeakyReLU
-        elif activation == "relu":
-            activation_fn = nn.ReLU
+        if conv_activation == "linear":
+            raise ValueError(
+                "conv_activation='linear' is ambiguous here: pass None for the historical "
+                "architecture, which has no pointwise activation at all."
+            )
 
         assert (
             latent_dim % deep_image_size**2 == 0
@@ -88,7 +110,11 @@ class VAEDecoder(nn.Module):
                     raise ValueError("norm_type must be 'batch' or 'layer'")
                 layers.append(norm)
 
-            activation = activation_fn()
+            # Appended, unlike the activation this class built and dropped until Aug 2026.
+            # Positional: adding it renumbers every later key in self.decoder, which is
+            # exactly why it is opt-in rather than a repair -- see __init__'s docstring.
+            if conv_activation is not None:
+                layers.append(get_activation(conv_activation))
 
             # set in_channels for next loop.
             in_channels = out_channels
@@ -222,8 +248,15 @@ class TriplanarDecoder(nn.Module):
         conv_hidden_dims=[512, 512, 512, 512, 512],
         conv_deep_image_size=2,
         conv_norm=True,
+        # "batch" here is the historical signature default and NOT what anything trained:
+        # every ShapeMedKnee config, NSM's default_config.json and two_stage's defaults all
+        # say "layer". load_model REQUIRES the key rather than defaulting it, so a config
+        # cannot reach this value by omission; changing the signature itself is a breaking
+        # change to a public-stable class and belongs to the release slice. Under "batch"
+        # the VAE trains nonlinear and evaluates affine -- ARCHITECTURE.md section 7.1.
         conv_norm_type="batch",
         conv_start_with_mlp=True,
+        conv_activation=None,
         sdf_latent_size=128,
         sdf_hidden_dims=[512, 512, 512],
         sdf_weight_norm=True,
@@ -241,6 +274,7 @@ class TriplanarDecoder(nn.Module):
         self.n_objects = n_objects
         self.conv_hidden_dims = conv_hidden_dims
         self.conv_deep_image_size = conv_deep_image_size
+        self.conv_activation = conv_activation
         self.sdf_latent_size = sdf_latent_size
         self.sdf_hidden_dims = sdf_hidden_dims
         self.sdf_weight_norm = sdf_weight_norm
@@ -257,16 +291,31 @@ class TriplanarDecoder(nn.Module):
         self.padding = padding
         self.conv_pred_sdf = conv_pred_sdf
 
-        if self.sum_sdf_features is False:
-            assert (
-                self.sdf_latent_size % 3 == 0
-            ), "sdf_latent_size must be divisible by 3 if sum_sdf_features is False"
-            vae_out_features = self.sdf_latent_size
-        elif self.sum_sdf_features is True:
+        if self.sum_sdf_features:
+            # One full-width feature map per plane; the three are summed at sample time.
             vae_out_features = self.sdf_latent_size * 3
-
-        if self.conv_pred_sdf is True:
-            vae_out_features += 3
+            if self.conv_pred_sdf is True:
+                # One low-frequency SDF channel per plane, summed with the features.
+                vae_out_features += 3
+        else:
+            # The three planes are CONCATENATED, so each contributes a third of the
+            # decoder's input width. A ValueError and not an assert: `python -O` strips
+            # asserts, and this one guards a shape.
+            if self.sdf_latent_size % 3 != 0:
+                raise ValueError(
+                    f"sdf_latent_size must be divisible by 3 when sum_sdf_features is "
+                    f"False: the three planes are concatenated, so each contributes "
+                    f"sdf_latent_size // 3 channels. Got {self.sdf_latent_size}."
+                )
+            if self.conv_pred_sdf is True:
+                raise ValueError(
+                    "conv_pred_sdf is not supported with sum_sdf_features=False. "
+                    "Concatenation leaves three low-frequency SDF channels, one per "
+                    "plane, and nothing has ever defined how they combine -- the "
+                    "configuration built and then handed the SDF decoder the wrong "
+                    "number of features. Use sum_sdf_features=True, or drop conv_pred_sdf."
+                )
+            vae_out_features = self.sdf_latent_size
 
         self.vae_decoder = VAEDecoder(
             latent_dim=latent_dim,
@@ -276,6 +325,7 @@ class TriplanarDecoder(nn.Module):
             norm=conv_norm,
             norm_type=conv_norm_type,
             start_with_mlp=conv_start_with_mlp,
+            conv_activation=conv_activation,
         )
 
         self.sdf_decoder = Decoder(
@@ -301,9 +351,11 @@ class TriplanarDecoder(nn.Module):
         Returns:
             plane_feats: (N, sdf_latent_size) - sampled features
         """
-        latent_size = (
-            self.sdf_latent_size + self.conv_pred_sdf
-        )  # one sdf prediction per plane (if conv_pred_sdf is True)
+        # NOT sdf_latent_size when the planes are concatenated: each carries a third of the
+        # decoder's input width. Slicing the full width in both modes gave yz and xy
+        # zero-channel slices (#45; KNOWN_ISSUES History 15).
+        latent_size = self.sdf_latent_size if self.sum_sdf_features else self.sdf_latent_size // 3
+        latent_size += self.conv_pred_sdf  # one sdf prediction per plane
 
         feat_xz = plane_features[:latent_size, ...]
         feat_yz = plane_features[latent_size : latent_size * 2, ...]
@@ -351,9 +403,10 @@ class TriplanarDecoder(nn.Module):
 
         return sampled_feats.T
 
-    def normalize_coordinates(self, query, plane, padding=0.1):
-        # KNOWN DEFECT, #20: `padding` is accepted and ignored -- the body reads
-        # self.padding. Same class as get_pts_center_and_scale, also #20; see also #26.
+    def normalize_coordinates(self, query, plane):
+        # No `padding` argument: it was accepted and ignored here until Aug 2026 (#20),
+        # and honouring it would have handed the sole caller the 0.1 default in place of
+        # a model's trained value. self.padding is the only source.
         if plane == "xy":
             xy = query[:, [0, 1]]
         elif plane == "xz":

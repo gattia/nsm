@@ -26,6 +26,7 @@
     "conv_norm_type": "layer",
     "conv_pred_sdf": false,
     "conv_start_with_mlp": true,
+    "conv_activation": null,
     "sum_conv_output_features": true,
     "sdf_latent_size": 128,
     "sdf_hidden_dims": [
@@ -62,16 +63,6 @@
         7
     ],
     "dropout_prob": 0,
-    "layers_with_norm": [
-        0,
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7
-    ],
     "layer_latent_in": [
         4
     ],

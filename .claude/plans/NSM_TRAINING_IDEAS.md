@@ -249,9 +249,13 @@ recon accuracy and training stability.
 summing destroys — was never tested, only a broken implementation of it. The prior
 negative result should be withdrawn rather than trusted.
 
-**Cost / retrain.** Two training runs plus the draft-6 fix as a prerequisite.
+**Cost / retrain.** Two training runs. The prerequisite fix has landed.
 
-**Status.** Idea — not started. Blocked on the draft-6 fix.
+**Status.** Idea — not started, and **unblocked as of 2026-08-26**: §8.0.H shipped the fix
+(all three planes get `sdf_latent_size // 3` channels; `KNOWN_ISSUES.md` § History 15).
+The VAE's output width is unchanged, so a pre-fix `sum_conv_output_features: false`
+checkpoint still loads — and computes something different, which is why the pairs have to
+be retrained rather than re-evaluated.
 
 ---
 
@@ -564,6 +568,91 @@ upstream retraining-required change.)
 
 **Status.** Idea — not started. Parked 2026-08-24 when §8.0.E deleted
 `tune_reconstruction` (PR #78), so the deletion does not silently drop the intent.
+
+---
+
+## Idea 13 — Give the triplanar VAE a pointwise activation, opt-in, and find out if it helps
+
+**What.** `VAEDecoder`'s conv stack has **no pointwise activation**. `__init__` built one
+and never appended it, from the first triplanar commit (`71df387`, Aug 2023) onwards, so no
+triplanar model NSM has ever produced has had one. `conv_activation` now exists and defaults
+to off (§8.0.H); what this idea is, is the matched pair that says whether turning it on is
+worth a retrain.
+
+**Why it is not obvious either way.** The stack is not degenerate — LayerNorm supplies a
+nonlinearity — but a narrow one: a radial projection that preserves direction and rescales
+magnitude. It cannot zero a feature out or form a decision boundary. What an activation adds
+is *selectivity*, which for an SDF field should matter most at sharp features and creases.
+Against that, the gain LayerNorm supplies is already weak and gets weaker with depth
+(`ARCHITECTURE.md` §7.1: σ spreads of 1.71×, 1.30×, 1.15×, 1.02×, 1.00× across 647's five
+layers), so there is real headroom — and the shipped models were fitted without any of it.
+
+**What is already settled, so nobody repeats it.**
+
+- **The fix is available and costs nothing to old checkpoints.** Verified: a
+  `conv_activation` defaulting to `None` builds an identical module list, strict-loads a
+  shipped checkpoint and is bitwise-identical. Only an *unconditional* insert breaks them,
+  by shifting every index inside `nn.Sequential`.
+- **The regression harness cannot answer this.** Measured over 3 seeds × 2 norm types on the
+  synthetic fixture: reconstruction ASSD flips sign with the seed (5.80× better, 1.09×,
+  0.69× on `layer`), because the *control* alone varies 11× across seeds — a bad latent fit
+  dominates the effect. A single-seed run looked like a 5.8× win and was noise.
+- **A naive drop-in trains worse.** Training loss was worse in **5 of 6** of those runs.
+  Consistent with LayerNorm's scale invariance currently normalizing the gradients: adding
+  activations changes that balance, so **both learning rates need retuning** before the
+  comparison means anything. `Conv → LN → SiLU`, or leaky ReLU at 0.2, is the shape to try.
+
+**Cost / retrain.** Two production-scale training runs plus LR retuning. Not answerable at
+harness scale — that is the finding above, not an assumption.
+
+**Priority.** Below triplane resolution and feature dimension. Expect a modest gain rather
+than a step change; the honest position is that nobody knows, and the shipped models work.
+
+**Status.** Idea — not started, and **the code no longer blocks it** (§8.0.H, PR #90):
+`conv_activation` exists, defaults to `None` (the historical stack, byte-identical and
+loading every existing checkpoint), and `load_model` requires the config to state which
+architecture it means. What is left is purely the experiment — two production-scale runs
+with the learning rates retuned. No tracker issue remains: the defect's code half shipped
+in that PR, and this entry is the research half (per the docs rules, an experiment is not
+a fixable defect and does not meet the tracker bar).
+
+---
+
+## Idea 14 — Weight norm *and* per-layer normalization together in the MLP decoder
+
+**What.** `deep_sdf.Decoder` applies weight norm to every linear layer, or LayerNorm to
+selected layers, but never both — the branch is an `elif`. Commit `01d774a` (Jun 2023) set
+that structure out with the message *"separate wieght norm and batch norm **so can use
+both**"*, which is precisely what the `elif` prevents, so the stated goal was never
+delivered and no run has ever had both. Make it possible, and measure whether it helps.
+
+**Why.** The two normalizations do different jobs — weight norm reparameterizes the weights,
+LayerNorm normalizes activations — and combining them is standard elsewhere. The reason to
+suspect it is worth trying is that a maintainer deliberately built toward it and the code
+silently did not follow. The reason not to assume it helps is that nobody has run it.
+
+**What is already settled.** The `elif` is verified: with `weight_norm=True` nothing is ever
+appended to the norm list, so every shipped model has weight norm and no LayerNorm. The
+`norm_layers` argument itself is **deleted** (`SCOPE.md` §1, unsupported by design), so this
+is not "un-delete it" — it is a fresh option whose shape can be chosen with the experiment
+rather than inherited. Note the design trap that deletion avoided: the old key indexed the
+norm list by absolute layer index, so any set not starting at layer 0 raised `IndexError`.
+
+**Cost / retrain.** Two training runs plus the option. Like Idea 13, adding the layers
+renumbers state-dict keys, so it must be opt-in with the historical layout as the default.
+
+**Priority — the lowest in this file, and it should stay there.** Every other entry is here
+because a measurement, a defect or a maintainer observation pointed at it. This one is here
+because a 2023 commit message stated a goal the code did not reach. That is a reason to
+*record* it, not a reason to do it: no shipped model wants it, nothing measured suggests
+weight norm alone is the limiting factor, and nobody has asked for it. It also costs more
+than its two runs — it means re-adding an option §8.0.H just deleted, so the bar is a
+result, not a hunch. **Do not pick this up ahead of anything else here**; if the ideas file
+is ever pruned, this is the first entry to go.
+
+**Status.** Idea — not started, very low priority. Surfaced 2026-08-26 while §8.0.H deleted
+the half-working option; recorded here so the intent does not die with the code that failed
+to implement it.
 
 ---
 

@@ -166,16 +166,13 @@ def temp_model_files():
                 n_objects=config["objects_per_decoder"],
                 dropout=config["layers_with_dropout"],
                 dropout_prob=config["dropout_prob"],
-                norm_layers=config["layers_with_norm"],
                 latent_in=config["layer_latent_in"],
                 weight_norm=config["weight_norm"],
-                xyz_in_all=config["xyz_in_all"],
                 activation=config["activation"],
                 final_activation=config["final_activation"],
                 concat_latent_input=config["concat_latent_input"],
                 progressive_add_depth=config["progressive_add_depth"],
                 layer_split=config["layer_split"],
-                latent_noise_sigma=config["latent_noise_sigma"],
             )
 
         elif model_type == "two_stage":
@@ -314,6 +311,97 @@ class TestModelLoadingFullWorkflow:
         # Test automatic device detection (should default to CPU in test environment)
         model_auto = load_model(config, file_path, model_type="deepsdf", device=None)
         assert next(model_auto.parameters()).device.type in ["cpu", "cuda"]
+
+
+class TestConvNormTypeMustBeStated:
+    """
+    ``conv_norm_type`` decides the VAE's normalization, and until Aug 2026 four places
+    defaulted it and disagreed: ``"batch"`` in ``VAEDecoder``, ``TriplanarDecoder``,
+    ``_get_triplanar_params`` and the triplanar template; ``"layer"`` in
+    ``_get_two_stage_params``, ``two_stage.default_triplanar_params`` and
+    ``NSM/configs/default_config.json``.
+
+    **The value nothing has ever trained was the one that won three of those.** Every
+    ShapeMedKnee config -- 647, 551, the 2024 training config and the regenerated
+    ``default_config.json`` -- says ``"layer"``. And ``"layer"`` is not cosmetic: it is the
+    only thing making the VAE nonlinear at all, because the pointwise activation was never
+    wired in (``ARCHITECTURE.md`` section 7.1). Under ``"batch"`` the stack trains nonlinear
+    (batch statistics couple samples) and evaluates affine (running statistics).
+
+    A mismatch against a checkpoint does not load silently -- ``BatchNorm2d`` and
+    ``LayerNorm`` differ in both key set and shape, so torch refuses. What the silent
+    default cost was a *fresh* run started from the template, which inherited a
+    configuration nobody has trained and nothing would flag.
+    """
+
+    def test_a_triplanar_config_without_it_is_refused(self):
+        stripped = {
+            k: v for k, v in get_model_config_template("triplanar").items() if k != "conv_norm_type"
+        }
+        with pytest.raises(KeyError, match="conv_norm_type"):
+            load_model(stripped, "/nonexistent.pt", model_type="triplanar")
+
+    def test_a_two_stage_config_without_it_is_refused(self):
+        config = get_model_config_template("two_stage")
+        del config["triplanar_params"]
+        with pytest.raises(KeyError, match="conv_norm_type"):
+            load_model(config, "/nonexistent.pt", model_type="two_stage")
+
+    def test_the_triplanar_template_advertises_the_value_that_was_trained(self):
+        """
+        A template is what a NEW config should look like, so it must not hand someone the
+        configuration nothing has been trained with.
+        """
+        assert get_model_config_template("triplanar")["conv_norm_type"] == "layer"
+
+    def test_both_templates_agree(self):
+        """The divergence this pins was two templates disagreeing about the same class."""
+        triplanar = get_model_config_template("triplanar")["conv_norm_type"]
+        two_stage = get_model_config_template("two_stage")["triplanar_params"]["conv_norm_type"]
+        assert triplanar == two_stage == "layer"
+
+    def test_a_triplanar_config_without_conv_activation_is_refused(self):
+        """
+        Same contract, different key: ``conv_activation`` decides the module *layout*, so a
+        config that does not state it does not describe an architecture. ``null`` is the
+        historical stack -- see ``TestTheOptInConvActivation``.
+        """
+        stripped = {
+            k: v
+            for k, v in get_model_config_template("triplanar").items()
+            if k != "conv_activation"
+        }
+        with pytest.raises(KeyError, match="conv_activation"):
+            load_model(stripped, "/nonexistent.pt", model_type="triplanar")
+
+    def test_the_triplanar_template_defaults_to_the_historical_architecture(self):
+        """``null``, not an activation: a template that flipped the architecture would make
+        every checkpoint anyone owns unloadable from it."""
+        assert get_model_config_template("triplanar")["conv_activation"] is None
+
+    def test_the_loader_keeps_no_silent_default_for_it(self):
+        """
+        The structural half, and the one that stops this regressing: a fix that only
+        aligned the two literals would leave the next person free to add a third
+        ``config.get("conv_norm_type", ...)``. There must be no default to disagree about.
+        """
+        import ast
+        import inspect
+
+        import NSM.models.loader as loader
+
+        tree = ast.parse(inspect.getsource(loader))
+        defaulted = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and len(node.args) == 2
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value in ("conv_norm_type", "conv_activation")
+        ]
+        assert defaulted == [], f"{len(defaulted)} silent default(s) for an architecture key"
 
 
 if __name__ == "__main__":

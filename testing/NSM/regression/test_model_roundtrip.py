@@ -159,36 +159,53 @@ class TestPaddingIsNotInTheCheckpoint:
         model = build_model(config)
         return config, model, save_checkpoint(model, directory)
 
-    def test_a_config_without_padding_loads_without_error(self, checkpoint_at_a_nondefault_padding):
+    def test_a_config_without_padding_is_refused(self, checkpoint_at_a_nondefault_padding):
+        """
+        Either the loaded model computes what the checkpoint was trained to compute, or
+        loading refuses. Until Aug 2026 it did neither: it loaded cleanly at ``load_model``'s
+        0.1 default and computed something else (#26).
+        """
         from NSM.models.loader import load_model
 
         _, _, path = checkpoint_at_a_nondefault_padding
         stripped = {k: v for k, v in ARCHITECTURE.items() if k != "padding"}
-        loaded = load_model(stripped, path, model_type="triplanar", device="cpu")
-        assert loaded.padding == 0.1, "load_model's default changed"
+        with pytest.raises(KeyError, match="padding"):
+            load_model(stripped, path, model_type="triplanar", device="cpu")
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#26: padding is not in the checkpoint, so a mismatch loads silently",
-    )
-    def test_a_padding_mismatch_must_not_silently_change_the_sdf(
-        self, checkpoint_at_a_nondefault_padding
-    ):
+    def test_the_refusal_says_what_to_write(self, checkpoint_at_a_nondefault_padding):
         """
-        Either the loaded model computes what the checkpoint was trained to compute, or
-        loading refuses. Today it does neither: it loads cleanly and computes something
-        else. The output is ``tanh``-bounded to (-1, 1), so the observed 0.063 is a large
-        fraction of the full range, not a rounding artefact.
+        The refusal is only useful if it ends the reader's search. A config predating the
+        key was trained at the constructor default, and the message has to say so -- a bare
+        "missing required key" would leave someone guessing at a value that changes results.
         """
         from NSM.models.loader import load_model
 
-        _, model, path = checkpoint_at_a_nondefault_padding
+        _, _, path = checkpoint_at_a_nondefault_padding
         stripped = {k: v for k, v in ARCHITECTURE.items() if k != "padding"}
-        loaded = load_model(stripped, path, model_type="triplanar", device="cpu")
+        with pytest.raises(KeyError) as raised:
+            load_model(stripped, path, model_type="triplanar", device="cpu")
+        message = str(raised.value)
+        assert "0.1" in message and "not a learned parameter" in message
+
+    def test_the_measured_size_of_a_padding_mismatch(self, checkpoint_at_a_nondefault_padding):
+        """
+        What the refusal is worth, computed rather than asserted from memory.
+
+        The output is ``tanh``-bounded to (-1, 1), so this is a fraction of the full range,
+        not a rounding artefact. Asserted as a lower bound: if a future change made
+        ``padding`` matter *less*, the refusal would be over-strict and someone should
+        find out here rather than by reading #26.
+        """
+        from NSM.models.loader import load_model
+
+        config, model, path = checkpoint_at_a_nondefault_padding
+        mismatched = load_model(
+            dict(config, padding=0.1), path, model_type="triplanar", device="cpu"
+        )
 
         inputs = query_points()
-        difference = (forward(model, inputs) - forward(loaded, inputs)).abs().max().item()
-        assert difference < 1e-6, f"padding mismatch moved the SDF by {difference:.3e}"
+        difference = (forward(model, inputs) - forward(mismatched, inputs)).abs().max().item()
+        assert difference > 1e-2, f"a padding mismatch now moves the SDF only {difference:.3e}"
 
     def test_stating_padding_in_the_config_restores_the_original(
         self, checkpoint_at_a_nondefault_padding
@@ -201,19 +218,15 @@ class TestPaddingIsNotInTheCheckpoint:
         inputs = query_points()
         assert torch.equal(forward(model, inputs), forward(loaded, inputs))
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#20: normalize_coordinates still accepts a `padding` argument it never reads",
-    )
     def test_normalize_coordinates_must_not_accept_a_padding_argument(self):
         """
-        The fix is to DELETE the parameter, so this asserts it is gone -- not that it works.
+        The fix was to DELETE the parameter, so this asserts it is gone -- not that it works.
 
-        ``TriplanarDecoder.normalize_coordinates(self, query, plane, padding=0.1)`` accepts
-        ``padding`` and divides by ``self.padding`` instead. Its sole caller,
+        ``TriplanarDecoder.normalize_coordinates(self, query, plane, padding=0.1)`` accepted
+        ``padding`` and divided by ``self.padding`` instead. Its sole caller,
         ``sample_plane_features``, passes none and depends on that. So making the argument
-        authoritative would hand the only real caller the ``0.1`` default in place of the
-        shipped 0.35 -- a measured 0.063 max SDF difference on a ``tanh``-bounded output.
+        authoritative would have handed the only real caller the ``0.1`` default in place of
+        the shipped 0.35 -- a measured 0.063 max SDF difference on a ``tanh``-bounded output.
         See #20's traps.
 
         The predecessor of this test asserted the opposite -- that ``padding`` is present

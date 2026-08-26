@@ -6,14 +6,25 @@
 
 **Updated:** 2026-08-26 · **Status:** open
 
-- **Next:** execute **§8.0.H** — the `models/` package: #26 (**High**), #45, #46,
-  #34, the two-`Sine` trap, the VAE missing activation. The largest untouched
-  surface on the production path and half the consumer's public contract
-  (`TriplanarDecoder`); no pass of any kind has reached it. Its statement is
-  commit 1 of that slice and is not written yet. Nothing blocks it — §8.0.G
-  touched `models/triplanar.py` only to convert six `print`s and decorate
-  `forward`.
-- **§8.0.G executed (2026-08-26), PR open:** commits 2–8 whole — characterization,
+- **Next:** execute **§8.0.I** — `mesh/main.py`: #60, #57 (five sites, one
+  helper), #54's sites there, `create_mesh_adaptive`. Second-largest file in the
+  repo, on the production path, and named nowhere in this plan before the slice
+  index. Its statement is commit 1 of that slice and is not written yet. Nothing
+  blocks it; §8.0.H touched `mesh/` not at all.
+- **§8.0.H executed (2026-08-26), PR open:** commits 2–11 whole — the option
+  matrix, #46 in three commits, #45, #26, the #20 sweep, one `Sine`, #34, and
+  this update. Suite 787 passed (from 704) / 1 skipped / 3 xfailed (from 5); the
+  12 strict xfails commit 2 raised were all retired inside the slice. **Verified
+  end to end against the real shipped models** (not in CI — they are not in the
+  repo): both `model_params_config.json` files are refused for omitting
+  `padding`, and with `"padding": 0.1` added both load through `load_model` on
+  CPU and forward (647: 20,801,924 parameters, output width 2; 551: 20,801,410,
+  width 1). That same run settles `SCOPE.md` §2.6's open question — the consumer
+  *could* switch to `load_model`, once those two files state `padding`.
+  Three § History entries (14 `layer_split`/progressive depth, 15 #45, 16 #26),
+  seven CHANGELOG Breaking entries, and `NSM_TRAINING_IDEAS.md` Idea 5 unblocked.
+- **§8.0.G merged to `main` in PR #89 (2026-08-26):** #1 closed by the merge,
+  no review comments to apply. Commits 2–8 whole — characterization,
   the `basicConfig` deletion, the `verbose` bridge, five per-subpackage
   conversions, verify-and-close #1, this update. Suite 678→704 passed; 5 xfailed
   both ends (the two new strict xfails were raised and retired inside the slice).
@@ -24,6 +35,71 @@
   `testing/NSM/test_observability.py` hold all of that: no `print`, no log call
   that builds its first argument, and a `getLogger(__name__)` in every module
   that speaks.
+- **§8.0.H, review round 3 (maintainer, 2026-08-26): the VAE activation is now
+  *repairable*, not just documented.** The maintainer's objection was that the slice
+  left the library unable to do what it was written to do, and it was right.
+  `conv_activation` lands, `None` by default — byte-identical module list, every
+  existing checkpoint loads, verified against 647 and 551 — and `load_model` requires
+  the config to state which architecture it means, the third instance of that pattern
+  after `padding` and `conv_norm_type`. **Not a version number, deliberately:** the
+  maintainer proposed one, and a `version: 1|2` bundles this change with whatever the
+  next architecture change is, needs a lookup table to read, and asserts that v2 is
+  better — which Idea 13 says nobody has measured. A named field says what differs and
+  lets the retrain pick the value. Placement (`conv → norm → activation`) is pinned by
+  a test *as provisional*, so changing it is a decision rather than a diff. **Three
+  required keys now land in one release**, all needing the same one-line edit to the
+  same files; a combined "this config predates v0.3.0, here are the lines to add"
+  message is worth considering at the release, and is not in this slice.
+- **§8.0.H, review round 2 (maintainer, 2026-08-26): `conv_norm_type` had four
+  defaults and they disagreed.** Asking what the ShapeMedKnee config actually says
+  turned up the divergence: `"batch"` in the `VAEDecoder`/`TriplanarDecoder`
+  signatures, `_get_triplanar_params` and the triplanar template; `"layer"` in the
+  two_stage branch, `two_stage`'s defaults and `default_config.json`. **The value
+  three of them chose is the one nothing has ever trained** — 647, 551 and
+  `ShapeMedKnee_2024_config.json` all say `"layer"`, and the shipped default only
+  agrees because `651a810` regenerated it from the 647 run; before that the key was
+  absent. Same remedy as #26: `load_model` requires it, templates say `"layer"`,
+  signatures untouched (breaking for a public-stable class → release slice). Not the
+  same *defect* as #26, checked rather than assumed: a mismatch against a checkpoint
+  is loud, because `BatchNorm2d` and `LayerNorm` differ in key set and shape. What the
+  silent default cost was a **fresh** run from the template. Also settled here: the
+  activation was never wired in — `71df387`, Aug 2023, the first triplanar commit,
+  appends conv and norm and builds the activation without appending it — so no
+  triplanar model NSM has produced has ever had one, and this is not a regression.
+- **§8.0.H, review round 1 (maintainer, 2026-08-26): the `norm_layers` refusal was
+  too wide, and the framing was wrong.** The maintainer recognised the option as
+  something they had deliberately set up, which sent us to the history: commit
+  `01d774a` (Jun 2023) introduced the branch with the message *"separate wieght
+  norm and batch norm so can use both"* — and made it an `elif`, which is exactly
+  what prevents using both. So it was never dead weight; it was a feature the code
+  did not deliver, reachable only with `weight_norm=False`. Checked against a real
+  `361_nsm_femur_cartilage` training config the maintainer produced: it carries
+  `layers_with_norm: [0..7]` with `weight_norm: true`, so the defect never touched
+  it — and the first implementation **refused it anyway**. Now the two cases differ
+  (warn when provably inert, raise only where LayerNorm was really built), and that
+  config builds bitwise-identically before and after. Two lessons, both general:
+  a guard on "the key is set" is not the same as a guard on "the key did
+  something"; and `git log` on the line, not just the line, is what tells you
+  whether you are deleting dead code or someone's intent. Delivering "use both" is
+  new capability and is filed for §8.1.
+- **§8.0.H diverged from its statement in four places.** (1) **Two defects the
+  audit had never recorded**, both found by re-running the claims:
+  `layer_split: false` — the value `default_config.json` and *both shipped model
+  configs* carry — is tested with `is not None`, so it meant *split at layer 0*
+  and moved every state-dict key; and `TwoStageDecoder` mutated its module-level
+  default dicts **before** raising, so even a failed construction changed the
+  module process-wide. (2) **The size budget was wrong and the reason is
+  structural.** NSM/ is **+31** net against a stated +10 — but `raise` blocks in
+  `models/` went 30 → 78 lines (+48) and comments +32, so the *logic* is **−49**.
+  The statement costed "roughly +25 lines of refusal" without counting that the
+  slice contains **eight** separate refusals; a slice whose whole thesis is
+  "works or refuses at construction" cannot be net-negative on message text.
+  (3) **#34 needed no xfail** — the assertion it wants already held, it was
+  simply never asserted, so the characterization commit had nothing to record and
+  the measurement landed with the fix. (4) **`normalize_coordinates`' `padding`
+  was still there although #20 is closed** — the issue closed on the enumeration,
+  not on the deletions; the `models/` instances were carried only by
+  `KNOWN_ISSUES` § Open, which is why "closed" was not the same as "gone".
 - **Two maintainer calls ride alongside and gate nothing in §8:** (1) **file the
   drafted Mesh-subject issue** — approved text in PR #85's body, tracker still
   has no such issue (checked 2026-08-26); (2) the v0.3.0 timing ("soonish, or at
@@ -835,7 +911,7 @@ mistake `CLAUDE.md` names. What is fixed here is the *order* and each slice's *s
 | **L** | `train_epoch`'s loss pipeline | the ~270-line batch loop | The statement §8.0.D said this needs, deferred deliberately, now due. |
 | **M** | `NSM/utils.py` | #50, the module's remaining undocumented surface | §1.2's exhibit: the file that held the founding bug. Phase A documented the LR path and nothing else. |
 | **N** | Phase 2 close + lint gate | the §6 checkboxes, `flake8-docstrings` in `make lint`, `CLAUDE.md` §Architecture rewrite | Must follow G–M — that is where the missing docstrings are — and the lint gate is what stops G–M's accuracy rotting. |
-| **O** | v0.3.0 release | the pending Breaking set, setuptools-scm (§10.1), §7.1's GPU note, **`NSM.configs` ships in no wheel** (SCOPE §5) | Maintainer-gated timing. Nothing in G–N waits on it. |
+| **O** | v0.3.0 release | the pending Breaking set, setuptools-scm (§10.1), §7.1's GPU note, **`NSM.configs` ships in no wheel** (SCOPE §5), and **two items §8.0.H deferred here by name**: (a) a **combined pre-v0.3.0 config message** — the release adds three required triplanar keys (`padding`, `conv_norm_type`, `conv_activation`), each refused separately, so an old config is fixed one round-trip at a time; one message naming every missing key at once is the `_lr_migration` pattern applied to the set. (b) **`TriplanarDecoder`/`VAEDecoder`'s signature defaults**, still `conv_norm_type="batch"` against the `"layer"` everything trained — unreachable from a config now that the loader requires the key, but reachable by direct construction, and changing a public-stable signature needs the version boundary. | Maintainer-gated timing. Nothing in G–N waits on it. |
 | **P** | 0b quarantine + #18 | `train/deprecated/` (876 lines), the `sample_difficulty_lx` port | Maintainer-gated on the nsosim survey, unchanged since Phase 0. |
 | **Q** | #3, sigma coordinate space | `BREAKING_CHANGE_PROPOSAL.md` + `SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` | Last, because it is the one remaining *behaviour* change: it needs a §4-style migration guard and a version boundary, so it wants a release on either side of it. |
 
@@ -1702,6 +1778,138 @@ optional-dependency clause would give it — it fires in every consumer process 
 debug-only capability, and a warning there is what teaches people to filter NSM out —
 and `configs/generate_sdf_default_config.py`'s one `print` stays a `print`, because a
 script's own output on its own stdout is not the library speaking.
+
+### 8.0.H The `models/` package — plan statement (2026-08-26)
+
+Every claim below was re-run against `main` at `57ebfbe` before it was written. `models/`
+is 1,522 lines across five files and has had no pass of any kind — not Phase 2, not 3,
+not 4 — while holding half the consumer's public contract (`TriplanarDecoder`) and the
+documented `load_model` entry point.
+
+**What is actually wrong, measured.** Nine defects, and they are three shapes, not nine:
+
+*Shape 1 — a config value reaches a constructor unchecked.* `padding` is not a learned
+parameter, so a checkpoint trained at one value loads cleanly at another and samples the
+feature planes at the wrong scale: 0.063 max SDF difference on a `tanh`-bounded output
+(#26). `layer_split: false` — what `default_config.json` ships — is `False`, which
+`Decoder` tests with `is not None`, so it means *split at layer 0*, not *do not split*:
+verified, it moves every state-dict key from `layers.N.weight` to `layers.N.0.weight`.
+
+*Shape 2 — an argument accepted and never read* (#20's class, and the memory of what
+honouring one costs is why each is deleted rather than wired up).
+`normalize_coordinates(padding=)`; `Decoder(xyz_in_all=)`, which `default_config.json`
+ships and `loader` plumbs through four call sites; `Decoder(latent_noise_sigma=)`, stored
+and never read; `VAEDecoder(activation=)`, built and discarded — the `LeakyReLU` never
+enters the stack (ARCHITECTURE §7.1); `weight_norm_all`, defined and called nowhere.
+
+*Shape 3 — a documented option that constructs and then does not work.*
+`sum_sdf_features=False` sizes the VAE by `sdf_latent_size` while
+`forward_with_plane_features` slices `sdf_latent_size` **per plane**, so the three planes
+get (12, 0, 0) channels and the output is `torch.equal` to using the xz plane alone —
+re-measured today, and every VAE parameter still receives gradient, so training converges
+to a silently degraded model (#45). `Decoder(activation='linear')` gets `None` from
+`get_activation` and calls it. `progressive_add_depth=True` returns `None` from
+`forward_branch_` for every epoch below the last configured `start_epoch` (verified at
+0/100/300/700; 1300 and 5000 work). `Decoder(norm_layers=(1,2), weight_norm=False)`
+raises `IndexError` — it indexes `self.bn` by absolute layer index and appends only per
+norm layer — while with `weight_norm=True`, the shipped value, the whole option is
+silently inert. `TwoStageDecoder()` raises `TypeError` at any argument (`list` + `tuple`)
+and mutates its module-level default dicts on the way out — verified: after one failed
+construction `default_triplanar_params["latent_dim"]` is 32, process-wide.
+
+And #34: `TestAFreshlyTrainedDecoder` asserts a surface comes back and the latent has the
+configured shape. Both hold for an untrained decoder — measured today, trained
+`assd_0/assd_1` = 0.224/0.172 against untrained 2.197/3.014, and the untrained run passes
+every assertion in that class.
+
+**Target shape (all permanent — this slice adds no transitional module).**
+
+- **Each option works or refuses at construction**, which is #46's own closure criterion.
+  `progressive_add_depth` works (a not-yet-started block is skipped, not turned into
+  `None`); `activation='linear'` refuses (an affine SDF decoder is not a thing anyone
+  wants silently); `norm_layers` is deleted; `TwoStageDecoder` builds and stops mutating
+  its defaults; `layer_split=False` is normalized to `None` at the boundary, because
+  `False == 0` makes the two indistinguishable by value and only one of them is what
+  `default_config.json` means.
+- **`sum_sdf_features=False` slices `sdf_latent_size // 3` per plane**, which is what its
+  own `% 3` guard has always implied, and the guard becomes a `ValueError` so `-O` cannot
+  strip it. `conv_pred_sdf=True` *with* concatenation refuses: the per-plane SDF channels
+  have no defined combination rule under concatenation and never had one.
+- **`load_model` refuses a triplanar config that omits `padding`**, with a message naming
+  the one line to add. This is #26 option 1 and deliberately not option 3 — the plan's
+  §8.1 note says taking the registry first is how that section swallows this slice.
+- **Every dead argument is deleted, not honoured.** `Decoder` keeps its `**kwargs`, so a
+  deleted name would go back to being silently ignored; the two that a config can still
+  carry (`xyz_in_all`, `norm_layers`) raise from `**kwargs` when set to something truthy
+  and stay silent when falsy, which is what every NSM-owned config ships.
+- **One `Sine`.** `deep_sdf.Sine` (`w0` hardcoded 30, `__init__` misspelled `__init` so it
+  is mangled to `_Sine__init` and never runs) is deleted; `deep_sdf` imports the
+  `modulated_periodic_activations` one and `get_activation("sin")` returns `Sine(w0=30)`.
+  `torch.equal` on the two outputs is `True`, so no run changes.
+
+**Deliberately NOT in this slice, each for a stated reason.**
+
+- **Adding the VAE's missing activation.** It is real, it is documented in ARCHITECTURE
+  §7.1, and it is not fixed here: adding the activations **unconditionally** would shift
+  every subsequent module's index inside `nn.Sequential`, so all three shipped checkpoints
+  stop loading, and the weights were fitted without them anyway. An opt-in flag defaulting
+  to off is compatible (verified bitwise) — what it needs is the retrain that says whether
+  it helps, which is `NSM_TRAINING_IDEAS.md` Idea 13, not this slice. What this slice does is delete the dead
+  `activation=` parameter and pin the structure so the next reader cannot "fix" it by
+  accident. The issue text is drafted in the PR body for the maintainer to file.
+- **Rejecting unknown `**kwargs`** on `Decoder`/`TriplanarDecoder`. It closes the same
+  class and it is a behaviour change with unmeasurable external blast radius; it wants the
+  release boundary §8.0.O owns.
+- **A public "build the model this config describes" call** (#26 option 3, SCOPE §3.1's
+  "single highest-value API change"). That is §8.1, deferred by the 2026-08-26 re-draw.
+- **The `l2reg`/latent-gradient convention** (KNOWN_ISSUES `models/triplanar.py` §3). It
+  rescales every run and is a research question, not a refactor.
+- **Removing config keys other than `layers_with_norm`.** `layer_split`, `xyz_in_all` and
+  `latent_dropout` stay in `default_config.json`; they are inert and their removal is
+  config-shape work (§8.1/§8.3). `layers_with_norm` goes because the argument it feeds
+  ceases to exist.
+
+**Size budget.** Net negative in `NSM/models/`: five deleted arguments, one deleted class,
+one deleted function and `self.bn` against roughly +25 lines of refusal and slicing. Past
++10 net in `NSM/` is scope creep. Tests are additive and outside the budget.
+
+**Sequence** (one commit each; `make lint` clean and the full suite green at every step):
+
+1. this statement;
+2. characterization — a parameterised constructor-and-one-forward matrix over every
+   documented option value of all four model types, plus structural pins for the things no
+   fix here may silently change: the VAE's additivity table from §7.1 and the `Sine`
+   resolution. Strict xfails for what is broken. **#34 gets no xfail** — the assertion it
+   wants (trained error below an untrained control's) already holds, it is simply not
+   asserted anywhere, so its measurement lands with its fix in commit 10;
+3. #46(a) `TwoStageDecoder` builds, and stops mutating its module-level defaults;
+4. #46(b) `activation='linear'`, `progressive_add_depth`, and the `layer_split=False`
+   normalization;
+5. #46(c) `norm_layers` deleted — decoder, loader, templates, shipped config;
+6. #45 all three planes, with its § History entry;
+7. #26 `load_model` refuses a config that omits `padding`;
+8. the #20 dead-argument sweep, retiring both `models/` § Open entries;
+9. one `Sine`;
+10. #34 an assertion that goes red if training stops learning;
+11. docs sweep (ARCHITECTURE §5/§6/§7, SCOPE §2.6's open question, CHANGELOG) and this
+    plan's State.
+
+**Verification per claim:**
+
+| Claim | Verification |
+|---|---|
+| every documented option value works or refuses at construction | the commit-2 matrix, run over the four model types; its strict xfails all XPASS by commit 7 and are unmarked in the commit that fixes each |
+| `sum_sdf_features=False` uses three planes | forward-shape test over both flag values, plus an assertion that the concat output is **not** `torch.equal` to the xz plane alone — the exact equality measured today |
+| an old `sum_conv_output_features: false` checkpoint still loads | the VAE output width is `sdf_latent_size` before and after, so state-dict shapes are unchanged: asserted by loading a pre-fix checkpoint |
+| no shipped model changes | both shipped configs set `sum_conv_output_features: true`; the round-trip test's bitwise assertion covers the rest |
+| `load_model` refuses a config without `padding` | `TestPaddingIsNotInTheCheckpoint` is rewritten from "loads without error" to `pytest.raises`; its #26 strict xfail goes with it |
+| the refusal names the fix | the raised message contains `"padding"` and a value, asserted on the message |
+| `progressive_add_depth` is continuous across `start_epoch` | forward at `start-1`, `start`, `start+1` differs by less than the warmup step, rather than jumping to a full-weight layer — the ordering defect the `RuntimeError` branch hides |
+| `layer_split=False` means no split | state-dict keys are `layers.N.weight`, the same list `layer_split=None` produces — the difference measured today |
+| deleting an argument does not re-silence it | a truthy `xyz_in_all` / `norm_layers` raises `TypeError` through `**kwargs`; a falsy one does not |
+| one `Sine` changes no arithmetic | `torch.equal(old_Sine()(x), Sine(w0=30)(x))` — `True` today, kept as a test |
+| #34 is training-dependent | trained `assd` versus an untrained control built from the same config: measured 9.8× and 17.5×, asserted at a factor with its headroom in the docstring |
+| the suite still passes | 704 passed / 1 skipped / 5 xfailed on `main` at `57ebfbe` is the baseline every commit is compared against |
 
 ### 8.1 Make the library plural — added 2026-08-15
 

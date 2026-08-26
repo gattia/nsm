@@ -30,6 +30,117 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **There is one `Sine`, and `NSM.models.Sine` is unambiguously it.** `deep_sdf` defined a
+  second one with `w0` hardcoded to 30 and its initializer misspelled `__init` (so
+  name-mangled, and never run), and `NSM/models/__init__.py`'s `from .deep_sdf import *`
+  runs before the explicit imports, so `NSM.models.Sine` silently meant that one rather
+  than `modulated_periodic_activations.Sine`, which takes `w0` and defaults it to 1.0.
+  `deep_sdf` now imports the parameterized class and `get_activation("sin")` returns
+  `Sine(w0=30)`. **No arithmetic changes** — both computed `sin(30 * x)` — and any code
+  that constructed `NSM.models.Sine()` positionally now gets `w0=1.0` instead of 30, so
+  pass `w0=30` explicitly if that was the intent.
+
+- **Four arguments that were accepted and never read are deleted from `models/`**
+  ([#20](https://github.com/gattia/nsm/issues/20)):
+  `TriplanarDecoder.normalize_coordinates(padding=)` (the body reads `self.padding`, and
+  its sole caller depends on that — honouring the argument instead would have handed it the
+  0.1 default in place of a model's trained value), `Decoder(xyz_in_all=)` and
+  `Decoder(latent_noise_sigma=)` (documented, never read — no run has ever had either), and
+  `VAEDecoder(activation=)` (the module it selected was built and never appended, so the
+  argument chose between two things neither of which ran). The dead function
+  `deep_sdf.weight_norm_all` goes with them. **`Decoder` keeps `**kwargs`**, so
+  `xyz_in_all` and `latent_noise_sigma` set to something truthy now raise a `TypeError`
+  rather than being silently ignored a second time; falsy values — what every NSM-owned
+  config carries — are still accepted. `get_model_config_template` no longer advertises
+  either key; `default_config.json` keeps `xyz_in_all: false`, which is inert.
+
+- **`conv_activation` exists, and is a required key for `load_model` on the `triplanar` and
+  `two_stage` branches.** `VAEDecoder` built a pointwise activation and never appended it,
+  from the first triplanar commit (Aug 2023) onwards, so the conv stack has never had one and
+  the only nonlinearity in the feature-plane generator is the final `Tanh`
+  (`ARCHITECTURE.md` §7.1). `conv_activation` now selects it, through the same vocabulary as
+  `get_activation` — and **`null` is the default and the historical architecture**, because
+  `nn.Sequential` names children by position, so inserting a parameterless activation
+  renumbers every later state-dict key. `null` builds a byte-identical module list and loads
+  every existing checkpoint; any other value builds a layout no existing checkpoint fits, and
+  says so with `Missing key(s)`. The key is required rather than defaulted so a config
+  describes exactly one architecture. **Migration: add `"conv_activation": null`** — every
+  model trained before Aug 2026 is that one, including both shipped ShapeMedKnee models.
+  *Placement is `conv → norm → activation` and is provisional until the retrain in
+  `NSM_TRAINING_IDEAS.md` Idea 13; a naive drop-in measured worse on the synthetic harness.*
+
+- **`conv_norm_type` is a required key for `load_model` on the `triplanar` and `two_stage`
+  branches, and the templates now say `"layer"`.** Four places defaulted it and disagreed:
+  `"batch"` in the `VAEDecoder`/`TriplanarDecoder` signatures, `_get_triplanar_params` and
+  the triplanar template, against `"layer"` in `_get_two_stage_params`,
+  `two_stage`'s default triplanar params and `NSM/configs/default_config.json`. **`"layer"` is
+  the only value ever trained** — 647, 551 and `ShapeMedKnee_2024_config.json` all use it —
+  and it is not cosmetic: it is the only thing making the VAE nonlinear at all, since the
+  pointwise activation was never wired in (`ARCHITECTURE.md` §7.1). Under `"batch"` the
+  stack trains nonlinear and evaluates affine. Every config on disk already states the key,
+  so nothing that worked stops working; what stops is a **fresh** run started from
+  `get_model_config_template("triplanar")` silently inheriting a configuration nobody has
+  trained. A mismatch against an existing checkpoint was never silent — `BatchNorm2d` and
+  `LayerNorm` differ in key set and shape, so torch already refused it. The constructor
+  signatures keep `"batch"`; changing them is breaking for a public-stable class.
+
+- **`padding` is a required key for `load_model(..., model_type="triplanar")`**
+  ([#26](https://github.com/gattia/nsm/issues/26)). It is not a learned parameter, so a
+  checkpoint trained at one value loaded cleanly at `load_model`'s 0.1 default and sampled
+  the feature planes at the wrong scale — measured at 0.063 max SDF difference on a
+  `tanh`-bounded output. A config that omits it now raises `KeyError` naming the value to
+  write. **Configs written before Aug 2026 omit the key**, including the shipped
+  `647_nsm_femur_v0.0.1` one; those models ran at the constructor default, so adding
+  `"padding": 0.1` reproduces them exactly and is the whole migration.
+
+- **`sum_conv_output_features: false` now uses all three feature planes**
+  ([#45](https://github.com/gattia/nsm/issues/45)). It sliced `sdf_latent_size` per plane
+  while sizing the VAE for the concatenation, so yz and xy got zero-channel slices and the
+  output equalled the xz plane alone — silently, with every VAE parameter still receiving
+  gradient. Each plane now takes `sdf_latent_size // 3`. **The VAE's output width is
+  unchanged, so pre-fix checkpoints still load** and then compute something different;
+  `KNOWN_ISSUES.md` § History 15 says how to tell whether a run of yours is affected.
+  `conv_pred_sdf: true` with `sum_conv_output_features: false` now refuses at construction
+  — the combination always died on the first forward — and the divisibility guard is a
+  `ValueError` rather than an `assert`, so `python -O` cannot strip it.
+
+- **`Decoder` no longer takes `norm_layers`** ([#46](https://github.com/gattia/nsm/issues/46)).
+  The branch that built the LayerNorms was an `elif` under `weight_norm`, so the option was
+  reachable **only with weight norm off** — and it then indexed the norm list by absolute
+  layer index, raising `IndexError` for any set not starting at layer 0.
+  **`weight_norm: true` configs are unaffected and still load**: nothing was ever built in
+  that branch, so the key was provably a no-op, and a config carrying it gets a logged
+  warning rather than an error. **`weight_norm: false` with a non-empty `layers_with_norm`
+  is refused**: LayerNorm really was applied there and the checkpoint carries `bn.*` keys,
+  so that architecture can no longer be built — pin NSM < 0.3.0 to load one. No shipped
+  model is in that case; both ShapeMedKnee configs set `weight_norm: true`.
+  `default_config.json` no longer ships the key, and `load_model` keeps mapping it for the
+  sole purpose of reaching those two responses.
+
+  *Not fixed here, deliberately:* commit `01d774a` (Jun 2023) introduced this branch with
+  the message "separate wieght norm and batch norm **so can use both**", which the `elif`
+  is precisely what prevents. Delivering that is new capability — it would add LayerNorm to
+  every model built from a config setting both, `default_config.json` included — so it
+  needs an explicit opt-in and a version boundary rather than a refactor commit.
+
+- **`layer_split: false` now means no layer split** ([#46](https://github.com/gattia/nsm/issues/46)).
+  `Decoder` tested `self.layer_split is not None`, and `False is not None`, so the value
+  `default_config.json` ships selected a split at layer 0: every state-dict key moved from
+  `layers.N.weight` to `layers.N.0.weight`, and with `objects_per_decoder > 1` the output
+  head changed shape as well. A `deepsdf` checkpoint built from such a config no longer
+  loads into a model built from the same config — loudly, with `Missing key(s)` — and
+  **passing `layer_split=0` explicitly rebuilds the original architecture**. `0` still
+  means split at layer 0; only `False` is reinterpreted, since `False == 0` leaves nothing
+  but an identity check to tell them apart. No triplanar model is affected:
+  `TriplanarDecoder` builds its inner `Decoder` with `layer_split=None`.
+
+- **`Decoder(activation='linear')` refuses at construction** ([#46](https://github.com/gattia/nsm/issues/46)).
+  `get_activation` returns `None` for `'linear'`, which is correct for the final position
+  and fatal for the hidden one, where `forward` then called `None`. It now raises a
+  `ValueError` naming `final_activation='linear'` as the position where `'linear'` is
+  supported. Nothing that worked stops working: the configuration always died on the first
+  forward pass.
+
 - **The checkpoint format changes: `VAEDecoder` tensors appear once, not twice**
   ([#27](https://github.com/gattia/nsm/issues/27)). Until now every VAE layer was
   registered in both `self.layers` and `self.decoder`, so `state_dict()` emitted each

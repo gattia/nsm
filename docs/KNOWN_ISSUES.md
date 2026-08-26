@@ -158,43 +158,6 @@ re-exports in `__init__.py` files, which is the usual reason `F401` gets ignored
 
 ## `models/triplanar.py`
 
-### `padding` is not in the checkpoint, and the mismatch is silent
-
-`TriplanarDecoder.padding` scales query coordinates before they index the feature planes
-(`TriplanarDecoder.normalize_coordinates`). It is **not a learned parameter**, so a
-checkpoint trained at one value loads
-cleanly under strict `load_state_dict` at another and then samples at the wrong scale.
-
-**Measured.** A model built at `padding=0.35`, saved, and loaded through `load_model` with a
-config that omits `padding` (`loader._get_triplanar_params` defaults it to 0.1) loads without
-error and computes a maximum absolute SDF difference of **0.063**. The output is `tanh`-bounded
-to (−1, 1), so that is ~3% of the full range, not a rounding artefact. Stating `padding` in the
-config restores bitwise-identical output.
-
-`kneepipeline/steps/run_nsm.py:94-112` passes 15 of `TriplanarDecoder`'s 16 meaningful
-arguments, and `padding` is the one it omits — so the shipped consumer is exposed.
-
-**How to tell whether you are affected:** if the model was trained at a `padding` other than
-0.1 and your config or caller does not state it, every SDF it computes is wrong by up to
-~3% of the output range. Stating `padding` in the config restores bitwise-identical output.
-
-*Fix:* [#26](https://github.com/gattia/nsm/issues/26). *Pinned by:*
-`test_model_roundtrip.TestPaddingIsNotInTheCheckpoint`.
-
-### `normalize_coordinates` ignores its own `padding` argument
-
-The signature is `TriplanarDecoder.normalize_coordinates(self, query, plane, padding=0.1)`
-and the body reads `self.padding`. Accepted, no effect, at any value. Same defect class as
-the entry above and as `get_pts_center_and_scale` — which is why they should be swept
-together rather than one at a time.
-
-> ⚠️ **The obvious fix is worse than the bug**, and the test pinning this rewards the wrong
-> one. Read [#20](https://github.com/gattia/nsm/issues/20)'s traps before changing anything
-> here.
-
-*Pinned by:*
-`test_model_roundtrip...::test_normalize_coordinates_must_honour_its_padding_argument`.
-
 ### Latent gradients are summed over query points, so the reg balance depends on N
 
 When a latent is optimized (reconstruction fitting, and the training embedding), the
@@ -216,22 +179,6 @@ scaled by ~N versus nominal, compare fit quality and fitted-latent norms (see al
 `NSM_TRAINING_IDEAS.md` Idea 4, the norm-saturation gap). Any change to the convention
 rescales every training and reconstruction run and needs a § History entry plus a
 Phase-A-style migration.
-
-## `models/deep_sdf.py`
-
-### `xyz_in_all` is accepted and never read
-
-`deep_sdf.Decoder.__init__` takes `xyz_in_all`, documents it as "for deepSDF decoder, include
-XYZ at each layer", and never stores it. `forward` computed `xyz = input_[:, -3:]` and never
-used it either — the vestige of the unimplemented feature, removed when `NSM/` was brought
-to zero flake8 violations. `default_config.json` ships the key and `loader` plumbs it
-through in four places, so a config setting `xyz_in_all: true` is silently a no-op.
-
-Same class as `normalize_coordinates`' `padding` and `get_pts_center_and_scale`'s `center=`
-— an argument accepted and discarded — so it belongs to the same sweep.
-
-*Fix:* [#20](https://github.com/gattia/nsm/issues/20). *Not pinned by a test:* found by
-reading, not by a failure.
 
 ## `train/train_deep_sdf.py`
 
@@ -1029,3 +976,154 @@ reclaimable disk.
 *Pinned by:* `test_dataset_cache.TestFormerlyCollidingParameters`,
 `test_dataset_cache.TestMeshContentInTheKey`, `test_dataset_cache.TestReferenceMeshHashing`,
 `test_dataset_cache.TestHashedParametersChangeTheKey`.
+
+## 14. `layer_split: false` meant "split at layer 0", and progressive depth's first phase-in epoch ran at full weight
+
+Two `deep_sdf.Decoder` option defects, bundled because they are the same shape — a start
+condition written more than once and inconsistently — and because no shipped model is
+affected by either.
+
+| | |
+|---|---|
+| **Affected** | `deepsdf` models built from a config carrying `"layer_split": false` (what `default_config.json` ships); training runs with `progressive_add_depth: true` **and** `layer_split` set, at exactly `epoch == start_epoch` of each phased-in block |
+| **Unaffected** | Every triplanar model, including both shipped ShapeMedKnee models — `TriplanarDecoder` builds its inner `Decoder` with `layer_split=None` and never passes `progressive_add_depth`; every `progressive_add_depth: true` run without `layer_split`, which raised `TypeError` on the first forward below the last `start_epoch` and so produced no results |
+| **Severity** | `layer_split`: silent, and it changes the architecture. Progressive depth: one epoch per block |
+| **Fixed in** | `models-package-sweep`, Aug 2026 ([#46](https://github.com/gattia/nsm/issues/46)) |
+
+### What was wrong
+
+**`layer_split`.** `Decoder` decides whether to split with `self.layer_split is not None`,
+and `False is not None`. So `"layer_split": false` — the value `default_config.json` ships
+and the value every reader takes to mean *off* — selected a split at layer 0: every layer
+became an `nn.ModuleList` of `n_objects` branches, moving every state-dict key from
+`layers.N.weight` to `layers.N.0.weight`. With `objects_per_decoder > 1` it also changed
+the output head, from one stack emitting `n_objects` channels to `n_objects` stacks each
+emitting one. `False == 0` in Python, so no value comparison can separate the shipped
+"off" from a deliberate split at layer 0 — only an identity check can.
+
+**Progressive depth.** `forward_branch_` phases a block in at `epoch >= start_epoch`, while
+`progressive_layer` blended only for `start < epoch < end`. `epoch == start` therefore fell
+through to the `else` and applied the block at **full weight** — before the warmup, whose
+own first weight is `(1 / warmup) ** 2`, near zero. So the block's contribution went
+0 → 1 → ~0 → ramp. (`progressive_layer` also carried an `epoch < start` `RuntimeError` that
+its one caller could not reach.)
+
+### What changed
+
+`layer_split=False` normalizes to `None` at construction; `0` still means split at layer 0.
+`progressive_layer` blends for `epoch < end`, one condition rather than three, so
+`epoch == start` weights the block at zero — an identity, which is exactly what skipping it
+one epoch earlier does. A not-yet-started block now returns its input rather than `None`.
+
+### How to tell whether one of your runs is affected
+
+Check `model_params_config.json`. `"model_type": "triplanar"` — not affected, by either.
+`"model_type": "deepsdf"` with `"layer_split": false` — that checkpoint was built with
+every layer split, so it no longer loads into a model built from the same config: it fails
+loudly with `Missing key(s)`/`Unexpected key(s)`, and **passing `layer_split=0` explicitly
+reproduces the original architecture exactly**. `"progressive_add_depth": true` with
+`layer_split` set — one epoch per phased-in block trained with that block at full weight;
+everything else in the run is unchanged.
+
+*Pinned by:* `test_model_options.test_layer_split_false_is_the_same_model_as_no_layer_split`,
+`test_model_options.test_layer_split_zero_still_splits_at_layer_zero`,
+`test_model_options.test_a_block_phases_in_continuously_across_its_start_epoch`.
+
+## 15. `sum_conv_output_features: false` trained on one plane of three
+
+| | |
+|---|---|
+| **Affected** | Any training or reconstruction run with `sum_conv_output_features: false` (the `TriplanarDecoder` argument `sum_sdf_features=False`) |
+| **Unaffected** | Everything else, including **both shipped ShapeMedKnee models** — 647 and 551 set it `true`, and it defaults to `true` in the constructor, `loader` and `get_model_config_template` |
+| **Severity** | Silent. The model builds, trains, converges and reconstructs; it is simply a third of the architecture it was asked for |
+| **Fixed in** | `models-package-sweep`, Aug 2026 ([#45](https://github.com/gattia/nsm/issues/45)) |
+
+### What was wrong
+
+`TriplanarDecoder.__init__` sized the VAE output by `sdf_latent_size` when not summing —
+correct, since the three planes are concatenated into the decoder's input width — while
+`forward_with_plane_features` sliced `sdf_latent_size` **per plane**. For
+`sdf_latent_size=12`, the xz plane received all 12 channels and yz and xy received
+zero-channel slices. `grid_sample` on a zero-channel plane returns an `(N, 0)` tensor and
+does not complain, so the concatenation produced a result `torch.equal` to sampling the xz
+plane alone. Every VAE parameter still received gradient — through the xz geometry — so
+training converged, to a model using one plane of three.
+
+The `assert` guarding the branch said "if sum_sdf_features is True" while guarding the
+`False` branch, which is one reason nobody read it as suspicious.
+
+`conv_pred_sdf: true` combined with concatenation was broken past that: three
+low-frequency SDF channels, one per plane, with no defined rule for combining them, and a
+feature vector two channels wider than the SDF decoder was sized for. It always raised a
+shape error on the first forward.
+
+### What changed
+
+Each plane's slice is `sdf_latent_size // 3` (plus one channel when `conv_pred_sdf`), so
+the three concatenate to exactly the decoder's input width. The divisibility guard is a
+`ValueError` rather than an `assert`, since `python -O` strips asserts and this one guards
+a shape. Concatenation with `conv_pred_sdf` refuses at construction.
+
+**The VAE's output width is unchanged** — it was `sdf_latent_size` before and is
+`sdf_latent_size` after — so every parameter shape is the same and a pre-fix checkpoint
+still loads under strict `load_state_dict`. It then computes something different, which is
+the reason this entry exists.
+
+### How to tell whether one of your runs is affected
+
+`model_params_config.json`: `"sum_conv_output_features": false`. If the key is absent or
+`true`, the run is unaffected. If it is `false`, that model used only its xz plane, and no
+comparison drawn against a summed model is meaningful — retrain rather than re-evaluate,
+since the checkpoint loads either way.
+
+*Pinned by:* `test_model_options.test_concatenation_uses_all_three_planes`,
+`test_model_options.test_the_concatenating_vae_keeps_the_width_it_always_had`,
+`test_model_options.test_triplanar_feature_combination_works_or_refuses`.
+
+## 16. A `padding` a config did not state was silently defaulted, at any trained value
+
+| | |
+|---|---|
+| **Affected** | Any model trained at a `padding` other than 0.1 and loaded through `load_model` from a config that omits the key — every SDF it computed was wrong |
+| **Unaffected** | Models trained at `padding=0.1`, which is the constructor default and what **both shipped ShapeMedKnee models** ran at; any caller that states `padding` in the config |
+| **Severity** | Silent, and it scales the whole query domain |
+| **Fixed in** | `models-package-sweep`, Aug 2026 ([#26](https://github.com/gattia/nsm/issues/26)) |
+
+### What was wrong
+
+`TriplanarDecoder.padding` scales query coordinates before they index the feature planes
+(`normalize_coordinates`). It is **not a learned parameter**, so nothing in a checkpoint
+constrains it: strict `load_state_dict` succeeds at any value, and the model then samples
+the feature planes at the wrong scale. `loader._get_triplanar_params` defaulted it to 0.1
+with a `config.get`, so a config that never mentioned `padding` produced a working,
+plausible, wrong model.
+
+**Measured.** A model built at `padding=0.35`, saved, and loaded through `load_model` with
+a config omitting the key computes a maximum absolute SDF difference of **0.063**. The
+output is `tanh`-bounded to (−1, 1), so that is ~3% of the full range.
+
+### What changed
+
+`padding` is a required key for the triplanar branch. A config without it raises `KeyError`
+with the value to write, including the note that a config predating the key belongs to a
+model trained at the constructor default — so `"padding": 0.1` reproduces such a model
+exactly, and stating it restores bitwise-identical output.
+
+This is option 1 of the three the issue lists. Options 2 (write it into the checkpoint) and
+3 (a public "build the model this config describes" call) are not done: option 2 would put
+a key in the state dict that no shipped checkpoint has, and option 3 is the model-registry
+work in `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §8.1.
+
+**`kneepipeline` is not covered by this fix and does not need to be.** It hand-rolls the
+config→constructor mapping (`steps/run_nsm.py:94-112`, 15 of 16 meaningful arguments) and
+never calls `load_model`, so the refusal does not reach it — and both models it loads were
+trained at the default. Closing that gap is what option 3 is for; `SCOPE.md` §3.1 tracks it.
+
+### How to tell whether one of your runs is affected
+
+Was the model trained at a `padding` other than 0.1, and did the config or caller you
+loaded it with state that value? If not, every SDF that model computed is wrong by up to
+~3% of the output range. Re-run with `padding` stated; nothing about the checkpoint needs
+to change.
+
+*Pinned by:* `test_model_roundtrip.TestPaddingIsNotInTheCheckpoint`.
