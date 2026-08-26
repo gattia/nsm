@@ -415,11 +415,10 @@ def test_subdividing_on_a_matching_base_mesh_is_silent():
         subdivide_triangles_on_base_mesh(mesh.copy(), mesh, max_length_threshold=0.5)
 
 
-@broken(ISSUE_54, "#54: score_correspondence substitutes the warped mesh for the source")
 def test_roundtrip_metrics_skip_without_a_source_mesh():
-    """Every sibling in the same dict skips; these two invent.
+    """Every sibling in the same dict skips; these two used to invent.
 
-    Measured today: mean roundtrip distance 0.2500 where the true displacement against
+    Was a strict #54 xfail. Measured before the fix: mean roundtrip distance 0.2500 where the true displacement against
     the source is 0.0017 -- a factor of 144, reported as a measurement, in the same
     return value where ``foldover_count`` correctly says it was skipped.
     """
