@@ -284,11 +284,10 @@ class _OffsetSphereDecoder(torch.nn.Module):
         return torch.linalg.norm(x[:, -3:] - 2.0, dim=1, keepdim=True) - 0.05
 
 
-@broken(ISSUE_60, "#60: the fallback grid origin ignores search_bounds")
 def test_fallback_grid_covers_search_bounds(monkeypatch):
     """The fallback searches where the caller asked, not where the default points.
 
-    Measured today with ``search_bounds=(0.0, 4.0)`` and ``n_pts_per_axis=17``: the
+    Was a strict #60 xfail. Measured before the fix with ``search_bounds=(0.0, 4.0)`` and ``n_pts_per_axis=17``: the
     fallback grid spans [-1, 3] on every axis, because ``voxel_origin`` arrives as its
     own ``(-1, -1, -1)`` default while ``voxel_size`` was derived from ``search_bounds``.
     """
@@ -320,6 +319,37 @@ def test_fallback_grid_covers_search_bounds(monkeypatch):
         (seen["origin"][i], seen["origin"][i] + seen["size"] * (seen["n"] - 1)) for i in range(3)
     ]
     assert span == [(0.0, 4.0)] * 3, span
+
+
+def test_default_search_bounds_keep_the_historical_fallback_origin(monkeypatch):
+    """Why #60's fix moves no run anyone has: the two agree at the defaults.
+
+    ``search_bounds`` defaults to (-1.0, 1.0) and ``reconstruct_mesh`` builds it from
+    ``recon_grid_origin``, which defaults to 1.0 and which no NSM-owned config overrides.
+    Deriving the origin from it therefore reproduces the old ``(-1, -1, -1)`` exactly.
+    """
+    seen = {}
+    monkeypatch.setattr(mesh_main, "create_mesh", lambda *a, **k: seen.update(k))
+    create_mesh_adaptive(
+        _OffsetSphereDecoder(), None, n_pts_per_axis=9, n_pts_coarse=4, device="cpu"
+    )
+    assert seen["voxel_origin"] == (-1.0, -1.0, -1.0)
+
+
+def test_an_explicit_fallback_origin_is_still_honoured(monkeypatch):
+    """``None`` is the sentinel for "derive it"; a passed value still wins."""
+    seen = {}
+    monkeypatch.setattr(mesh_main, "create_mesh", lambda *a, **k: seen.update(k))
+    create_mesh_adaptive(
+        _OffsetSphereDecoder(),
+        None,
+        n_pts_per_axis=9,
+        n_pts_coarse=4,
+        search_bounds=(0.0, 4.0),
+        voxel_origin=(7.0, 7.0, 7.0),
+        device="cpu",
+    )
+    assert seen["voxel_origin"] == (7.0, 7.0, 7.0)
 
 
 # ---------------------------------------------------------------------------

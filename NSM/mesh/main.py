@@ -585,7 +585,7 @@ def create_mesh_adaptive(
     decoder,
     latent_vector,
     n_pts_per_axis=256,
-    voxel_origin=(-1, -1, -1),
+    voxel_origin=None,
     voxel_size=None,
     n_pts_coarse=64,
     search_bounds=(-1.0, 1.0),
@@ -636,7 +636,11 @@ def create_mesh_adaptive(
         n_pts_per_axis: Sets the fine voxel size whenever voxel_size is None
             (extent / (n_pts_per_axis - 1)) — the mean-mesh caller's case — and
             the full-grid resolution on the fallback path
-        voxel_origin: Origin for fallback grid
+        voxel_origin: Origin of the *fallback* full grid, and of nothing else -- the
+            two-pass path derives its own origin from the detected bounds and
+            overwrites this. None (the default) takes it from search_bounds, which
+            is the only value consistent with the voxel_size derived from the same
+            place; see #60
         voxel_size: Voxel size for dense grid (computed if None)
         n_pts_coarse: Coarse grid resolution per axis
         search_bounds: (min, max) bounds for coarse grid
@@ -672,6 +676,13 @@ def create_mesh_adaptive(
     if voxel_size is None:
         original_extent = search_bounds[1] - search_bounds[0]
         voxel_size = original_extent / (n_pts_per_axis - 1)
+
+    # The fallback grid's origin has to come from the same place its spacing does. It
+    # used to default to (-1, -1, -1) independently of search_bounds, so a caller who
+    # moved the search region got a fallback grid that did not cover it (#60): with
+    # search_bounds=(0, 4) and n_pts_per_axis=17 the grid spanned [-1, 3].
+    if voxel_origin is None:
+        voxel_origin = (search_bounds[0],) * 3
 
     # Use voxel_size as the original spacing
     original_spacing = voxel_size
@@ -719,24 +730,28 @@ def create_mesh_adaptive(
         if fallback_to_original:
             if verbose:
                 logger.warning("Falling back to original create_mesh...")
+            # Keywords, not the 17 positionals this used to be: create_mesh's
+            # signature is public and any insertion into it would have shifted them
+            # silently. ARCHITECTURE.md section 7 lists this call as its example of
+            # the LR bug's shape.
             return create_mesh(
                 decoder,
                 latent_vector,
-                n_pts_per_axis,
-                voxel_origin,
-                voxel_size,
-                batch_size,
-                scale,
-                offset,
-                path_save,
-                filename,
-                path_original_mesh,
-                scale_to_original_mesh,
-                icp_transform,
-                objects,
-                verbose,
-                device,
-                use_vtk,
+                n_pts_per_axis=n_pts_per_axis,
+                voxel_origin=voxel_origin,
+                voxel_size=voxel_size,
+                batch_size=batch_size,
+                scale=scale,
+                offset=offset,
+                path_save=path_save,
+                filename=filename,
+                path_original_mesh=path_original_mesh,
+                scale_to_original_mesh=scale_to_original_mesh,
+                icp_transform=icp_transform,
+                objects=objects,
+                verbose=verbose,
+                device=device,
+                use_vtk=use_vtk,
             )
         else:
             return [None] * objects if objects > 1 else None
