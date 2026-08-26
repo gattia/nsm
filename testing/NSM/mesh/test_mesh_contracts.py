@@ -35,7 +35,12 @@ from NSM.mesh.correspondence_metrics import (
     self_intersection_count,
 )
 from NSM.mesh.interpolate import build_mesh_laplacian, compute_feature_mask
-from NSM.mesh.main import create_mesh_adaptive, sdf_grid_to_mesh, sdf_grid_to_mesh_vtk
+from NSM.mesh.main import (
+    create_mesh,
+    create_mesh_adaptive,
+    sdf_grid_to_mesh,
+    sdf_grid_to_mesh_vtk,
+)
 from NSM.mesh.refine_mesh import (
     get_faces,
     get_target_cells,
@@ -357,6 +362,77 @@ def test_an_explicit_fallback_origin_is_still_honoured(monkeypatch):
         device="cpu",
     )
     assert seen["voxel_origin"] == (7.0, 7.0, 7.0)
+
+
+# ---------------------------------------------------------------------------
+# 3b. The shared mesh-building tail
+# ---------------------------------------------------------------------------
+
+
+class _TwoSpheres(torch.nn.Module):
+    """Two nested analytic surfaces, so the multi-object loop is exercised."""
+
+    def forward(self, x):
+        q = x[:, -3:]
+        return torch.cat(
+            [
+                torch.linalg.norm(q, dim=1, keepdim=True) - 0.5,
+                torch.linalg.norm(q - 0.2, dim=1, keepdim=True) - 0.3,
+            ],
+            dim=1,
+        )
+
+
+class _NoSurface(torch.nn.Module):
+    def forward(self, x):
+        return torch.linalg.norm(x[:, -3:], dim=1, keepdim=True) + 1.0
+
+
+@pytest.mark.parametrize("use_vtk", [True, False])
+def test_dense_and_adaptive_extract_the_same_surface(use_vtk):
+    """The two callers of the shared tail agree, on both extraction backends.
+
+    They evaluate different grids -- the adaptive one is cropped to the detected
+    bounds -- so agreement is a statement about the tail, not a tautology. Measured
+    max vertex displacement 7.0e-07 with VTK and 7.1e-07 with skimage, against a
+    0.087 voxel: five orders of magnitude of headroom under the 1e-05 tolerance.
+    """
+    decoder = _TwoSpheres()
+    common = dict(objects=2, device="cpu", scale_to_original_mesh=False, use_vtk=use_vtk)
+    dense = create_mesh(decoder, None, n_pts_per_axis=24, **common)
+    adaptive = create_mesh_adaptive(decoder, None, n_pts_per_axis=24, n_pts_coarse=12, **common)
+
+    assert len(dense) == len(adaptive) == 2
+    for d, a in zip(dense, adaptive):
+        assert d.point_coords.shape == a.point_coords.shape
+        assert np.abs(d.point_coords - a.point_coords).max() < 1e-5
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda d, **k: create_mesh(d, None, n_pts_per_axis=16, **k),
+        lambda d, **k: create_mesh_adaptive(
+            d, None, n_pts_per_axis=16, n_pts_coarse=8, fallback_to_original=False, **k
+        ),
+    ],
+    ids=["dense", "adaptive"],
+)
+def test_an_object_with_no_zero_crossing_yields_none(build):
+    """The tail's one branch that returns something other than a mesh."""
+    assert build(_NoSurface(), objects=1, device="cpu", scale_to_original_mesh=False) is None
+
+
+def test_scale_and_offset_reach_the_finished_mesh():
+    """`scale_to_original_mesh` with no `old_mesh` applies the passed scale/offset."""
+    decoder = _TwoSpheres()
+    common = dict(objects=2, device="cpu", n_pts_per_axis=24)
+    plain = create_mesh(decoder, None, scale_to_original_mesh=False, **common)
+    scaled = create_mesh(
+        decoder, None, scale=2.5, offset=(0.1, -0.2, 0.3), scale_to_original_mesh=True, **common
+    )
+    expected = plain[0].point_coords * 2.5 + np.array([0.1, -0.2, 0.3])
+    assert np.allclose(scaled[0].point_coords, expected, atol=1e-5)
 
 
 # ---------------------------------------------------------------------------
