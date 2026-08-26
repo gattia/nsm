@@ -30,6 +30,16 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **There is one `Sine`, and `NSM.models.Sine` is unambiguously it.** `deep_sdf` defined a
+  second one with `w0` hardcoded to 30 and its initializer misspelled `__init` (so
+  name-mangled, and never run), and `NSM/models/__init__.py`'s `from .deep_sdf import *`
+  runs before the explicit imports, so `NSM.models.Sine` silently meant that one rather
+  than `modulated_periodic_activations.Sine`, which takes `w0` and defaults it to 1.0.
+  `deep_sdf` now imports the parameterized class and `get_activation("sin")` returns
+  `Sine(w0=30)`. **No arithmetic changes** — both computed `sin(30 * x)` — and any code
+  that constructed `NSM.models.Sine()` positionally now gets `w0=1.0` instead of 30, so
+  pass `w0=30` explicitly if that was the intent.
+
 - **Four arguments that were accepted and never read are deleted from `models/`**
   ([#20](https://github.com/gattia/nsm/issues/20)):
   `TriplanarDecoder.normalize_coordinates(padding=)` (the body reads `self.padding`, and

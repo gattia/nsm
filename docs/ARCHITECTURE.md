@@ -293,10 +293,12 @@ non-underscore name in the source module, including its imported third-party mod
 `read_meshes_get_sampled_pts` and `adjust_learning_rate` — 138 de-facto exports across the
 package in total.
 
-`NSM.models` inherits a subtler problem: `from .deep_sdf import *` runs *before* the
-explicit imports, and `deep_sdf` defines a `Sine` with a hardcoded `w0=30` while
-`modulated_periodic_activations` defines a different `Sine` taking `w0` as an argument.
-`NSM.models.Sine` resolves to the hardcoded one.
+`NSM.models` inherited a subtler problem: `from .deep_sdf import *` runs *before* the
+explicit imports, and `deep_sdf` defined its own `Sine` with a hardcoded `w0=30` while
+`modulated_periodic_activations` defines a different `Sine` taking `w0` as an argument, so
+`NSM.models.Sine` resolved to the hardcoded one. *Closed in §8.0.H — there is one `Sine`,
+and `deep_sdf` imports it.* The star-import that decided which one is still there, and is
+still the reason the ordering mattered.
 
 ---
 
@@ -308,7 +310,7 @@ The plan flagged one. There are six.
 |---|---|---|
 | **Two `adjust_learning_rate`** | `utils.adjust_learning_rate` (target-keyed, per-epoch) and `reconstruct/utils.py` (step decay for latent fitting) | Unrelated signatures, same name, and the second is *leaked into `NSM.reconstruct`'s namespace* by the star-import — so `from NSM.reconstruct import adjust_learning_rate` silently gets the wrong one. |
 | **Four `loss_l1 = torch.nn.L1Loss(...)`** | module-level `loss_l1` in `train_deep_sdf.py`, `train_deep_sdf_multi_head.py`, and both `deprecated/` trainers | Four copies of a shared import-time module. |
-| **Two `Sine` classes** | `deep_sdf.Sine` (w0 hardcoded, `__init__` misspelled as `__init`, never runs) and `modulated_periodic_activations.Sine` | Incompatible defaults; the star-import decides which one `NSM.models.Sine` means. |
+| ~~**Two `Sine` classes**~~ | *Closed in §8.0.H.* The `deep_sdf` copy (w0 hardcoded, `__init__` misspelled as `__init` and so name-mangled to `_Sine__init`, never ran) is deleted; `deep_sdf` imports `modulated_periodic_activations.Sine` and `get_activation("sin")` returns `Sine(w0=30)`. Both computed `sin(30 * x)`, so no run's arithmetic changed. | Kept as an entry because *why* it was hard to see is the durable part: the star-import ordering, not the duplication. |
 | **Two edge-ratio implementations** | `correspondence_metrics.triangle_health` and `triangle_metrics.py` | Divergent results from the same-named statistic. |
 | **`train_deep_sdf` defined twice** | `train/train_deep_sdf.py` and `train/train_deep_sdf_multi_head.py` | Same function name in two modules, second parameter is `model` in one and `models` in the other. Tests alias them to disambiguate. |
 | **`unpack_pts` / `unpack_numpy_data`** | `datasets/utils.py` (moved from `sdf_dataset.py`, §8.0) and duplicated verbatim in a testing script | Encodes the `.npz` cache layout in two places. |

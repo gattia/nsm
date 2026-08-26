@@ -112,34 +112,37 @@ class TestTheVAEHasNoActivation:
 
 class TestOneSine:
     """
-    ``deep_sdf`` and ``modulated_periodic_activations`` each define a ``Sine``, with
+    ``deep_sdf`` and ``modulated_periodic_activations`` each defined a ``Sine`` with
     incompatible defaults -- ``w0`` hardcoded to 30 in one, an argument defaulting to 1.0
-    in the other -- and ``NSM.models.__init__``'s ``from .deep_sdf import *`` runs first,
-    so ``NSM.models.Sine`` silently means the hardcoded one (ARCHITECTURE section 6).
+    in the other -- and ``NSM.models.__init__``'s ``from .deep_sdf import *`` runs before
+    the explicit imports, so ``NSM.models.Sine`` silently meant the hardcoded one
+    (ARCHITECTURE section 6). ``deep_sdf`` now imports the parameterized one.
     """
 
-    def test_the_two_compute_the_same_function_at_w0_30(self):
-        """What makes merging them safe: no run's arithmetic changes."""
-        from NSM.models.deep_sdf import Sine as HardcodedSine
-        from NSM.models.modulated_periodic_activations import Sine as ParameterizedSine
+    def test_there_is_only_one_sine(self):
+        import NSM.models as models
+        from NSM.models.deep_sdf import Sine as ReExported
+        from NSM.models.modulated_periodic_activations import Sine
+
+        assert models.Sine is Sine is ReExported
+
+    def test_the_sin_activation_still_computes_sin_30x(self):
+        """
+        What makes merging the two safe: no run's arithmetic changes. The deleted class
+        computed ``torch.sin(30 * input)`` with 30 inlined; ``get_activation`` now returns
+        ``Sine(w0=30)``, and the parameterized default of 1.0 must not leak in here.
+        """
+        from NSM.models.deep_sdf import get_activation
 
         torch.manual_seed(3)
         x = torch.randn(32)
-        assert torch.equal(HardcodedSine()(x), ParameterizedSine(30)(x))
+        assert torch.equal(get_activation("sin")(x), torch.sin(30 * x))
 
-    def test_the_hardcoded_sines_initializer_never_runs(self):
-        """``def __init(self)`` -- one underscore short, and name-mangled to ``_Sine__init``."""
-        from NSM.models.deep_sdf import Sine as HardcodedSine
+    def test_a_sine_decoder_forwards(self):
+        """The activation reached through a real ``Decoder``, not just constructed."""
+        from NSM.models.deep_sdf import Decoder
 
-        assert "_Sine__init" in vars(HardcodedSine)
-        assert "__init__" not in vars(HardcodedSine)
-
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#46/ARCHITECTURE section 6: two Sine classes, and the star-import picks one",
-    )
-    def test_there_is_only_one_sine(self):
-        import NSM.models as models
-        from NSM.models.modulated_periodic_activations import Sine
-
-        assert models.Sine is Sine
+        torch.manual_seed(4)
+        model = Decoder(latent_size=8, dims=[16, 16], activation="sin").eval()
+        with torch.no_grad():
+            assert model(torch.randn(5, 11)).shape == (5, 1)

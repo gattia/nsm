@@ -6,7 +6,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .modulated_periodic_activations import Sine
+
 logger = logging.getLogger(__name__)
+
+#: SIREN's frequency scaling. See the paper's sec. 3.2, final paragraph, and supplement
+#: sec. 1.5, for the discussion of the factor 30.
+SIREN_W0 = 30
 
 PROGRESSIVE_PARAMS = {
     "n_layers": 3,
@@ -25,15 +31,6 @@ PROGRESSIVE_PARAMS = {
         },
     },
 }
-
-
-class Sine(nn.Module):
-    def __init(self):
-        super().__init__()
-
-    def forward(self, input):
-        # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of factor 30
-        return torch.sin(30 * input)
 
 
 class Decoder(nn.Module):
@@ -325,7 +322,7 @@ def init_weights(module, activation, first_layer=False):
                 if first_layer is True:
                     b = 1 / num_input
                 elif first_layer is False:
-                    b = np.sqrt(6 / num_input) / 30
+                    b = np.sqrt(6 / num_input) / SIREN_W0
 
                 torch.nn.init.uniform_(module.weight, -b, b)
 
@@ -348,7 +345,12 @@ def get_activation(activation):
     elif activation == "swish":
         return nn.SiLU()
     elif activation == "sin":
-        return Sine()
+        # One Sine, imported from modulated_periodic_activations. deep_sdf used to define a
+        # second one with w0 hardcoded to 30 and its initializer misspelled `__init`, and
+        # `from .deep_sdf import *` runs first in NSM/models/__init__.py -- so
+        # `NSM.models.Sine` silently meant the hardcoded one. Both computed sin(30 * x)
+        # here, so no run's arithmetic changes.
+        return Sine(w0=SIREN_W0)
     elif activation == "linear":
         return None
     else:
