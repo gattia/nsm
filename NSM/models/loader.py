@@ -115,6 +115,25 @@ def _get_triplanar_params(config: Dict[str, Any]) -> tuple:
     required_keys = ["latent_size"]
     _check_required_keys(config, required_keys, "triplanar")
 
+    # `padding` is required rather than defaulted, and it is the only key here that is
+    # (#26). Every other one either has a value the checkpoint's tensor shapes would
+    # contradict, or does not change what the model computes. `padding` is neither: it
+    # scales query coordinates before they index the feature planes and is not a learned
+    # parameter, so a checkpoint trained at one value loads cleanly under strict
+    # load_state_dict at another and samples at the wrong scale -- measured at 0.063 max
+    # SDF difference on a tanh-bounded output. There is nothing in the checkpoint to
+    # cross-check it against, so the config is the only place it can come from.
+    if "padding" not in config:
+        raise KeyError(
+            "padding is missing from this triplanar config, and it cannot be recovered "
+            "from the checkpoint: it scales query coordinates before they index the "
+            "feature planes and is not a learned parameter, so loading at the wrong value "
+            'succeeds and silently samples at the wrong scale. Add "padding": <value> to '
+            "the config. Configs written before Aug 2026 omit the key, and every model "
+            "trained before then ran at the constructor default -- for those, "
+            '"padding": 0.1 reproduces the model exactly.'
+        )
+
     params = {
         "latent_dim": config["latent_size"],
         "n_objects": config.get("objects_per_decoder", 1),

@@ -30,6 +30,15 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **`padding` is a required key for `load_model(..., model_type="triplanar")`**
+  ([#26](https://github.com/gattia/nsm/issues/26)). It is not a learned parameter, so a
+  checkpoint trained at one value loaded cleanly at `load_model`'s 0.1 default and sampled
+  the feature planes at the wrong scale — measured at 0.063 max SDF difference on a
+  `tanh`-bounded output. A config that omits it now raises `KeyError` naming the value to
+  write. **Configs written before Aug 2026 omit the key**, including the shipped
+  `647_nsm_femur_v0.0.1` one; those models ran at the constructor default, so adding
+  `"padding": 0.1` reproduces them exactly and is the whole migration.
+
 - **`sum_conv_output_features: false` now uses all three feature planes**
   ([#45](https://github.com/gattia/nsm/issues/45)). It sliced `sdf_latent_size` per plane
   while sizing the VAE for the concatenation, so yz and xy got zero-channel slices and the

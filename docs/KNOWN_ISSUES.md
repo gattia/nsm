@@ -158,42 +158,21 @@ re-exports in `__init__.py` files, which is the usual reason `F401` gets ignored
 
 ## `models/triplanar.py`
 
-### `padding` is not in the checkpoint, and the mismatch is silent
-
-`TriplanarDecoder.padding` scales query coordinates before they index the feature planes
-(`TriplanarDecoder.normalize_coordinates`). It is **not a learned parameter**, so a
-checkpoint trained at one value loads
-cleanly under strict `load_state_dict` at another and then samples at the wrong scale.
-
-**Measured.** A model built at `padding=0.35`, saved, and loaded through `load_model` with a
-config that omits `padding` (`loader._get_triplanar_params` defaults it to 0.1) loads without
-error and computes a maximum absolute SDF difference of **0.063**. The output is `tanh`-bounded
-to (−1, 1), so that is ~3% of the full range, not a rounding artefact. Stating `padding` in the
-config restores bitwise-identical output.
-
-`kneepipeline/steps/run_nsm.py:94-112` passes 15 of `TriplanarDecoder`'s 16 meaningful
-arguments, and `padding` is the one it omits — so the shipped consumer is exposed.
-
-**How to tell whether you are affected:** if the model was trained at a `padding` other than
-0.1 and your config or caller does not state it, every SDF it computes is wrong by up to
-~3% of the output range. Stating `padding` in the config restores bitwise-identical output.
-
-*Fix:* [#26](https://github.com/gattia/nsm/issues/26). *Pinned by:*
-`test_model_roundtrip.TestPaddingIsNotInTheCheckpoint`.
-
 ### `normalize_coordinates` ignores its own `padding` argument
 
 The signature is `TriplanarDecoder.normalize_coordinates(self, query, plane, padding=0.1)`
 and the body reads `self.padding`. Accepted, no effect, at any value. Same defect class as
-the entry above and as `get_pts_center_and_scale` — which is why they should be swept
-together rather than one at a time.
+`get_pts_center_and_scale` — which is why they should be swept together rather than one at
+a time. (`padding` *not being in the checkpoint* was a different defect and is § History
+16; the two share a name and nothing else.)
 
 > ⚠️ **The obvious fix is worse than the bug**, and the test pinning this rewards the wrong
 > one. Read [#20](https://github.com/gattia/nsm/issues/20)'s traps before changing anything
 > here.
 
 *Pinned by:*
-`test_model_roundtrip...::test_normalize_coordinates_must_honour_its_padding_argument`.
+`test_model_roundtrip.TestPaddingIsNotInTheCheckpoint::test_normalize_coordinates_must_not_accept_a_padding_argument` — note the name: the
+test asserts the argument is **gone**, because honouring it is the harmful fix.
 
 ### Latent gradients are summed over query points, so the reg balance depends on N
 
@@ -1132,3 +1111,51 @@ since the checkpoint loads either way.
 *Pinned by:* `test_model_options.test_concatenation_uses_all_three_planes`,
 `test_model_options.test_the_concatenating_vae_keeps_the_width_it_always_had`,
 `test_model_options.test_triplanar_feature_combination_works_or_refuses`.
+
+## 16. A `padding` a config did not state was silently defaulted, at any trained value
+
+| | |
+|---|---|
+| **Affected** | Any model trained at a `padding` other than 0.1 and loaded through `load_model` from a config that omits the key — every SDF it computed was wrong |
+| **Unaffected** | Models trained at `padding=0.1`, which is the constructor default and what **both shipped ShapeMedKnee models** ran at; any caller that states `padding` in the config |
+| **Severity** | Silent, and it scales the whole query domain |
+| **Fixed in** | `models-package-sweep`, Aug 2026 ([#26](https://github.com/gattia/nsm/issues/26)) |
+
+### What was wrong
+
+`TriplanarDecoder.padding` scales query coordinates before they index the feature planes
+(`normalize_coordinates`). It is **not a learned parameter**, so nothing in a checkpoint
+constrains it: strict `load_state_dict` succeeds at any value, and the model then samples
+the feature planes at the wrong scale. `loader._get_triplanar_params` defaulted it to 0.1
+with a `config.get`, so a config that never mentioned `padding` produced a working,
+plausible, wrong model.
+
+**Measured.** A model built at `padding=0.35`, saved, and loaded through `load_model` with
+a config omitting the key computes a maximum absolute SDF difference of **0.063**. The
+output is `tanh`-bounded to (−1, 1), so that is ~3% of the full range.
+
+### What changed
+
+`padding` is a required key for the triplanar branch. A config without it raises `KeyError`
+with the value to write, including the note that a config predating the key belongs to a
+model trained at the constructor default — so `"padding": 0.1` reproduces such a model
+exactly, and stating it restores bitwise-identical output.
+
+This is option 1 of the three the issue lists. Options 2 (write it into the checkpoint) and
+3 (a public "build the model this config describes" call) are not done: option 2 would put
+a key in the state dict that no shipped checkpoint has, and option 3 is the model-registry
+work in `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §8.1.
+
+**`kneepipeline` is not covered by this fix and does not need to be.** It hand-rolls the
+config→constructor mapping (`steps/run_nsm.py:94-112`, 15 of 16 meaningful arguments) and
+never calls `load_model`, so the refusal does not reach it — and both models it loads were
+trained at the default. Closing that gap is what option 3 is for; `SCOPE.md` §3.1 tracks it.
+
+### How to tell whether one of your runs is affected
+
+Was the model trained at a `padding` other than 0.1, and did the config or caller you
+loaded it with state that value? If not, every SDF that model computed is wrong by up to
+~3% of the output range. Re-run with `padding` stated; nothing about the checkpoint needs
+to change.
+
+*Pinned by:* `test_model_roundtrip.TestPaddingIsNotInTheCheckpoint`.
