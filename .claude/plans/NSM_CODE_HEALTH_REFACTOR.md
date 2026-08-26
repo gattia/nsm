@@ -35,6 +35,22 @@
   `testing/NSM/test_observability.py` hold all of that: no `print`, no log call
   that builds its first argument, and a `getLogger(__name__)` in every module
   that speaks.
+- **§8.0.H, review round 2 (maintainer, 2026-08-26): `conv_norm_type` had four
+  defaults and they disagreed.** Asking what the ShapeMedKnee config actually says
+  turned up the divergence: `"batch"` in the `VAEDecoder`/`TriplanarDecoder`
+  signatures, `_get_triplanar_params` and the triplanar template; `"layer"` in the
+  two_stage branch, `two_stage`'s defaults and `default_config.json`. **The value
+  three of them chose is the one nothing has ever trained** — 647, 551 and
+  `ShapeMedKnee_2024_config.json` all say `"layer"`, and the shipped default only
+  agrees because `651a810` regenerated it from the 647 run; before that the key was
+  absent. Same remedy as #26: `load_model` requires it, templates say `"layer"`,
+  signatures untouched (breaking for a public-stable class → release slice). Not the
+  same *defect* as #26, checked rather than assumed: a mismatch against a checkpoint
+  is loud, because `BatchNorm2d` and `LayerNorm` differ in key set and shape. What the
+  silent default cost was a **fresh** run from the template. Also settled here: the
+  activation was never wired in — `71df387`, Aug 2023, the first triplanar commit,
+  appends conv and norm and builds the activation without appending it — so no
+  triplanar model NSM has produced has ever had one, and this is not a regression.
 - **§8.0.H, review round 1 (maintainer, 2026-08-26): the `norm_layers` refusal was
   too wide, and the framing was wrong.** The maintainer recognised the option as
   something they had deliberately set up, which sent us to the history: commit

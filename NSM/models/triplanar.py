@@ -219,6 +219,12 @@ class TriplanarDecoder(nn.Module):
         conv_hidden_dims=[512, 512, 512, 512, 512],
         conv_deep_image_size=2,
         conv_norm=True,
+        # "batch" here is the historical signature default and NOT what anything trained:
+        # every ShapeMedKnee config, NSM's default_config.json and two_stage's defaults all
+        # say "layer". load_model REQUIRES the key rather than defaulting it, so a config
+        # cannot reach this value by omission; changing the signature itself is a breaking
+        # change to a public-stable class and belongs to the release slice. Under "batch"
+        # the VAE trains nonlinear and evaluates affine -- ARCHITECTURE.md section 7.1.
         conv_norm_type="batch",
         conv_start_with_mlp=True,
         sdf_latent_size=128,

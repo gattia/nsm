@@ -364,8 +364,24 @@ to. The production models work, and they work by accident.
 **The sharper hazard the correction exposes:** with `norm_type="batch"` the model *trains*
 nonlinear — batch statistics couple samples, additivity error 4.08 — and *evaluates* affine
 once BatchNorm switches to running statistics. The function being fit is not in the same
-expressive class as the function being deployed. `batch` is the constructor default, so any
-config omitting `conv_norm_type` gets it.
+expressive class as the function being deployed.
+
+**`batch` was also the default in three of the four places that had one** — the `VAEDecoder`
+and `TriplanarDecoder` signatures, `_get_triplanar_params` and the triplanar template —
+against `layer` in `_get_two_stage_params`, `two_stage`'s default triplanar params and
+`NSM/configs/default_config.json`. The value that won three of them is the one **nothing has
+ever been trained with**: 647, 551, `ShapeMedKnee_2024_config.json` and the regenerated
+default all say `layer`, and the default only says `layer` at all because `651a810`
+regenerated it as a snapshot of the 647 run — before that the key was absent, so anything
+built from the shipped default fell through to `batch`.
+
+*Closed in §8.0.H:* `load_model` **requires** `conv_norm_type` on both branches that build a
+`TriplanarDecoder`, so no config can reach a default by omission, and the templates say
+`layer`. The signature defaults are untouched — changing `TriplanarDecoder`'s is a breaking
+change to a public-stable class and belongs to the release slice. Note what this does *not*
+fix, because torch already does: a mismatch against a checkpoint is loud, since `BatchNorm2d`
+and `LayerNorm` differ in key set *and* shape. What the silent default cost was a **fresh**
+run started from the template, inheriting a configuration nobody had trained.
 
 In every configuration the depth buys much less than it reads as — but **not nothing, and
 the distinction matters.** Composing affine maps gives an affine map, so under `"batch"`

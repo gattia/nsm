@@ -115,8 +115,8 @@ def _get_triplanar_params(config: Dict[str, Any]) -> tuple:
     required_keys = ["latent_size"]
     _check_required_keys(config, required_keys, "triplanar")
 
-    # The only required key that is not `latent_size`, because it is the only one whose
-    # wrong value the checkpoint's tensor shapes do not contradict (#26; History 16).
+    # Two architecture keys are required rather than defaulted. Both are keys whose
+    # silent default has been the wrong one for a real model, for opposite reasons.
     if "padding" not in config:
         raise KeyError(
             "padding is missing from this triplanar config, and it cannot be recovered "
@@ -127,6 +127,16 @@ def _get_triplanar_params(config: Dict[str, Any]) -> tuple:
             "trained before then ran at the constructor default -- for those, "
             '"padding": 0.1 reproduces the model exactly.'
         )
+    if "conv_norm_type" not in config:
+        raise KeyError(
+            "conv_norm_type is missing from this triplanar config. It decides the VAE's "
+            "normalization, and the four places that used to default it did not agree: "
+            '"batch" in the constructor and here, "layer" in the two_stage branch, in '
+            "two_stage's defaults and in every config ever trained. A mismatch against a "
+            "checkpoint fails in torch with a shape error that does not name the cause. "
+            'Add "conv_norm_type": "layer" -- the value every ShapeMedKnee model and the '
+            'shipped default_config.json use -- or "batch" if that is what you trained.'
+        )
 
     params = {
         "latent_dim": config["latent_size"],
@@ -134,7 +144,7 @@ def _get_triplanar_params(config: Dict[str, Any]) -> tuple:
         "conv_hidden_dims": config.get("conv_hidden_dims", [512, 512, 512, 512, 512]),
         "conv_deep_image_size": config.get("conv_deep_image_size", 2),
         "conv_norm": config.get("conv_norm", True),
-        "conv_norm_type": config.get("conv_norm_type", "batch"),
+        "conv_norm_type": config["conv_norm_type"],
         "conv_start_with_mlp": config.get("conv_start_with_mlp", True),
         "sdf_latent_size": config.get("sdf_latent_size", 128),
         "sdf_hidden_dims": config.get("sdf_hidden_dims", [512, 512, 512]),
@@ -202,11 +212,17 @@ def _get_two_stage_params(config: Dict[str, Any]) -> tuple:
         triplanar_params = config["triplanar_params"].copy()
     else:
         # Use default triplanar params with config overrides
+        if "conv_norm_type" not in config:
+            raise KeyError(
+                "conv_norm_type is missing from this two_stage config. State it here or "
+                'inside "triplanar_params"; it used to default to "layer" on this branch '
+                'and "batch" on the triplanar one, for the same underlying class.'
+            )
         triplanar_params = {
             "conv_hidden_dims": config.get("conv_hidden_dims", [512, 512, 512, 512, 512]),
             "conv_deep_image_size": config.get("conv_deep_image_size", 2),
             "conv_norm": config.get("conv_norm", True),
-            "conv_norm_type": config.get("conv_norm_type", "layer"),
+            "conv_norm_type": config["conv_norm_type"],
             "conv_start_with_mlp": config.get("conv_start_with_mlp", True),
             "sdf_latent_size": config.get("sdf_latent_size", 128),
             "sdf_hidden_dims": config.get("sdf_hidden_dims", [512, 512, 512]),
@@ -318,7 +334,12 @@ def get_model_config_template(model_type: str) -> Dict[str, Any]:
             "conv_hidden_dims": [512, 512, 512, 512, 512],
             "conv_deep_image_size": 2,
             "conv_norm": True,
-            "conv_norm_type": "batch",  # 'batch' or 'layer'
+            # 'layer', not the constructor's 'batch': "layer" is what every ShapeMedKnee
+            # model and NSM's own default_config.json were trained with, and "batch" makes
+            # the VAE train nonlinear (batch statistics couple samples) and evaluate affine
+            # (running statistics) -- a different function class fitted and deployed. See
+            # docs/ARCHITECTURE.md section 7.1.
+            "conv_norm_type": "layer",  # 'batch' or 'layer'
             "conv_start_with_mlp": True,
             "sdf_latent_size": 128,
             "sdf_hidden_dims": [512, 512, 512],

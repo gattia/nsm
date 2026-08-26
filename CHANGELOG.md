@@ -54,6 +54,21 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   config carries — are still accepted. `get_model_config_template` no longer advertises
   either key; `default_config.json` keeps `xyz_in_all: false`, which is inert.
 
+- **`conv_norm_type` is a required key for `load_model` on the `triplanar` and `two_stage`
+  branches, and the templates now say `"layer"`.** Four places defaulted it and disagreed:
+  `"batch"` in the `VAEDecoder`/`TriplanarDecoder` signatures, `_get_triplanar_params` and
+  the triplanar template, against `"layer"` in `_get_two_stage_params`,
+  `two_stage`'s default triplanar params and `NSM/configs/default_config.json`. **`"layer"` is
+  the only value ever trained** — 647, 551 and `ShapeMedKnee_2024_config.json` all use it —
+  and it is not cosmetic: it is the only thing making the VAE nonlinear at all, since the
+  pointwise activation was never wired in (`ARCHITECTURE.md` §7.1). Under `"batch"` the
+  stack trains nonlinear and evaluates affine. Every config on disk already states the key,
+  so nothing that worked stops working; what stops is a **fresh** run started from
+  `get_model_config_template("triplanar")` silently inheriting a configuration nobody has
+  trained. A mismatch against an existing checkpoint was never silent — `BatchNorm2d` and
+  `LayerNorm` differ in key set and shape, so torch already refused it. The constructor
+  signatures keep `"batch"`; changing them is breaking for a public-stable class.
+
 - **`padding` is a required key for `load_model(..., model_type="triplanar")`**
   ([#26](https://github.com/gattia/nsm/issues/26)). It is not a learned parameter, so a
   checkpoint trained at one value loaded cleanly at `load_model`'s 0.1 default and sampled
