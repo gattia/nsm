@@ -86,7 +86,9 @@ class Decoder(nn.Module):
         self._activation_ = activation
         self._final_activation_ = final_activation
         self.concat_latent_input = concat_latent_input
-        self.dims = [latent_size + 3] + dims
+        # list(), not `+ dims`: TwoStageDecoder's default mlp_params carries a tuple, and
+        # `[x] + (...)` is a TypeError -- so the type was not constructible at all (#46).
+        self.dims = [latent_size + 3] + list(dims)
         self.latent_in = latent_in
         self.progressive_add_depth = progressive_add_depth
         self.progressive_depth_params = progressive_depth_params

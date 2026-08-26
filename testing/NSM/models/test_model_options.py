@@ -313,26 +313,22 @@ def test_triplanar_multi_object_forwards(objects_per_decoder):
 # --- two_stage and implicit --------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="#46: TwoStageDecoder() concatenates a list and a tuple")
 def test_two_stage_builds_from_its_own_defaults():
     """
-    ``TwoStageDecoder`` with no arguments at all: ``default_mlp_params["dims"]`` is a
-    tuple and ``Decoder`` does ``[latent_size + 3] + dims``. It raises for every argument
-    list, so the type has never been constructible.
+    ``TwoStageDecoder`` with no arguments at all. Until Aug 2026 this raised for every
+    argument list, so the type had never been constructible: ``default_mlp_params["dims"]``
+    is a tuple and ``Decoder`` did ``[latent_size + 3] + dims`` (#46).
     """
     from NSM.models.two_stage import TwoStageDecoder
 
     assert isinstance(TwoStageDecoder(), torch.nn.Module)
 
 
-@pytest.mark.xfail(
-    strict=True, reason="#46: TwoStageDecoder mutates its module-level default dicts"
-)
 def test_two_stage_does_not_mutate_its_module_level_defaults():
     """
     ``__init__`` writes ``latent_dim`` and ``n_objects`` into whichever dicts it was
-    handed, and the defaults are module-level. One construction -- even a failed one --
-    changes what every later default construction means, process-wide.
+    handed, and the defaults are module-level. Until Aug 2026 one construction -- even a
+    failed one -- changed what every later default construction meant, process-wide (#46).
     """
     from NSM.models import two_stage
 

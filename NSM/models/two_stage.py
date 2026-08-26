@@ -62,6 +62,13 @@ class TwoStageDecoder(nn.Module):
 
         self.n_objects = n_objects
 
+        # Copied before they are written to. Both defaults are module-level dicts, so
+        # until Aug 2026 one construction rewrote what every later default construction
+        # meant, process-wide -- and it happened before the TypeError below, so even a
+        # failed build left the module changed (#46).
+        triplanar_params = dict(triplanar_params)
+        mlp_params = dict(mlp_params)
+
         triplanar_params["latent_dim"] = self.model_latent_size
         triplanar_params["n_objects"] = self.n_objects
         mlp_params["latent_size"] = self.model_latent_size
