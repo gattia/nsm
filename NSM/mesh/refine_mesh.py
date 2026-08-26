@@ -1,9 +1,13 @@
+import logging
+
 import numpy as np
 import pyvista as pv
 from vtk.util.numpy_support import numpy_to_vtk
 
 from .._verbose_deprecation import honour_verbose
 from .triangle_metrics import TriangleProperties
+
+logger = logging.getLogger(__name__)
 
 
 def midpoint(vertex1, vertex2):
@@ -413,9 +417,9 @@ def get_target_cells(
     cells_to_divide = np.where(cells_to_divide_binary)[0]
 
     if verbose is True:
-        print(sum(edge_ratio_binary), edge_ratio_binary.shape)
-        print(sum(areas_binary), areas_binary.shape)
-        print(cells_to_divide.shape)
+        logger.debug("%s %s", sum(edge_ratio_binary), edge_ratio_binary.shape)
+        logger.debug("%s %s", sum(areas_binary), areas_binary.shape)
+        logger.debug("%s", cells_to_divide.shape)
 
     return cells_to_divide
 
