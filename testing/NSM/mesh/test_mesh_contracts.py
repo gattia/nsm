@@ -123,13 +123,13 @@ ARRAY_SITES = {
 
 @pytest.mark.parametrize("site", sorted(MESH_SITES))
 @pytest.mark.parametrize("layout", sorted(NON_TRIANGLE_MESHES))
-@broken(ISSUE_57, "#57: a non-triangular mesh is reshaped, not refused")
 def test_mesh_site_refuses_non_triangles(site, layout):
     """Every mesh-taking site names the problem instead of reshaping past it.
 
-    Today two things happen and neither is this: ``quads_3`` raises a bare
-    ``ValueError: cannot reshape array of size 15 into shape (4)``, and ``quads_4``
-    succeeds -- returning five fabricated triangles for four real quads.
+    Was a strict #57 xfail. Before the fix two things happened and neither was this:
+    ``quads_3`` raised a bare ``ValueError: cannot reshape array of size 15 into shape
+    (4)``, and ``quads_4`` succeeded -- returning five fabricated triangles for four
+    real quads.
     """
     with pytest.raises(ValueError) as exc:
         MESH_SITES[site](NON_TRIANGLE_MESHES[layout]())
@@ -137,12 +137,12 @@ def test_mesh_site_refuses_non_triangles(site, layout):
 
 
 @pytest.mark.parametrize("site", sorted(ARRAY_SITES))
-@broken(ISSUE_57, "#57: a VTK-style flat face array is reshaped, not refused")
 def test_array_site_refuses_vtk_style_faces(site):
     """``mesh.faces`` is the array a caller reaches for, and it is the wrong one.
 
-    ``pv.Sphere(8, 8).faces`` has 384 entries and 384 % 3 == 0, so the reshape succeeds
-    and builds 128 rows of interleaved counts and indices for 96 real triangles.
+    Was a strict #57 xfail. ``pv.Sphere(8, 8).faces`` has 384 entries and 384 % 3 == 0,
+    so the reshape succeeded and built 128 rows of interleaved counts and indices for 96
+    real triangles.
     """
     sphere = triangle_sphere()
     with pytest.raises(ValueError) as exc:
@@ -151,8 +151,8 @@ def test_array_site_refuses_vtk_style_faces(site):
 
 
 @pytest.mark.parametrize("site", sorted(ARRAY_SITES))
-@broken(ISSUE_57, "#57: a (M, 4) quad array is reshaped, not refused")
 def test_array_site_refuses_quad_arrays(site):
+    """Was a strict #57 xfail. ``regular_faces`` is (M, 4) for quads, not an error."""
     quads = quad_strip(4)
     with pytest.raises(ValueError) as exc:
         ARRAY_SITES[site](np.asarray(quads.regular_faces), quads)

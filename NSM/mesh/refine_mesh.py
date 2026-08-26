@@ -5,7 +5,7 @@ import pyvista as pv
 from vtk.util.numpy_support import numpy_to_vtk
 
 from .._verbose_deprecation import honour_verbose
-from .triangle_metrics import TriangleProperties
+from .triangle_metrics import TriangleProperties, triangle_faces
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +33,12 @@ def get_faces(mesh):
 
     Returns:
     - faces: A numpy array of vertex indices for each face (Nx3).
+
+    Raises:
+    - ValueError: if the mesh is not all-triangular. See
+      ``triangle_metrics.triangle_faces``, which this forwards to.
     """
-    return mesh.faces.reshape(-1, 4)[:, 1:]
+    return triangle_faces(mesh)
 
 
 def find_all_faces_to_split(mesh, cells_to_divide):

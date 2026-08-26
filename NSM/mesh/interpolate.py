@@ -29,6 +29,7 @@ import torch
 from vtk.util.numpy_support import numpy_to_vtk
 
 from .._verbose_deprecation import honour_verbose
+from .triangle_metrics import triangle_faces
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +221,7 @@ def build_mesh_laplacian(faces, n_points, device, dtype=torch.float32):
     Returns:
     - torch.sparse_coo_tensor: row-normalised adjacency, shape (n_points, n_points).
     """
-    faces = np.asarray(faces).reshape(-1, 3).astype(np.int64)
+    faces = triangle_faces(faces).astype(np.int64)
     edges = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]], axis=0)
     edges = np.concatenate([edges, edges[:, ::-1]], axis=0)
     edges = np.unique(edges, axis=0)
@@ -260,7 +261,7 @@ def compute_feature_mask(faces, points, dihedral_threshold_deg=45.0):
     Returns:
     - np.ndarray[bool]: shape (n_points,), True for feature / boundary vertices.
     """
-    faces = np.asarray(faces).reshape(-1, 3).astype(np.int64)
+    faces = triangle_faces(faces).astype(np.int64)
     pts = np.asarray(points, dtype=np.float64)
     n_points = max(int(faces.max()) + 1, len(pts))
     n_tri = len(faces)

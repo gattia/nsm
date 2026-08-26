@@ -27,7 +27,12 @@ import numpy as np
 import pyvista as pv
 from scipy.spatial import cKDTree
 
-from NSM.mesh.triangle_metrics import TriangleProperties, calculate_triangle_areas, get_edge_lengths
+from NSM.mesh.triangle_metrics import (
+    TriangleProperties,
+    calculate_triangle_areas,
+    get_edge_lengths,
+    triangle_faces,
+)
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -287,8 +292,7 @@ def self_intersection_count(
         return None
 
     pts = np.asarray(mesh.points, dtype=float)
-    # faces array: [3, i0, i1, i2, 3, i0, i1, i2, ...]
-    faces = mesh.faces.reshape(-1, 4)[:, 1:]  # shape (n_tris, 3)
+    faces = triangle_faces(mesh)  # shape (n_tris, 3)
 
     # Precompute triangle vertices as arrays for vectorised ops
     v0 = pts[faces[:, 0]]  # (n_tris, 3)
@@ -481,7 +485,7 @@ def foldover_count(
     src_pts = _mesh_points(source_mesh)
     warped = np.asarray(warped_points, dtype=float)
 
-    faces = source_mesh.faces.reshape(-1, 4)[:, 1:]  # (n_tris, 3)
+    faces = triangle_faces(source_mesh)  # (n_tris, 3)
     n_tris = len(faces)
 
     i0, i1, i2 = faces[:, 0], faces[:, 1], faces[:, 2]
