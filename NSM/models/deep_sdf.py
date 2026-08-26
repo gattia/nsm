@@ -46,14 +46,11 @@ class Decoder(nn.Module):
         dropout_prob=0.2,
         latent_in=(),
         weight_norm=True,
-        # batch_norm=False,
-        xyz_in_all=None,
         activation="relu",  # "relu" or "sin"
         final_activation="tanh",  # "sin", "linear"
         concat_latent_input=False,
         progressive_add_depth=False,
         progressive_depth_params=PROGRESSIVE_PARAMS,
-        latent_noise_sigma=None,
         layer_split=None,
         **kwargs,
     ):
@@ -65,8 +62,6 @@ class Decoder(nn.Module):
         dropout_prob (float) : probability with which dropout is applied
         latent_in (list of ints): where to repeat the latent vector in the decoder
         weight_norm (bool): whether to apply weight normalization
-        xyz_in_all (bool): for deepSDF decoder, include XYZ at each layer
-        use_tanh (bool): for deepSDF decoder, tanh final layer to [0, 1]
         """
         super(Decoder, self).__init__()
 
@@ -76,6 +71,24 @@ class Decoder(nn.Module):
                 "enabled no longer exists, and per-layer dropout (dropout + dropout_prob) is "
                 "a different mechanism, not a replacement. Delete the argument.",
                 DeprecationWarning,
+            )
+
+        # Deleted arguments that a config on disk can still carry. Each is refused when set
+        # to something truthy and ignored when falsy, which is what every NSM-owned config
+        # ships -- so a config that asked for nothing keeps loading, and one that asked for
+        # a thing that never happened is told, instead of being ignored a second time.
+        if kwargs.get("xyz_in_all"):
+            raise TypeError(
+                "xyz_in_all was never implemented: no NSM decoder injects xyz at each "
+                "layer. Decoder accepted the argument, documented it, and never read it. "
+                "Delete the argument (or the config key); there is no replacement."
+            )
+
+        if kwargs.get("latent_noise_sigma"):
+            raise TypeError(
+                "latent_noise_sigma was never implemented: Decoder stored it and forward "
+                "never read it, so no run has ever had latent noise added. Delete the "
+                "argument; there is no replacement."
             )
 
         # norm_layers is not simply inert, so the two cases are answered differently. The
@@ -110,7 +123,6 @@ class Decoder(nn.Module):
         self.latent_in = latent_in
         self.progressive_add_depth = progressive_add_depth
         self.progressive_depth_params = progressive_depth_params
-        self.latent_noise_sigma = latent_noise_sigma
         # `False` means "no split", which is what default_config.json ships and what every
         # reader takes it to mean -- but the tests below are `is not None`, and
         # `False is not None`, so it used to mean "split at layer 0" and moved every
@@ -316,18 +328,6 @@ def init_weights(module, activation, first_layer=False):
                     b = np.sqrt(6 / num_input) / 30
 
                 torch.nn.init.uniform_(module.weight, -b, b)
-
-
-def weight_norm_all(module):
-    """
-    Applies weight normalization to all linear layers in a PyTorch module.
-    """
-
-    def apply_weight_norm(module):
-        if isinstance(module, nn.Linear):
-            nn.utils.weight_norm(module)
-
-    module.apply(apply_weight_norm)
 
 
 def get_activation(activation):

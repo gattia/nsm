@@ -30,6 +30,20 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **Four arguments that were accepted and never read are deleted from `models/`**
+  ([#20](https://github.com/gattia/nsm/issues/20)):
+  `TriplanarDecoder.normalize_coordinates(padding=)` (the body reads `self.padding`, and
+  its sole caller depends on that — honouring the argument instead would have handed it the
+  0.1 default in place of a model's trained value), `Decoder(xyz_in_all=)` and
+  `Decoder(latent_noise_sigma=)` (documented, never read — no run has ever had either), and
+  `VAEDecoder(activation=)` (the module it selected was built and never appended, so the
+  argument chose between two things neither of which ran). The dead function
+  `deep_sdf.weight_norm_all` goes with them. **`Decoder` keeps `**kwargs`**, so
+  `xyz_in_all` and `latent_noise_sigma` set to something truthy now raise a `TypeError`
+  rather than being silently ignored a second time; falsy values — what every NSM-owned
+  config carries — are still accepted. `get_model_config_template` no longer advertises
+  either key; `default_config.json` keeps `xyz_in_all: false`, which is inert.
+
 - **`padding` is a required key for `load_model(..., model_type="triplanar")`**
   ([#26](https://github.com/gattia/nsm/issues/26)). It is not a learned parameter, so a
   checkpoint trained at one value loaded cleanly at `load_model`'s 0.1 default and sampled

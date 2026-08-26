@@ -325,11 +325,11 @@ instance" asks for. The LR bug's class is the largest group.
 | Class | Count | Representative |
 |---|---|---|
 | **Undocumented positional/index ordering** — the LR bug's exact shape | ~12 | `reconstruct_mesh`: reconstructed mesh order *is* the surface identity contract, named nowhere, hardcoded by the consumer. `losses.compute_sdf_gradients`: `cat([latent, points])` with nothing validating the width. `mesh.create_mesh_adaptive`: 17 positional args into `create_mesh`. |
-| **Parameter accepted and silently ignored** | ~10 | `get_pts_center_and_scale`: `center=` / `scale=` are rebound before they are read, so both operations happen unconditionally. `n_pts_random` swallowed by `**kwargs` — the consumer passes 100,000 for it. |
+| **Parameter accepted and silently ignored** | ~10 | `get_pts_center_and_scale`: `center=` / `scale=` are rebound before they are read, so both operations happen unconditionally. `n_pts_random` swallowed by `**kwargs` — the consumer passes 100,000 for it. *`models/` is swept ([#20](https://github.com/gattia/nsm/issues/20), §8.0.H): `normalize_coordinates`' `padding`, `Decoder`'s `xyz_in_all` and `latent_noise_sigma`, and `VAEDecoder`'s `activation` are deleted.* **Deleting the name is only half the fix where the function keeps `**kwargs`** — `Decoder` does, so each deleted argument raises when set truthy rather than going back to being ignored. |
 | **Silent in-place mutation of caller data** | 7 | `get_pts_center_and_scale` mutates the passed array; all three in-repo callers pass `np.copy()` defensively, so the convention exists only as a habit at the call sites. |
 | **Cache key omits a parameter that changes cached content** | 4 | *Fixed by [#19](https://github.com/gattia/nsm/issues/19) in PR #85 (§8.0.F).* `mesh_to_scale` and `uniform_pts_buffer` are in the key; `subsample` was decoupled from cached content instead of keyed; the key is a named canonical mapping with a `cache_format` version. Kept as a defect *class* because it is the one that silently served another run's data — see `KNOWN_ISSUES.md` § History 13. |
 | **Import-time side effect** | 10 | §4 above. |
-| **Constructed and discarded / leaked loop variable** | 3 | `train_deep_sdf_multi_head.train_deep_sdf` (only the last decoder trains), `read_meshes_get_sampled_pts`, `VAEDecoder.__init__` (the activation is built and never appended — the VAE decoder has no pointwise nonlinearity; see §7.1). |
+| **Constructed and discarded / leaked loop variable** | 3 | `train_deep_sdf_multi_head.train_deep_sdf` (only the last decoder trains), `read_meshes_get_sampled_pts`, `VAEDecoder.__init__` (the activation is built and never appended — the VAE decoder has no pointwise nonlinearity; see §7.1). *The `VAEDecoder` half is as fixed as it can be (§8.0.H): the dead `activation=` argument is gone and the stack's shape is pinned by `testing/NSM/models/test_model_structure.py`. Adding the activations is not available — it moves every index inside `self.decoder` and no shipped checkpoint would load.* |
 | **Constructible-but-uncallable configuration** | 5 | *Closed in `models/` by [#46](https://github.com/gattia/nsm/issues/46) (§8.0.H): `Decoder(activation='linear')` and `norm_layers` now refuse at construction, `progressive_add_depth=True` works below its last `start_epoch`, and `TwoStageDecoder()` builds — it had never been constructible, `[latent_size + 3] + dims` being a list plus a tuple. `refine_mesh.get_target_cells()` with its own defaults is the surviving instance and belongs to §8.0.I.* Kept as a defect *class* because it is what an option matrix catches and nothing else does: `testing/NSM/models/test_model_options.py` is that matrix for this package. |
 
 **71 of the 216 are landmines** — wrong behaviour that raises nothing and returns a
@@ -365,8 +365,13 @@ once BatchNorm switches to running statistics. The function being fit is not in 
 expressive class as the function being deployed. `batch` is the constructor default, so any
 config omitting `conv_norm_type` gets it.
 
-In every configuration the depth is still largely wasted: five stacked `ConvTranspose2d`
-with no activation between them buy much less than five layers of a normal decoder.
+In every configuration the depth buys much less than it reads as — but **not nothing, and
+the distinction matters.** Composing affine maps gives an affine map, so under `"batch"`
+the five-layer stack can only express what *one* transposed convolution could. The
+parameters are not idle: they still decide *which* affine map, and the stacked strides give
+it a large effective kernel and receptive field. What is missing is nonlinear expressivity,
+not the parameters. The right statement is that the stack is over-parameterised for the
+function class it can represent, not that 20M weights compute nothing.
 
 **Method note.** The original claim came from reading the code and was reported as verified.
 It took ~20 lines of `torch` to falsify. This is exactly `CLAUDE.md`'s "run the claim before

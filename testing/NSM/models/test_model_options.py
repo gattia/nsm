@@ -186,6 +186,42 @@ def test_a_block_phases_in_continuously_across_its_start_epoch():
     ), f"jump across start_epoch {across:.3e} > one warmup step {intended:.3e}"
 
 
+#: Config keys whose ``Decoder`` argument was deleted in Aug 2026 (#20), with a truthy
+#: value and the falsy value every NSM-owned config carries. Both were documented, stored
+#: or dropped, and never read by ``forward``: no run has ever had either.
+#:
+#: ``layers_with_norm`` is deliberately NOT here -- it was not always inert, so it gets
+#: ``TestNormLayersWasReachableOnlyOneWay`` below rather than this blanket treatment.
+DELETED_OPTIONS = [
+    ("xyz_in_all", True, False),
+    ("latent_noise_sigma", 0.01, None),
+]
+
+
+@pytest.mark.parametrize(
+    "key, truthy, _falsy", DELETED_OPTIONS, ids=[o[0] for o in DELETED_OPTIONS]
+)
+def test_a_deleted_option_asked_for_is_refused(key, truthy, _falsy):
+    """
+    ``Decoder`` keeps ``**kwargs``, so deleting the named parameter would put each of these
+    straight back to being silently ignored -- the exact defect being fixed. They are
+    refused instead, and the message names the config spelling rather than the argument.
+    """
+    with pytest.raises(TypeError, match=key):
+        build("deepsdf", **{key: truthy})
+
+
+@pytest.mark.parametrize(
+    "key, _truthy, falsy", DELETED_OPTIONS, ids=[o[0] for o in DELETED_OPTIONS]
+)
+def test_a_deleted_option_left_at_its_old_default_is_accepted(key, _truthy, falsy):
+    """
+    Every NSM-owned config carries these falsy, and a falsy value asked for nothing and got
+    nothing -- so refusing it would break configs over a key that never did anything.
+    """
+    assert build_and_forward("deepsdf", **{key: falsy}).shape == (N_POINTS, 1)
+
+
 class TestNormLayersWasReachableOnlyOneWay:
     """
     ``norm_layers`` was deleted in Aug 2026 (#46), but it was **not** simply inert, so the

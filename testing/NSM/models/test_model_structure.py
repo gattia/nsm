@@ -46,14 +46,19 @@ def additivity_error(vae, alpha=0.3):
 
 class TestTheVAEHasNoActivation:
     """
-    ``VAEDecoder.__init__`` builds ``activation = activation_fn()`` and never appends it,
-    while the two lines above it append. The stack is ``ConvTranspose2d -> norm`` x N then
-    ``Conv2d -> Tanh``; ``LeakyReLU`` appears nowhere.
+    ``VAEDecoder.__init__`` used to build ``activation = activation_fn()`` and never append
+    it, while the two lines above it appended -- a leaked loop variable. The argument is
+    deleted (#20); the shape it left behind is not. The stack is ``ConvTranspose2d -> norm``
+    x N then ``Conv2d -> Tanh``; ``LeakyReLU`` appears nowhere.
 
-    **This is not fixable in place.** Inserting the activations shifts every later module's
-    index inside ``nn.Sequential``, so all three shipped checkpoints stop loading, and the
-    weights were fitted without them regardless. ``docs/ARCHITECTURE.md`` section 7.1 holds
-    the full account; these assertions are what stops someone closing the gap by reflex.
+    **It cannot be added unconditionally, only opt-in.** Inserting the activations shifts
+    every later module's index inside ``nn.Sequential``, so all three shipped checkpoints
+    stop loading -- and the weights were fitted without them regardless, so remapping the
+    keys would load a model that computes something else. A ``conv_activation`` flag
+    defaulting to off builds the identical module list and changes nothing, which is what
+    makes the fix available at all; what it needs beyond that is a retrain to show it is
+    worth having. ``docs/ARCHITECTURE.md`` section 7.1 holds the full account; these
+    assertions are what stops someone closing the gap by reflex.
     """
 
     def test_no_pointwise_activation_is_registered_in_the_conv_stack(self):
@@ -93,18 +98,16 @@ class TestTheVAEHasNoActivation:
         else:
             assert relative > 1e-2, f"LayerNorm stopped supplying the nonlinearity: {relative:.2e}"
 
-    def test_the_activation_argument_selects_nothing(self):
+    def test_the_activation_argument_is_gone(self):
         """
-        Accepted and never read, so ``relu`` and ``leakyrelu`` build the same module and
-        compute the same numbers. Deleting the argument is the fix (#20's rule); this is
-        the measurement that says deleting it changes nothing.
+        It was accepted and never read: ``relu`` and ``leakyrelu`` built the same module
+        and computed the same numbers, so deleting it changed nothing (#20's rule -- the
+        fix for an ignored argument is deletion, never making it authoritative).
+
+        ``VAEDecoder`` takes no ``**kwargs``, so passing it now raises on its own.
         """
-        torch.manual_seed(2)
-        x = torch.randn(1, LATENT)
-        with torch.no_grad():
-            leaky = build_vae(activation="leakyrelu")(x)
-            relu = build_vae(activation="relu")(x)
-        assert torch.equal(leaky, relu)
+        with pytest.raises(TypeError, match="activation"):
+            build_vae(activation="relu")
 
 
 class TestOneSine:

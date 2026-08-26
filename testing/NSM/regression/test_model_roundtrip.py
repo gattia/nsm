@@ -218,19 +218,15 @@ class TestPaddingIsNotInTheCheckpoint:
         inputs = query_points()
         assert torch.equal(forward(model, inputs), forward(loaded, inputs))
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#20: normalize_coordinates still accepts a `padding` argument it never reads",
-    )
     def test_normalize_coordinates_must_not_accept_a_padding_argument(self):
         """
-        The fix is to DELETE the parameter, so this asserts it is gone -- not that it works.
+        The fix was to DELETE the parameter, so this asserts it is gone -- not that it works.
 
-        ``TriplanarDecoder.normalize_coordinates(self, query, plane, padding=0.1)`` accepts
-        ``padding`` and divides by ``self.padding`` instead. Its sole caller,
+        ``TriplanarDecoder.normalize_coordinates(self, query, plane, padding=0.1)`` accepted
+        ``padding`` and divided by ``self.padding`` instead. Its sole caller,
         ``sample_plane_features``, passes none and depends on that. So making the argument
-        authoritative would hand the only real caller the ``0.1`` default in place of the
-        shipped 0.35 -- a measured 0.063 max SDF difference on a ``tanh``-bounded output.
+        authoritative would have handed the only real caller the ``0.1`` default in place of
+        the shipped 0.35 -- a measured 0.063 max SDF difference on a ``tanh``-bounded output.
         See #20's traps.
 
         The predecessor of this test asserted the opposite -- that ``padding`` is present

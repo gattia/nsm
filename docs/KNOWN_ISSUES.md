@@ -158,22 +158,6 @@ re-exports in `__init__.py` files, which is the usual reason `F401` gets ignored
 
 ## `models/triplanar.py`
 
-### `normalize_coordinates` ignores its own `padding` argument
-
-The signature is `TriplanarDecoder.normalize_coordinates(self, query, plane, padding=0.1)`
-and the body reads `self.padding`. Accepted, no effect, at any value. Same defect class as
-`get_pts_center_and_scale` — which is why they should be swept together rather than one at
-a time. (`padding` *not being in the checkpoint* was a different defect and is § History
-16; the two share a name and nothing else.)
-
-> ⚠️ **The obvious fix is worse than the bug**, and the test pinning this rewards the wrong
-> one. Read [#20](https://github.com/gattia/nsm/issues/20)'s traps before changing anything
-> here.
-
-*Pinned by:*
-`test_model_roundtrip.TestPaddingIsNotInTheCheckpoint::test_normalize_coordinates_must_not_accept_a_padding_argument` — note the name: the
-test asserts the argument is **gone**, because honouring it is the harmful fix.
-
 ### Latent gradients are summed over query points, so the reg balance depends on N
 
 When a latent is optimized (reconstruction fitting, and the training embedding), the
@@ -195,22 +179,6 @@ scaled by ~N versus nominal, compare fit quality and fitted-latent norms (see al
 `NSM_TRAINING_IDEAS.md` Idea 4, the norm-saturation gap). Any change to the convention
 rescales every training and reconstruction run and needs a § History entry plus a
 Phase-A-style migration.
-
-## `models/deep_sdf.py`
-
-### `xyz_in_all` is accepted and never read
-
-`deep_sdf.Decoder.__init__` takes `xyz_in_all`, documents it as "for deepSDF decoder, include
-XYZ at each layer", and never stores it. `forward` computed `xyz = input_[:, -3:]` and never
-used it either — the vestige of the unimplemented feature, removed when `NSM/` was brought
-to zero flake8 violations. `default_config.json` ships the key and `loader` plumbs it
-through in four places, so a config setting `xyz_in_all: true` is silently a no-op.
-
-Same class as `normalize_coordinates`' `padding` and `get_pts_center_and_scale`'s `center=`
-— an argument accepted and discarded — so it belongs to the same sweep.
-
-*Fix:* [#20](https://github.com/gattia/nsm/issues/20). *Not pinned by a test:* found by
-reading, not by a failure.
 
 ## `train/train_deep_sdf.py`
 

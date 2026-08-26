@@ -168,13 +168,11 @@ def temp_model_files():
                 dropout_prob=config["dropout_prob"],
                 latent_in=config["layer_latent_in"],
                 weight_norm=config["weight_norm"],
-                xyz_in_all=config["xyz_in_all"],
                 activation=config["activation"],
                 final_activation=config["final_activation"],
                 concat_latent_input=config["concat_latent_input"],
                 progressive_add_depth=config["progressive_add_depth"],
                 layer_split=config["layer_split"],
-                latent_noise_sigma=config["latent_noise_sigma"],
             )
 
         elif model_type == "two_stage":

@@ -176,10 +176,12 @@ def _get_deepsdf_params(config: Dict[str, Any]) -> tuple:
         "n_objects": config.get("objects_per_decoder", 1),
         "dropout": config.get("layers_with_dropout", None),
         "dropout_prob": config.get("dropout_prob", 0.2),
-        # Still mapped although Decoder no longer takes it: a config on disk that sets
-        # it has to reach Decoder's refusal rather than be dropped here in silence.
-        # Permanent for the same reason VAEDecoder's alias hook is -- configs written
-        # before the removal exist forever and NSM has no config version to retire them by.
+        # norm_layers, xyz_in_all and latent_noise_sigma are still mapped although Decoder
+        # no longer takes any of them: a config on disk that sets one has to reach
+        # Decoder's refusal rather than be dropped here in silence. Permanent for the same
+        # reason VAEDecoder's alias hook is -- configs written before the removal exist
+        # forever and NSM has no config version to retire them by. They are absent from
+        # get_model_config_template, which is what a NEW config should look like.
         "norm_layers": config.get("layers_with_norm", ()),
         "latent_in": config.get("layer_latent_in", ()),
         "weight_norm": config.get("weight_norm", True),
@@ -349,13 +351,11 @@ def get_model_config_template(model_type: str) -> Dict[str, Any]:
             "dropout_prob": 0.2,
             "layer_latent_in": (),  # Tuple of layer indices
             "weight_norm": True,
-            "xyz_in_all": None,
             "activation": "relu",
             "final_activation": "tanh",
             "concat_latent_input": False,
             "progressive_add_depth": False,
             "layer_split": None,
-            "latent_noise_sigma": None,
         }
 
     elif model_type == "two_stage":
@@ -383,7 +383,6 @@ def get_model_config_template(model_type: str) -> Dict[str, Any]:
                 "dropout_prob": 0.0,
                 "latent_in": (),
                 "weight_norm": True,
-                "xyz_in_all": None,
                 "activation": "relu",
                 "final_activation": "tanh",
                 "concat_latent_input": True,

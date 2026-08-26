@@ -35,9 +35,15 @@ class VAEDecoder(nn.Module):
         deep_image_size=2,
         norm=True,
         norm_type="batch",
-        activation="leakyrelu",
         start_with_mlp=True,
     ):
+        # No `activation` argument. The activation it selected was built and never appended
+        # to the layer list, so the conv stack has no pointwise nonlinearity at all and the
+        # argument chose between two modules that neither of them ever ran (#20). Adding
+        # the activations is NOT a fix available here: it shifts every later index inside
+        # self.decoder, so all three shipped checkpoints stop loading, and the weights were
+        # fitted without them. docs/ARCHITECTURE.md section 7.1 has the full account, and
+        # testing/NSM/models/test_model_structure.py pins the shape this leaves behind.
         super(VAEDecoder, self).__init__()
 
         # self.fc = nn.Linear(latent_dim, hidden_dims[0] * deep_image_size**2)
@@ -49,11 +55,6 @@ class VAEDecoder(nn.Module):
         self.norm = norm
         self.norm_type = norm_type
         self.start_with_mlp = start_with_mlp
-
-        if activation == "leakyrelu":
-            activation_fn = nn.LeakyReLU
-        elif activation == "relu":
-            activation_fn = nn.ReLU
 
         assert (
             latent_dim % deep_image_size**2 == 0
@@ -87,8 +88,6 @@ class VAEDecoder(nn.Module):
                 else:
                     raise ValueError("norm_type must be 'batch' or 'layer'")
                 layers.append(norm)
-
-            activation = activation_fn()
 
             # set in_channels for next loop.
             in_channels = out_channels
@@ -370,9 +369,10 @@ class TriplanarDecoder(nn.Module):
 
         return sampled_feats.T
 
-    def normalize_coordinates(self, query, plane, padding=0.1):
-        # KNOWN DEFECT, #20: `padding` is accepted and ignored -- the body reads
-        # self.padding. Same class as get_pts_center_and_scale, also #20; see also #26.
+    def normalize_coordinates(self, query, plane):
+        # No `padding` argument: it was accepted and ignored here until Aug 2026 (#20),
+        # and honouring it would have handed the sole caller the 0.1 default in place of
+        # a model's trained value. self.padding is the only source.
         if plane == "xy":
             xy = query[:, [0, 1]]
         elif plane == "xz":

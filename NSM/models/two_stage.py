@@ -27,7 +27,6 @@ default_mlp_params = {
     "dropout_prob": 0.0,
     "latent_in": (),
     "weight_norm": True,
-    "xyz_in_all": None,
     "activation": "relu",  # "relu" or "sin"
     "final_activation": "tanh",  # "sin", "linear"
     "concat_latent_input": True,
