@@ -2,26 +2,43 @@
 
 ## State
 
-**Updated:** 2026-08-24 · **Status:** open
+**Updated:** 2026-08-25 · **Status:** open
 
 > **This is the ideas file.** Per `CLAUDE.md` § Documents and work, new training ideas are
 > appended here rather than given their own plan. An idea graduates to its own plan only
 > when someone commits to executing it.
 
-- **Next:** Idea 4(a) — the no-retrain latent-norm diagnostic — is first in line
-  (maintainer, 2026-08-23): the max_norm/capacity question and the recon norm-gap
-  (fitted ~6–7 vs trained 10) are one coupled decision, and the re-sweep (Idea 11)
-  waits on it. Idea 6 gained a measurement question with downstream stakes the same
-  day: is scale leaking into the shipped distal-femur latents, and how does the
-  scaling choice move the severity task? Ideas 10 (surface-residual training metric)
+- **Next:** the maintainer's coupled Idea 4 decision — what training does about the
+  bound (4(b): remove / raise / soften) and what reconstruction does about landing
+  off the shell (Idea 7 is the recon-side lever) — now that 4(a)'s diagnostic is in
+  (2026-08-25, results in the Idea 4 entry). The re-sweep (Idea 11) still waits on
+  that decision. One input only the maintainer can supply: the shipped 647/551
+  checkpoints carry no training latent codes, so their saturation is confirmed by
+  analogy (231's codes) plus observation — a histogram over the training runs'
+  `latent_codes/*.pth` on the training machine settles it directly. Idea 6 keeps
+  its measurement question with downstream stakes (2026-08-23): is scale leaking
+  into the shipped distal-femur latents, and how does the scaling choice move the
+  severity task? Ideas 10 (surface-residual training metric)
   and 11 (hyperparameter re-sweep) added 2026-08-23. Idea 12 (recon-hyperparameter
   sweep entry point; inference-side, no retrain) added 2026-08-24, parked by
   §8.0.E's deletion of `tune_reconstruction`. Idea 3 (test the Eikonal loss)
   keeps its live dependency — `NSM_CODE_HEALTH_REFACTOR.md` §8.2 found three
   independent failures and gated the loss behind `NotImplementedError`.
-- **Blocked on:** nothing. Each entry is independent and can be picked up on its own.
-- **Done:** nothing from this list has been executed.
-- **Surprises:** the Eikonal loss turned out to be unrunnable rather than untested — it
+- **Blocked on:** the Next is a maintainer call; every entry stays independently
+  executable in the meantime.
+- **Done:** Idea 4(a), 2026-08-25 — training-shell saturation confirmed on the one
+  shipped latent-code file (median code norm 9.987 of a 10 bound), fitted
+  production norms median ~7.3, and the error–norm correlation splits by level
+  (within-subject spearman −0.81; across-subject +0.12 to +0.56). Numbers, method
+  and provenance in the Idea 4 entry.
+- **Surprises:** the error–norm correlation has opposite signs at the two levels —
+  with anatomy fixed, fits landing nearer the training shell are almost universally
+  better, yet across subjects the higher-norm fits are the *worse* ones (difficulty
+  confound) — so "pull every fit to norm 10" is not the free win the premise alone
+  suggested. And the shipped production checkpoints turn out to carry no training
+  latent codes at all, so the saturation claim is directly measurable only on the
+  231 cartilage model. Earlier: the Eikonal loss turned out to be unrunnable rather
+  than untested — it
   crashed on the first backward pass, cannot work at all for triplanar models, and opposes
   the clamped-training regime NSM actually uses. See `NSM_CODE_HEALTH_REFACTOR.md` §8.2.
 
@@ -165,9 +182,45 @@ in-place on forward), unlike a soft penalty the gradients can feel.
 **Cost / retrain.** (a) is an afternoon with existing checkpoints. (b) is one
 training run per bound setting.
 
-**Status.** Idea — not started. Raised by the maintainer 2026-08-22 while reviewing
-the audit disposition (register since retired; the filed issues are #40–#61). Related
-trap: latent *gradients*
+**(a) executed 2026-08-25 — saturation confirmed; the error correlation splits by
+level.** Measured on the kneepipeline machine's artifacts. Models:
+`NSM_MODELS/{647_nsm_femur,551_nsm_femur_bone,231_nsm_femur_cartilage}_v0.0.1`, all
+`latent_size` 512 / `latent_bound` 10 / `latent_init_std` 0.01 (init norm ≈ 0.23).
+Fits: `/mnt/data/knee_pipeline_data/archive` (website production jobs, one fit per
+subject) and `nsm_seed_analysis` (74 subjects × 10 seeds, bone-only).
+
+- **Training-side saturation is real — on the one shipped latent-code file.** Only
+  the 231 cartilage model ships `latent_codes/2000.pth`; the `aagatti/ShapeMedKnee`
+  HF listing carries **no latent codes for 647/551** (decoder + optimizer state
+  only), so the production models' training codes exist only on the training
+  machine. 231's 6,325 codes: median norm 9.987, min 8.99, 95% within 0.1 of 10 —
+  the codes live on the radius-10 shell, the clip actively binding.
+- **The fitted-norm gap is real.** 161 archived bone+cart fits: median ‖z‖ 7.26
+  (p5–p95 6.30–8.70), 4 fits *above* 10 (max 10.70 — reconstruction is unbounded).
+  123 bone-only fits: median 7.27, max 9.45. So production reconstruction decodes
+  from radii below every measurable training code (min 8.99).
+- **Within subject the gap predicts error; across subjects the sign reverses.**
+  74 × 10 seeds, bone-only: spearman(assd_bone, ‖z‖) median **−0.81**, negative for
+  98.6% of subjects — anatomy fixed, the seed that lands nearer the shell fits
+  better, though the seed-level stakes are tiny (assd range across a subject's
+  seeds: median 0.005 mm vs ~0.27 mm between-subject median). Across subjects it
+  reverses: spearman(assd, ‖z‖) **+0.12** (bone-only), +0.11 (bone+cart, bone), and
+  **+0.56** for cartilage assd (excluding the four >10 fits) — atypical anatomy
+  lands at higher norm *and* fits worse, a difficulty confound dominating between
+  subjects.
+- **BScore is nearly uncorrelated with fitted norm** (spearman |r| ≤ 0.17, both
+  models) — no sign today's severity output rides the norm.
+
+Read for the decision (hypothesis, not measurement): the within-subject result
+supports the premise — decoding off-shell costs accuracy, so both levers stay live
+(recon-side: pull the fit toward the shell, Idea 7; training-side: free the codes
+off the shell, 4(b)). The across-subject reversal says "force every fit to norm 10"
+is not a free win: the worst-fit subjects are already the highest-norm ones.
+
+**Status.** (a) executed 2026-08-25, results above; (b) not started — it now has the
+saturation and gap numbers to design against. Raised by the maintainer 2026-08-22
+while reviewing the audit disposition (register since retired; the filed issues are
+#40–#61). Related trap: latent *gradients*
 scale with query-point count (ARCHITECTURE §6), which affects any soft-penalty
 balance chosen in (b). **Re-raised and prioritized 2026-08-23: this goes first.** The
 recon-side norm-gap fix and the training-side bound are one coupled decision — what
@@ -176,6 +229,9 @@ about why training pins codes at 10 — so (a)'s diagnostic precedes both, and i
 precedes the re-sweep (Idea 11), since the bound decision changes the latent geometry
 every other knob is tuned against. Idea 7 (the barrier penalty) is the existing
 recon-side lever if the answer is "constrain the fit toward the training shell".
+One residue only the maintainer can close: 647/551's saturation is confirmed by
+analogy (231) plus the maintainer's observation — one histogram over the training
+runs' `latent_codes/*.pth` on the training machine settles it directly.
 
 ---
 
