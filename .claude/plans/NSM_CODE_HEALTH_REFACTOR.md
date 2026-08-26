@@ -8,9 +8,13 @@
 
 - **Next:** execute **§8.0.G** — the observability slice: delete the root-logger
   `basicConfig`, give every module a real `logger`, and route 257 `print` calls
-  through it (#58). Its statement is written; the one call it needs first is the
-  `verbose` question in that statement (G-i vs G-ii), because that decides
-  whether a caller passing `verbose=True` still sees anything.
+  through it (#58). The statement is written and its one open call is now
+  settled (maintainer, 2026-08-26): **`verbose` is deprecated, logging is the
+  mechanism**, and the flag is still honoured for one release because a
+  `DeprecationWarning` is invisible by default outside `__main__` — measured —
+  so warn-and-no-op would delete the consumer's output silently. The
+  `config["verbose"]` key is out of scope and keeps working. Nothing blocks the
+  slice.
 - **Two maintainer calls ride alongside and gate nothing in §8:** (1) **file the
   drafted Mesh-subject issue** — approved text in PR #85's body, tracker still
   has no such issue (checked 2026-08-26); (2) the v0.3.0 timing ("soonish, or at
@@ -1565,32 +1569,51 @@ through logging to stderr is not a regression for this consumer; it is the fix.
   and per-step loops.
 - **`train/deprecated/`'s 30 prints stay untouched** — that module belongs to §8.0.P.
 
-**The one decision this slice needs before commit 2, because it is the only
-user-visible one.** Any move from `print` to `logging` makes previously-visible output
-invisible unless the host configures a handler: `logging.lastResort` is level `WARNING`
-(verified), so `info` and `debug` records vanish by default. That is correct library
-behaviour and a silent behaviour change for every existing caller passing `verbose=True`,
-which Principle 5 forbids doing quietly. Two ways out:
+**The `verbose` decision — settled 2026-08-26 (maintainer): deprecate it, logging is
+the mechanism.** The problem it settles: any move from `print` to `logging` makes
+previously-visible output invisible unless the host configures a handler
+(`logging.lastResort` is level `WARNING`, verified), so `info` and `debug` records vanish
+by default. Correct library behaviour, and a silent behaviour change for every caller
+passing `verbose=True`.
 
-- **G-i — `verbose` keeps its meaning, on stderr.** `verbose=True` attaches a
-  `StreamHandler(sys.stderr)` at `INFO` to the `"NSM"` logger for the duration of the
-  call, *only if* that logger has no handler beyond the `NullHandler` — so a host that has
-  configured logging is never overridden. `verbose=True` still means "show me what is
-  happening"; the stream changes from stdout to stderr and the format becomes the host's.
-  Non-breaking in intent, and for `kneepipeline` it moves the output from the discarded
-  stream to the surfaced one. CHANGELOG entry for the stream change.
-- **G-ii — `verbose` becomes a no-op with a `DeprecationWarning`**, and configuring
-  logging is the only way to see anything. Cleaner library, and it breaks every caller
-  who is watching stdout today, including a consumer we ship to.
+**What ships:** logging is the only output mechanism from commit 5 on. `verbose=` on the
+30 public functions that take it is **deprecated and still honoured for one release** —
+it emits a `DeprecationWarning` naming the one-line replacement, *and* attaches a
+`StreamHandler(sys.stderr)` at `INFO` to the `"NSM"` logger for the duration of the call,
+**only if** that logger has no handler beyond the `NullHandler`, so a host that has
+configured logging is never overridden. Delete-when: **v0.4.0**, in a transitional module
+with the condition in its header (`NSM/_lr_migration.py` is the precedent). CHANGELOG:
+Deprecated, plus the stdout → stderr stream change.
 
-**Recommendation: G-i**, with `verbose`'s eventual deprecation left as its own decision
-once a release has gone out with logging in it. G-i is the migration guard; G-ii is the
-destination, and the plan's own §4 lesson is that those are two mechanisms, not one.
+**Why honoured rather than a no-op, which is what "deprecate it" would normally mean.**
+Measured 2026-08-26: **a `DeprecationWarning` is invisible by default outside
+`__main__`** — the same call warns from a script and emits nothing when made from inside
+another module (Python's default filter). `kneepipeline` calls `reconstruct_mesh` from
+`steps/run_nsm.py`, a non-`__main__` module. So warn-and-no-op is, for the one consumer
+we ship to, indistinguishable from deleting their output silently — Principle 5's exact
+shape, wearing a deprecation label. The warning is the announcement; the release of
+overlap is what makes it an announcement rather than a fait accompli.
 
-**Deliberately out of this slice:** deleting the `verbose` parameters (that is G-ii, and a
-Breaking change of its own); `warnings.warn` → logging (different mechanism, correctly
-used at the two sites that have it — `NSM/utils.py`'s schedulefree probe is already a
-`UserWarning` on stderr, not the stdout print `ARCHITECTURE.md` §4 still describes);
+**Safe to deprecate, checked rather than assumed.** `verbose` gates output only. Of the
+30 public functions taking it, the five `if verbose` blocks containing a non-`print`
+statement are all print *support* — a local computed for a print
+(`mesh/main.py:722`), a `try/except` around one (`datasets/sdf_dataset.py:370`), loops
+and nested `if`s of prints (`triplanar.py:417`, `latent_fit.py:40`, `:651`). Nothing
+behavioural hides behind the flag (AST scan, 2026-08-26).
+
+**The `config["verbose"]` key is deliberately NOT deprecated here.** It is a §4 on-disk
+format contract — `NSM/configs/default_config.json:139` ships `"verbose": true`, so every
+`model_params_config.json` ever written carries it — and there is no `log_level` key to
+replace it with. Deprecating a config key with no replacement leaves the user unable to
+express "log more" at all. The trainers keep reading it; it maps to the same stderr
+bridge. Choosing its replacement is config-shape work and belongs with §8.1 (§8.3),
+not here.
+
+**Deliberately out of this slice:** *removing* the `verbose` parameters (that is the
+v0.4.0 half of the deprecation, Breaking, and it needs the release this slice precedes);
+the `config["verbose"]` key, above; `warnings.warn` → logging (different mechanism,
+correctly used at the two sites that have it — `NSM/utils.py`'s schedulefree probe is
+already a `UserWarning` on stderr, not the stdout print `ARCHITECTURE.md` §4 described);
 tqdm/progress-bar behaviour; anything in `train/deprecated/` (§8.0.P); the `logger` name
 that `recon_evaluation.py` and `latent_fit.py` already use (they keep it — this slice adds
 peers, it does not rename).
@@ -1613,7 +1636,8 @@ budget.
    parses it; the deprecated-kwarg notices, already capsys-pinned in §8.0.C, keep firing),
    and pin that `import NSM.reconstruct` does **not** mutate the root logger
    (strict-xfail — it does today); 3. delete `basicConfig`, add the `NullHandler`, unmark;
-   4. the G-i `verbose` bridge + its tests + CHANGELOG; 5. the per-module conversion,
+   4. the `verbose` bridge — deprecation warning + stderr handler + delete-when header —
+   with its tests and CHANGELOG; 5. the per-module conversion,
    one commit per subpackage (`datasets/`, `mesh/`, `reconstruct/`, `train/`, `models/`
    + `utils.py`) so each stays reviewable; 6. verify-and-close #1 (its remedy shipped in
    #69; confirm against `main` and close, or say why not); 7. State update.
@@ -1625,8 +1649,11 @@ budget.
 | importing NSM no longer touches the host's root logger | the commit-2 strict-xfail passes unmarked: a subprocess records root handlers/level before and after `import NSM.reconstruct` and asserts they are unchanged |
 | NSM emits nothing unconfigured | subprocess: `import NSM` + a `reconstruct_mesh` run under no logging config produces empty stderr from NSM's own loggers |
 | the consumer's stdout contract survives | the commit-2 pin: a fit's stdout still parses with `json.loads(lines[-1])` |
-| `verbose=True` still shows the user something (G-i) | test: `verbose=True` with no host config emits the same messages on **stderr**; asserted against the message set, not the stream formatting |
-| a host that configures logging is not overridden (G-i) | test: pre-attach a handler, call with `verbose=True`, assert NSM added none and the host's handler saw the records |
+| `verbose=True` still shows the user something | test: `verbose=True` with no host config emits the same messages on **stderr**; asserted against the message set, not the stream formatting |
+| a host that configures logging is not overridden | test: pre-attach a handler, call with `verbose=True`, assert NSM added none and the host's handler saw the records |
+| `verbose=` announces its own deprecation | test: `pytest.warns(DeprecationWarning)` naming the replacement, on a representative call per subpackage |
+| the warning cannot be the *only* notice | the measurement above, recorded in the decision: default filters hide it outside `__main__`, which is why the bridge honours the flag for a release rather than no-opping it |
+| `config["verbose"]` still works | the trainer tests, green untouched — the key is out of scope and keeps its meaning |
 | no message is lost in the conversion | per-subpackage: the message set before (capsys) equals the message set after (caplog), asserted as a set — this is what makes commit 5 mechanical rather than judgement |
 | suppressed lines cost no formatting | the `%`-style form is checked by an AST test over `NSM/`: no `logger.*` call takes an f-string or a `%`/`+`-built first argument |
 | numerics unchanged | full suite + regression harness green at every commit |
