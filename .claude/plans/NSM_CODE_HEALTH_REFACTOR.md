@@ -6,15 +6,24 @@
 
 **Updated:** 2026-08-26 · **Status:** open
 
-- **Next:** execute **§8.0.G** — the observability slice: delete the root-logger
-  `basicConfig`, give every module a real `logger`, and route 257 `print` calls
-  through it (#58). The statement is written and its one open call is now
-  settled (maintainer, 2026-08-26): **`verbose` is deprecated, logging is the
-  mechanism**, and the flag is still honoured for one release because a
-  `DeprecationWarning` is invisible by default outside `__main__` — measured —
-  so warn-and-no-op would delete the consumer's output silently. The
-  `config["verbose"]` key is out of scope and keeps working. Nothing blocks the
-  slice.
+- **Next:** execute **§8.0.H** — the `models/` package: #26 (**High**), #45, #46,
+  #34, the two-`Sine` trap, the VAE missing activation. The largest untouched
+  surface on the production path and half the consumer's public contract
+  (`TriplanarDecoder`); no pass of any kind has reached it. Its statement is
+  commit 1 of that slice and is not written yet. Nothing blocks it — §8.0.G
+  touched `models/triplanar.py` only to convert six `print`s and decorate
+  `forward`.
+- **§8.0.G executed (2026-08-26), PR open:** commits 2–8 whole — characterization,
+  the `basicConfig` deletion, the `verbose` bridge, five per-subpackage
+  conversions, verify-and-close #1, this update. Suite 678→704 passed; 5 xfailed
+  both ends (the two new strict xfails were raised and retired inside the slice).
+  Measured on the branch: **1** `print` survives in `NSM/` outside
+  `train/deprecated/` — `configs/generate_sdf_default_config.py`'s, under its
+  `__main__` guard — against 257 before; 277 `logger` calls (204 debug, 34 info,
+  39 warning) across 15 module-scope loggers. Three structural pins in
+  `testing/NSM/test_observability.py` hold all of that: no `print`, no log call
+  that builds its first argument, and a `getLogger(__name__)` in every module
+  that speaks.
 - **Two maintainer calls ride alongside and gate nothing in §8:** (1) **file the
   drafted Mesh-subject issue** — approved text in PR #85's body, tracker still
   has no such issue (checked 2026-08-26); (2) the v0.3.0 timing ("soonish, or at
@@ -834,7 +843,10 @@ Rows that are **not** refactor and are deliberately absent: see §8.3.
 
 Residual items with no row of their own, to ride with the slice that opens the file:
 `__getitem__` unification across the two dataset classes (§8.0.F deferred it in writing),
-`SDFSamples.__init__` at 169 lines, and the #54/#55/#56 class sweeps.
+`SDFSamples.__init__` at 169 lines, the #54/#55/#56 class sweeps, and — added by §8.0.G —
+`NSM/utils.py`'s `print_gpu_memory`, which now logs and whose name says otherwise. It has
+no caller in `NSM/`, in the suite or in `docs/`, so the fix is a rename or a deletion,
+both Breaking: **§8.0.M**.
 
 ### 8.0 `sdf_dataset.py` decomposition — plan statement (2026-08-22)
 
@@ -1657,6 +1669,39 @@ budget.
 | no message is lost in the conversion | per-subpackage: the message set before (capsys) equals the message set after (caplog), asserted as a set — this is what makes commit 5 mechanical rather than judgement |
 | suppressed lines cost no formatting | the `%`-style form is checked by an AST test over `NSM/`: no `logger.*` call takes an f-string or a `%`/`+`-built first argument |
 | numerics unchanged | full suite + regression harness green at every commit |
+
+**Diverged from the statement, on execution (2026-08-26).** Five, each settled by
+running it:
+
+- **The bridge attaches at `DEBUG`, not `INFO`.** The statement's own level rule sends
+  progress and per-step chatter to `debug`, which is where most of the 187
+  `verbose`-gated prints landed — so an `INFO` bridge would have honoured the flag in
+  name and dropped most of its output silently, the exact loss the bridge exists to
+  prevent. A host that has set its own level still keeps it.
+- **28 functions decorated, not 30.** `SDFSamples.load_mesh_step` and
+  `_process_meshes_for_wandb` take `verbose` as a *required* parameter, so every call
+  site is inside NSM, under an entry point that is bridged already. The rule that
+  replaces the count: decorate every function whose `verbose` has a default.
+- **The notice fires only when the flag was supplied**, so
+  `mesh/interpolate.update_positions` — the one `verbose=True` default — keeps its
+  output without announcing a parameter its caller never wrote.
+- **The size budget said net negative in `NSM/`; it came out +272.** None of it is
+  logic: 135 is the transitional bridge module, 66 is plumbing (28 decorator lines,
+  26 import lines, 12 `logger = ...`), and the remaining +71 is black re-wrapping —
+  a one-line `print(f"...")` becomes a three-line `logger.debug("...", arg)`. The
+  statement wrote the budget as if the conversion were one-for-one on lines. The
+  deletion arrives at v0.4.0 with the bridge.
+- **Four messages lost a literal level prefix** (`"WARNING: "` ×3, `"Warning: "` ×2 on
+  the two batch-size shims), which the record's level now carries; everything else is
+  byte-identical. The statement called the conversion message-preserving without
+  allowing for this.
+
+Two judgement calls inside the level rule, recorded because they read as exceptions to
+it: the pympler import-time fallback is `debug`, not the `warning` the
+optional-dependency clause would give it — it fires in every consumer process for a
+debug-only capability, and a warning there is what teaches people to filter NSM out —
+and `configs/generate_sdf_default_config.py`'s one `print` stays a `print`, because a
+script's own output on its own stdout is not the library speaking.
 
 ### 8.1 Make the library plural — added 2026-08-15
 
