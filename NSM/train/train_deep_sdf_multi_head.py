@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 import warnings
@@ -25,6 +26,8 @@ from NSM.utils import (
 )
 
 from .._verbose_deprecation import honour_verbose
+
+logger = logging.getLogger(__name__)
 
 loss_l1 = torch.nn.L1Loss(reduction="none")
 
@@ -195,9 +198,9 @@ def train_epoch(
 
     for sdf_data, indices in data_loader:
         if config["verbose"] is True:
-            print("sdf index size:", indices.size())
-            print("xyz data size:", sdf_data["xyz"].size())
-            print("sdf gt size:", sdf_data["gt_sdf"].size())
+            logger.debug("sdf index size: %s", indices.size())
+            logger.debug("xyz data size: %s", sdf_data["xyz"].size())
+            logger.debug("sdf gt size: %s", sdf_data["gt_sdf"].size())
 
         xyz = sdf_data["xyz"]
         xyz = xyz.reshape(-1, 3)
@@ -214,7 +217,7 @@ def train_epoch(
             sdf_gt.append(sdf_gt_)
 
         if config["verbose"] is True:
-            print("sdf gt size:", sdf_gt[0].size(), sdf_gt[1].size())
+            logger.debug("sdf gt size: %s %s", sdf_gt[0].size(), sdf_gt[1].size())
 
         xyz = torch.chunk(xyz, config["batch_split"])
         indices = torch.chunk(
@@ -230,9 +233,9 @@ def train_epoch(
             sdf_gt[surf_idx] = torch.chunk(sdf_gt[surf_idx], config["batch_split"])
 
         if config["verbose"] is True:
-            print("len sdf_gt", len(sdf_gt))
-            print("len sdf_gt chunks", len(sdf_gt[0]), len(sdf_gt[1]))
-            print("len xyz chunks", len(xyz))
+            logger.debug("len sdf_gt %s", len(sdf_gt))
+            logger.debug("len sdf_gt chunks %s %s", len(sdf_gt[0]), len(sdf_gt[1]))
+            logger.debug("len xyz chunks %s", len(xyz))
 
         batch_loss = 0.0
         batch_l1_loss = 0.0
@@ -243,7 +246,7 @@ def train_epoch(
 
         for split_idx in range(config["batch_split"]):
             if config["verbose"] is True:
-                print("Split idx: ", split_idx)
+                logger.debug("Split idx:  %s", split_idx)
 
             batch_vecs = latent_vecs(indices[split_idx])
             inputs = torch.cat([batch_vecs, xyz[split_idx]], dim=1)
@@ -257,14 +260,14 @@ def train_epoch(
                 pred_sdfs.append(pred_sdf)
 
             if config["verbose"] is True:
-                print("len pred_sdfs", len(pred_sdfs))
-                print("split idx", split_idx)
+                logger.debug("len pred_sdfs %s", len(pred_sdfs))
+                logger.debug("split idx %s", split_idx)
             l1_losses = []
             for surf_idx, pred_sdf in enumerate(pred_sdfs):
                 if config["verbose"] is True:
-                    print("surf idx", surf_idx)
-                    print(len(sdf_gt))
-                    print(len(sdf_gt[surf_idx]))
+                    logger.debug("surf idx %s", surf_idx)
+                    logger.debug("%s", len(sdf_gt))
+                    logger.debug("%s", len(sdf_gt[surf_idx]))
                 l1_losses.append(loss_l1(pred_sdf, sdf_gt[surf_idx][split_idx].cuda()))
             # l1_loss = loss_l1(pred_sdf, sdf_gt[split_idx].cuda())
 
@@ -363,8 +366,8 @@ def train_epoch(
             l1_loss = l1_loss / len(l1_losses)
 
             if config["verbose"] is True:
-                print(f"l1 losses: {[l1_loss_.sum().item() for l1_loss_ in l1_losses]}")
-                print(f"l1 loss: {l1_loss.item()}")
+                logger.debug("l1 losses: %s", [l1_loss_.sum().item() for l1_loss_ in l1_losses])
+                logger.debug("l1 loss: %s", l1_loss.item())
 
             batch_l1_loss += l1_loss.item()
             for l1_idx, l1_loss_ in enumerate(l1_losses):
@@ -423,10 +426,10 @@ def train_epoch(
     save_l1_loss = step_l1_loss / len(data_loader)
     save_code_reg_loss = step_code_reg_loss / len(data_loader)
     save_l1_losses = [l1_loss_ / len(data_loader) for l1_loss_ in step_l1_losses]
-    print("save loss: ", save_loss)
-    print("\t save l1 loss: ", save_l1_loss)
-    print("\t save code loss: ", save_code_reg_loss)
-    print("\t save l1 losses: ", save_l1_losses)
+    logger.info("save loss:  %s", save_loss)
+    logger.info("\t save l1 loss:  %s", save_l1_loss)
+    logger.info("\t save code loss:  %s", save_code_reg_loss)
+    logger.info("\t save l1 losses:  %s", save_l1_losses)
 
     log_dict = {
         "loss": save_loss,
