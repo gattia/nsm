@@ -6,12 +6,60 @@
 
 **Updated:** 2026-08-26 · **Status:** open
 
-- **Next:** execute **§8.0.I** — `mesh/main.py`: #60, #57 (five sites, one
-  helper), #54's sites there, `create_mesh_adaptive`. Second-largest file in the
-  repo, on the production path, and named nowhere in this plan before the slice
-  index. Its statement is commit 1 of that slice and is not written yet. Nothing
-  blocks it; §8.0.H touched `mesh/` not at all.
-- **§8.0.H executed (2026-08-26), PR open:** commits 2–11 whole — the option
+- **Next:** execute **§8.0.J** — `reconstruct_mesh` internals: the 61-parameter
+  signature and the interleaved timing plumbing. Its statement is commit 1 of
+  that slice and is not written yet. Nothing blocks it; §8.0.I touched
+  `reconstruct/` not at all, and left `mesh/main.py`'s two public signatures (17
+  and 26 parameters) deliberately alone as §8.0.O's release-boundary work — the
+  same kind of signature §8.0.J opens, so check whether the two want doing
+  together before writing the statement.
+- **§8.0.I executed (2026-08-26), PR open:** commits 2–9 whole — the
+  characterization, #57's accessor, #60 in two commits, #54 in two, the shared
+  tail, and this update. Suite 812 → 857 passed / 1 skipped, 3 xfailed at both
+  ends: **all 19 strict xfails commit 2 raised were retired inside the slice**.
+  Three § History entries (17 #57, 18 #54's `score_correspondence`, 19 #60's
+  fallback grid), five CHANGELOG Breaking entries, SCOPE §2.3's three conditions
+  all executed and §2.6 given new input, ARCHITECTURE §2.1/§3/§6/§7 corrected.
+  `mesh/main.py` is net −5 lines with the deduplication in it.
+- **§8.0.I diverged from its slice-index row before any code, and the statement
+  says so.** The row reads "`mesh/main.py`". #57 has **zero** sites there — its
+  five are in `correspondence_metrics` (2), `interpolate` (2) and `refine_mesh`
+  (1) — and #54's two mesh-side sites are also outside it. Re-running the greps
+  is what caught it. The general lesson: a slice index row names the *issue* set
+  reliably and the *file* only as a guess, because the index was written from
+  issue titles.
+- **Two of §8.0.I's own claims came back different from the issue text.**
+  (1) #57 says a quad mesh "raises a bare reshape `ValueError`". It raises for 3
+  quads and **silently fabricates five triangles** for 4 — the reshape succeeds
+  exactly when the flat length divides, which is a fact about the cell count mod
+  4. That moved #57 from a hygiene fix to a § History entry. (2) #60's differing
+  `narrow_band` defaults are **behaviourally inert** — 6.2e-08 (skimage) /
+  7.5e-08 (VTK) on a 32³ sphere against a 0.065 voxel — so aligning them needed
+  no History entry, where the issue's framing implied one. Both were settled by a
+  ten-line script before the statement was written.
+- **The size budget was wrong again, the same way §8.0.H's was, and the statement
+  is the thing that keeps being wrong.** `NSM/` is **+140** net against a stated
+  ceiling of +30. Computed split: **+95 docstrings, +29 `raise`/`warn` message
+  text, +16 everything else** — so the *logic* is +16 and the budget was measuring
+  the wrong quantity. Two of the three biggest additions were mandated by the
+  statement itself: SCOPE §2.3 condition 3 is a 43-line module docstring for
+  `refine_mesh`, and condition 2 is a 15-line warning. **The rule to carry into
+  §8.0.J:** a slice that adds documentation or refusals by name has to budget them
+  by name; a single net-lines ceiling will be missed every time. §8.0.H recorded
+  this once and it was not enough to prevent it.
+- **A second, narrower lesson: extraction pays the signature twice.**
+  `_finish_meshes` first landed at 72 lines and made `mesh/main.py` **+25** for
+  removing two copies of a 45-line tail — a 14-parameter signature at the
+  definition and again at each of two call sites, plus an `Args` block restating
+  `create_mesh`'s own parameters. Cutting the docstring to what the reader cannot
+  look up took it to −5. §8.0.J and §8.0.K extract from 61- and 26-parameter
+  functions; expect the same, and check the budget *after* the docstring.
+- **`create_mesh_adaptive` is still 223 lines** (from 243), and that is deliberate
+  — the statement scoped only the shared tail. What remains is a ~55-line
+  docstring plus three sequential passes (coarse → fallback → dense). Its
+  26-parameter signature is §8.0.O.
+- **§8.0.H merged to `main` in PR #90 (2026-08-26):** no review comments to apply.
+- **§8.0.H executed (2026-08-26), PR merged:** commits 2–11 whole — the option
   matrix, #46 in three commits, #45, #26, the #20 sweep, one `Sine`, #34, and
   this update. Suite 787 passed (from 704) / 1 skipped / 3 xfailed (from 5); the
   12 strict xfails commit 2 raised were all retired inside the slice. **Verified
@@ -896,7 +944,7 @@ below exists so a decomposition bullet cannot be satisfied by relocation again.
 
 ### 8.0 Slice index — scheduled 2026-08-26
 
-§8.0.A–F are executed and keep their statements below. G–Q are scheduled. **Each gets its
+§8.0.A–I are executed and keep their statements below. J–Q are scheduled. **Each gets its
 own §8.0-style statement as commit 1 of its own slice**, with every claim re-run against
 `main` first — writing eleven statements up front is the "size docs to your uncertainty"
 mistake `CLAUDE.md` names. What is fixed here is the *order* and each slice's *scope*.

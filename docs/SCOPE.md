@@ -189,17 +189,22 @@ was kept deliberately.
 
 Dead code is code nobody decided about. This is code someone decided to keep, in writing.
 
-**Ruling: research. Keep, documented as such** — with three conditions, in order:
+**Ruling: research. Keep, documented as such** — with three conditions, in order.
+**All three executed** in plan §8.0.I (Aug 2026); the module's status line in
+`ARCHITECTURE.md` §3 changed with them.
 
-1. **Make it work.** `get_target_cells` reads `np.zeros_like(max_length_binary)` where it
-   means
-   `max_lengths`, so both public entry points raise `UnboundLocalError` on their own
-   defaults. One-word fix, and it comes first — documenting a module that raises describes
-   something nobody can run.
-2. **Warn at the entry points.** It is research code with a precondition nobody states:
-   `subdivide_triangles_on_base_mesh:465` computes cell indices on one mesh and applies them
+1. **Make it work.** `get_target_cells` read `np.zeros_like(max_length_binary)` where it
+   meant `max_lengths`, so both public entry points raised `UnboundLocalError` on their own
+   defaults. One-word fix, and it came first — documenting a module that raises describes
+   something nobody can run. A test per criterion now covers the three thresholds
+   separately, because it was the two *unused* ones that had never run.
+2. **Warn at the entry points.** It is research code with a precondition nobody stated:
+   `subdivide_triangles_on_base_mesh` computes cell indices on one mesh and applies them
    to a different one, which is valid only if the two share connectivity and cell ordering.
-   Violating it produces a wrong mesh, not an error.
+   Violating it produces a wrong mesh, not an error. It now warns where that is *provably*
+   false — differing cell counts, or equal counts with differing face arrays. Two meshes
+   that share connectivity in a different cell order are still silent, and the helper's
+   docstring says so: this narrows the case rather than closing it.
 3. **Document what it is for and what not to do with it,** in the module docstring so it
    travels with the code: the cross-mesh/ID-preserving capability it uniquely provides, why
    `pyvista.subdivide_adaptive` was tested and rejected, its preconditions, and what is
@@ -272,7 +277,7 @@ trained at the constructor default, so adding `"padding": 0.1` to each is the wh
 migration — and that omission is exactly what the hand-rolled mapping was hiding. What
 switching would buy: one mapping instead of two, and the refusal reaching the consumer.
 What it would not fix: the surface-order contract in §3.1, which is unrelated.
-| `mesh/triangle_metrics.py` | 97 | **keep — scope under investigation** | Both importers (`correspondence_metrics`, `refine_mesh`) are themselves unreached from production, so it cannot be ruled on independently of §2.3. Two open questions: is all five of its public symbols live, or only the part `correspondence_metrics` uses; and its `areas(norm=True)` default returns a relative deviation rather than areas, which is what makes `refine_mesh`'s `area_threshold` misleading. **Keep either way** — the question is whether it stays a separate file or the live part merges into `correspondence_metrics`. Input to that merge decision, from the audit (re-verified 2026-08-22): the two modules implement the edge-ratio statistic with deliberately opposite failure behaviour — `TriangleProperties.edge_ratio` raises on a zero-length edge, `correspondence_metrics.triangle_health` degrades gracefully and reports a `degenerate_count`. A merge must reconcile that split or keep it, deliberately. |
+| `mesh/triangle_metrics.py` | 97 | **keep — scope under investigation** | **New input, §8.0.I (Aug 2026):** it now also holds `triangle_faces`, the one validated face accessor all three sibling modules route through (#57) — including `interpolate`, which did not import it before. That makes it the `mesh/` package's leaf rather than a metrics helper, and argues for keeping it a separate file; the open question below is now only about the edge-ratio pair, not about the file. Both original importers (`correspondence_metrics`, `refine_mesh`) are themselves unreached from production, so it cannot be ruled on independently of §2.3. Two open questions: is all five of its public symbols live, or only the part `correspondence_metrics` uses; and its `areas(norm=True)` default returns a relative deviation rather than areas, which is what makes `refine_mesh`'s `area_threshold` misleading. **Keep either way** — the question is whether it stays a separate file or the live part merges into `correspondence_metrics`. Input to that merge decision, from the audit (re-verified 2026-08-22): the two modules implement the edge-ratio statistic with deliberately opposite failure behaviour — `TriangleProperties.edge_ratio` raises on a zero-length edge, `correspondence_metrics.triangle_health` degrades gracefully and reports a `degenerate_count`. A merge must reconcile that split or keep it, deliberately. |
 | `datasets/utils.py` | 360 | **prod** — *ruling executed, 2026-08-22* | Was a two-line TODO proposing the Phase 4 `sdf_dataset` split, ruled dead pending that split. The split happened (§8.0 slice A, PR #71): the file now holds the 13 leaf helpers, is imported by `sdf_dataset.py` and `mesh_sampling.py`, and is one of the best-covered modules in the package. The row is kept rather than deleted because "delete when Phase 4 does the split" was a correct ruling that a reader will otherwise go looking for. |
 | `configs/generate_sdf_default_config.py` | 112 | **supported** | Confirmed — it owns the shipped `default_config.json` and is pinned by `test_default_config_sync.py`. The plan already ruled this correctly. |
 
