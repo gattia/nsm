@@ -21,6 +21,8 @@ Strict xfails mark the ones NSM does not honour yet. Each is retired by the comm
 fixes it.
 """
 
+import warnings
+
 import numpy as np
 import pytest
 import pyvista as pv
@@ -34,7 +36,12 @@ from NSM.mesh.correspondence_metrics import (
 )
 from NSM.mesh.interpolate import build_mesh_laplacian, compute_feature_mask
 from NSM.mesh.main import create_mesh_adaptive, sdf_grid_to_mesh, sdf_grid_to_mesh_vtk
-from NSM.mesh.refine_mesh import get_faces, get_target_cells, subdivide_large_triangles
+from NSM.mesh.refine_mesh import (
+    get_faces,
+    get_target_cells,
+    subdivide_large_triangles,
+    subdivide_triangles_on_base_mesh,
+)
 
 ISSUE_57 = "https://github.com/gattia/nsm/issues/57"
 ISSUE_60 = "https://github.com/gattia/nsm/issues/60"
@@ -357,15 +364,55 @@ def test_an_explicit_fallback_origin_is_still_honoured(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@broken(ISSUE_54, "#54: get_target_cells raises UnboundLocalError on its own defaults")
 def test_get_target_cells_runs_on_its_own_defaults():
-    """SCOPE §2.3 condition 1. Documenting a module that raises describes nothing."""
+    """SCOPE §2.3 condition 1, and a strict #54 xfail until it landed.
+
+    Documenting a module that raises describes something nobody can run.
+    """
     assert len(get_target_cells(triangle_sphere())) == 0
 
 
-@broken(ISSUE_54, "#54: subdivide_large_triangles inherits the UnboundLocalError")
 def test_subdivide_large_triangles_runs_on_its_own_defaults():
+    """The other public entry point, which inherited the same UnboundLocalError."""
     assert subdivide_large_triangles(triangle_sphere()) is not None
+
+
+@pytest.mark.parametrize(
+    "threshold",
+    ["area_threshold", "length_threshold", "max_length_threshold"],
+)
+def test_each_threshold_selects_cells_on_its_own(threshold):
+    """Each of the three criteria works alone.
+
+    ``max_length_threshold`` always did; the other two were what the
+    ``np.zeros_like(max_length_binary)`` self-reference made unreachable, and they are
+    the ones SCOPE §2.3's "keep" ruling turns on.
+    """
+    sphere = triangle_sphere()
+    value = {"area_threshold": -1.0, "length_threshold": 0.0, "max_length_threshold": 0.0}
+    selected = get_target_cells(sphere, **{threshold: value[threshold]})
+    assert len(selected) == sphere.n_cells
+
+
+def test_subdividing_on_a_mismatched_base_mesh_warns():
+    """SCOPE §2.3 condition 2: the cross-mesh precondition is stated where it is used.
+
+    A cell index selected on one tessellation means nothing in another, and the result
+    is a wrong mesh rather than an error -- so the only place this can surface is here.
+    """
+    mesh = triangle_sphere()
+    base = pv.Sphere(theta_resolution=10, phi_resolution=10).triangulate()
+    assert base.n_cells != mesh.n_cells
+    with pytest.warns(UserWarning, match="do not refer to the same triangles"):
+        subdivide_triangles_on_base_mesh(base, mesh, max_length_threshold=0.5)
+
+
+def test_subdividing_on_a_matching_base_mesh_is_silent():
+    """The counterpart, so the warning cannot degrade into noise on the valid path."""
+    mesh = triangle_sphere()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        subdivide_triangles_on_base_mesh(mesh.copy(), mesh, max_length_threshold=0.5)
 
 
 @broken(ISSUE_54, "#54: score_correspondence substitutes the warped mesh for the source")

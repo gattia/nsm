@@ -1,4 +1,31 @@
+"""Adaptive triangle subdivision that can select on one mesh and split on another.
+
+Research code, kept deliberately (``docs/SCOPE.md`` §2.3). What it uniquely provides is
+``subdivide_triangles_on_base_mesh``: it computes which cells are too large using the
+metrics of ``mesh`` and splits those cell indices in ``base_mesh``, preserving the base
+mesh's original point IDs. That is how vertex density is added to a source mesh so it can
+carry the detail of an interpolated one. ``pyvista.subdivide_adaptive`` is present in the
+dependency set and cannot express the split, which is why this exists -- both were tried,
+and ``.claude/plans/completed/NSM_MESH_INTERPOLATION_IMPROVEMENTS_COMPLETED.md`` records
+the decision to keep this.
+
+**The precondition nobody used to state:** ``base_mesh`` and ``mesh`` must share
+connectivity and cell ordering, because a cell index means nothing across two different
+tessellations. Violating it produces a wrong mesh, not an error; the entry point warns
+when it can prove the two differ, which it cannot always do.
+
+**``area_threshold`` is not an area.** It is compared against
+``TriangleProperties.areas(norm=True)``, a relative deviation from the mean triangle
+area, so ``0.5`` means "50% larger than average". Three docstrings called it "the maximum
+area of a triangle" and were wrong.
+
+**Known broken:** nothing here is reached from the rest of NSM (``ARCHITECTURE.md`` §2.1)
+and only ``get_target_cells``' own thresholds are covered by tests. Treat the subdivision
+geometry as unverified beyond what ``testing/NSM/mesh/`` asserts.
+"""
+
 import logging
+import warnings
 
 import numpy as np
 import pyvista as pv
@@ -415,7 +442,7 @@ def get_target_cells(
     if max_length_threshold is not None:
         max_length_binary = max_lengths > max_length_threshold
     else:
-        max_length_binary = np.zeros_like(max_length_binary)
+        max_length_binary = np.zeros_like(max_lengths)
 
     cells_to_divide_binary = np.max((edge_ratio_binary, areas_binary, max_length_binary), axis=0)
     cells_to_divide = np.where(cells_to_divide_binary)[0]
@@ -457,6 +484,34 @@ def subdivide_large_triangles(
     return mesh_
 
 
+def _warn_if_connectivity_differs(base_mesh, mesh):
+    """Warn when the shared-connectivity precondition is provably violated.
+
+    Provably, not probably: identical face arrays are the precondition holding, and
+    differing ones are it failing. Nothing here can catch two meshes that share
+    connectivity but were built in a different cell order, so this narrows the silent
+    case rather than closing it.
+    """
+    if base_mesh.n_cells != mesh.n_cells:
+        warnings.warn(
+            f"subdivide_triangles_on_base_mesh: base_mesh has {base_mesh.n_cells} cells "
+            f"and mesh has {mesh.n_cells}. Cell indices selected on one do not refer to "
+            "the same triangles in the other; the result will be wrong, not empty.",
+            UserWarning,
+            stacklevel=3,
+        )
+        return
+    if not np.array_equal(triangle_faces(base_mesh), triangle_faces(mesh)):
+        warnings.warn(
+            "subdivide_triangles_on_base_mesh: base_mesh and mesh have the same cell "
+            "count but different connectivity. Cell indices selected on one do not "
+            "refer to the same triangles in the other; the result will be wrong, "
+            "not empty.",
+            UserWarning,
+            stacklevel=3,
+        )
+
+
 @honour_verbose
 def subdivide_triangles_on_base_mesh(
     base_mesh,
@@ -486,7 +541,14 @@ def subdivide_triangles_on_base_mesh(
     - mesh_: A new PyVista mesh copy of the base_mesh with the specified cells split into 4 sub-triangles.
     and adjacent cells split into 2 sub-triangles.
 
+    Warns:
+    - UserWarning: if `base_mesh` and `mesh` are shown not to share connectivity. See
+      the module docstring: the cell indices selected on one are applied to the other,
+      so a mismatch silently produces a wrong mesh.
+
     """
+    _warn_if_connectivity_differs(base_mesh, mesh)
+
     cells_to_divide = get_target_cells(
         mesh, area_threshold, length_threshold, max_length_threshold, verbose=verbose
     )
