@@ -963,6 +963,36 @@ class TestScaleJointlyInMemory:
         item, _ = dataset[0]
         assert item["xyz"].norm(dim=1).max() < 0.25
 
+    def test_both_storage_modes_agree_on_the_shared_frame(self, meshes, tmp_path_factory):
+        """
+        Was #1: ``norm_and_scale_all_meshes`` "assumes ``self.data`` includes all of the
+        meshes ... if data [is] being loaded [from disk] then it does not". The premise
+        had it backwards -- the ``.npz`` branch was the one that worked -- and the
+        remedy #1 proposed, scaling ``xyz`` in ``__getitem__``, is what #69 shipped for
+        both modes. This is the assertion that closes it: same meshes, same frame, and
+        batches in the same domain whichever way the samples were stored.
+        """
+        joint = dict(
+            SMALL,
+            scale_jointly=True,
+            center_pts=False,
+            norm_pts=False,
+            joint_scale_buffer=9.0,
+        )
+        disk = build_dataset(
+            meshes, tmp_path_factory.mktemp("frame_disk"), store_data_in_memory=False, **joint
+        )
+        memory = build_dataset(
+            meshes, tmp_path_factory.mktemp("frame_mem"), store_data_in_memory=True, **joint
+        )
+
+        np.testing.assert_allclose(disk.center, memory.center, rtol=1e-6)
+        np.testing.assert_allclose(disk.max_radius, memory.max_radius, rtol=1e-6)
+        # The frame is deterministic; the draw is not, so the batches are held to the
+        # sibling test's domain bound rather than to each other.
+        assert disk[0][0]["xyz"].norm(dim=1).max() < 0.25
+        assert memory[0][0]["xyz"].norm(dim=1).max() < 0.25
+
 
 class TestCacheLocationDefault:
     """
