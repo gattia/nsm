@@ -255,10 +255,14 @@ reconfigures the **root logger of the host process**. Because
 Nothing inside NSM reads the root logger config, so removing it has no intra-package
 dependency. **Highest-value single cleanup in the graph.**
 
-**`NSM/utils.py` — prints to stdout at import when `schedulefree` is absent.** Because
+**`NSM/utils.py` — warns at import when `schedulefree` is absent.** Because
 `NSM/__init__.py` does `from . import utils`, this fires on *any* `import NSM.*`
-whatsoever. `python -c 'import NSM'` emits `schedulefree not found, skipping import`.
-The consumer's orchestrator parses the last stdout line of each step as JSON.
+whatsoever. It is now a `UserWarning` on **stderr**, not the stdout `print` this entry
+described (re-measured 2026-08-26: `python -c 'import NSM'` emits
+`UserWarning: schedulefree not found, skipping import`). Why that mattered, and still
+does for every *other* import-time print: `kneepipeline/steps/run_nsm.py:340-342` runs
+each NSM fit in a subprocess and parses **the last line of its stdout as JSON**, so
+NSM's stdout is a contract surface. The general fix is §8.0.G.
 
 The rest: three separate `try/except` optional-dependency probes that print and set module
 globals (`recon_evaluation.py`, `sdf_dataset.py`, `correspondence_metrics.py` —
@@ -318,7 +322,7 @@ instance" asks for. The LR bug's class is the largest group.
 | **Undocumented positional/index ordering** — the LR bug's exact shape | ~12 | `reconstruct_mesh`: reconstructed mesh order *is* the surface identity contract, named nowhere, hardcoded by the consumer. `losses.compute_sdf_gradients`: `cat([latent, points])` with nothing validating the width. `mesh.create_mesh_adaptive`: 17 positional args into `create_mesh`. |
 | **Parameter accepted and silently ignored** | ~10 | `get_pts_center_and_scale`: `center=` / `scale=` are rebound before they are read, so both operations happen unconditionally. `n_pts_random` swallowed by `**kwargs` — the consumer passes 100,000 for it. |
 | **Silent in-place mutation of caller data** | 7 | `get_pts_center_and_scale` mutates the passed array; all three in-repo callers pass `np.copy()` defensively, so the convention exists only as a habit at the call sites. |
-| **Cache key omits a parameter that changes cached content** | 4 | `mesh_to_scale`, `uniform_pts_buffer`, `subsample` are all absent from `get_hash_params`. |
+| **Cache key omits a parameter that changes cached content** | 4 | *Fixed by [#19](https://github.com/gattia/nsm/issues/19) in PR #85 (§8.0.F).* `mesh_to_scale` and `uniform_pts_buffer` are in the key; `subsample` was decoupled from cached content instead of keyed; the key is a named canonical mapping with a `cache_format` version. Kept as a defect *class* because it is the one that silently served another run's data — see `KNOWN_ISSUES.md` § History 13. |
 | **Import-time side effect** | 10 | §4 above. |
 | **Constructed and discarded / leaked loop variable** | 3 | `train_deep_sdf_multi_head.train_deep_sdf` (only the last decoder trains), `read_meshes_get_sampled_pts`, `VAEDecoder.__init__` (the activation is built and never appended — the VAE decoder has no pointwise nonlinearity; see §7.1). |
 | **Constructible-but-uncallable configuration** | 5 | `Decoder(activation='linear')`, `progressive_add_depth=True`, `refine_mesh.get_target_cells()` with its own defaults — each builds fine and raises on first use. Two entries deviate, verified by execution: `TwoStageDecoder()` with its own defaults raises in `__init__` (tuple + list concat), so it never builds; and `Decoder(norm_layers=...)` builds *and forwards without error* under the shipped contiguous default with weight-norm on (the norm layers are silently ignored) — it raises on first use only for a norm set not starting at layer 0 with weight-norm off. |
