@@ -1703,6 +1703,136 @@ debug-only capability, and a warning there is what teaches people to filter NSM 
 and `configs/generate_sdf_default_config.py`'s one `print` stays a `print`, because a
 script's own output on its own stdout is not the library speaking.
 
+### 8.0.H The `models/` package — plan statement (2026-08-26)
+
+Every claim below was re-run against `main` at `57ebfbe` before it was written. `models/`
+is 1,522 lines across five files and has had no pass of any kind — not Phase 2, not 3,
+not 4 — while holding half the consumer's public contract (`TriplanarDecoder`) and the
+documented `load_model` entry point.
+
+**What is actually wrong, measured.** Nine defects, and they are three shapes, not nine:
+
+*Shape 1 — a config value reaches a constructor unchecked.* `padding` is not a learned
+parameter, so a checkpoint trained at one value loads cleanly at another and samples the
+feature planes at the wrong scale: 0.063 max SDF difference on a `tanh`-bounded output
+(#26). `layer_split: false` — what `default_config.json` ships — is `False`, which
+`Decoder` tests with `is not None`, so it means *split at layer 0*, not *do not split*:
+verified, it moves every state-dict key from `layers.N.weight` to `layers.N.0.weight`.
+
+*Shape 2 — an argument accepted and never read* (#20's class, and the memory of what
+honouring one costs is why each is deleted rather than wired up).
+`normalize_coordinates(padding=)`; `Decoder(xyz_in_all=)`, which `default_config.json`
+ships and `loader` plumbs through four call sites; `Decoder(latent_noise_sigma=)`, stored
+and never read; `VAEDecoder(activation=)`, built and discarded — the `LeakyReLU` never
+enters the stack (ARCHITECTURE §7.1); `weight_norm_all`, defined and called nowhere.
+
+*Shape 3 — a documented option that constructs and then does not work.*
+`sum_sdf_features=False` sizes the VAE by `sdf_latent_size` while
+`forward_with_plane_features` slices `sdf_latent_size` **per plane**, so the three planes
+get (12, 0, 0) channels and the output is `torch.equal` to using the xz plane alone —
+re-measured today, and every VAE parameter still receives gradient, so training converges
+to a silently degraded model (#45). `Decoder(activation='linear')` gets `None` from
+`get_activation` and calls it. `progressive_add_depth=True` returns `None` from
+`forward_branch_` for every epoch below the last configured `start_epoch` (verified at
+0/100/300/700; 1300 and 5000 work). `Decoder(norm_layers=(1,2), weight_norm=False)`
+raises `IndexError` — it indexes `self.bn` by absolute layer index and appends only per
+norm layer — while with `weight_norm=True`, the shipped value, the whole option is
+silently inert. `TwoStageDecoder()` raises `TypeError` at any argument (`list` + `tuple`)
+and mutates its module-level default dicts on the way out — verified: after one failed
+construction `default_triplanar_params["latent_dim"]` is 32, process-wide.
+
+And #34: `TestAFreshlyTrainedDecoder` asserts a surface comes back and the latent has the
+configured shape. Both hold for an untrained decoder — measured today, trained
+`assd_0/assd_1` = 0.224/0.172 against untrained 2.197/3.014, and the untrained run passes
+every assertion in that class.
+
+**Target shape (all permanent — this slice adds no transitional module).**
+
+- **Each option works or refuses at construction**, which is #46's own closure criterion.
+  `progressive_add_depth` works (a not-yet-started block is skipped, not turned into
+  `None`); `activation='linear'` refuses (an affine SDF decoder is not a thing anyone
+  wants silently); `norm_layers` is deleted; `TwoStageDecoder` builds and stops mutating
+  its defaults; `layer_split=False` is normalized to `None` at the boundary, because
+  `False == 0` makes the two indistinguishable by value and only one of them is what
+  `default_config.json` means.
+- **`sum_sdf_features=False` slices `sdf_latent_size // 3` per plane**, which is what its
+  own `% 3` guard has always implied, and the guard becomes a `ValueError` so `-O` cannot
+  strip it. `conv_pred_sdf=True` *with* concatenation refuses: the per-plane SDF channels
+  have no defined combination rule under concatenation and never had one.
+- **`load_model` refuses a triplanar config that omits `padding`**, with a message naming
+  the one line to add. This is #26 option 1 and deliberately not option 3 — the plan's
+  §8.1 note says taking the registry first is how that section swallows this slice.
+- **Every dead argument is deleted, not honoured.** `Decoder` keeps its `**kwargs`, so a
+  deleted name would go back to being silently ignored; the two that a config can still
+  carry (`xyz_in_all`, `norm_layers`) raise from `**kwargs` when set to something truthy
+  and stay silent when falsy, which is what every NSM-owned config ships.
+- **One `Sine`.** `deep_sdf.Sine` (`w0` hardcoded 30, `__init__` misspelled `__init` so it
+  is mangled to `_Sine__init` and never runs) is deleted; `deep_sdf` imports the
+  `modulated_periodic_activations` one and `get_activation("sin")` returns `Sine(w0=30)`.
+  `torch.equal` on the two outputs is `True`, so no run changes.
+
+**Deliberately NOT in this slice, each for a stated reason.**
+
+- **Adding the VAE's missing activation.** It is real, it is documented in ARCHITECTURE
+  §7.1, and it cannot be fixed here: the activations would shift every subsequent module's
+  index inside `nn.Sequential`, so all three shipped checkpoints stop loading, and the
+  weights were fitted without them anyway. What this slice does is delete the dead
+  `activation=` parameter and pin the structure so the next reader cannot "fix" it by
+  accident. The issue text is drafted in the PR body for the maintainer to file.
+- **Rejecting unknown `**kwargs`** on `Decoder`/`TriplanarDecoder`. It closes the same
+  class and it is a behaviour change with unmeasurable external blast radius; it wants the
+  release boundary §8.0.O owns.
+- **A public "build the model this config describes" call** (#26 option 3, SCOPE §3.1's
+  "single highest-value API change"). That is §8.1, deferred by the 2026-08-26 re-draw.
+- **The `l2reg`/latent-gradient convention** (KNOWN_ISSUES `models/triplanar.py` §3). It
+  rescales every run and is a research question, not a refactor.
+- **Removing config keys other than `layers_with_norm`.** `layer_split`, `xyz_in_all` and
+  `latent_dropout` stay in `default_config.json`; they are inert and their removal is
+  config-shape work (§8.1/§8.3). `layers_with_norm` goes because the argument it feeds
+  ceases to exist.
+
+**Size budget.** Net negative in `NSM/models/`: five deleted arguments, one deleted class,
+one deleted function and `self.bn` against roughly +25 lines of refusal and slicing. Past
++10 net in `NSM/` is scope creep. Tests are additive and outside the budget.
+
+**Sequence** (one commit each; `make lint` clean and the full suite green at every step):
+
+1. this statement;
+2. characterization — a parameterised constructor-and-one-forward matrix over every
+   documented option value of all four model types, plus structural pins for the things no
+   fix here may silently change: the VAE's additivity table from §7.1 and the `Sine`
+   resolution. Strict xfails for what is broken. **#34 gets no xfail** — the assertion it
+   wants (trained error below an untrained control's) already holds, it is simply not
+   asserted anywhere, so its measurement lands with its fix in commit 10;
+3. #46(a) `TwoStageDecoder` builds, and stops mutating its module-level defaults;
+4. #46(b) `activation='linear'`, `progressive_add_depth`, and the `layer_split=False`
+   normalization;
+5. #46(c) `norm_layers` deleted — decoder, loader, templates, shipped config;
+6. #45 all three planes, with its § History entry;
+7. #26 `load_model` refuses a config that omits `padding`;
+8. the #20 dead-argument sweep, retiring both `models/` § Open entries;
+9. one `Sine`;
+10. #34 an assertion that goes red if training stops learning;
+11. docs sweep (ARCHITECTURE §5/§6/§7, SCOPE §2.6's open question, CHANGELOG) and this
+    plan's State.
+
+**Verification per claim:**
+
+| Claim | Verification |
+|---|---|
+| every documented option value works or refuses at construction | the commit-2 matrix, run over the four model types; its strict xfails all XPASS by commit 7 and are unmarked in the commit that fixes each |
+| `sum_sdf_features=False` uses three planes | forward-shape test over both flag values, plus an assertion that the concat output is **not** `torch.equal` to the xz plane alone — the exact equality measured today |
+| an old `sum_conv_output_features: false` checkpoint still loads | the VAE output width is `sdf_latent_size` before and after, so state-dict shapes are unchanged: asserted by loading a pre-fix checkpoint |
+| no shipped model changes | both shipped configs set `sum_conv_output_features: true`; the round-trip test's bitwise assertion covers the rest |
+| `load_model` refuses a config without `padding` | `TestPaddingIsNotInTheCheckpoint` is rewritten from "loads without error" to `pytest.raises`; its #26 strict xfail goes with it |
+| the refusal names the fix | the raised message contains `"padding"` and a value, asserted on the message |
+| `progressive_add_depth` is continuous across `start_epoch` | forward at `start-1`, `start`, `start+1` differs by less than the warmup step, rather than jumping to a full-weight layer — the ordering defect the `RuntimeError` branch hides |
+| `layer_split=False` means no split | state-dict keys are `layers.N.weight`, the same list `layer_split=None` produces — the difference measured today |
+| deleting an argument does not re-silence it | a truthy `xyz_in_all` / `norm_layers` raises `TypeError` through `**kwargs`; a falsy one does not |
+| one `Sine` changes no arithmetic | `torch.equal(old_Sine()(x), Sine(w0=30)(x))` — `True` today, kept as a test |
+| #34 is training-dependent | trained `assd` versus an untrained control built from the same config: measured 9.8× and 17.5×, asserted at a factor with its headroom in the docstring |
+| the suite still passes | 704 passed / 1 skipped / 5 xfailed on `main` at `57ebfbe` is the baseline every commit is compared against |
+
 ### 8.1 Make the library plural — added 2026-08-15
 
 > **Deferred 2026-08-26 — this is an upgrade, not the refactor.** All three bullets are
