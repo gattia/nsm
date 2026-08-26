@@ -4,18 +4,29 @@
 
 ## State
 
-**Updated:** 2026-08-25 · **Status:** open
+**Updated:** 2026-08-26 · **Status:** open
 
-- **Next:** three maintainer calls: (1) **file the drafted Mesh-subject issue**
-  — the approved-text draft is in PR #85's body, and the tracker still has no
-  such issue (checked 2026-08-25); (2) the v0.3.0 timing ("soonish, or at the
-  end of this cleanup") — latest tag is still v0.2.0, nothing gates the cut,
-  and §8.0.F's ship-together constraint is now satisfied *inside* `main`, #19
-  and #27 both merged; (3) the Idea 4 coupled decision (training-side norm
-  bound + recon-side gap response), for which 4(a)'s diagnostic now exists —
-  see `NSM_TRAINING_IDEAS.md` State. If the call is more refactor first, the
-  open §8 threads stand unchanged: `train_epoch`'s internal loss-pipeline
-  decomposition only if a statement justifies it; multi_head's repair is #51.
+- **Next:** execute **§8.0.G** — the observability slice: delete the root-logger
+  `basicConfig`, give every module a real `logger`, and route 257 `print` calls
+  through it (#58). Its statement is written; the one call it needs first is the
+  `verbose` question in that statement (G-i vs G-ii), because that decides
+  whether a caller passing `verbose=True` still sees anything.
+- **Two maintainer calls ride alongside and gate nothing in §8:** (1) **file the
+  drafted Mesh-subject issue** — approved text in PR #85's body, tracker still
+  has no such issue (checked 2026-08-26); (2) the v0.3.0 timing ("soonish, or at
+  the end of this cleanup") — latest tag is still v0.2.0, nothing gates the cut,
+  and §8.0.F's ship-together constraint is satisfied inside `main` now that #19
+  and #27 are both merged. Slices G–N do not touch a release boundary; §8.0.O,
+  §8.0.P (the quarantine move changes import paths) and §8.0.Q do.
+- **Scope re-drawn 2026-08-26 (maintainer).** Research and upgrades wait until the
+  refactor closes. The Idea 4 coupled decision left this plan's **Next** and lives
+  only in `NSM_TRAINING_IDEAS.md`, where it already was; §8.1 and §8.2 are marked
+  deferred in place and indexed in the new **§8.3**. What triggered the re-draw:
+  §8's four checkboxes read three-quarters done while every one of the repo's
+  largest functions was a function the slices had *moved* but never opened, and
+  the whole `models/` package — half the consumer's public contract — had had no
+  pass of any kind. §8.0 now carries a slice index (G–Q) so that stops being
+  invisible.
 - **PR #85 merged to `main` (2026-08-25):** #19 and #27 closed by the merge,
   no review comments to apply, branch deleted. That consumed this plan's
   "review of #85" Next; the research-queue item behind it —
@@ -701,11 +712,18 @@ worst findings untouched, so add:
       `test_model_roundtrip.TestRoundTrip::test_a_bare_load_state_dict_round_trips_bitwise`
       covers the consumer's bare path; `test_a_trained_model_round_trips_bitwise` the
       `load_model` path — both bitwise against the in-memory original.)*
-- [ ] **Name the CPU/GPU gap rather than discovering it later.** A <2-minute CI harness is
+- [x] **Name the CPU/GPU gap rather than discovering it later.** A <2-minute CI harness is
       CPU; production is CUDA. Add a separate opt-in GPU test asserting the seed-ordering
       constraint `kneepipeline` depends on (`torch.manual_seed` *after* `.cuda()`, per
       `docs/KNOWN_ISSUES.md`), and state in the harness that CPU baselines do not
-      bound GPU divergence. *(Attach to the v0.3.0 release PR.)*
+      bound GPU divergence. *(Both halves shipped in `94b48f0` —
+      `testing/NSM/regression/test_gpu.py`, skipped without CUDA: its module docstring
+      states the gap with measured numbers, and `TestSeedOrderingAroundCudaTransfer` pins
+      the seed-ordering measurement rather than the belief. **This box was left unticked
+      until 2026-08-26** and carried a "(Attach to the v0.3.0 release PR)" note for work
+      that was already in the tree — found by re-measuring instead of reading. The release
+      PR (§8.0.O) still owns the one part that is genuinely release-time: running a real
+      shipped checkpoint through it.)*
 
 Roughly 30–40% more than the original four items, still one bounded artifact, still under
 two minutes.
@@ -761,16 +779,58 @@ Standard extract-under-test: pull a coherent piece out,
 have the monolith call the extracted function, keep §7.1 green, then unit-test the
 extracted piece properly.
 
-- [ ] `train_deep_sdf.py`: split the 618-line/2-function structure into setup, epoch loop,
-      validation, checkpointing.
-- [ ] `sdf_dataset.py`: separate mesh loading, normalization/scaling, registration, SDF
-      sampling, caching. `NSM/datasets/utils.py` is a 2-line stub whose only content is a
-      TODO to do exactly this — it has been waiting.
-- [ ] `reconstruct/main.py`: separate latent optimization, mesh generation, evaluation.
+- [x] `train_deep_sdf.py`: split the 618-line/2-function structure into setup, epoch loop,
+      validation, checkpointing. *(§8.0.D, PR #76 — the orchestrator's four concerns are
+      private helpers. `train_epoch` itself stays whole and is §8.0.L.)*
+- [x] `sdf_dataset.py`: separate mesh loading, normalization/scaling, registration, SDF
+      sampling, caching. *(§8.0.A/B/F, PRs #71, #72, #85 — helpers, readers, reader
+      internals and the cache shell. `NSM/datasets/utils.py` is no longer the 2-line stub
+      this bullet described; it is the 13 leaf helpers.)*
+- [x] `reconstruct/main.py`: separate latent optimization, mesh generation, evaluation.
+      *(§8.0.C/E, PRs #74, #79 — `latent_fit.py`, `wandb_logging.py`, `recon_evaluation.py`.
+      The **module** split is done; `reconstruct_mesh` and `reconstruct_latent` themselves
+      were moved unopened and are §8.0.J and §8.0.K.)*
 - [ ] Fold in the stalled API-cleanup plans, which are Phase-4-shaped and should not run
       separately: `.claude/plans/BREAKING_CHANGE_PROPOSAL.md` +
-      `.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` (issue #3).
-- [ ] Close issues #1, #2, #5, #6 as the relevant modules are touched.
+      `.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` (issue #3). *(= §8.0.Q, last.)*
+- [ ] Close issues #1, #2, #5, #6 as the relevant modules are touched. *(#5 closed by #79,
+      #6 by #63. **#1 looks already fixed** — its proposed remedy (scale `xyz` in
+      `__getitem__`) is what #69 shipped in PR #72; verify and close, §8.0.G rides it.
+      #2 is performance work → §8.3.)*
+
+**A warning about these four checkboxes, 2026-08-26.** Three of them tick at *module*
+level and that is what made the remaining work invisible for two slices: the largest
+functions in the repo are functions a slice moved verbatim and never opened. Ticking
+"`reconstruct/main.py`: separate latent optimization, mesh generation, evaluation" is
+true and `reconstruct_mesh` is still 408 lines behind 61 parameters. The slice index
+below exists so a decomposition bullet cannot be satisfied by relocation again.
+
+### 8.0 Slice index — scheduled 2026-08-26
+
+§8.0.A–F are executed and keep their statements below. G–Q are scheduled. **Each gets its
+own §8.0-style statement as commit 1 of its own slice**, with every claim re-run against
+`main` first — writing eleven statements up front is the "size docs to your uncertainty"
+mistake `CLAUDE.md` names. What is fixed here is the *order* and each slice's *scope*.
+
+| | Slice | Carries | Why it is where it is |
+|---|---|---|---|
+| **G** | Observability: logging, not `print` | #58, the root-logger `basicConfig`, 257 prints, verify-and-close #1 | Mechanical and independent, and it touches every file H–M touch. Doing it after them means opening all of them twice. Statement below. |
+| **H** | `models/` package | #26 (**High**), #45, #46, #34, the two-`Sine` trap, the VAE missing activation | The largest untouched surface on the production path, and half the consumer's public contract (`TriplanarDecoder`). No pass of any kind has reached it — not Phase 2, not 3, not 4. |
+| **I** | `mesh/main.py` | #60, #57 (five sites, one helper), #54's sites there, `create_mesh_adaptive` | Second-largest file in the repo, on the production path, and **never named anywhere in this plan** — §7.3's priority list has four files and this is not one of them. |
+| **J** | `reconstruct_mesh` internals | the 61-parameter signature, the interleaved timing plumbing | Seams are already clean: coerce → reference → sample → fit → build → metrics → assemble. |
+| **K** | `reconstruct_latent` internals | #75, the 185-line nested `compute_loss`, the hybrid Adam/LBFGS branch | The last unopened production monolith. #75 (cannot chunk its forward pass) is a defect the decomposition has to make expressible. |
+| **L** | `train_epoch`'s loss pipeline | the ~270-line batch loop | The statement §8.0.D said this needs, deferred deliberately, now due. |
+| **M** | `NSM/utils.py` | #50, the module's remaining undocumented surface | §1.2's exhibit: the file that held the founding bug. Phase A documented the LR path and nothing else. |
+| **N** | Phase 2 close + lint gate | the §6 checkboxes, `flake8-docstrings` in `make lint`, `CLAUDE.md` §Architecture rewrite | Must follow G–M — that is where the missing docstrings are — and the lint gate is what stops G–M's accuracy rotting. |
+| **O** | v0.3.0 release | the pending Breaking set, setuptools-scm (§10.1), §7.1's GPU note, **`NSM.configs` ships in no wheel** (SCOPE §5) | Maintainer-gated timing. Nothing in G–N waits on it. |
+| **P** | 0b quarantine + #18 | `train/deprecated/` (876 lines), the `sample_difficulty_lx` port | Maintainer-gated on the nsosim survey, unchanged since Phase 0. |
+| **Q** | #3, sigma coordinate space | `BREAKING_CHANGE_PROPOSAL.md` + `SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` | Last, because it is the one remaining *behaviour* change: it needs a §4-style migration guard and a version boundary, so it wants a release on either side of it. |
+
+Rows that are **not** refactor and are deliberately absent: see §8.3.
+
+Residual items with no row of their own, to ride with the slice that opens the file:
+`__getitem__` unification across the two dataset classes (§8.0.F deferred it in writing),
+`SDFSamples.__init__` at 169 lines, and the #54/#55/#56 class sweeps.
 
 ### 8.0 `sdf_dataset.py` decomposition — plan statement (2026-08-22)
 
@@ -1450,7 +1510,136 @@ split + ARCHITECTURE §3 ledger rows; 7. State update (ticks §7.1's round-trip 
 | split changes no behaviour | full suite + harness green; no xfail transitions in the split commit |
 | namespace unchanged | frozen lists on both import paths untouched |
 
+### 8.0.G Observability: logging, not `print` — plan statement (2026-08-26)
+
+Every count below was measured on `main` at `995a59d` (2026-08-26) by AST scan, not grep:
+a `print` is "gated" when it sits under an `if` whose test mentions `verbose`/`log_`.
+
+**The defect, measured.** `NSM/` outside `deprecated/` makes **257** `print` calls — 189
+gated behind `verbose`, **68 ungated**. Three modules define
+`logger = logging.getLogger(__name__)`; only two ever call it (21 calls between
+`recon_evaluation.py` and `latent_fit.py`), and `reconstruct/main.py` defines a logger it
+never uses. Meanwhile `reconstruct/main.py:44` calls `logging.basicConfig(...)` **at module
+scope**, which reconfigures the **root logger of the host process** — and because
+`reconstruct/__init__.py` star-imports `.main`, it fires on any `import NSM.reconstruct`,
+invisibly, in the consumer's process. `ARCHITECTURE.md` §4 calls it the highest-value
+single cleanup in the graph and it is still there.
+
+So #58 is not "gate the prints" — most already are. It is that the library owns its
+output stream and its host's logging configuration, and the caller owns neither.
+
+**Why this is worth a slice rather than a ride-along.** It touches almost every file
+H–M open. Sequenced after them, each of those files gets opened twice and each of their
+diffs carries unrelated print churn.
+
+**The consumer constraint, verified 2026-08-26 — and it cuts our way.**
+`kneepipeline/steps/run_nsm.py:311-342` runs each NSM fit in a subprocess with
+`capture_output=True`, then **parses the last line of stdout as JSON**
+(`json.loads(stdout_lines[-1])`), and on failure surfaces `result.stderr[-1000:]`. Two
+consequences: (1) anything NSM prints to stdout after that JSON line breaks the consumer,
+so stdout is a contract surface, not a scratchpad; (2) the consumer passes
+`verbose=True` (`:211`) and then **throws the output away** — it is captured, not shown —
+while the stream it actually surfaces to a human is stderr. Today NSM's diagnostics go to
+the discarded stream and are invisible at exactly the moment someone needs them. Routing
+through logging to stderr is not a regression for this consumer; it is the fix.
+
+**Target shape (all permanent).**
+
+- **`logging.basicConfig` deleted** from `reconstruct/main.py`. A library never configures
+  the root logger.
+- **`NSM/__init__.py` adds `logging.getLogger("NSM").addHandler(logging.NullHandler())`** —
+  the stdlib idiom, so NSM emits nothing until a host configures logging, and no
+  "no handlers" noise is possible.
+- **Every module that speaks gets `logger = logging.getLogger(__name__)`.** Module-scope,
+  one line, no configuration. The hierarchy under `NSM.*` then lets a host silence or
+  raise one subpackage without touching the others — which is the actual benefit of doing
+  this properly rather than swapping `print` for a project-wide helper.
+- **Level assignment, by what the line is for**, not by where it sits: progress and
+  per-step chatter → `debug`; once-per-call facts a user would want in a log of a
+  completed run (chosen frame, subject counts, cache hit/miss, fitted loss) → `info`;
+  degraded-but-continuing (the deprecated-kwarg notices, the optional-dependency
+  fallbacks, `meshfix` giving up) → `warning`. The 68 ungated prints are triaged
+  individually; several are debug lines someone forgot to gate.
+- **`%` -style lazy interpolation** (`logger.debug("center %s", c)`), not f-strings, so a
+  suppressed line costs no formatting. This matters: the hot ones are inside the per-batch
+  and per-step loops.
+- **`train/deprecated/`'s 30 prints stay untouched** — that module belongs to §8.0.P.
+
+**The one decision this slice needs before commit 2, because it is the only
+user-visible one.** Any move from `print` to `logging` makes previously-visible output
+invisible unless the host configures a handler: `logging.lastResort` is level `WARNING`
+(verified), so `info` and `debug` records vanish by default. That is correct library
+behaviour and a silent behaviour change for every existing caller passing `verbose=True`,
+which Principle 5 forbids doing quietly. Two ways out:
+
+- **G-i — `verbose` keeps its meaning, on stderr.** `verbose=True` attaches a
+  `StreamHandler(sys.stderr)` at `INFO` to the `"NSM"` logger for the duration of the
+  call, *only if* that logger has no handler beyond the `NullHandler` — so a host that has
+  configured logging is never overridden. `verbose=True` still means "show me what is
+  happening"; the stream changes from stdout to stderr and the format becomes the host's.
+  Non-breaking in intent, and for `kneepipeline` it moves the output from the discarded
+  stream to the surfaced one. CHANGELOG entry for the stream change.
+- **G-ii — `verbose` becomes a no-op with a `DeprecationWarning`**, and configuring
+  logging is the only way to see anything. Cleaner library, and it breaks every caller
+  who is watching stdout today, including a consumer we ship to.
+
+**Recommendation: G-i**, with `verbose`'s eventual deprecation left as its own decision
+once a release has gone out with logging in it. G-i is the migration guard; G-ii is the
+destination, and the plan's own §4 lesson is that those are two mechanisms, not one.
+
+**Deliberately out of this slice:** deleting the `verbose` parameters (that is G-ii, and a
+Breaking change of its own); `warnings.warn` → logging (different mechanism, correctly
+used at the two sites that have it — `NSM/utils.py`'s schedulefree probe is already a
+`UserWarning` on stderr, not the stdout print `ARCHITECTURE.md` §4 still describes);
+tqdm/progress-bar behaviour; anything in `train/deprecated/` (§8.0.P); the `logger` name
+that `recon_evaluation.py` and `latent_fit.py` already use (they keep it — this slice adds
+peers, it does not rename).
+
+**A retiring argument, recorded so it is not re-used.** §8.0.C and §8.0.E both leaned on
+"the log format has no `%(name)s`, so renaming the logger changes no output byte" to prove
+a module move was byte-clean. That argument dies here: after this slice NSM owns no
+format at all, the host does. Any future move that wants the same guarantee needs a new
+one.
+
+**Size budget:** net **negative** in `NSM/` — 257 print statements become 257 logger
+calls plus ~14 module-scope `logger = ...` lines, minus the `basicConfig` line and the
+prints that triage into deletion. G-i's handler helper is ≤ +30 in one place. Anything
+that grows the file is scope creep. Characterization tests are additive and outside the
+budget.
+
+**Sequence** (one commit each, suite green and lint clean at every step):
+1. this statement; 2. characterization — pin what stdout currently carries at the two
+   places it is a contract (a `reconstruct_mesh` run's stdout parses as the consumer
+   parses it; the deprecated-kwarg notices, already capsys-pinned in §8.0.C, keep firing),
+   and pin that `import NSM.reconstruct` does **not** mutate the root logger
+   (strict-xfail — it does today); 3. delete `basicConfig`, add the `NullHandler`, unmark;
+   4. the G-i `verbose` bridge + its tests + CHANGELOG; 5. the per-module conversion,
+   one commit per subpackage (`datasets/`, `mesh/`, `reconstruct/`, `train/`, `models/`
+   + `utils.py`) so each stays reviewable; 6. verify-and-close #1 (its remedy shipped in
+   #69; confirm against `main` and close, or say why not); 7. State update.
+
+**Verification per claim:**
+
+| Claim | Verification |
+|---|---|
+| importing NSM no longer touches the host's root logger | the commit-2 strict-xfail passes unmarked: a subprocess records root handlers/level before and after `import NSM.reconstruct` and asserts they are unchanged |
+| NSM emits nothing unconfigured | subprocess: `import NSM` + a `reconstruct_mesh` run under no logging config produces empty stderr from NSM's own loggers |
+| the consumer's stdout contract survives | the commit-2 pin: a fit's stdout still parses with `json.loads(lines[-1])` |
+| `verbose=True` still shows the user something (G-i) | test: `verbose=True` with no host config emits the same messages on **stderr**; asserted against the message set, not the stream formatting |
+| a host that configures logging is not overridden (G-i) | test: pre-attach a handler, call with `verbose=True`, assert NSM added none and the host's handler saw the records |
+| no message is lost in the conversion | per-subpackage: the message set before (capsys) equals the message set after (caplog), asserted as a set — this is what makes commit 5 mechanical rather than judgement |
+| suppressed lines cost no formatting | the `%`-style form is checked by an AST test over `NSM/`: no `logger.*` call takes an f-string or a `%`/`+`-built first argument |
+| numerics unchanged | full suite + regression harness green at every commit |
+
 ### 8.1 Make the library plural — added 2026-08-15
+
+> **Deferred 2026-08-26 — this is an upgrade, not the refactor.** All three bullets are
+> new capability, and they are indexed in §8.3. The one thread that does *not* wait is the
+> defensive half of #26, which §8.0.H carries: refusing to load a checkpoint whose config
+> omits `padding` is a silent-wrong-answer fix, where "a third party adds a model type and
+> it works everywhere" is a feature. Keep them apart — #26's issue text lists them as
+> options 1 and 3 of the same fix, and taking option 3 first is how this section swallows
+> the slice.
 
 The name is *neural shape model**s***. Two defects currently make it singular in practice,
 and both are structural, so they belong here rather than in the documentation pass.
@@ -1483,6 +1672,12 @@ unlocks the others: until there is one supported way to build a model from a con
 "a default config per model type" has no single consumer to be correct for.
 
 ### 8.2 Eikonal loss — gated 2026-08-15, needs repair
+
+> **Deferred 2026-08-26 — the refactor's part of this is done.** Gating a never-runnable
+> path behind `NotImplementedError` *was* the code-health outcome; making the loss work is
+> research, tracked as `NSM_TRAINING_IDEAS.md` Idea 3. The three failures below stay here
+> because they are the executed evidence, and whoever picks the research up needs them.
+> Indexed in §8.3.
 
 `eikonal_weight > 0` now raises `NotImplementedError` at both entry points
 (`train_deep_sdf`, `reconstruct_latent`), with the message in `NSM/losses.py`.
@@ -1524,6 +1719,30 @@ in a year.
 
 **Rule:** every commit keeps the §7.1 harness green. Any intended numerical change gets a
 §9 ledger entry and a §4-style migration guard.
+
+---
+
+### 8.3 Deferred until the refactor closes — drawn 2026-08-26
+
+The plan's own §Scope banner has always said new science is out of scope. What it did not
+say is that §8 had grown three items that are not code health either, and one of them had
+reached the **Next** line. This is the list, so that deferring them is a decision with a
+venue rather than a thing that keeps not happening.
+
+| Deferred | Where it lives | Why it is not refactor |
+|---|---|---|
+| §8.1 — decoder interface, per-type default configs, config renames | here, banner above | New capability. Every bullet changes public behaviour and needs its own migration guard; none of them makes existing code more correct. |
+| §8.2 — repairing the Eikonal loss | here + `NSM_TRAINING_IDEAS.md` Idea 3 | The loss is gated, which is the code-health answer. Making it work is an experiment with an unknown result — measured to *oppose* the clamped regime NSM actually trains in. |
+| Idea 4 — the latent norm bound, training and recon sides | `NSM_TRAINING_IDEAS.md` Idea 4/7/11 | A training experiment. It sat in this plan's **Next** on 2026-08-25 while §8 had eleven unstarted slices; that is the specific failure this table exists to prevent. |
+| Ideas 6, 10, 11, 12 | `NSM_TRAINING_IDEAS.md` | Same. Each is independently executable and none of them is blocked by the refactor. |
+| #2 — `SDFSamples` slow loading | issue #2 | Performance. Real, but it is an optimisation, and §8.0.F just rewrote the cache path it would target. |
+| §9's fourth bullet — whether the LR bug moved published results | §9 | A research assessment of finished work, not a change to the library. |
+
+**The test for this table.** An item belongs in §8 if a reader would call the outcome
+"the code was wrong and now it is right". If the honest description is "we tried something
+and measured what happened", it belongs in the ideas file. #3 (sigma) stays in §8 under
+that test — the same number means two things and one of them is wrong — which is why it is
+§8.0.Q and not a row here.
 
 ---
 
