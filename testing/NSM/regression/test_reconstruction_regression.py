@@ -414,24 +414,51 @@ class TestAFreshlyTrainedDecoder:
     nothing else here checks that a model straight out of ``train_deep_sdf`` can be
     reconstructed from at all.
 
-    Structural only, and that is the point. The numbers a fresh run produces are the chaotic
-    ones -- 60 epochs of gradient descent is what moved the reconstruction baselines 763x
-    their tolerance under a torch bump -- so this asserts that a surface comes back and the
-    latent has the right shape, and pins no value. ``baselines/training.json`` is what pins
-    training output, directly and at 8 epochs where it has not yet diverged.
+    **Pins no value, and is still training-dependent.** The numbers a fresh run produces are
+    the chaotic ones -- 60 epochs of gradient descent is what moved the reconstruction
+    baselines 763x their tolerance under a torch bump -- so nothing here is compared against
+    a stored number. What makes it more than a smoke test is the untrained control: the
+    trained decoder's surface error has to be materially below a decoder that skipped
+    training, which is a comparison both sides of a torch bump move together (#34).
+    ``baselines/training.json`` is what pins training output, directly and at 8 epochs where
+    it has not yet diverged.
 
-    Costs about 2.5 s on a warm process: ~1.3 s to train the ``RECON_TRAINING_EPOCHS``
-    epochs the asset was generated from, ~1.2 s to reconstruct. Training through
-    ``_harness.train_reconstruction_decoder`` rather than inline is deliberate -- it keeps
-    the asset's regeneration path executed on every run, instead of only when someone sets
-    ``NSM_REGENERATE_RECON_DECODER``.
+    Costs about 3.7 s on a warm process: ~1.3 s to train the ``RECON_TRAINING_EPOCHS``
+    epochs the asset was generated from, ~1.2 s to reconstruct, and ~1.2 s for the control's
+    reconstruction. Training through ``_harness.train_reconstruction_decoder`` rather than
+    inline is deliberate -- it keeps the asset's regeneration path executed on every run,
+    instead of only when someone sets ``NSM_REGENERATE_RECON_DECODER``.
     """
+
+    #: How much better than an untrained control the trained decoder has to fit.
+    #:
+    #: Measured 2026-08-26 on this fixture: trained ``assd_0``/``assd_1`` 0.224/0.172
+    #: against untrained 2.197/3.014 -- ratios of 9.8x and 17.5x. The threshold is set at
+    #: 3x, so the tighter of the two has 3.3x of headroom, and the test reports the
+    #: observed ratio when it fails. Deliberately far below the measurement: this is a
+    #: floor on "training did something", not a pin on how much, and a pin is exactly what
+    #: could not be made to hold across environments (see the module header and #34).
+    MIN_IMPROVEMENT = 3.0
 
     @pytest.fixture(scope="class")
     def fresh_reconstruction(self, synthetic_meshes, training_dataset, tmp_path_factory):
         model = train_reconstruction_decoder(
             training_dataset, tmp_path_factory.mktemp("fresh_recon_train")
         )
+        return run_reconstruction(synthetic_meshes[0], model)
+
+    @pytest.fixture(scope="class")
+    def untrained_reconstruction(self, synthetic_meshes, tmp_path_factory):
+        """
+        The same architecture, the same seed, the same reconstruction -- no training.
+
+        ``build_model`` seeds itself, so this control is deterministic; it costs one extra
+        reconstruction (~1.2 s) and nothing else.
+        """
+        from _harness import build_model, training_config
+
+        model = build_model(training_config(tmp_path_factory.mktemp("untrained_recon")))
+        model.eval()
         return run_reconstruction(synthetic_meshes[0], model)
 
     def test_a_surface_comes_back_for_every_object(self, fresh_reconstruction):
@@ -444,6 +471,33 @@ class TestAFreshlyTrainedDecoder:
         from _harness import LATENT_SIZE
 
         assert fresh_reconstruction["latent"].shape == (1, LATENT_SIZE)
+
+    @pytest.mark.parametrize("key", ["assd_0", "assd_1"])
+    def test_training_is_what_makes_the_surfaces_fit(
+        self, fresh_reconstruction, untrained_reconstruction, key
+    ):
+        """
+        The assertion this class was missing (#34): one that goes red if training stops
+        learning.
+
+        The two above do not. An untrained decoder still has *a* zero level set somewhere
+        in the sampling volume, so marching cubes returns a surface and ``mesh`` is not
+        ``[None, None]``; and the latent's shape comes from the config, not from training.
+        Both were verified to pass against an untrained control before this test existed --
+        which is what made the class weaker than its own docstring claimed.
+
+        Relative, against a control that shares the architecture, the seed and the
+        reconstruction path, so a torch bump moves both sides together. The alternative --
+        pinning the fresh run's numbers -- is the thing that forced the decoder to be
+        frozen in the first place (763x the tolerance across a torch bump; module header).
+        """
+        untrained = untrained_reconstruction[key]
+        trained = fresh_reconstruction[key]
+        ratio = untrained / trained
+        assert ratio > self.MIN_IMPROVEMENT, (
+            f"{key}: trained {trained:.4f} vs untrained {untrained:.4f} is only "
+            f"{ratio:.2f}x better, under the {self.MIN_IMPROVEMENT}x floor"
+        )
 
 
 class NoZeroLevelSetDecoder(torch.nn.Module):
