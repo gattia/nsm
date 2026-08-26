@@ -225,7 +225,7 @@ actually ran is not answerable from this repo.
 |---|---|---|---|
 | `models/loader.py` | 387 | **production — fix, under investigation** | Not a status question. It is the documented entry point (README, `examples/`) *and* the natural home of the extensibility work in §1, since `load_model` is what a registration pathway would hang off. But three of its four advertised model types cannot be reconstructed, and the consumer does not use it — `steps/run_nsm.py:94-112` hand-rolls the config→constructor mapping instead and drops `padding`. **Open question being investigated: could the consumer switch to `load_model` today, and if not, what exactly is missing?** That answer sets the size of the fix. |
 | `mesh/triangle_metrics.py` | 97 | **keep — scope under investigation** | Both importers (`correspondence_metrics`, `refine_mesh`) are themselves unreached from production, so it cannot be ruled on independently of §2.3. Two open questions: is all five of its public symbols live, or only the part `correspondence_metrics` uses; and its `areas(norm=True)` default returns a relative deviation rather than areas, which is what makes `refine_mesh`'s `area_threshold` misleading. **Keep either way** — the question is whether it stays a separate file or the live part merges into `correspondence_metrics`. Input to that merge decision, from the audit (re-verified 2026-08-22): the two modules implement the edge-ratio statistic with deliberately opposite failure behaviour — `TriangleProperties.edge_ratio` raises on a zero-length edge, `correspondence_metrics.triangle_health` degrades gracefully and reports a `degenerate_count`. A merge must reconcile that split or keep it, deliberately. |
-| `datasets/utils.py` | 2 | **dead** | A two-line TODO proposing the Phase 4 `sdf_dataset` split. Zero importers. Delete when Phase 4 does the split it describes. |
+| `datasets/utils.py` | 360 | **prod** — *ruling executed, 2026-08-22* | Was a two-line TODO proposing the Phase 4 `sdf_dataset` split, ruled dead pending that split. The split happened (§8.0 slice A, PR #71): the file now holds the 13 leaf helpers, is imported by `sdf_dataset.py` and `mesh_sampling.py`, and is one of the best-covered modules in the package. The row is kept rather than deleted because "delete when Phase 4 does the split" was a correct ruling that a reader will otherwise go looking for. |
 | `configs/generate_sdf_default_config.py` | 112 | **supported** | Confirmed — it owns the shipped `default_config.json` and is pinned by `test_default_config_sync.py`. The plan already ruled this correctly. |
 
 ### 2.7 Net effect on Phase 1's checkpoint
@@ -251,7 +251,7 @@ a no-op, and the real open decision is the one after it — see the note below t
 |---|---|
 | Quarantine now: `train/deprecated/train_deep_sdf_multi_surface_orig.py` | 562 |
 | Quarantine after porting 12 lines: `train/deprecated/train_deep_sdf_orig.py` | 318 |
-| Delete when Phase 4 lands: `datasets/utils.py` | 2 |
+| ~~Delete when Phase 4 lands: `datasets/utils.py`~~ — became live code instead (§2.6) | 0 |
 | **Total** | **882** |
 | Plan's expectation | ~1,800 |
 
