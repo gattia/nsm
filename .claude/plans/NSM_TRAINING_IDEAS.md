@@ -249,9 +249,13 @@ recon accuracy and training stability.
 summing destroys — was never tested, only a broken implementation of it. The prior
 negative result should be withdrawn rather than trusted.
 
-**Cost / retrain.** Two training runs plus the draft-6 fix as a prerequisite.
+**Cost / retrain.** Two training runs. The prerequisite fix has landed.
 
-**Status.** Idea — not started. Blocked on the draft-6 fix.
+**Status.** Idea — not started, and **unblocked as of 2026-08-26**: §8.0.H shipped the fix
+(all three planes get `sdf_latent_size // 3` channels; `KNOWN_ISSUES.md` § History 15).
+The VAE's output width is unchanged, so a pre-fix `sum_conv_output_features: false`
+checkpoint still loads — and computes something different, which is why the pairs have to
+be retrained rather than re-evaluated.
 
 ---
 

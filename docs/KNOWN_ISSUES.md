@@ -1081,3 +1081,54 @@ everything else in the run is unchanged.
 *Pinned by:* `test_model_options.test_layer_split_false_is_the_same_model_as_no_layer_split`,
 `test_model_options.test_layer_split_zero_still_splits_at_layer_zero`,
 `test_model_options.test_a_block_phases_in_continuously_across_its_start_epoch`.
+
+## 15. `sum_conv_output_features: false` trained on one plane of three
+
+| | |
+|---|---|
+| **Affected** | Any training or reconstruction run with `sum_conv_output_features: false` (the `TriplanarDecoder` argument `sum_sdf_features=False`) |
+| **Unaffected** | Everything else, including **both shipped ShapeMedKnee models** — 647 and 551 set it `true`, and it defaults to `true` in the constructor, `loader` and `get_model_config_template` |
+| **Severity** | Silent. The model builds, trains, converges and reconstructs; it is simply a third of the architecture it was asked for |
+| **Fixed in** | `models-package-sweep`, Aug 2026 ([#45](https://github.com/gattia/nsm/issues/45)) |
+
+### What was wrong
+
+`TriplanarDecoder.__init__` sized the VAE output by `sdf_latent_size` when not summing —
+correct, since the three planes are concatenated into the decoder's input width — while
+`forward_with_plane_features` sliced `sdf_latent_size` **per plane**. For
+`sdf_latent_size=12`, the xz plane received all 12 channels and yz and xy received
+zero-channel slices. `grid_sample` on a zero-channel plane returns an `(N, 0)` tensor and
+does not complain, so the concatenation produced a result `torch.equal` to sampling the xz
+plane alone. Every VAE parameter still received gradient — through the xz geometry — so
+training converged, to a model using one plane of three.
+
+The `assert` guarding the branch said "if sum_sdf_features is True" while guarding the
+`False` branch, which is one reason nobody read it as suspicious.
+
+`conv_pred_sdf: true` combined with concatenation was broken past that: three
+low-frequency SDF channels, one per plane, with no defined rule for combining them, and a
+feature vector two channels wider than the SDF decoder was sized for. It always raised a
+shape error on the first forward.
+
+### What changed
+
+Each plane's slice is `sdf_latent_size // 3` (plus one channel when `conv_pred_sdf`), so
+the three concatenate to exactly the decoder's input width. The divisibility guard is a
+`ValueError` rather than an `assert`, since `python -O` strips asserts and this one guards
+a shape. Concatenation with `conv_pred_sdf` refuses at construction.
+
+**The VAE's output width is unchanged** — it was `sdf_latent_size` before and is
+`sdf_latent_size` after — so every parameter shape is the same and a pre-fix checkpoint
+still loads under strict `load_state_dict`. It then computes something different, which is
+the reason this entry exists.
+
+### How to tell whether one of your runs is affected
+
+`model_params_config.json`: `"sum_conv_output_features": false`. If the key is absent or
+`true`, the run is unaffected. If it is `false`, that model used only its xz plane, and no
+comparison drawn against a summed model is meaningful — retrain rather than re-evaluate,
+since the checkpoint loads either way.
+
+*Pinned by:* `test_model_options.test_concatenation_uses_all_three_planes`,
+`test_model_options.test_the_concatenating_vae_keeps_the_width_it_always_had`,
+`test_model_options.test_triplanar_feature_combination_works_or_refuses`.

@@ -30,6 +30,17 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **`sum_conv_output_features: false` now uses all three feature planes**
+  ([#45](https://github.com/gattia/nsm/issues/45)). It sliced `sdf_latent_size` per plane
+  while sizing the VAE for the concatenation, so yz and xy got zero-channel slices and the
+  output equalled the xz plane alone — silently, with every VAE parameter still receiving
+  gradient. Each plane now takes `sdf_latent_size // 3`. **The VAE's output width is
+  unchanged, so pre-fix checkpoints still load** and then compute something different;
+  `KNOWN_ISSUES.md` § History 15 says how to tell whether a run of yours is affected.
+  `conv_pred_sdf: true` with `sum_conv_output_features: false` now refuses at construction
+  — the combination always died on the first forward — and the divisibility guard is a
+  `ValueError` rather than an `assert`, so `python -O` cannot strip it.
+
 - **`Decoder` no longer takes `norm_layers`** ([#46](https://github.com/gattia/nsm/issues/46)).
   The branch that built the LayerNorms was an `elif` under `weight_norm`, so the option was
   reachable **only with weight norm off** — and it then indexed the norm list by absolute

@@ -297,25 +297,17 @@ def test_triplanar_vae_options_forward(conv_norm, conv_norm_type, conv_start_wit
         (True, False),
         (True, True),
         (False, False),
-        pytest.param(
-            False,
-            True,
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="#45: concatenation + conv_pred_sdf builds and forwards into a shape error",
-            ),
-        ),
+        (False, True),
     ],
 )
 def test_triplanar_feature_combination_works_or_refuses(sum_conv_output_features, conv_pred_sdf):
     """
     Four combinations; only the two that sum are correct today.
 
-    Concatenation with ``conv_pred_sdf`` is broken past the slicing #45 describes and has
-    no defined repair: with three planes concatenated there are three low-frequency SDF
-    channels, one per plane, and nothing has ever said how they combine. It builds, then
-    hands the SDF decoder 17 features where 15 were sized. Either it refuses at
-    construction or it forwards.
+    Concatenation with ``conv_pred_sdf`` is the one that refuses, and it has no defined
+    repair: with three planes concatenated there are three low-frequency SDF channels, one
+    per plane, and nothing has ever said how they combine. Until Aug 2026 it built and
+    then handed the SDF decoder 17 features where 15 were sized (#45).
     """
     try:
         model = build(
@@ -329,17 +321,16 @@ def test_triplanar_feature_combination_works_or_refuses(sum_conv_output_features
     assert forward_once("triplanar", model).shape == (N_POINTS, 1)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#45: sum_sdf_features=False slices sdf_latent_size per plane, so yz and xy get 0 channels",
-)
-def test_concatenation_must_not_reduce_to_one_plane():
+def test_concatenation_uses_all_three_planes():
     """
-    ``__init__`` sizes the VAE output by ``sdf_latent_size`` when not summing;
-    ``forward_with_plane_features`` then slices ``sdf_latent_size`` **per plane**, so xz
-    takes everything and yz and xy take zero-width slices. The concatenated result is
+    ``__init__`` sizes the VAE output by ``sdf_latent_size`` when not summing, and until
+    Aug 2026 ``forward_with_plane_features`` sliced ``sdf_latent_size`` **per plane**: xz
+    took everything and yz and xy took zero-width slices, so the concatenated result was
     ``torch.equal`` to sampling the xz plane alone -- exact equality, not an approximation,
-    which is what makes this assertable.
+    which is what makes it assertable in both directions (#45).
+
+    Each plane's slice is asserted to be non-empty as well, because a width that is merely
+    *different* from the old one would satisfy the inequality without fixing anything.
     """
     model = build("triplanar", sum_conv_output_features=False)
     torch.manual_seed(0)
@@ -349,9 +340,27 @@ def test_concatenation_must_not_reduce_to_one_plane():
     with torch.no_grad():
         planes = model.vae_decoder(latent)[0]
         combined = model.forward_with_plane_features(planes, xyz)
-        per_plane = model.sdf_latent_size + model.conv_pred_sdf
-        xz_alone = model.sample_plane_features(xyz, planes[:per_plane], "xz")
-    assert not torch.equal(combined, xz_alone), "yz and xy contributed nothing"
+        per_plane = model.sdf_latent_size // 3
+        slices = [planes[i * per_plane : (i + 1) * per_plane] for i in range(3)]
+        sampled = [
+            model.sample_plane_features(xyz, plane, name)
+            for plane, name in zip(slices, ("xz", "yz", "xy"))
+        ]
+    assert combined.shape == (N_POINTS, model.sdf_latent_size)
+    assert all(part.shape[1] == per_plane and per_plane > 0 for part in sampled)
+    assert torch.equal(combined, torch.cat(sampled, dim=1))
+    assert not torch.equal(combined, sampled[0].repeat(1, 3))
+
+
+def test_the_concatenating_vae_keeps_the_width_it_always_had():
+    """
+    What makes #45's fix loadable rather than breaking: the VAE emitted
+    ``sdf_latent_size`` channels before the fix and emits ``sdf_latent_size`` after, so
+    every parameter shape is unchanged and a pre-fix checkpoint still loads. What changed
+    is only how those channels are divided among the planes.
+    """
+    concat = build("triplanar", sum_conv_output_features=False)
+    assert concat.vae_decoder.out_features == concat.sdf_latent_size
 
 
 @pytest.mark.parametrize("objects_per_decoder", [1, 2, 3])

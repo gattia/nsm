@@ -257,16 +257,31 @@ class TriplanarDecoder(nn.Module):
         self.padding = padding
         self.conv_pred_sdf = conv_pred_sdf
 
-        if self.sum_sdf_features is False:
-            assert (
-                self.sdf_latent_size % 3 == 0
-            ), "sdf_latent_size must be divisible by 3 if sum_sdf_features is False"
-            vae_out_features = self.sdf_latent_size
-        elif self.sum_sdf_features is True:
+        if self.sum_sdf_features:
+            # One full-width feature map per plane; the three are summed at sample time.
             vae_out_features = self.sdf_latent_size * 3
-
-        if self.conv_pred_sdf is True:
-            vae_out_features += 3
+            if self.conv_pred_sdf is True:
+                # One low-frequency SDF channel per plane, summed with the features.
+                vae_out_features += 3
+        else:
+            # The three planes are CONCATENATED, so each contributes a third of the
+            # decoder's input width. A ValueError and not an assert: `python -O` strips
+            # asserts, and this one guards a shape.
+            if self.sdf_latent_size % 3 != 0:
+                raise ValueError(
+                    f"sdf_latent_size must be divisible by 3 when sum_sdf_features is "
+                    f"False: the three planes are concatenated, so each contributes "
+                    f"sdf_latent_size // 3 channels. Got {self.sdf_latent_size}."
+                )
+            if self.conv_pred_sdf is True:
+                raise ValueError(
+                    "conv_pred_sdf is not supported with sum_sdf_features=False. "
+                    "Concatenation leaves three low-frequency SDF channels, one per "
+                    "plane, and nothing has ever defined how they combine -- the "
+                    "configuration built and then handed the SDF decoder the wrong "
+                    "number of features. Use sum_sdf_features=True, or drop conv_pred_sdf."
+                )
+            vae_out_features = self.sdf_latent_size
 
         self.vae_decoder = VAEDecoder(
             latent_dim=latent_dim,
@@ -301,9 +316,13 @@ class TriplanarDecoder(nn.Module):
         Returns:
             plane_feats: (N, sdf_latent_size) - sampled features
         """
-        latent_size = (
-            self.sdf_latent_size + self.conv_pred_sdf
-        )  # one sdf prediction per plane (if conv_pred_sdf is True)
+        # Per-plane width, which is NOT sdf_latent_size when the planes are concatenated:
+        # each of the three then carries a third of the decoder's input width. Until
+        # Aug 2026 this sliced the full width per plane in both modes, so with
+        # sum_sdf_features=False the xz plane took everything and yz and xy took
+        # zero-channel slices -- see KNOWN_ISSUES History 15 (#45).
+        latent_size = self.sdf_latent_size if self.sum_sdf_features else self.sdf_latent_size // 3
+        latent_size += self.conv_pred_sdf  # one sdf prediction per plane
 
         feat_xz = plane_features[:latent_size, ...]
         feat_yz = plane_features[latent_size : latent_size * 2, ...]
