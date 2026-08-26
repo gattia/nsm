@@ -248,12 +248,14 @@ the best covered. That ordering is the durable finding; the percentages are not.
 
 Ten modules do something at import beyond defining names. Two matter:
 
-**`reconstruct/main.py` — `logging.basicConfig(...)` at module scope.** This
-reconfigures the **root logger of the host process**. Because
-`reconstruct/__init__.py` star-imports `.main`, it fires on any `import NSM.reconstruct`
-— invisible at the call site — and it hits the downstream consumer on every NSM fit.
-Nothing inside NSM reads the root logger config, so removing it has no intra-package
-dependency. **Highest-value single cleanup in the graph.**
+**`reconstruct/main.py` — `logging.basicConfig(...)` at module scope: fixed 2026-08-26
+(§8.0.G), do not reintroduce.** It reconfigured the **root logger of the host process**,
+and because `reconstruct/__init__.py` star-imports `.main` it fired on any
+`import NSM.reconstruct` — invisible at the call site — hitting the downstream consumer
+on every NSM fit. `NSM/__init__.py` now installs a `NullHandler` on the `"NSM"` logger
+instead: a library configures its own hierarchy and nothing else. Pinned by
+`testing/NSM/test_observability.py`, which records the root logger's handlers and level
+across the import in a subprocess.
 
 **`NSM/utils.py` — warns at import when `schedulefree` is absent.** Because
 `NSM/__init__.py` does `from . import utils`, this fires on *any* `import NSM.*`
@@ -262,9 +264,12 @@ described (re-measured 2026-08-26: `python -c 'import NSM'` emits
 `UserWarning: schedulefree not found, skipping import`). Why that mattered, and still
 does for every *other* import-time print: `kneepipeline/steps/run_nsm.py:340-342` runs
 each NSM fit in a subprocess and parses **the last line of its stdout as JSON**, so
-NSM's stdout is a contract surface. The general fix is §8.0.G.
+NSM's stdout is a contract surface. §8.0.G settled that generally: every
+diagnostic in `NSM/` outside `train/deprecated/` goes through `logging`, and
+`test_observability.py` fails if a `print` reappears anywhere but the
+`configs/generate_sdf_default_config.py` generator script.
 
-The rest: three separate `try/except` optional-dependency probes that print and set module
+The rest: three separate `try/except` optional-dependency probes that log and set module
 globals (`recon_evaluation.py`, `sdf_dataset.py`, `correspondence_metrics.py` —
 the last silently switches exact point-to-surface distance to a nearest-vertex fallback);
 `loss_l1 = torch.nn.L1Loss(...)` instantiated at import in **four** separate training

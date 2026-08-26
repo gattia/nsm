@@ -164,6 +164,41 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   former belongs to #51's repair, the latter to the quarantine decision (`SCOPE.md` §2).
   **No numerical output changes.**
 
+### Deprecated
+
+- **`verbose=` on the 28 functions that take it**, in favour of `logging` ([#58](https://github.com/gattia/nsm/issues/58)).
+  It still works, unchanged, for this release: passing it emits a `DeprecationWarning`
+  and shows NSM's records — every level, down to `DEBUG` — on **stderr** for the
+  duration of the call. It is
+  removed at **v0.4.0** — that removal is Breaking and ships with its own entry.
+  The replacement is one line of host configuration:
+  `logging.basicConfig(level=logging.INFO)`, or
+  `logging.getLogger("NSM").setLevel(logging.DEBUG)` with a handler on it. Per-subpackage
+  control comes free with the `NSM.*` hierarchy — `logging.getLogger("NSM.datasets")`
+  silences the cache chatter without silencing reconstruction.
+  **`config["verbose"]` is not deprecated** and keeps its meaning: it is an on-disk
+  format contract carried by every `model_params_config.json` ever written, and there is
+  no `log_level` key to replace it with yet.
+  The flag is *honoured* rather than made a no-op because a `DeprecationWarning` is
+  invisible under Python's default filter outside `__main__`, so warn-and-no-op would be
+  indistinguishable, for a caller invoking NSM from inside a module, from deleting their
+  output with no notice at all.
+
+### Changed
+
+- **NSM's diagnostics go to `logging`, not `print`, and therefore to stderr rather than
+  stdout** ([#58](https://github.com/gattia/nsm/issues/58)). A caller that captured NSM's
+  stdout to read its messages now finds them on stderr; a caller that parses its *own*
+  output out of stdout — which is what the pipeline consumer does — now has that stream
+  to itself.
+
+- **Importing NSM no longer reconfigures the host process's root logger.**
+  `NSM/reconstruct/main.py` called `logging.basicConfig(...)` at module scope, and
+  `NSM.reconstruct` star-imports it, so any `import NSM.reconstruct` set the root
+  logger's level to `INFO` and attached a `StreamHandler` in the caller's process.
+  `NSM/__init__.py` now installs the stdlib `NullHandler` on the `"NSM"` logger instead,
+  so NSM emits nothing until a host asks for it.
+
 ### Fixed — affects results
 
 - **The logged `mean_vec_length` / `std_vec_length` are epoch means** (#59). They were

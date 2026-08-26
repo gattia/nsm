@@ -1,9 +1,14 @@
 import json
+import logging
 import math
 import os
 import warnings
 
 import torch
+
+from ._verbose_deprecation import honour_verbose
+
+logger = logging.getLogger(__name__)
 
 try:
     import schedulefree
@@ -198,6 +203,7 @@ def get_learning_rate_schedules(config):
     return dict(zip(targets, schedules))
 
 
+@honour_verbose
 def adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False):
     """
     Set each optimizer param group's learning rate for ``epoch``.
@@ -220,8 +226,8 @@ def adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False):
         at load time, so this is a backstop).
     """
     if verbose is True:
-        print("optimizer param groups: ", optimizer.param_groups)
-        print("lr_schedules: ", lr_schedules)
+        logger.debug("optimizer param groups:  %s", optimizer.param_groups)
+        logger.debug("lr_schedules:  %s", lr_schedules)
 
     for param_group in optimizer.param_groups:
         target = param_group.get(PARAM_GROUP_TARGET_KEY)
@@ -434,11 +440,11 @@ def print_gpu_memory():
     if torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated()
         cached = torch.cuda.memory_reserved()
-        print("CUDA, GPU Usage:")
-        print(f"\tAllocated memory: {allocated / 1024**3:.2f} GB")
-        print(f"\tCached memory: {cached / 1024**3:.2f} GB")
+        logger.info("CUDA, GPU Usage:")
+        logger.info("\tAllocated memory: %.2f GB", allocated / 1024**3)
+        logger.info("\tCached memory: %.2f GB", cached / 1024**3)
     else:
-        print("CUDA not available - GPU stats not available")
+        logger.info("CUDA not available - GPU stats not available")
 
 
 def clear_gpu_cache(device):

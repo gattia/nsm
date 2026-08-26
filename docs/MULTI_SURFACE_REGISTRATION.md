@@ -48,7 +48,7 @@ The `mesh_to_scale` parameter in `read_meshes_get_sampled_pts()` now accepts:
 
 ```python
 if isinstance(mesh_to_scale, (list, tuple)):
-    print(f'Registering to multiple surfaces: {mesh_to_scale}')
+    logger.debug("Registering to multiple surfaces: %s", mesh_to_scale)
     # Combine multiple meshes for registration
     combined_mesh = combine_meshes(orig_meshes, mesh_to_scale)
     registration_mesh = combined_mesh
@@ -69,7 +69,7 @@ The mean mesh creation logic in `reconstruct_mesh()` has been updated to support
 
 ```python
 if isinstance(mesh_to_scale, (list, tuple)):
-    print(f'Combining mean meshes for multi-surface registration: {mesh_to_scale}')
+    logger.info("Combining mean meshes for multi-surface registration: %s", mesh_to_scale)
     # Combine multiple mean meshes for registration
     mean_mesh = combine_meshes(mean_mesh, mesh_to_scale)
 else:

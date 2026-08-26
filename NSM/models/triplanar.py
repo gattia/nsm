@@ -14,11 +14,16 @@ summation of the latent codes from each plane using bilinear interpolation. This
 way, we get a specific latent code for each point in space.
 """
 
+import logging
+
 import torch
 from torch import nn
 from torch.nn.functional import grid_sample
 
+from .._verbose_deprecation import honour_verbose
 from .deep_sdf import Decoder
+
+logger = logging.getLogger(__name__)
 
 
 class VAEDecoder(nn.Module):
@@ -366,6 +371,7 @@ class TriplanarDecoder(nn.Module):
 
         return xy_new[None, :, None, :]
 
+    @honour_verbose
     def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
         """
         Forward pass through the triplanar decoder.
@@ -415,13 +421,13 @@ class TriplanarDecoder(nn.Module):
                 )
 
             if verbose:
-                print("Triplanar.forward()")
-                print("Epoch:", epoch)
-                print(f"Device: {x.device}")
-                print(f"x shape: {x.shape}, dtype: {x.dtype}")
+                logger.debug("Triplanar.forward()")
+                logger.debug("Epoch: %s", epoch)
+                logger.debug("Device: %s", x.device)
+                logger.debug("x shape: %s, dtype: %s", x.shape, x.dtype)
                 if x.device.type == "cuda":
-                    print(f"Memory allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
-                    print(f"Memory cached: {torch.cuda.memory_reserved() / 1e9:.2f} GB")
+                    logger.debug("Memory allocated: %.2f GB", torch.cuda.memory_allocated() / 1e9)
+                    logger.debug("Memory cached: %.2f GB", torch.cuda.memory_reserved() / 1e9)
 
             # Input parsing
             xyz = x[:, -3:]

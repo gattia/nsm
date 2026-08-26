@@ -9,12 +9,14 @@ importable from ``NSM.datasets`` and ``NSM.datasets.sdf_dataset`` as before; thi
 module holds the definitions. It imports only from ``.utils``.
 """
 
+import logging
 import os
 import time
 
 import numpy as np
 from pymskt.mesh import Mesh
 
+from .._verbose_deprecation import honour_verbose
 from .utils import (
     combine_meshes,
     derive_seed,
@@ -23,6 +25,8 @@ from .utils import (
     get_rand_uniform_pts,
     meshfix,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def read_mesh_get_sampled_pts(
@@ -110,15 +114,17 @@ def read_mesh_get_sampled_pts(
     ]
     for kwarg in kwargs:
         if kwarg in list_deprecated:
-            print(f"{kwarg} is deprecated and not used in this function - always True")
+            logger.warning("%s is deprecated and not used in this function - always True", kwarg)
         elif kwarg == "mean":
-            print("mean is deprecated and not used in this function - it never had an effect")
+            logger.warning(
+                "mean is deprecated and not used in this function - it never had an effect"
+            )
 
     results = {}
 
     # if mesh path does not exist, return None (skipping)
     if os.path.exists(path) is False:
-        print(f"Skipping ... path does not exist, {path}")
+        logger.warning("Skipping ... path does not exist, %s", path)
         return None
 
     # read in mesh & "fix" using meshfix if requested
@@ -133,7 +139,7 @@ def read_mesh_get_sampled_pts(
     results["orig_pts"] = [orig_mesh.point_coords]
 
     if register_to_mean_first is True:
-        print("Registering mesh to mean mesh")
+        logger.debug("Registering mesh to mean mesh")
         # Rigid + scaling alginment of the original mesh to the mean mesh
         # of the model. This allows all downstream scaling to occur as expected
         # it also aligns the new bone with the mean/expected bone of the shape model
@@ -154,11 +160,11 @@ def read_mesh_get_sampled_pts(
         results["icp_transform"] = icp_transform
         new_mesh.apply_transform_to_mesh(icp_transform)
     else:
-        print("No registration")
+        logger.debug("No registration")
         results["icp_transform"] = None
 
     if (center_pts is True) or (norm_pts is True):
-        print("Scaling and centering mesh")
+        logger.debug("Scaling and centering mesh")
         center, scale, new_pts = get_pts_center_and_scale(
             new_mesh.point_coords,
             scale_method=scale_method,
@@ -166,7 +172,7 @@ def read_mesh_get_sampled_pts(
         )
         new_mesh.point_coords = new_pts
     else:
-        print("Not scaling or centering mesh")
+        logger.debug("Not scaling or centering mesh")
         scale = 1
         center = np.zeros(3)
         new_pts = new_mesh.point_coords
@@ -232,7 +238,7 @@ def _register_to_mean(
     if icp_transform is None:
         # Support multiple surface registration
         if isinstance(mesh_to_scale, (list, tuple)):
-            print(f"Registering to multiple surfaces: {mesh_to_scale}")
+            logger.debug("Registering to multiple surfaces: %s", mesh_to_scale)
             # Combine multiple meshes for registration
             registration_mesh = combine_meshes(orig_meshes, mesh_to_scale)
         else:
@@ -253,7 +259,7 @@ def _register_to_mean(
     # apply transform to all meshes
     for idx, new_mesh in enumerate(new_meshes):
         if new_mesh is None:
-            print(f"Mesh is None... returning None for meshes and pts, {paths[idx]}")
+            logger.warning("Mesh is None... returning None for meshes and pts, %s", paths[idx])
             new_pts[idx] = None
             continue
         new_mesh.apply_transform_to_mesh(icp_transform)
@@ -383,6 +389,7 @@ def _draw_surface_samples(
     return np.concatenate(rand_pts, axis=0), np.concatenate(pts_surface, axis=0)
 
 
+@honour_verbose
 def read_meshes_get_sampled_pts(
     paths,
     sigma=[1, 1],
@@ -493,9 +500,11 @@ def read_meshes_get_sampled_pts(
     ]
     for kwarg in kwargs:
         if kwarg in list_deprecated:
-            print(f"{kwarg} is deprecated and not used in this function - always True")
+            logger.warning("%s is deprecated and not used in this function - always True", kwarg)
         elif kwarg == "mean":
-            print("mean is deprecated and not used in this function - it never had an effect")
+            logger.warning(
+                "mean is deprecated and not used in this function - it never had an effect"
+            )
 
     # preallocate results dictionary
     results = {}
@@ -505,12 +514,12 @@ def read_meshes_get_sampled_pts(
     orig_pts = []
     for path in paths:
         if path is None:
-            print(f"Mesh is None... returning None for meshes and pts, {path}")
+            logger.warning("Mesh is None... returning None for meshes and pts, %s", path)
             orig_meshes.append(None)
             orig_pts.append(None)
             continue
         if os.path.exists(path) is False:
-            print(f"Skipping ... path does not exist, {path}")
+            logger.warning("Skipping ... path does not exist, %s", path)
             return None
         mesh = Mesh(path)
         # fixing meshes ensures they are not degenerate
@@ -524,7 +533,7 @@ def read_meshes_get_sampled_pts(
     results["orig_pts"] = orig_pts
 
     toc = time.time()
-    print(f"Finished reading meshes in {toc - tic:.3f}s")
+    logger.debug("Finished reading meshes in %.3fs", toc - tic)
     tic = time.time()
 
     # Copy all meshes & points to new lists
@@ -532,7 +541,7 @@ def read_meshes_get_sampled_pts(
     new_pts = []
     for mesh_idx, orig_mesh in enumerate(orig_meshes):
         if orig_mesh is None:
-            print(f"Mesh is None... returning None for meshes and pts, {paths[mesh_idx]}")
+            logger.warning("Mesh is None... returning None for meshes and pts, %s", paths[mesh_idx])
             new_meshes.append(None)
             new_pts.append(None)
             continue
@@ -545,20 +554,20 @@ def read_meshes_get_sampled_pts(
         # of the model. This allows all downstream scaling to occur as expected
         # it also aligns the new bone with the mean/expected bone of the shape model
         # to maximize fidelity of the reconstruction.
-        print("Registering meshes to mean mesh")
+        logger.debug("Registering meshes to mean mesh")
         results["icp_transform"] = _register_to_mean(
             orig_meshes, new_meshes, new_pts, paths, mesh_to_scale, mean_mesh, icp_transform
         )
     else:
-        print("No registration")
+        logger.debug("No registration")
         results["icp_transform"] = None
 
     toc = time.time()
-    print(f"Finished registering meshes in {toc - tic:.3f}s")
+    logger.debug("Finished registering meshes in %.3fs", toc - tic)
     tic = time.time()
 
     if (center_pts is True) or (norm_pts is True):
-        print("Scaling and centering meshes")
+        logger.debug("Scaling and centering meshes")
         center, scale = _compute_shared_frame(
             new_pts, mesh_to_scale, scale_all_meshes, center_all_meshes, scale_method
         )
@@ -573,7 +582,7 @@ def read_meshes_get_sampled_pts(
         center = np.zeros(3)
 
     toc = time.time()
-    print(f"Finished centering and scaling meshes in {toc - tic:.3f}s")
+    logger.debug("Finished centering and scaling meshes in %.3fs", toc - tic)
     tic = time.time()
 
     for mesh_idx, new_mesh in enumerate(new_meshes):
@@ -603,7 +612,7 @@ def read_meshes_get_sampled_pts(
             tic_ = time.time()
             rand_sdf.append(new_mesh.get_sdf_pts(pts=rand_pts, method="pcu"))
             toc_ = time.time()
-            print(f"Finished calculating SDFs in {toc_ - tic_:.3f}s")
+            logger.debug("Finished calculating SDFs in %.3fs", toc_ - tic_)
 
         results["pts"] = rand_pts
         results["sdf"] = rand_sdf
@@ -623,21 +632,21 @@ def read_meshes_get_sampled_pts(
                 if new_pts_ is None:
                     continue
                 if verbose is True:
-                    print(
-                        "mesh_idx, new_mesh point_coords shape",
+                    logger.debug(
+                        "mesh_idx, new_mesh point_coords shape %s %s",
                         mesh_idx,
                         new_mesh.point_coords.shape,
                     )
                 if pts_idx == mesh_idx:
                     if verbose is True:
-                        print("adding zeros new_pts_ shape (zero)", new_pts_.shape)
+                        logger.debug("adding zeros new_pts_ shape (zero) %s", new_pts_.shape)
                     # same mesh, set SDFs to 0
                     sdfs_.append(np.zeros(new_pts_.shape[0]))
                 else:
                     # different mesh, calculate SDFs
                     _sdfs_ = new_mesh.get_sdf_pts(pts=new_pts_, method="pcu")
                     if verbose is True:
-                        print("caculating SDFs for new_pts_ ", _sdfs_.shape)
+                        logger.debug("caculating SDFs for new_pts_  %s", _sdfs_.shape)
                     sdfs_.append(_sdfs_)
 
             sdfs.append(np.concatenate(sdfs_, axis=0))
@@ -660,7 +669,7 @@ def read_meshes_get_sampled_pts(
         results["pts_surface"] = pts_surface
 
     toc = time.time()
-    print(f"Finished getting random points and SDFs in {toc - tic:.3f}s")
+    logger.debug("Finished getting random points and SDFs in %.3fs", toc - tic)
 
     results["new_pts"] = new_pts
 

@@ -12,6 +12,8 @@ warning at itself. Both readers accept ``**kwargs``, which is what made each of 
 silent.
 """
 
+import logging
+
 import numpy as np
 import pytest
 import torch
@@ -66,17 +68,26 @@ class TestNPtsRandomReachesTheReaders:
 
 
 class TestDeprecatedBatchSizeLatentRecon:
-    def test_the_shim_warns_and_stays(self, capsys):
+    def test_the_shim_warns_and_stays(self, caplog, capsys):
         """
         The ``batch_size_latent_recon`` check in ``reconstruct_mesh`` is the migration
         surface for external callers and outlives the in-repo plumbing removal. It fires
         before any work: an invalid ``path`` aborts immediately after it.
+
+        It is a ``logger.warning`` since §8.0.G, not a ``print`` -- so it reaches the
+        host's handlers, and stdout stays the consumer's.
         """
-        with pytest.raises(ValueError, match="path must be a string"):
-            recon_main.reconstruct_mesh(
-                path=42, decoders=None, latent_size=8, batch_size_latent_recon=1
-            )
-        assert "batch_size_latent_recon is deprecated" in capsys.readouterr().out
+        with caplog.at_level(logging.WARNING, logger="NSM"):
+            with pytest.raises(ValueError, match="path must be a string"):
+                recon_main.reconstruct_mesh(
+                    path=42, decoders=None, latent_size=8, batch_size_latent_recon=1
+                )
+        assert any(
+            "batch_size_latent_recon is deprecated" in record.getMessage()
+            and record.levelno == logging.WARNING
+            for record in caplog.records
+        )
+        assert capsys.readouterr().out == ""
 
     def test_get_mean_errors_does_not_forward_the_deprecated_kwarg(self, monkeypatch):
         """Was the #16-class strict xfail: the parameter and its plumbing are deleted."""

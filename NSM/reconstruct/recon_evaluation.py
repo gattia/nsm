@@ -20,6 +20,7 @@ try:
 except ImportError:
     wandb = None
 
+from .._verbose_deprecation import honour_verbose
 from .predictive_validation_class import Regress
 from .utils import compute_chamfer  # , compute_assd
 
@@ -52,8 +53,10 @@ def compute_recon_loss(
         dict: A dictionary containing the reconstruction loss for each mesh.
     """
     logger.info("Starting reconstruction loss computation")
-    logger.debug(f"Computing loss for {len(meshes) if isinstance(meshes, list) else 1} meshes")
-    logger.debug(f"Loss calculation settings: chamfer={calc_symmetric_chamfer}, assd={calc_assd}")
+    logger.debug("Computing loss for %s meshes", len(meshes) if isinstance(meshes, list) else 1)
+    logger.debug(
+        "Loss calculation settings: chamfer=%s, assd=%s", calc_symmetric_chamfer, calc_assd
+    )
 
     result = {}
 
@@ -66,43 +69,43 @@ def compute_recon_loss(
         orig_meshes
     ), "Number of meshes and number of original points must be equal"
 
-    logger.debug(f"Processing {len(meshes)} mesh pairs")
+    logger.debug("Processing %s mesh pairs", len(meshes))
 
     for mesh_idx, mesh in enumerate(meshes):
-        logger.debug(f"Processing mesh {mesh_idx + 1}/{len(meshes)}")
+        logger.debug("Processing mesh %s/%s", mesh_idx + 1, len(meshes))
 
         if mesh is not None:
             pts_recon_ = mesh.point_coords
-            logger.debug(f"Mesh {mesh_idx}: {len(pts_recon_)} reconstructed points")
+            logger.debug("Mesh %s: %s reconstructed points", mesh_idx, len(pts_recon_))
         else:
             pts_recon_ = None
-            logger.warning(f"Mesh {mesh_idx}: No reconstructed mesh provided (None)")
+            logger.warning("Mesh %s: No reconstructed mesh provided (None)", mesh_idx)
 
         xyz_orig_ = orig_meshes[mesh_idx].point_coords
-        logger.debug(f"Mesh {mesh_idx}: {len(xyz_orig_)} original points")
+        logger.debug("Mesh %s: %s original points", mesh_idx, len(xyz_orig_))
 
         if calc_symmetric_chamfer:
-            logger.debug(f"Computing Chamfer distance for mesh {mesh_idx}")
+            logger.debug("Computing Chamfer distance for mesh %s", mesh_idx)
             # if __chamfer__ is True:
             if pts_recon_ is None:
                 chamfer_loss_ = np.nan
                 logger.warning(
-                    f"Mesh {mesh_idx}: Chamfer distance set to NaN (no reconstructed mesh)"
+                    "Mesh %s: Chamfer distance set to NaN (no reconstructed mesh)", mesh_idx
                 )
             else:
                 chamfer_loss_ = compute_chamfer(
                     xyz_orig_, pts_recon_, num_samples=n_samples_chamfer, power=chamfer_norm
                 )
-                logger.debug(f"Mesh {mesh_idx}: Chamfer distance = {chamfer_loss_:.6f}")
+                logger.debug("Mesh %s: Chamfer distance = %.6f", mesh_idx, chamfer_loss_)
             result[f"chamfer_{mesh_idx}"] = chamfer_loss_
             # elif __chamfer__ is False:
             #     raise ImportError('Cannot calculate symmetric chamfer distance without chamfer_pytorch module')
 
         if calc_assd:
-            logger.debug(f"Computing ASSD for mesh {mesh_idx}")
+            logger.debug("Computing ASSD for mesh %s", mesh_idx)
             if pts_recon_ is None:
                 assd_loss_ = np.nan
-                logger.warning(f"Mesh {mesh_idx}: ASSD set to NaN (no reconstructed mesh)")
+                logger.warning("Mesh %s: ASSD set to NaN (no reconstructed mesh)", mesh_idx)
             else:
                 # make sure the points for the meshes are the same types
                 mesh.point_coords = mesh.point_coords.astype(np.float32)
@@ -110,14 +113,15 @@ def compute_recon_loss(
                     np.float32
                 )
                 assd_loss_ = mesh.get_assd_mesh(orig_meshes[mesh_idx])
-                logger.debug(f"Mesh {mesh_idx}: ASSD = {assd_loss_:.6f}")
+                logger.debug("Mesh %s: ASSD = %.6f", mesh_idx, assd_loss_)
             result[f"assd_{mesh_idx}"] = assd_loss_
 
-    logger.info(f"Reconstruction loss computation completed. Computed {len(result)} loss values.")
-    logger.debug(f"Result keys: {list(result.keys())}")
+    logger.info("Reconstruction loss computation completed. Computed %s loss values.", len(result))
+    logger.debug("Result keys: %s", list(result.keys()))
     return result
 
 
+@honour_verbose
 def get_mean_errors(
     mesh_paths,
     decoders,
@@ -255,7 +259,7 @@ def get_mean_errors(
             # subject NaN and keep the validation epoch alive rather than killing the
             # training run. No latent exists for this subject, so the predictive
             # validation below reports NaN instead of regressing on fabrications.
-            logger.warning(f"{mesh_path}: {error}")
+            logger.warning("%s: %s", mesh_path, error)
             n_degenerate += 1
             n_decoders = len(decoders) if isinstance(decoders, (list, tuple)) else 1
             n_surfaces = (
@@ -270,7 +274,7 @@ def get_mean_errors(
                 if calc_assd:
                     result_[f"assd_{mesh_idx}"] = np.nan
         if verbose is True:
-            print("result_", result_)
+            logger.debug("result_ %s", result_)
 
         if predict_val_variables is not None and "latent" in result_:
             reg.add_latent(result_["latent"].detach().cpu().numpy().ravel())
@@ -297,7 +301,7 @@ def get_mean_errors(
             wandb.finish()
 
     if verbose is True:
-        print("loss", loss)
+        logger.debug("loss %s", loss)
     loss_ = {}
 
     if predict_val_variables is not None:
@@ -313,7 +317,7 @@ def get_mean_errors(
         loss_.update(predictive_results)
 
     for key, item in loss.items():
-        print(key, item)
+        logger.debug("%s %s", key, item)
         mean = np.mean(item)
         std = np.std(item)
         median = np.median(item)

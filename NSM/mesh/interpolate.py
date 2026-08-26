@@ -20,11 +20,17 @@ archive branch/tag — ``mesh-interpolation-improvements``,
 as of 2026-08-22 it exists, if anywhere, only in a local clone.)
 """
 
+import logging
+
 import numpy as np
 import pyvista as pv
 import scipy
 import torch
 from vtk.util.numpy_support import numpy_to_vtk
+
+from .._verbose_deprecation import honour_verbose
+
+logger = logging.getLogger(__name__)
 
 EPS = 1e-8
 
@@ -320,6 +326,7 @@ def _tangent_laplacian_step(
 # ---------------------------------------------------------------------------
 
 
+@honour_verbose
 def update_positions(model, new_latent, current_points, surface_idx=0, verbose=True):
     """Single Newton projection of ``current_points`` onto the level set.
 
@@ -387,6 +394,7 @@ def _advance(
     return points
 
 
+@honour_verbose
 def interpolate_common(
     model,
     latent1,
@@ -453,7 +461,7 @@ def interpolate_common(
         # because the VTK smoothing already redistributes the mesh.
         for idx, step in enumerate(np.linspace(1 / n_steps, 1, n_steps)):
             if verbose:
-                print(f"{idx + 1}/{n_steps}")
+                logger.debug("%s/%s", idx + 1, n_steps)
             new_latent = _to_model_tensor(
                 (
                     slerp_latent(latent1, latent2, step)
@@ -511,7 +519,7 @@ def interpolate_common(
 
     for idx, t in enumerate(np.linspace(1 / n_steps, 1, n_steps)):
         if verbose:
-            print(f"{idx + 1}/{n_steps}")
+            logger.debug("%s/%s", idx + 1, n_steps)
         z_end = _latent_at(latent1, latent2, float(t), spherical)
         points = _advance(
             model,
@@ -528,6 +536,7 @@ def interpolate_common(
     return points.detach().cpu().numpy()
 
 
+@honour_verbose
 def interpolate_points(
     model,
     latent1,
@@ -594,6 +603,7 @@ def interpolate_points(
     )
 
 
+@honour_verbose
 def interpolate_mesh(
     model,
     latent1,
