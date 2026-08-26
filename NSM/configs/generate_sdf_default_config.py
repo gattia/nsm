@@ -47,7 +47,6 @@ config = {
     "layer_dimensions": [512] * 8,
     "layers_with_dropout": list(range(8)),
     "dropout_prob": 0,
-    "layers_with_norm": list(range(8)),
     "layer_latent_in": [4],
     "xyz_in_all": False,
     "latent_dropout": False,

@@ -62,16 +62,6 @@
         7
     ],
     "dropout_prob": 0,
-    "layers_with_norm": [
-        0,
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7
-    ],
     "layer_latent_in": [
         4
     ],

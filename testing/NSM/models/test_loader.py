@@ -166,7 +166,6 @@ def temp_model_files():
                 n_objects=config["objects_per_decoder"],
                 dropout=config["layers_with_dropout"],
                 dropout_prob=config["dropout_prob"],
-                norm_layers=config["layers_with_norm"],
                 latent_in=config["layer_latent_in"],
                 weight_norm=config["weight_norm"],
                 xyz_in_all=config["xyz_in_all"],

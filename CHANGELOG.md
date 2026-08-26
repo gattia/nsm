@@ -30,6 +30,25 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **`Decoder` no longer takes `norm_layers`** ([#46](https://github.com/gattia/nsm/issues/46)).
+  The branch that built the LayerNorms was an `elif` under `weight_norm`, so the option was
+  reachable **only with weight norm off** — and it then indexed the norm list by absolute
+  layer index, raising `IndexError` for any set not starting at layer 0.
+  **`weight_norm: true` configs are unaffected and still load**: nothing was ever built in
+  that branch, so the key was provably a no-op, and a config carrying it gets a logged
+  warning rather than an error. **`weight_norm: false` with a non-empty `layers_with_norm`
+  is refused**: LayerNorm really was applied there and the checkpoint carries `bn.*` keys,
+  so that architecture can no longer be built — pin NSM < 0.3.0 to load one. No shipped
+  model is in that case; both ShapeMedKnee configs set `weight_norm: true`.
+  `default_config.json` no longer ships the key, and `load_model` keeps mapping it for the
+  sole purpose of reaching those two responses.
+
+  *Not fixed here, deliberately:* commit `01d774a` (Jun 2023) introduced this branch with
+  the message "separate wieght norm and batch norm **so can use both**", which the `elif`
+  is precisely what prevents. Delivering that is new capability — it would add LayerNorm to
+  every model built from a config setting both, `default_config.json` included — so it
+  needs an explicit opt-in and a version boundary rather than a refactor commit.
+
 - **`layer_split: false` now means no layer split** ([#46](https://github.com/gattia/nsm/issues/46)).
   `Decoder` tested `self.layer_split is not None`, and `False is not None`, so the value
   `default_config.json` ships selected a split at layer 0: every state-dict key moved from

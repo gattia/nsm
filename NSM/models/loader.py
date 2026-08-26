@@ -157,6 +157,10 @@ def _get_deepsdf_params(config: Dict[str, Any]) -> tuple:
         "n_objects": config.get("objects_per_decoder", 1),
         "dropout": config.get("layers_with_dropout", None),
         "dropout_prob": config.get("dropout_prob", 0.2),
+        # Still mapped although Decoder no longer takes it: a config on disk that sets
+        # it has to reach Decoder's refusal rather than be dropped here in silence.
+        # Permanent for the same reason VAEDecoder's alias hook is -- configs written
+        # before the removal exist forever and NSM has no config version to retire them by.
         "norm_layers": config.get("layers_with_norm", ()),
         "latent_in": config.get("layer_latent_in", ()),
         "weight_norm": config.get("weight_norm", True),
@@ -324,7 +328,6 @@ def get_model_config_template(model_type: str) -> Dict[str, Any]:
             "objects_per_decoder": 1,
             "layers_with_dropout": None,  # List of layer indices or None
             "dropout_prob": 0.2,
-            "layers_with_norm": (),  # Tuple of layer indices (deprecated)
             "layer_latent_in": (),  # Tuple of layer indices
             "weight_norm": True,
             "xyz_in_all": None,
@@ -359,7 +362,6 @@ def get_model_config_template(model_type: str) -> Dict[str, Any]:
                 "dims": [512, 512, 512, 512, 512, 512, 512, 512],
                 "dropout": None,
                 "dropout_prob": 0.0,
-                "norm_layers": (),
                 "latent_in": (),
                 "weight_norm": True,
                 "xyz_in_all": None,

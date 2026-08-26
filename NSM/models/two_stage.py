@@ -25,7 +25,6 @@ default_mlp_params = {
     "n_objects": 2,
     "dropout": None,
     "dropout_prob": 0.0,
-    "norm_layers": (0, 1, 2, 3, 4, 5, 6, 7),  # DEPRECATED
     "latent_in": (),
     "weight_norm": True,
     "xyz_in_all": None,

@@ -1,9 +1,12 @@
+import logging
 import warnings
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+logger = logging.getLogger(__name__)
 
 PROGRESSIVE_PARAMS = {
     "n_layers": 3,
@@ -41,7 +44,6 @@ class Decoder(nn.Module):
         n_objects=1,
         dropout=None,
         dropout_prob=0.2,
-        norm_layers=(),  # DEPRECATED
         latent_in=(),
         weight_norm=True,
         # batch_norm=False,
@@ -61,7 +63,6 @@ class Decoder(nn.Module):
         n_objects (int): number of objects to predict
         dropout (list of ints): where to apply dropout to the encoder
         dropout_prob (float) : probability with which dropout is applied
-        norm_layers (list of ints): where to apply weightnorm/batchnorm to the decoder
         latent_in (list of ints): where to repeat the latent vector in the decoder
         weight_norm (bool): whether to apply weight normalization
         xyz_in_all (bool): for deepSDF decoder, include XYZ at each layer
@@ -77,11 +78,28 @@ class Decoder(nn.Module):
                 DeprecationWarning,
             )
 
-        # DEPRECATED
-        self.norm_layers = norm_layers
-
-        def make_sequence():
-            return []
+        # norm_layers is not simply inert, so the two cases are answered differently. The
+        # branch that built the LayerNorms is an `elif` under weight_norm (01d774a,
+        # Jun 2023), so:
+        #   weight_norm on  -> nothing was ever built; the key is provably a no-op and
+        #                      refusing it would break configs the defect never touched.
+        #   weight_norm off -> LayerNorms were built and used, and the checkpoint carries
+        #                      bn.* keys. That architecture is gone, so say so.
+        if kwargs.get("norm_layers"):
+            if weight_norm:
+                logger.warning(
+                    "norm_layers (config key: layers_with_norm) is set but has no effect "
+                    "and never had one under weight_norm=True: the branch that built the "
+                    "norm layers was unreachable. The model is unchanged; delete the key."
+                )
+            else:
+                raise TypeError(
+                    "norm_layers (config key: layers_with_norm) is gone, and with "
+                    "weight_norm=False it did something: LayerNorm was applied at those "
+                    "layers and the checkpoint carries bn.* keys. That architecture can no "
+                    "longer be built here -- pin NSM < 0.3.0 to load such a checkpoint. "
+                    "Under weight_norm=True the key was always a no-op."
+                )
 
         self._activation_ = activation
         self._final_activation_ = final_activation
@@ -111,7 +129,6 @@ class Decoder(nn.Module):
             self.dims = self.dims + [n_objects]
 
         self.layers = nn.ModuleList()
-        self.bn = nn.ModuleList()
 
         # Add the rest of the layers
         for layer in range(len(self.dims) - 1):
@@ -151,11 +168,8 @@ class Decoder(nn.Module):
         # initialize the weights - particularly for the sine activation
         init_weights(module=lin_layer, activation=self._activation_, first_layer=layer == 0)
         # add weight norm if specified
-        # if weight_norm is True and layer in self.norm_layers:
         if weight_norm is True:
             lin_layer = nn.utils.weight_norm(lin_layer)
-        elif self.norm_layers is not None and layer in self.norm_layers:
-            self.bn.append(nn.LayerNorm(out_dim))
         return lin_layer
 
     def get_layer_dims(self, layer):
@@ -201,9 +215,6 @@ class Decoder(nn.Module):
         # only apply normalization/ regular activation to
         # hidden layers (not output)
         if layer_idx < len(self.layers) - 1:
-
-            if len(self.bn) > 0 and layer_idx in self.norm_layers:
-                x = self.bn[layer_idx](x)
             x = self.activation(x)
 
             if (

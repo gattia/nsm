@@ -186,30 +186,44 @@ def test_a_block_phases_in_continuously_across_its_start_epoch():
     ), f"jump across start_epoch {across:.3e} > one warmup step {intended:.3e}"
 
 
-@pytest.mark.parametrize(
-    "layers_with_norm, weight_norm",
-    [
-        ((0, 1), False),
-        ((0, 1), True),
-        pytest.param(
-            (1, 2),
-            False,
-            marks=broken("norm_layers indexes self.bn by absolute layer index"),
-        ),
-        ((1, 2), True),
-    ],
-)
-def test_norm_layers_work_or_refuse(layers_with_norm, weight_norm):
+class TestNormLayersWasReachableOnlyOneWay:
     """
-    ``self.bn`` is appended to once per norm layer and read as ``self.bn[layer_idx]``, so
-    any set not starting at layer 0 indexes past the end -- but only with weight-norm off,
-    because with it on nothing is ever appended and the option is silently inert instead.
-    Both halves are pinned: the shipped configuration (weight_norm on) is the inert one.
+    ``norm_layers`` was deleted in Aug 2026 (#46), but it was **not** simply inert, so the
+    two cases have to be answered differently -- and getting that wrong breaks real configs.
+
+    The branch that built the LayerNorms is an ``elif`` under ``weight_norm``
+    (``deep_sdf.py``, commit ``01d774a``, Jun 2023, whose message says the goal was to
+    "separate wieght norm and batch norm so can use both" -- which the ``elif`` is exactly
+    what prevents). So with weight norm **on**, the shipped setting, nothing was ever
+    appended to the norm list and the key was provably a no-op; with it **off**, LayerNorm
+    really was applied, the checkpoint carries ``bn.*`` keys, and a set not starting at
+    layer 0 raised ``IndexError`` on the first forward.
     """
-    forwarded = build_and_forward(
-        "deepsdf", layers_with_norm=layers_with_norm, weight_norm=weight_norm
-    )
-    assert forwarded.shape == (N_POINTS, 1)
+
+    @pytest.mark.parametrize("layers_with_norm", [(0, 1), (1, 2), tuple(range(8))])
+    def test_it_is_accepted_where_it_never_did_anything(self, layers_with_norm):
+        """
+        The case that matters in practice: ``weight_norm: true`` with a full
+        ``layers_with_norm``, which is what ``default_config.json`` shipped and what real
+        training configs carry. Refusing it would break a config the defect never touched.
+        """
+        forwarded = build_and_forward(
+            "deepsdf", layers_with_norm=layers_with_norm, weight_norm=True
+        )
+        assert forwarded.shape == (N_POINTS, 1)
+
+    @pytest.mark.parametrize("layers_with_norm", [(0, 1), (1, 2)])
+    def test_it_is_refused_where_it_built_layers_the_checkpoint_still_carries(
+        self, layers_with_norm
+    ):
+        """Weight norm off is the configuration whose architecture can no longer be built."""
+        with pytest.raises(TypeError, match="bn"):
+            build("deepsdf", layers_with_norm=layers_with_norm, weight_norm=False)
+
+    @pytest.mark.parametrize("weight_norm", [True, False])
+    def test_an_empty_norm_layers_is_silent_either_way(self, weight_norm):
+        forwarded = build_and_forward("deepsdf", layers_with_norm=(), weight_norm=weight_norm)
+        assert forwarded.shape == (N_POINTS, 1)
 
 
 @pytest.mark.parametrize("layer_split", [None, 2])
