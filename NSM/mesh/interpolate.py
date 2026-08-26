@@ -26,6 +26,8 @@ import scipy
 import torch
 from vtk.util.numpy_support import numpy_to_vtk
 
+from .._verbose_deprecation import honour_verbose
+
 EPS = 1e-8
 
 
@@ -320,6 +322,7 @@ def _tangent_laplacian_step(
 # ---------------------------------------------------------------------------
 
 
+@honour_verbose
 def update_positions(model, new_latent, current_points, surface_idx=0, verbose=True):
     """Single Newton projection of ``current_points`` onto the level set.
 
@@ -387,6 +390,7 @@ def _advance(
     return points
 
 
+@honour_verbose
 def interpolate_common(
     model,
     latent1,
@@ -528,6 +532,7 @@ def interpolate_common(
     return points.detach().cpu().numpy()
 
 
+@honour_verbose
 def interpolate_points(
     model,
     latent1,
@@ -594,6 +599,7 @@ def interpolate_points(
     )
 
 
+@honour_verbose
 def interpolate_mesh(
     model,
     latent1,

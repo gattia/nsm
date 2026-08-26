@@ -18,6 +18,7 @@ import torch
 from torch import nn
 from torch.nn.functional import grid_sample
 
+from .._verbose_deprecation import honour_verbose
 from .deep_sdf import Decoder
 
 
@@ -366,6 +367,7 @@ class TriplanarDecoder(nn.Module):
 
         return xy_new[None, :, None, :]
 
+    @honour_verbose
     def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
         """
         Forward pass through the triplanar decoder.

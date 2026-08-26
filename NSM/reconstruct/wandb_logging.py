@@ -13,6 +13,8 @@ import copy
 import numpy as np
 import torch
 
+from .._verbose_deprecation import honour_verbose
+
 # Optional (#5): every wandb use is behind an explicit request that raises when absent.
 try:
     import wandb
@@ -72,6 +74,7 @@ def _process_meshes_for_wandb(meshes, mesh_prefix, max_points_3d, log_faces, ver
     return mesh_data
 
 
+@honour_verbose
 def prepare_results_for_wandb(result, max_points_3d=10000, log_faces=True, verbose=False):
     """
     Prepare reconstruction results for wandb logging with 3D point cloud visualization and robust JSON serialization.

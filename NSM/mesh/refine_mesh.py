@@ -2,6 +2,7 @@ import numpy as np
 import pyvista as pv
 from vtk.util.numpy_support import numpy_to_vtk
 
+from .._verbose_deprecation import honour_verbose
 from .triangle_metrics import TriangleProperties
 
 
@@ -366,6 +367,7 @@ def subdivide_triangles(mesh, cells_to_divide):
     return mesh_
 
 
+@honour_verbose
 def get_target_cells(
     mesh, area_threshold=None, length_threshold=None, max_length_threshold=None, verbose=False
 ):
@@ -418,6 +420,7 @@ def get_target_cells(
     return cells_to_divide
 
 
+@honour_verbose
 def subdivide_large_triangles(
     mesh, area_threshold=None, length_threshold=None, max_length_threshold=None, verbose=False
 ):
@@ -446,6 +449,7 @@ def subdivide_large_triangles(
     return mesh_
 
 
+@honour_verbose
 def subdivide_triangles_on_base_mesh(
     base_mesh,
     mesh,

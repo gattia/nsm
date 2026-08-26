@@ -20,6 +20,8 @@ from NSM.datasets.sdf_dataset import combine_meshes
 from NSM.losses import EIKONAL_UNSUPPORTED, eikonal_loss
 from NSM.mesh import create_mesh_adaptive
 
+from .._verbose_deprecation import honour_verbose
+
 # The .latent_fit, .wandb_logging and .recon_evaluation imports re-serve definitions
 # moved out in the §8.0.C and §8.0.E splits. Public API, not scaffolding:
 # ``NSM.reconstruct`` (star-import of this module) and ``NSM.reconstruct.main`` are both
@@ -57,6 +59,7 @@ class NoZeroLevelSetError(RuntimeError):
     """
 
 
+@honour_verbose
 def reconstruct_mesh(
     path,
     decoders,

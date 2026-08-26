@@ -20,6 +20,7 @@ try:
 except ImportError:
     wandb = None
 
+from .._verbose_deprecation import honour_verbose
 from .predictive_validation_class import Regress
 from .utils import compute_chamfer  # , compute_assd
 
@@ -118,6 +119,7 @@ def compute_recon_loss(
     return result
 
 
+@honour_verbose
 def get_mean_errors(
     mesh_paths,
     decoders,

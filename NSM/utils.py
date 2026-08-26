@@ -5,6 +5,8 @@ import warnings
 
 import torch
 
+from ._verbose_deprecation import honour_verbose
+
 try:
     import schedulefree
 except ImportError:
@@ -198,6 +200,7 @@ def get_learning_rate_schedules(config):
     return dict(zip(targets, schedules))
 
 
+@honour_verbose
 def adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False):
     """
     Set each optimizer param group's learning rate for ``epoch``.

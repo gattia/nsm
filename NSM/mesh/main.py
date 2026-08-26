@@ -23,6 +23,8 @@ import torch
 import vtk
 from skimage.measure import marching_cubes
 
+from .._verbose_deprecation import honour_verbose
+
 
 def _dilate6(mask: np.ndarray) -> np.ndarray:
     """
@@ -128,6 +130,7 @@ def coarse_bounds_from_sign_change(
     return bounds_min, bounds_max
 
 
+@honour_verbose
 def scale_mesh_(mesh, scale=1.0, offset=(0.0, 0.0, 0.0), icp_transform=None, verbose=False):
     """
     Scale, offset, and (optionally) inverse-ICP-transform a mesh — sometimes in place.
@@ -172,6 +175,7 @@ def scale_mesh_(mesh, scale=1.0, offset=(0.0, 0.0, 0.0), icp_transform=None, ver
     return mesh
 
 
+@honour_verbose
 def scale_mesh(
     new_mesh,
     old_mesh=None,
@@ -216,6 +220,7 @@ def scale_mesh(
     return mesh
 
 
+@honour_verbose
 def create_mesh(
     decoder,
     latent_vector,
@@ -315,6 +320,7 @@ def create_mesh(
     return meshes[0] if objects == 1 else meshes
 
 
+@honour_verbose
 def sdf_grid_to_mesh(
     sdf_values,
     voxel_origin,
@@ -378,6 +384,7 @@ def sdf_grid_to_mesh(
     return mesh
 
 
+@honour_verbose
 def crop_sdf_to_narrow_band(
     sdf_values, voxel_origin, voxel_size, band_width=3.0, pad_voxels=2, verbose=False
 ):
@@ -435,6 +442,7 @@ def crop_sdf_to_narrow_band(
     return sub_sdf, crop_origin
 
 
+@honour_verbose
 def sdf_grid_to_mesh_vtk(
     sdf_values,
     voxel_origin,
@@ -557,6 +565,7 @@ def create_grid_samples_in_bounds(
     return samples, (nx, ny, nz), (padded_min[0], padded_min[1], padded_min[2])
 
 
+@honour_verbose
 def create_mesh_adaptive(
     decoder,
     latent_vector,

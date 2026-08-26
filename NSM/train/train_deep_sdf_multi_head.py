@@ -24,6 +24,8 @@ from NSM.utils import (
     save_model_params,
 )
 
+from .._verbose_deprecation import honour_verbose
+
 loss_l1 = torch.nn.L1Loss(reduction="none")
 
 
@@ -165,6 +167,7 @@ def train_deep_sdf(config, models: tuple, sdf_dataset, use_wandb=False):
     return
 
 
+@honour_verbose
 def train_epoch(
     models,
     data_loader,

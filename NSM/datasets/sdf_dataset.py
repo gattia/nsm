@@ -28,6 +28,8 @@ except ModuleNotFoundError:
 today_date = datetime.now().strftime("%b_%d_%Y")
 
 
+from .._verbose_deprecation import honour_verbose
+
 # Moved to .utils / .mesh_sampling in the §8.0 decomposition (slice A) and re-imported
 # here permanently: NSM.datasets and NSM.datasets.sdf_dataset are both live import
 # paths for these names (reconstruct/main.py uses both), so they are public API of
@@ -222,6 +224,7 @@ class SDFSamples(torch.utils.data.Dataset):
         never hit again, so an old cache directory is reclaimable disk.
     """
 
+    @honour_verbose
     def __init__(
         self,
         list_mesh_paths,
@@ -1217,6 +1220,7 @@ class MultiSurfaceSDFSamples(SDFSamples):
           the surface the point was drawn around.
     """
 
+    @honour_verbose
     def __init__(
         self,
         list_mesh_paths,

@@ -12,6 +12,7 @@ from NSM.datasets import (
     read_mesh_get_sampled_pts,
 )
 
+from .._verbose_deprecation import honour_verbose
 from .utils import adjust_learning_rate
 
 # TODO: Add scaling, translation, and rotation to optimization
@@ -62,6 +63,7 @@ def get_axis_angle_rotation_matrix(polar_angle, azimuthal_angle, theta, epsilon=
     return R
 
 
+@honour_verbose
 def reconstruct_latent_S3(
     decoder,
     num_iterations,

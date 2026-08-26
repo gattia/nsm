@@ -19,11 +19,13 @@ except ImportError:
 
 from NSM.losses import EIKONAL_UNSUPPORTED, eikonal_loss
 
+from .._verbose_deprecation import honour_verbose
 from .utils import adjust_learning_rate
 
 logger = logging.getLogger(__name__)
 
 
+@honour_verbose
 def reconstruct_latent_sdf_gt_type_check(sdf_gt, verbose=False):
     if type(sdf_gt) in (torch.Tensor, np.ndarray):
         sdf_gt = [sdf_gt]
@@ -49,6 +51,7 @@ def reconstruct_latent_sdf_gt_type_check(sdf_gt, verbose=False):
     return sdf_gt
 
 
+@honour_verbose
 def reconstruct_latent_pts_surface_type_check(pts_surface, verbose=False, device="cuda"):
     if isinstance(pts_surface, (list, tuple)):
         pts_surface = torch.tensor(pts_surface).to(device)
@@ -89,6 +92,7 @@ def reconstruct_latent_get_lr_update_freq(n_lr_updates, num_iterations):
     return adjust_lr_every
 
 
+@honour_verbose
 def reconstruct_latent_preprocess_sdf_gt(sdf_gt, clamp_dist, device="cuda", verbose=False):
     # Set a clamp (maximum) distance to "model"
     for sdf_idx, sdf in enumerate(sdf_gt):
@@ -205,6 +209,7 @@ def latent_norm_penalty(latent, target_norm, penalty_weight=1.0, penalty_type="q
     return penalty_weight * penalty
 
 
+@honour_verbose
 def reconstruct_latent(
     decoders,
     num_iterations,

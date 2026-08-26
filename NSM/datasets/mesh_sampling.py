@@ -15,6 +15,7 @@ import time
 import numpy as np
 from pymskt.mesh import Mesh
 
+from .._verbose_deprecation import honour_verbose
 from .utils import (
     combine_meshes,
     derive_seed,
@@ -383,6 +384,7 @@ def _draw_surface_samples(
     return np.concatenate(rand_pts, axis=0), np.concatenate(pts_surface, axis=0)
 
 
+@honour_verbose
 def read_meshes_get_sampled_pts(
     paths,
     sigma=[1, 1],
