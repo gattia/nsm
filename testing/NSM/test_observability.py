@@ -89,10 +89,25 @@ class TestNSMOwnsNoStream:
         completed = _run("import NSM.reconstruct", _EMIT_A_DIAGNOSTIC)
         assert completed.stdout == ""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#58: reconstruct/main.py calls logging.basicConfig at module scope",
-    )
+    def test_an_unconfigured_host_sees_no_log_records(self):
+        """
+        What the ``NullHandler`` on the ``"NSM"`` logger buys: records from ``NSM.*``
+        find a handler, so ``logging.lastResort`` never fires and even a ``warning``
+        stays silent until the host asks for it. That is the stdlib idiom's known
+        consequence, not an oversight -- ``verbose=`` is the bridge for callers who
+        want the output without configuring logging.
+        """
+        completed = _run(
+            """
+            import logging
+            import NSM.reconstruct.recon_evaluation as recon_evaluation
+            recon_evaluation.logger.info("an info record")
+            recon_evaluation.logger.warning("a warning record")
+            """
+        )
+        assert "an info record" not in completed.stderr
+        assert "a warning record" not in completed.stderr
+
     def test_importing_does_not_reconfigure_the_host_root_logger(self):
         """
         Recorded before and after the import in one process, so the comparison is

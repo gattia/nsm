@@ -40,8 +40,6 @@ from .recon_evaluation import compute_recon_loss, get_mean_errors  # noqa: F401
 from .utils import adjust_learning_rate
 from .wandb_logging import _process_meshes_for_wandb, prepare_results_for_wandb  # noqa: F401
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
