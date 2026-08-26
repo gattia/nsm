@@ -9,12 +9,15 @@ module holds the definitions. Nothing in this module may import from other
 """
 
 import hashlib
+import logging
 import os
 import zipfile
 
 import numpy as np
 import torch
 from pymskt.mesh import Mesh
+
+logger = logging.getLogger(__name__)
 
 
 def derive_seed(seed, *key):
@@ -164,8 +167,11 @@ def meshfix(mesh, assert_=False, assert_error=0.01):
     mesh.fix_mesh()
     n_pts_fixed = mesh.point_coords.shape[0]
     # Asserting that no more than 1% of the mesh points were removed
-    print(
-        f"Fixed mesh, {n_pts_orig} -> {n_pts_fixed} ({(n_pts_fixed - n_pts_orig) / n_pts_orig * 100:.2f}%)"
+    logger.info(
+        "Fixed mesh, %s -> %s (%.2f%%)",
+        n_pts_orig,
+        n_pts_fixed,
+        (n_pts_fixed - n_pts_orig) / n_pts_orig * 100,
     )
     if assert_ is True:
         assert (n_pts_orig - n_pts_fixed) < (

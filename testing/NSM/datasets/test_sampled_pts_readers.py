@@ -15,6 +15,8 @@ Meshes are analytic spheres with known centers and radii, so the frame math
 ``center_all_meshes`` combination) is assertable against arithmetic, not baselines.
 """
 
+import logging
+
 import numpy as np
 import pytest
 
@@ -27,6 +29,16 @@ from NSM.datasets.sdf_dataset import (  # noqa: E402
     read_meshes_get_sampled_pts,
 )
 from NSM.datasets.utils import get_buffered_cube_mins_maxs  # noqa: E402
+
+
+def _messages(caplog, level=logging.DEBUG):
+    """The rendered messages NSM's own loggers emitted at or above ``level``."""
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name.startswith("NSM.") and record.levelno >= level
+    ]
+
 
 BONE_CENTER = np.array([2.0, 0.0, 0.0])
 BONE_RADIUS = 1.0
@@ -128,21 +140,26 @@ class TestSingleMeshReader:
         radii = np.linalg.norm(registered - center, axis=1)
         assert abs(radii.mean() - BONE_RADIUS) < 0.1
 
-    def test_deprecated_kwargs_print_and_change_nothing(self, sphere_paths, capsys):
-        result = read_mesh_get_sampled_pts(
-            sphere_paths[0], n_pts=10, sigma=0.1, fix_mesh=False, return_scale=False, mean=3
+    def test_deprecated_kwargs_warn_and_change_nothing(self, sphere_paths, caplog):
+        with caplog.at_level(logging.DEBUG, logger="NSM"):
+            result = read_mesh_get_sampled_pts(
+                sphere_paths[0], n_pts=10, sigma=0.1, fix_mesh=False, return_scale=False, mean=3
+            )
+        warnings = _messages(caplog, logging.WARNING)
+        assert "return_scale is deprecated and not used in this function - always True" in warnings
+        assert (
+            "mean is deprecated and not used in this function - it never had an effect" in warnings
         )
-        out = capsys.readouterr().out
-        assert "return_scale is deprecated" in out
-        assert "mean is deprecated" in out
         assert "scale" in result  # returned despite return_scale=False: always-on
 
-    def test_unknown_kwargs_are_swallowed_silently(self, sphere_paths, capsys):
-        result = read_mesh_get_sampled_pts(
-            sphere_paths[0], n_pts=10, sigma=0.1, fix_mesh=False, not_a_parameter=True
-        )
+    def test_unknown_kwargs_are_swallowed_silently(self, sphere_paths, caplog, capsys):
+        with caplog.at_level(logging.DEBUG, logger="NSM"):
+            result = read_mesh_get_sampled_pts(
+                sphere_paths[0], n_pts=10, sigma=0.1, fix_mesh=False, not_a_parameter=True
+            )
         assert result is not None
-        assert "not_a_parameter" not in capsys.readouterr().out
+        assert "not_a_parameter" not in "\n".join(_messages(caplog))
+        assert capsys.readouterr().out == ""
 
     def test_return_point_cloud_stores_the_normalized_surface(self, sphere_paths):
         result = read_mesh_get_sampled_pts(
@@ -150,10 +167,11 @@ class TestSingleMeshReader:
         )
         np.testing.assert_array_equal(result["point_cloud"], result["new_pts"][0])
 
-    def test_fix_mesh_runs_the_meshfix_wrapper(self, sphere_paths, capsys):
-        result = read_mesh_get_sampled_pts(sphere_paths[0], n_pts=10, sigma=0.1, fix_mesh=True)
+    def test_fix_mesh_runs_the_meshfix_wrapper(self, sphere_paths, caplog):
+        with caplog.at_level(logging.DEBUG, logger="NSM"):
+            result = read_mesh_get_sampled_pts(sphere_paths[0], n_pts=10, sigma=0.1, fix_mesh=True)
         assert result is not None
-        assert "Fixed mesh," in capsys.readouterr().out
+        assert any(m.startswith("Fixed mesh,") for m in _messages(caplog))
 
 
 class TestMultiMeshReader:
@@ -385,16 +403,21 @@ class TestMultiMeshReader:
         np.testing.assert_array_equal(result["pts"][n_random:end_of_surface_0], bone_verts)
         np.testing.assert_array_equal(result["pts"][end_of_surface_0 + n_random :], cart_verts)
 
-    def test_deprecated_kwargs_print_and_change_nothing(self, sphere_paths, capsys):
-        result = read_meshes_get_sampled_pts(
-            list(sphere_paths),
-            sigma=[0.1, 0.1],
-            n_pts=[10, 10],
-            fix_mesh=False,
-            return_orig_mesh=False,
-            mean=1,
+    def test_deprecated_kwargs_warn_and_change_nothing(self, sphere_paths, caplog):
+        with caplog.at_level(logging.DEBUG, logger="NSM"):
+            result = read_meshes_get_sampled_pts(
+                list(sphere_paths),
+                sigma=[0.1, 0.1],
+                n_pts=[10, 10],
+                fix_mesh=False,
+                return_orig_mesh=False,
+                mean=1,
+            )
+        warnings = _messages(caplog, logging.WARNING)
+        assert (
+            "return_orig_mesh is deprecated and not used in this function - always True" in warnings
         )
-        out = capsys.readouterr().out
-        assert "return_orig_mesh is deprecated" in out
-        assert "mean is deprecated" in out
+        assert (
+            "mean is deprecated and not used in this function - it never had an effect" in warnings
+        )
         assert "orig_mesh" in result  # returned despite return_orig_mesh=False: always-on
