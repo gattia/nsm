@@ -9,11 +9,14 @@ re-imports both names (public API, pinned by ``test_reconstruct_import_compat``)
 """
 
 import copy
+import logging
 
 import numpy as np
 import torch
 
 from .._verbose_deprecation import honour_verbose
+
+logger = logging.getLogger(__name__)
 
 # Optional (#5): every wandb use is behind an explicit request that raises when absent.
 try:
@@ -45,8 +48,12 @@ def _process_meshes_for_wandb(meshes, mesh_prefix, max_points_3d, log_faces, ver
             # Subsample if too many points
             if len(points) > max_points_3d:
                 if verbose:
-                    print(
-                        f"Subsampling {mesh_prefix}_{i} from {len(points)} to {max_points_3d} points"
+                    logger.debug(
+                        "Subsampling %s_%s from %s to %s points",
+                        mesh_prefix,
+                        i,
+                        len(points),
+                        max_points_3d,
                     )
                 indices = np.random.choice(len(points), max_points_3d, replace=False)
                 points = points[indices]
@@ -59,8 +66,11 @@ def _process_meshes_for_wandb(meshes, mesh_prefix, max_points_3d, log_faces, ver
                     )
                 except Exception as e:
                     if verbose:
-                        print(
-                            f"Failed to log faces for {mesh_prefix}_{i}, logging points only: {e}"
+                        logger.warning(
+                            "Failed to log faces for %s_%s, logging points only: %s",
+                            mesh_prefix,
+                            i,
+                            e,
                         )
                     mesh_data[f"{mesh_prefix}_{i}"] = wandb.Object3D(points)
             else:
@@ -91,7 +101,7 @@ def prepare_results_for_wandb(result, max_points_3d=10000, log_faces=True, verbo
     if wandb is None:
         raise ImportError("prepare_results_for_wandb requires wandb, which is not installed")
     if verbose:
-        print("Preparing results for wandb logging...")
+        logger.debug("Preparing results for wandb logging...")
 
     # Create a copy to avoid modifying the original
     result_wandb = copy.copy(result)
@@ -127,7 +137,7 @@ def prepare_results_for_wandb(result, max_points_3d=10000, log_faces=True, verbo
                 continue
             else:
                 if verbose:
-                    print(f"Removing large numpy array '{key}' with size {value.size}")
+                    logger.debug("Removing large numpy array '%s' with size %s", key, value.size)
                 keys_to_delete.append(key)
         elif isinstance(value, torch.Tensor):
             if value.numel() <= 10:  # Only log small tensors
@@ -135,13 +145,13 @@ def prepare_results_for_wandb(result, max_points_3d=10000, log_faces=True, verbo
                 continue
             else:
                 if verbose:
-                    print(f"Removing large tensor '{key}' with {value.numel()} elements")
+                    logger.debug("Removing large tensor '%s' with %s elements", key, value.numel())
                 keys_to_delete.append(key)
         elif hasattr(value, "__class__") and "wandb" in str(type(value)):
             continue  # Keep wandb objects (like Object3D)
         else:
             if verbose:
-                print(f"Removing non-serializable object '{key}' of type {type(value)}")
+                logger.warning("Removing non-serializable object '%s' of type %s", key, type(value))
             keys_to_delete.append(key)
 
     # Delete non-serializable items
@@ -155,6 +165,6 @@ def prepare_results_for_wandb(result, max_points_3d=10000, log_faces=True, verbo
         del result_wandb["orig_mesh"]
 
     if verbose:
-        print(f"Prepared {len(result_wandb)} items for wandb logging")
+        logger.debug("Prepared %s items for wandb logging", len(result_wandb))
 
     return result_wandb

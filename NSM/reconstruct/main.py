@@ -155,9 +155,8 @@ def reconstruct_mesh(
 
     # warning batch_size_latent_recon is deprecated
     if "batch_size_latent_recon" in kwargs:
-        print(
-            "Warning: batch_size_latent_recon is deprecated and will be removed in future versions. "
-            "Batch processing has been simplified and now processes all data at once for better performance."
+        logger.warning(
+            "batch_size_latent_recon is deprecated and will be removed in future versions. Batch processing has been simplified and now processes all data at once for better performance."
         )
 
     # Check if path is a single mesh or a list of meshes & set multi_object flag
@@ -215,11 +214,13 @@ def reconstruct_mesh(
 
         if objects_per_decoder[decoder_to_scale] > 1:
             if verbose is True:
-                print(f"Mean mesh is idx: {mesh_to_scale}")
+                logger.info("Mean mesh is idx: %s", mesh_to_scale)
             # Support multi-surface mean mesh creation
             if isinstance(mesh_to_scale, (list, tuple)):
                 if verbose is True:
-                    print(f"Combining mean meshes for multi-surface registration: {mesh_to_scale}")
+                    logger.info(
+                        "Combining mean meshes for multi-surface registration: %s", mesh_to_scale
+                    )
                 # Combine multiple mean meshes for registration
                 mean_mesh = combine_meshes(mean_mesh, mesh_to_scale)
             else:
@@ -240,7 +241,7 @@ def reconstruct_mesh(
     time_load_mean = toc - tic
     tic = time.time()
     if verbose is True:
-        print(f"Loaded mean mesh in {time_load_mean:.2f} seconds")
+        logger.debug("Loaded mean mesh in %.2f seconds", time_load_mean)
 
     # read in mesh(es) and get sampled points for fitting decoder too
     # handle single or multiple meshes appropriately.
@@ -290,7 +291,7 @@ def reconstruct_mesh(
         for sdf_idx, sdf_gt_ in enumerate(sdf_gt):
             if sdf_gt_ is None:
                 if verbose is True:
-                    print(f"sdf_gt[{sdf_idx}] is None, skipping surface {sdf_idx}")
+                    logger.warning("sdf_gt[%s] is None, skipping surface %s", sdf_idx, sdf_idx)
                 continue
             if not isinstance(sdf_gt_, torch.Tensor):
                 sdf_gt[sdf_idx] = torch.from_numpy(sdf_gt_).float()
@@ -307,7 +308,7 @@ def reconstruct_mesh(
     toc = time.time()
     time_load_mesh = toc - tic
     if verbose is True:
-        print(f"Loaded mesh in {time_load_mesh:.2f} seconds")
+        logger.debug("Loaded mesh in %.2f seconds", time_load_mesh)
 
     tic = time.time()
 
@@ -361,11 +362,11 @@ def reconstruct_mesh(
     toc = time.time()
     time_recon_latent = toc - tic
     if verbose is True:
-        print(f"Reconstructed latent in {time_recon_latent:.2f} seconds")
+        logger.debug("Reconstructed latent in %.2f seconds", time_recon_latent)
     tic = time.time()
 
     if verbose is True:
-        print(result_["icp_transform"])
+        logger.debug("%s", result_["icp_transform"])
 
     # create mesh(es) from latent
     meshes = []
@@ -398,7 +399,7 @@ def reconstruct_mesh(
     toc = time.time()
     time_create_mesh = toc - tic
     if verbose is True:
-        print(f"Created mesh in {time_create_mesh:.2f} seconds")
+        logger.debug("Created mesh in %.2f seconds", time_create_mesh)
     tic = time.time()
 
     if func is not None:
@@ -407,7 +408,7 @@ def reconstruct_mesh(
     toc = time.time()
     time_calc_recon_funcs = toc - tic
     if verbose is True:
-        print(f"metrics in {time_calc_recon_funcs:.2f} seconds")
+        logger.debug("metrics in %.2f seconds", time_calc_recon_funcs)
     tic = time.time()
 
     if (
@@ -422,8 +423,8 @@ def reconstruct_mesh(
         result["orig_mesh"] = result_["orig_mesh"]
 
         if calc_symmetric_chamfer or calc_assd:
-            print("length of meshes: ", len(meshes))
-            print("length of orig_mesh: ", len(result_["orig_mesh"]))
+            logger.debug("length of meshes:  %s", len(meshes))
+            logger.debug("length of orig_mesh:  %s", len(result_["orig_mesh"]))
             result_recon_metrics = compute_recon_loss(
                 meshes=meshes,
                 orig_meshes=result_["orig_mesh"],
@@ -433,11 +434,11 @@ def reconstruct_mesh(
                 calc_symmetric_chamfer=calc_symmetric_chamfer,
                 calc_assd=calc_assd,
             )
-            print("finished computing recon loss")
+            logger.debug("finished computing recon loss")
             toc = time.time()
             time_calc_recon_loss = toc - tic
             if verbose is True:
-                print(f"metrics in {time_calc_recon_loss:.2f} seconds")
+                logger.debug("metrics in %.2f seconds", time_calc_recon_loss)
 
             result.update(result_recon_metrics)
 
@@ -458,7 +459,7 @@ def reconstruct_mesh(
             # Prepare and log results to wandb with 3D point cloud visualization
             result_wandb = prepare_results_for_wandb(result, verbose=verbose)
             wandb.log(result_wandb)
-            print("done wandb stuff")
+            logger.debug("done wandb stuff")
 
         if return_registration_params:
             result["icp_transform"] = result_["icp_transform"]

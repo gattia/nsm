@@ -40,13 +40,13 @@ def reconstruct_latent_sdf_gt_type_check(sdf_gt, verbose=False):
         raise Exception("Invalid sdf_gt type")
 
     if verbose is True:
-        print("\tsdf_gt len:", len(sdf_gt))
+        logger.debug("\tsdf_gt len: %s", len(sdf_gt))
         for sdf in sdf_gt:
             if sdf is not None:
-                print("\tsdf shape:", sdf.shape)
-                print("\tsdf type:", type(sdf))
+                logger.debug("\tsdf shape: %s", sdf.shape)
+                logger.debug("\tsdf type: %s", type(sdf))
             else:
-                print("\tsdf is None")
+                logger.debug("\tsdf is None")
 
     return sdf_gt
 
@@ -63,8 +63,8 @@ def reconstruct_latent_pts_surface_type_check(pts_surface, verbose=False, device
         raise ValueError("pts_surface must be list, tuple, np.ndarray, or torch.Tensor")
 
     if verbose is True:
-        print("\tpts_surface shape:", pts_surface.shape)
-        print("\tpts_surface type:", type(pts_surface))
+        logger.debug("\tpts_surface shape: %s", pts_surface.shape)
+        logger.debug("\tpts_surface type: %s", type(pts_surface))
     return pts_surface
 
 
@@ -98,7 +98,7 @@ def reconstruct_latent_preprocess_sdf_gt(sdf_gt, clamp_dist, device="cuda", verb
     for sdf_idx, sdf in enumerate(sdf_gt):
         if sdf is None:
             if verbose is True:
-                print(f"sdf_gt[{sdf_idx}] is None, skipping surface {sdf_idx}")
+                logger.warning("sdf_gt[%s] is None, skipping surface %s", sdf_idx, sdf_idx)
             continue
         if clamp_dist is not None:
             sdf = torch.clamp(sdf, -clamp_dist, clamp_dist)
@@ -273,9 +273,8 @@ def reconstruct_latent(
 
     # Check for deprecated parameters
     if "max_batch_size" in kwargs:
-        print(
-            "Warning: max_batch_size is deprecated and will be removed in future versions. "
-            "Batch processing has been simplified and now processes all data at once for better performance."
+        logger.warning(
+            "max_batch_size is deprecated and will be removed in future versions. Batch processing has been simplified and now processes all data at once for better performance."
         )
 
     if eikonal_weight > 0:
@@ -290,8 +289,8 @@ def reconstruct_latent(
 
     if verbose is True:
         # print info about xyz
-        print("\txyz shape:", xyz.shape)
-        print("\txyz type:", type(xyz))
+        logger.debug("\txyz shape: %s", xyz.shape)
+        logger.debug("\txyz type: %s", type(xyz))
 
     # Setup n_samples, if not specified.
     if n_samples is None:
@@ -299,7 +298,7 @@ def reconstruct_latent(
 
     if (max_n_samples is not None) and (n_steps_sample_ramp is not None):
         if verbose is True:
-            print("Ramping up number of samples")
+            logger.debug("Ramping up number of samples")
         n_samples_init = n_samples
     else:
         n_samples_init = None
@@ -332,10 +331,12 @@ def reconstruct_latent(
         )
 
         if verbose:
-            print(
-                f"Hybrid optimizer: {adam_iterations} Adam iterations + {lbfgs_iterations} LBFGS iterations"
+            logger.info(
+                "Hybrid optimizer: %s Adam iterations + %s LBFGS iterations",
+                adam_iterations,
+                lbfgs_iterations,
             )
-            print(f"Total iterations: {total_iterations}")
+            logger.info("Total iterations: %s", total_iterations)
     else:
         # Single optimizer mode
         if optimizer_name == "adam":
@@ -393,7 +394,9 @@ def reconstruct_latent(
             if step == adam_iterations and not switched_to_lbfgs and lbfgs_iterations > 0:
                 switched_to_lbfgs = True
                 logger.info(
-                    f"Switching from Adam to LBFGS at step {step} (latent_norm: {latent.norm().item():.6f})"
+                    "Switching from Adam to LBFGS at step %s (latent_norm: %.6f)",
+                    step,
+                    latent.norm().item(),
                 )
         else:
             current_optimizer_name = optimizer_name
@@ -427,7 +430,7 @@ def reconstruct_latent(
                     (max_n_samples - n_samples_init) * min(1.0, (step / n_steps_sample_ramp))
                 )
                 if verbose is True:
-                    print("ramping up samples... ", n_samples_)
+                    logger.debug("ramping up samples...  %s", n_samples_)
             else:
                 n_samples_ = n_samples
 
@@ -456,8 +459,11 @@ def reconstruct_latent(
                         # get the locations of the points that belong to the current surface
                         pts_ = (pts_surface == idx).nonzero(as_tuple=True)[0]
                         if verbose is True:
-                            print(
-                                f"Surface {idx} has {pts_.shape[0]} points, sampling {n_samples_per_surface_} points"
+                            logger.debug(
+                                "Surface %s has %s points, sampling %s points",
+                                idx,
+                                pts_.shape[0],
+                                n_samples_per_surface_,
                             )
 
                         perm = torch.randperm(pts_.shape[0])
@@ -524,8 +530,10 @@ def reconstruct_latent(
                             # but we might want to reconstruct bone from cartilage (maybe?) or maybe we put
                             # cartilage first? Or maybe we have multiple bones & cartilage?
                             if verbose is True:
-                                print(
-                                    f"gt_idx ({gt_idx}) >= len(sdf_gt_) ({len(sdf_gt_)})... exiting"
+                                logger.warning(
+                                    "gt_idx (%s) >= len(sdf_gt_) (%s)... exiting",
+                                    gt_idx,
+                                    len(sdf_gt_),
                                 )
                             break
 
@@ -533,7 +541,9 @@ def reconstruct_latent(
                         # in fitting latent
                         if sdf_gt_[gt_idx] is None:
                             if verbose is True:
-                                print(f"sdf_gt_[gt_idx] is None, skipping surface {gt_idx}")
+                                logger.warning(
+                                    "sdf_gt_[gt_idx] is None, skipping surface %s", gt_idx
+                                )
                             continue
 
                         if difficulty_weight is not None:
@@ -554,9 +564,9 @@ def reconstruct_latent(
                         )
 
                         if verbose is True:
-                            print(f"loss_{sdf_idx} shape: ", _loss_.shape)
-                            print(f"loss_{sdf_idx} mean: ", _loss_.mean())
-                            print(f"loss_{sdf_idx} std: ", _loss_.std())
+                            logger.debug("loss_%s shape:  %s", sdf_idx, _loss_.shape)
+                            logger.debug("loss_%s mean:  %s", sdf_idx, _loss_.mean())
+                            logger.debug("loss_%s std:  %s", sdf_idx, _loss_.std())
 
                 _loss_ = torch.mean(_loss_)
                 # update the local loss
@@ -637,7 +647,11 @@ def reconstruct_latent(
         # Log progress at reasonable intervals
         if step % 50 == 0 or (step < 10):
             logger.info(
-                f"Step {step}: Loss={loss_.item():.6f}, Recon={recon_loss_.item():.6f}, Latent_norm={latent.norm().item():.3f}"
+                "Step %s: Loss=%.6f, Recon=%.6f, Latent_norm=%.3f",
+                step,
+                loss_.item(),
+                recon_loss_.item(),
+                latent.norm().item(),
             )
 
         # check if want to project onto hypersphere (skip for LBFGS since it's done in closure)
@@ -648,30 +662,30 @@ def reconstruct_latent(
             and not use_soft_norm_constraint
         ):
             if verbose is True:
-                print(f"Projecting latent onto hypersphere of norm in range: {latent_norm}")
+                logger.info("Projecting latent onto hypersphere of norm in range: %s", latent_norm)
             project_latent(latent, latent_norm)
 
         # Print progress/loss as appropriate
         if step % 50 == 0:
             if verbose is True:
                 optimizer_info = f" ({current_optimizer_name})" if hybrid_optimizer else ""
-                print(f"Step: {step}{optimizer_info}, Loss: {loss_.item()}")
-                print("\tRecon loss: ", recon_loss_.item())
+                logger.debug("Step: %s%s, Loss: %s", step, optimizer_info, loss_.item())
+                logger.debug("\tRecon loss:  %s", recon_loss_.item())
                 if eikonal_weight > 0:
                     eikonal_val = (
                         eikonal_loss_.item()
                         if hasattr(eikonal_loss_, "item")
                         else float(eikonal_loss_)
                     )
-                    print(f"\tEikonal loss: {eikonal_val:.6f}")
+                    logger.debug("\tEikonal loss: %.6f", eikonal_val)
                 if latent_norm is not None and use_soft_norm_constraint:
                     norm_penalty_val = (
                         norm_penalty_loss_.item()
                         if hasattr(norm_penalty_loss_, "item")
                         else float(norm_penalty_loss_)
                     )
-                    print(f"\tNorm penalty loss: {norm_penalty_val:.6f}")
-                print("\tLatent norm: ", latent.norm().item())
+                    logger.debug("\tNorm penalty loss: %.6f", norm_penalty_val)
+                logger.debug("\tLatent norm:  %s", latent.norm().item())
 
         # Log to wandb as appropriate
         if (log_wandb is True) and (step % log_wandb_step == 0):
@@ -705,7 +719,7 @@ def reconstruct_latent(
 
             if patience > convergence_patience:
                 logger.info(
-                    f"Converged (overall_loss) after {step} steps! Final loss: {loss_.item():.6f}"
+                    "Converged (overall_loss) after %s steps! Final loss: %.6f", step, loss_.item()
                 )
                 break
         elif convergence == "recon_loss":
@@ -718,7 +732,9 @@ def reconstruct_latent(
 
             if patience > convergence_patience:
                 logger.info(
-                    f"Converged (recon_loss) after {step} steps! Final recon loss: {recon_loss_.item():.6f}"
+                    "Converged (recon_loss) after %s steps! Final recon loss: %.6f",
+                    step,
+                    recon_loss_.item(),
                 )
                 break
         else:

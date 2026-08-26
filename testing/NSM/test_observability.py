@@ -21,7 +21,9 @@ Every check runs in a subprocess, because all three are properties of a fresh
 interpreter: once ``NSM`` is imported, the import-time effects cannot be observed again.
 """
 
+import ast
 import json
+import pathlib
 import subprocess
 import sys
 import textwrap
@@ -81,10 +83,6 @@ class TestNSMOwnsNoStream:
     conversion commits unmark them.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#58: NSM prints its diagnostics to stdout (plan §8.0.G, unmarks in the conversion)",
-    )
     def test_importing_and_calling_writes_nothing_to_stdout(self):
         completed = _run("import NSM.reconstruct", _EMIT_A_DIAGNOSTIC)
         assert completed.stdout == ""
@@ -126,3 +124,97 @@ class TestNSMOwnsNoStream:
         )
         recorded = json.loads(completed.stderr.strip().split("\n")[-1])
         assert recorded["after"] == recorded["before"]
+
+
+#: The Logger methods that emit a record. ``addHandler`` and friends are configuration,
+#: which ``_verbose_deprecation`` does to a *local* named ``logger``.
+EMIT_METHODS = {"debug", "info", "warning", "error", "exception", "critical", "log"}
+
+
+class TestTheConversionHolds:
+    """
+    Structural pins over ``NSM/`` itself: what the §8.0.G conversion established, so a
+    later slice reintroducing a ``print`` or an f-string log line goes red rather than
+    unnoticed. ``train/deprecated/`` is out of scope until §8.0.P.
+    """
+
+    #: A script's own output on its own stdout is not the library speaking.
+    ALLOWED_PRINTS = {"NSM/configs/generate_sdf_default_config.py"}
+
+    def test_no_print_survives_outside_the_generator_script(self):
+        offenders = [
+            f"{path}:{node.lineno}"
+            for path, tree in _library_modules()
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "print"
+            and path not in self.ALLOWED_PRINTS
+        ]
+        assert offenders == []
+
+    def test_every_log_call_defers_its_formatting(self):
+        """
+        ``%``-style, not an f-string or a pre-built string: a suppressed record must
+        cost no formatting. The hot ones sit in per-batch and per-step loops, and this
+        is the only thing standing between them and a silent per-iteration cost.
+
+        Note what this does *not* buy: the *arguments* are still evaluated eagerly. A
+        log line whose argument is expensive to compute belongs behind a guard, which
+        is where the remaining comprehension-valued ones already sit.
+        """
+        offenders = []
+        for path, tree in _library_modules():
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+                    continue
+                if not (isinstance(node.func.value, ast.Name) and node.func.value.id == "logger"):
+                    continue
+                if node.func.attr not in EMIT_METHODS:
+                    continue
+                first = node.args[0] if node.args else None
+                built = isinstance(first, ast.JoinedStr) or (
+                    isinstance(first, ast.BinOp) and isinstance(first.op, (ast.Mod, ast.Add))
+                )
+                built = built or (
+                    isinstance(first, ast.Call)
+                    and isinstance(first.func, ast.Attribute)
+                    and first.func.attr == "format"
+                )
+                if built:
+                    offenders.append(f"{path}:{node.lineno}")
+        assert offenders == []
+
+    def test_every_module_that_speaks_has_its_own_logger(self):
+        """
+        One ``getLogger(__name__)`` per speaking module, so the ``NSM.*`` hierarchy is
+        real: a host can silence ``NSM.datasets`` without silencing reconstruction.
+        """
+        missing = []
+        for path, tree in _library_modules():
+            speaks = any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "logger"
+                and node.func.attr in EMIT_METHODS
+                for node in ast.walk(tree)
+            )
+            defines = any(
+                isinstance(node, ast.Assign)
+                and any(getattr(t, "id", None) == "logger" for t in node.targets)
+                for node in tree.body
+            )
+            if speaks and not defines:
+                missing.append(path)
+        assert missing == []
+
+
+def _library_modules():
+    """(repo-relative path, parsed module) for every ``NSM/`` file outside ``deprecated/``."""
+    root = pathlib.Path(__file__).resolve().parents[2] / "NSM"
+    for path in sorted(root.rglob("*.py")):
+        if "deprecated" in path.parts:
+            continue
+        relative = path.relative_to(root.parent).as_posix()
+        yield relative, ast.parse(path.read_text(encoding="utf-8"))
