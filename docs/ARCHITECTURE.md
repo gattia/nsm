@@ -331,7 +331,7 @@ instance" asks for. The LR bug's class is the largest group.
 | **Silent in-place mutation of caller data** | 7 | `get_pts_center_and_scale` mutates the passed array; all three in-repo callers pass `np.copy()` defensively, so the convention exists only as a habit at the call sites. |
 | **Cache key omits a parameter that changes cached content** | 4 | *Fixed by [#19](https://github.com/gattia/nsm/issues/19) in PR #85 (§8.0.F).* `mesh_to_scale` and `uniform_pts_buffer` are in the key; `subsample` was decoupled from cached content instead of keyed; the key is a named canonical mapping with a `cache_format` version. Kept as a defect *class* because it is the one that silently served another run's data — see `KNOWN_ISSUES.md` § History 13. |
 | **Import-time side effect** | 10 | §4 above. |
-| **Constructed and discarded / leaked loop variable** | 3 | `train_deep_sdf_multi_head.train_deep_sdf` (only the last decoder trains), `read_meshes_get_sampled_pts`, `VAEDecoder.__init__` (the activation is built and never appended — the VAE decoder has no pointwise nonlinearity; see §7.1). *The `VAEDecoder` half is as fixed as it can be (§8.0.H): the dead `activation=` argument is gone and the stack's shape is pinned by `testing/NSM/models/test_model_structure.py`. Adding the activations is not available — it moves every index inside `self.decoder` and no shipped checkpoint would load.* |
+| **Constructed and discarded / leaked loop variable** | 3 | `train_deep_sdf_multi_head.train_deep_sdf` (only the last decoder trains), `read_meshes_get_sampled_pts`, `VAEDecoder.__init__` (the activation is built and never appended — the VAE decoder has no pointwise nonlinearity; see §7.1). *§8.0.H deleted the dead `activation=` argument and pinned the stack's shape with `testing/NSM/models/test_model_structure.py`; the missing activation itself is not fixed. Adding it **unconditionally** is not available — it moves every index inside `self.decoder` and no shipped checkpoint would load — but an opt-in flag defaulting to off builds the identical module list, so the fix is a retrain question rather than a compatibility one: `NSM_TRAINING_IDEAS.md` Idea 13.* |
 | **Constructible-but-uncallable configuration** | 5 | *Closed in `models/` by [#46](https://github.com/gattia/nsm/issues/46) (§8.0.H): `Decoder(activation='linear')` and `norm_layers` now refuse at construction, `progressive_add_depth=True` works below its last `start_epoch`, and `TwoStageDecoder()` builds — it had never been constructible, `[latent_size + 3] + dims` being a list plus a tuple. `refine_mesh.get_target_cells()` with its own defaults is the surviving instance and belongs to §8.0.I.* Kept as a defect *class* because it is what an option matrix catches and nothing else does: `testing/NSM/models/test_model_options.py` is that matrix for this package. |
 
 **71 of the 216 are landmines** — wrong behaviour that raises nothing and returns a
@@ -360,6 +360,36 @@ the shipped models,** and the correction matters:
 LayerNorm divides by a standard deviation computed from its own input, so it is nonlinear
 in its own right and silently supplies the nonlinearity the missing activation was meant
 to. The production models work, and they work by accident.
+
+**But it is a narrow kind of nonlinearity, and the difference is what decides how much the
+missing activation costs.** Only the division is nonlinear, and it is a radial projection:
+direction preserved, magnitude rescaled. It cannot zero a feature out, cannot form a
+decision boundary, cannot make the function piecewise. What an activation would add is
+*selectivity*, and none of it is present. Three properties, each measured and each pinned by
+`test_model_structure.TestWhatLayerNormActuallySupplies`, because each is one a reader will
+otherwise get wrong from theory:
+
+- **Normalization is over the whole `(C, H, W)` feature map**, so each sample gets *one*
+  scale for the entire map — verified on 647: `(512,4,4) … (512,64,64)`. The ConvNeXt
+  convention (over channels at each spatial position) would give a per-location gain the
+  next conv could mix into multiplicative interactions across space. This is the weaker of
+  the two.
+- **The latent magnitude is *not* discarded.** LayerNorm is degree-0 homogeneous, so a stack
+  whose first LayerNorm saw only linear maps would be blind to `‖z‖` — and then the L2 latent
+  prior could shrink latents at no reconstruction cost, and interpolation would belong on the
+  sphere rather than the line. Neither follows here: `fc` and the first `ConvTranspose2d`
+  both carry biases, which break the homogeneity first. Measured on 647, `vae(z)` against
+  `vae(2z)` differs by **1.33** on a `tanh`-bounded output.
+- **The gain's data-dependence attenuates with depth.** A σ that never moves across inputs is
+  a fixed affine map wearing a normalization layer's name. Over latents spanning the fitted
+  production norm range (4.0 → 10.0), 647's five σ spreads are **1.71×, 1.30×, 1.15×, 1.02×,
+  1.00×** — real at the first layer, gone by the last, so the deeper layers are close to fixed
+  affine maps. Freezing all five statistics moves the feature planes ~20% of output range,
+  but that is five layers of compounding, not a large per-layer nonlinearity.
+
+*(Method note, since the first version of that sweep was wrong: latents drawn all at the same
+norm remove the variation by construction and report 1.00× at every layer. The norms have to
+vary for the measurement to mean anything.)*
 
 **The sharper hazard the correction exposes:** with `norm_type="batch"` the model *trains*
 nonlinear — batch statistics couple samples, additivity error 4.08 — and *evaluates* affine

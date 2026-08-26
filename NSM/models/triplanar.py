@@ -38,10 +38,12 @@ class VAEDecoder(nn.Module):
         start_with_mlp=True,
     ):
         # No `activation` argument: the module it selected was built and never appended, so
-        # this conv stack has no pointwise nonlinearity at all (#20). Adding one is NOT
-        # available -- it shifts every later index inside self.decoder and no shipped
-        # checkpoint would load. ARCHITECTURE.md section 7.1; test_model_structure.py pins
-        # the shape that leaves behind.
+        # this conv stack has no pointwise nonlinearity at all (#20). Adding one
+        # UNCONDITIONALLY is not available -- it shifts every later index inside
+        # self.decoder and no shipped checkpoint would load. An opt-in flag defaulting to
+        # off builds the identical module list and costs them nothing; that, plus the
+        # retrain that says whether it is worth having, is NSM_TRAINING_IDEAS Idea 13.
+        # ARCHITECTURE.md section 7.1; test_model_structure.py pins today's shape.
         super(VAEDecoder, self).__init__()
 
         # self.fc = nn.Linear(latent_dim, hidden_dims[0] * deep_image_size**2)

@@ -1835,9 +1835,11 @@ every assertion in that class.
 **Deliberately NOT in this slice, each for a stated reason.**
 
 - **Adding the VAE's missing activation.** It is real, it is documented in ARCHITECTURE
-  §7.1, and it cannot be fixed here: the activations would shift every subsequent module's
-  index inside `nn.Sequential`, so all three shipped checkpoints stop loading, and the
-  weights were fitted without them anyway. What this slice does is delete the dead
+  §7.1, and it is not fixed here: adding the activations **unconditionally** would shift
+  every subsequent module's index inside `nn.Sequential`, so all three shipped checkpoints
+  stop loading, and the weights were fitted without them anyway. An opt-in flag defaulting
+  to off is compatible (verified bitwise) — what it needs is the retrain that says whether
+  it helps, which is `NSM_TRAINING_IDEAS.md` Idea 13, not this slice. What this slice does is delete the dead
   `activation=` parameter and pin the structure so the next reader cannot "fix" it by
   accident. The issue text is drafted in the PR body for the maintainer to file.
 - **Rejecting unknown `**kwargs`** on `Decoder`/`TriplanarDecoder`. It closes the same

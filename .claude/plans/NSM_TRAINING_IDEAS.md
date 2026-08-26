@@ -571,6 +571,49 @@ upstream retraining-required change.)
 
 ---
 
+## Idea 13 — Give the triplanar VAE a pointwise activation, opt-in, and find out if it helps
+
+**What.** `VAEDecoder`'s conv stack has **no pointwise activation**. `__init__` built one
+and never appended it, from the first triplanar commit (`71df387`, Aug 2023) onwards, so no
+triplanar model NSM has ever produced has had one. Add `conv_activation`, defaulting to off
+so every existing checkpoint keeps loading, and train a matched pair to find out whether it
+is worth the retrain.
+
+**Why it is not obvious either way.** The stack is not degenerate — LayerNorm supplies a
+nonlinearity — but a narrow one: a radial projection that preserves direction and rescales
+magnitude. It cannot zero a feature out or form a decision boundary. What an activation adds
+is *selectivity*, which for an SDF field should matter most at sharp features and creases.
+Against that, the gain LayerNorm supplies is already weak and gets weaker with depth
+(`ARCHITECTURE.md` §7.1: σ spreads of 1.71×, 1.30×, 1.15×, 1.02×, 1.00× across 647's five
+layers), so there is real headroom — and the shipped models were fitted without any of it.
+
+**What is already settled, so nobody repeats it.**
+
+- **The fix is available and costs nothing to old checkpoints.** Verified: a
+  `conv_activation` defaulting to `None` builds an identical module list, strict-loads a
+  shipped checkpoint and is bitwise-identical. Only an *unconditional* insert breaks them,
+  by shifting every index inside `nn.Sequential`.
+- **The regression harness cannot answer this.** Measured over 3 seeds × 2 norm types on the
+  synthetic fixture: reconstruction ASSD flips sign with the seed (5.80× better, 1.09×,
+  0.69× on `layer`), because the *control* alone varies 11× across seeds — a bad latent fit
+  dominates the effect. A single-seed run looked like a 5.8× win and was noise.
+- **A naive drop-in trains worse.** Training loss was worse in **5 of 6** of those runs.
+  Consistent with LayerNorm's scale invariance currently normalizing the gradients: adding
+  activations changes that balance, so **both learning rates need retuning** before the
+  comparison means anything. `Conv → LN → SiLU`, or leaky ReLU at 0.2, is the shape to try.
+
+**Cost / retrain.** Two production-scale training runs plus LR retuning. Not answerable at
+harness scale — that is the finding above, not an assumption.
+
+**Priority.** Below triplane resolution and feature dimension. Expect a modest gain rather
+than a step change; the honest position is that nobody knows, and the shipped models work.
+
+**Status.** Idea — not started. The dead `activation=` argument was deleted and the current
+shape pinned in §8.0.H (PR #90); the issue text for the defect itself is drafted in that
+PR's body, awaiting the maintainer.
+
+---
+
 ## Related
 
 - `NSM_MESH_INTERPOLATION_IMPROVEMENTS.md` — inference-only numerical fixes;

@@ -110,6 +110,106 @@ class TestTheVAEHasNoActivation:
             build_vae(activation="relu")
 
 
+class TestWhatLayerNormActuallySupplies:
+    """
+    The shipped models are nonlinear only because of LayerNorm (see above), so *what kind*
+    of nonlinearity that is decides how much the missing activation costs. Three properties,
+    none of them re-derivable by reading, all of them constraining any future fix.
+
+    LayerNorm subtracts a mean and divides by a standard deviation. Only the division is
+    nonlinear, and it is a radial projection: it preserves direction and rescales magnitude.
+    It cannot zero a feature out, cannot form a decision boundary, cannot make the function
+    piecewise. Whatever an activation would add is *selectivity*, and none of it is here.
+    """
+
+    def test_normalization_is_over_the_whole_feature_map_not_per_position(self):
+        """
+        ``normalized_shape`` is the full ``(C, H, W)``, so each sample gets **one** scale
+        for its entire feature map. The ConvNeXt convention -- normalizing over channels at
+        each spatial position -- would give a per-location gain that the next conv could mix
+        into genuine multiplicative interactions across space. This is the weaker of the two
+        and is what every shipped model runs.
+        """
+        norms = [m for m in build_vae(norm_type="layer").decoder if isinstance(m, nn.LayerNorm)]
+        assert norms, "the layer variant stopped building LayerNorms"
+        assert all(len(m.normalized_shape) == 3 for m in norms), [m.normalized_shape for m in norms]
+
+    def test_the_latent_magnitude_is_not_discarded(self):
+        """
+        LayerNorm is degree-0 homogeneous -- ``LN(cx) == LN(x)`` -- so a stack whose first
+        LayerNorm saw only linear maps would be blind to ``||z||``, and the L2 latent prior
+        could shrink latents at no reconstruction cost.
+
+        That is not this stack: ``fc`` and the first ``ConvTranspose2d`` both carry biases,
+        which break the homogeneity before the first LayerNorm sees anything. Asserted
+        rather than assumed, because the conclusions that follow from the homogeneous case
+        (an inert latent-norm penalty; interpolating on the sphere rather than the line) are
+        wrong here, and are the kind of thing a reader will otherwise derive from theory.
+        """
+        vae = build_vae(norm_type="layer")
+        assert vae.fc.bias is not None and vae.decoder[0].bias is not None
+
+        torch.manual_seed(4)
+        z = torch.randn(1, LATENT)
+        with torch.no_grad():
+            once, twice = vae(z), vae(2 * z)
+        relative = (once - twice).abs().max().item() / once.abs().max().item()
+        assert relative > 1e-2, f"the decoder became blind to ||z||: {relative:.2e}"
+
+    def test_the_data_dependence_of_the_gain_attenuates_with_depth(self):
+        """
+        How much nonlinearity LayerNorm actually contributes is how much its per-sample
+        sigma *moves* across inputs -- a sigma that never changes is a fixed affine map
+        wearing a normalization layer's name.
+
+        Measured here across latents spanning a 2.5x range of norms, matching the fitted
+        production range (median ~7.3, bound 10; ``NSM_TRAINING_IDEAS.md`` Idea 4).
+        The spread is real at the first LayerNorm and decays towards 1.0 by the last, so
+        the deeper layers are close to fixed affine maps. On the shipped 647 model the same
+        sweep gives 1.71x, 1.30x, 1.15x, 1.02x, 1.00x.
+
+        Asserted as *first > last* and not as values: the magnitudes depend on width and
+        depth, the ordering is the property.
+        """
+        vae = build_vae(hidden_dims=[16] * 5, norm_type="layer")
+
+        torch.manual_seed(5)
+        latents = torch.randn(16, LATENT)
+        norms = torch.linspace(4.0, 10.0, 16)[:, None]
+        latents = latents / latents.norm(dim=1, keepdim=True) * norms
+
+        seen = {}
+
+        def record(index):
+            def hook(module, inputs, output):
+                x = inputs[0]
+                seen.setdefault(index, []).append(x.std(dim=tuple(range(1, x.dim()))))
+
+            return hook
+
+        handles = [
+            module.register_forward_hook(record(index))
+            for index, module in enumerate(vae.decoder)
+            if isinstance(module, nn.LayerNorm)
+        ]
+        try:
+            with torch.no_grad():
+                vae(latents)
+        finally:
+            for handle in handles:
+                handle.remove()
+
+        spreads = []
+        for index in sorted(seen):
+            sigma = torch.cat(seen[index])
+            spreads.append((sigma.max() / sigma.min()).item())
+
+        assert len(spreads) == 5, spreads
+        assert spreads[0] > 1.5, f"the first gain stopped being data-dependent: {spreads[0]:.2f}x"
+        assert spreads[-1] < 1.1, f"the last gain stopped being near-constant: {spreads[-1]:.2f}x"
+        assert spreads[0] > spreads[-1], spreads
+
+
 class TestOneSine:
     """
     ``deep_sdf`` and ``modulated_periodic_activations`` each defined a ``Sine`` with
