@@ -115,14 +115,8 @@ def _get_triplanar_params(config: Dict[str, Any]) -> tuple:
     required_keys = ["latent_size"]
     _check_required_keys(config, required_keys, "triplanar")
 
-    # `padding` is required rather than defaulted, and it is the only key here that is
-    # (#26). Every other one either has a value the checkpoint's tensor shapes would
-    # contradict, or does not change what the model computes. `padding` is neither: it
-    # scales query coordinates before they index the feature planes and is not a learned
-    # parameter, so a checkpoint trained at one value loads cleanly under strict
-    # load_state_dict at another and samples at the wrong scale -- measured at 0.063 max
-    # SDF difference on a tanh-bounded output. There is nothing in the checkpoint to
-    # cross-check it against, so the config is the only place it can come from.
+    # The only required key that is not `latent_size`, because it is the only one whose
+    # wrong value the checkpoint's tensor shapes do not contradict (#26; History 16).
     if "padding" not in config:
         raise KeyError(
             "padding is missing from this triplanar config, and it cannot be recovered "
@@ -176,12 +170,9 @@ def _get_deepsdf_params(config: Dict[str, Any]) -> tuple:
         "n_objects": config.get("objects_per_decoder", 1),
         "dropout": config.get("layers_with_dropout", None),
         "dropout_prob": config.get("dropout_prob", 0.2),
-        # norm_layers, xyz_in_all and latent_noise_sigma are still mapped although Decoder
-        # no longer takes any of them: a config on disk that sets one has to reach
-        # Decoder's refusal rather than be dropped here in silence. Permanent for the same
-        # reason VAEDecoder's alias hook is -- configs written before the removal exist
-        # forever and NSM has no config version to retire them by. They are absent from
-        # get_model_config_template, which is what a NEW config should look like.
+        # norm_layers, xyz_in_all and latent_noise_sigma are deleted arguments, still
+        # mapped so a config that sets one reaches Decoder's refusal instead of being
+        # dropped here. Permanent: configs written before the removal exist forever.
         "norm_layers": config.get("layers_with_norm", ()),
         "latent_in": config.get("layer_latent_in", ()),
         "weight_norm": config.get("weight_norm", True),

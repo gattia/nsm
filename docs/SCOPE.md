@@ -223,7 +223,31 @@ actually ran is not answerable from this repo.
 
 | Module | Lines | Status | What decides it |
 |---|---|---|---|
-| `models/loader.py` | 387 | **production — fix, under investigation** | Not a status question. It is the documented entry point (README, `examples/`) *and* the natural home of the extensibility work in §1, since `load_model` is what a registration pathway would hang off. But three of its four advertised model types cannot be reconstructed, and the consumer does not use it — `steps/run_nsm.py:94-112` hand-rolls the config→constructor mapping instead and drops `padding`. **Open question being investigated: could the consumer switch to `load_model` today, and if not, what exactly is missing?** That answer sets the size of the fix. |
+| `models/loader.py` | 411 | **production — keep; the extensibility question moves to §8.1** | It is the documented entry point (README, `examples/`) *and* the natural home of the extensibility work in §1, since `load_model` is what a registration pathway would hang off. Three of its four advertised model types still cannot be reconstructed — that part is §8.1. **The open question is answered, by execution (2026-08-26): see below.** |
+
+**Could the consumer switch to `load_model` today?** **Yes, after one edit to two files
+it does not own.** Answered by running it, not by reading: both shipped
+`model_params_config.json` files were loaded through `load_model` on CPU, and both models
+built and forwarded (`647`: 20,801,924 parameters, output width 2; `551`: 20,801,410,
+width 1).
+
+- The consumer's 15-key mapping (`steps/run_nsm.py:94-112`) is `_get_triplanar_params`'
+  dict minus `padding`, written with `[...]` where the loader uses `.get(...)`. Nothing
+  else differs.
+- `torch.load`: the consumer passes `weights_only=True`, `load_model` leaves torch's
+  default. Checked on a `{epoch, model, optimizer}` checkpoint under torch 2.8 — all three
+  settings load it identically.
+- Device: `.cuda()` against `.to(device)` with device defaulting to cuda-if-available.
+  Equivalent where the consumer runs, and `load_model` additionally works on CPU.
+- `load_model` returns only the model, and the consumer also needs `model_config` — which
+  it already reads from the JSON itself, so nothing is lost.
+
+**The one blocker is the edit:** as of §8.0.H, `load_model` refuses a triplanar config that
+omits `padding` (#26, § History 16), and **both shipped configs omit it**. Both models were
+trained at the constructor default, so adding `"padding": 0.1` to each is the whole
+migration — and that omission is exactly what the hand-rolled mapping was hiding. What
+switching would buy: one mapping instead of two, and the refusal reaching the consumer.
+What it would not fix: the surface-order contract in §3.1, which is unrelated.
 | `mesh/triangle_metrics.py` | 97 | **keep — scope under investigation** | Both importers (`correspondence_metrics`, `refine_mesh`) are themselves unreached from production, so it cannot be ruled on independently of §2.3. Two open questions: is all five of its public symbols live, or only the part `correspondence_metrics` uses; and its `areas(norm=True)` default returns a relative deviation rather than areas, which is what makes `refine_mesh`'s `area_threshold` misleading. **Keep either way** — the question is whether it stays a separate file or the live part merges into `correspondence_metrics`. Input to that merge decision, from the audit (re-verified 2026-08-22): the two modules implement the edge-ratio statistic with deliberately opposite failure behaviour — `TriangleProperties.edge_ratio` raises on a zero-length edge, `correspondence_metrics.triangle_health` degrades gracefully and reports a `degenerate_count`. A merge must reconcile that split or keep it, deliberately. |
 | `datasets/utils.py` | 360 | **prod** — *ruling executed, 2026-08-22* | Was a two-line TODO proposing the Phase 4 `sdf_dataset` split, ruled dead pending that split. The split happened (§8.0 slice A, PR #71): the file now holds the 13 leaf helpers, is imported by `sdf_dataset.py` and `mesh_sampling.py`, and is one of the best-covered modules in the package. The row is kept rather than deleted because "delete when Phase 4 does the split" was a correct ruling that a reader will otherwise go looking for. |
 | `configs/generate_sdf_default_config.py` | 112 | **supported** | Confirmed — it owns the shipped `default_config.json` and is pinned by `test_default_config_sync.py`. The plan already ruled this correctly. |
@@ -351,6 +375,10 @@ Two things about that surface are load-bearing and undocumented:
    The duplicated mapping exists because NSM offers no supported "build the model this
    config describes" call that the consumer can use — `load_model` exists but is not what
    the consumer uses. **Closing that gap is the single highest-value API change available.**
+   *Half-closed 2026-08-26 (§8.0.H, #26): `load_model` now refuses a triplanar config that
+   omits `padding`, so the value can no longer be silently defaulted on **that** path. The
+   consumer's own path is untouched, because it never calls `load_model` — §2.6 above
+   establishes by execution that it could, and what the one prerequisite is.*
 
 `reconstruct_mesh` has **one executed line** in the entire test suite: its `def`.
 

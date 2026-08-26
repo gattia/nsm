@@ -6,14 +6,25 @@
 
 **Updated:** 2026-08-26 · **Status:** open
 
-- **Next:** execute **§8.0.H** — the `models/` package: #26 (**High**), #45, #46,
-  #34, the two-`Sine` trap, the VAE missing activation. The largest untouched
-  surface on the production path and half the consumer's public contract
-  (`TriplanarDecoder`); no pass of any kind has reached it. Its statement is
-  commit 1 of that slice and is not written yet. Nothing blocks it — §8.0.G
-  touched `models/triplanar.py` only to convert six `print`s and decorate
-  `forward`.
-- **§8.0.G executed (2026-08-26), PR open:** commits 2–8 whole — characterization,
+- **Next:** execute **§8.0.I** — `mesh/main.py`: #60, #57 (five sites, one
+  helper), #54's sites there, `create_mesh_adaptive`. Second-largest file in the
+  repo, on the production path, and named nowhere in this plan before the slice
+  index. Its statement is commit 1 of that slice and is not written yet. Nothing
+  blocks it; §8.0.H touched `mesh/` not at all.
+- **§8.0.H executed (2026-08-26), PR open:** commits 2–11 whole — the option
+  matrix, #46 in three commits, #45, #26, the #20 sweep, one `Sine`, #34, and
+  this update. Suite 787 passed (from 704) / 1 skipped / 3 xfailed (from 5); the
+  12 strict xfails commit 2 raised were all retired inside the slice. **Verified
+  end to end against the real shipped models** (not in CI — they are not in the
+  repo): both `model_params_config.json` files are refused for omitting
+  `padding`, and with `"padding": 0.1` added both load through `load_model` on
+  CPU and forward (647: 20,801,924 parameters, output width 2; 551: 20,801,410,
+  width 1). That same run settles `SCOPE.md` §2.6's open question — the consumer
+  *could* switch to `load_model`, once those two files state `padding`.
+  Three § History entries (14 `layer_split`/progressive depth, 15 #45, 16 #26),
+  seven CHANGELOG Breaking entries, and `NSM_TRAINING_IDEAS.md` Idea 5 unblocked.
+- **§8.0.G merged to `main` in PR #89 (2026-08-26):** #1 closed by the merge,
+  no review comments to apply. Commits 2–8 whole — characterization,
   the `basicConfig` deletion, the `verbose` bridge, five per-subpackage
   conversions, verify-and-close #1, this update. Suite 678→704 passed; 5 xfailed
   both ends (the two new strict xfails were raised and retired inside the slice).
@@ -24,6 +35,40 @@
   `testing/NSM/test_observability.py` hold all of that: no `print`, no log call
   that builds its first argument, and a `getLogger(__name__)` in every module
   that speaks.
+- **§8.0.H, review round 1 (maintainer, 2026-08-26): the `norm_layers` refusal was
+  too wide, and the framing was wrong.** The maintainer recognised the option as
+  something they had deliberately set up, which sent us to the history: commit
+  `01d774a` (Jun 2023) introduced the branch with the message *"separate wieght
+  norm and batch norm so can use both"* — and made it an `elif`, which is exactly
+  what prevents using both. So it was never dead weight; it was a feature the code
+  did not deliver, reachable only with `weight_norm=False`. Checked against a real
+  `361_nsm_femur_cartilage` training config the maintainer produced: it carries
+  `layers_with_norm: [0..7]` with `weight_norm: true`, so the defect never touched
+  it — and the first implementation **refused it anyway**. Now the two cases differ
+  (warn when provably inert, raise only where LayerNorm was really built), and that
+  config builds bitwise-identically before and after. Two lessons, both general:
+  a guard on "the key is set" is not the same as a guard on "the key did
+  something"; and `git log` on the line, not just the line, is what tells you
+  whether you are deleting dead code or someone's intent. Delivering "use both" is
+  new capability and is filed for §8.1.
+- **§8.0.H diverged from its statement in four places.** (1) **Two defects the
+  audit had never recorded**, both found by re-running the claims:
+  `layer_split: false` — the value `default_config.json` and *both shipped model
+  configs* carry — is tested with `is not None`, so it meant *split at layer 0*
+  and moved every state-dict key; and `TwoStageDecoder` mutated its module-level
+  default dicts **before** raising, so even a failed construction changed the
+  module process-wide. (2) **The size budget was wrong and the reason is
+  structural.** NSM/ is **+31** net against a stated +10 — but `raise` blocks in
+  `models/` went 30 → 78 lines (+48) and comments +32, so the *logic* is **−49**.
+  The statement costed "roughly +25 lines of refusal" without counting that the
+  slice contains **eight** separate refusals; a slice whose whole thesis is
+  "works or refuses at construction" cannot be net-negative on message text.
+  (3) **#34 needed no xfail** — the assertion it wants already held, it was
+  simply never asserted, so the characterization commit had nothing to record and
+  the measurement landed with the fix. (4) **`normalize_coordinates`' `padding`
+  was still there although #20 is closed** — the issue closed on the enumeration,
+  not on the deletions; the `models/` instances were carried only by
+  `KNOWN_ISSUES` § Open, which is why "closed" was not the same as "gone".
 - **Two maintainer calls ride alongside and gate nothing in §8:** (1) **file the
   drafted Mesh-subject issue** — approved text in PR #85's body, tracker still
   has no such issue (checked 2026-08-26); (2) the v0.3.0 timing ("soonish, or at

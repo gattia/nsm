@@ -70,10 +70,8 @@ class Decoder(nn.Module):
                 DeprecationWarning,
             )
 
-        # Deleted arguments that a config on disk can still carry. Each is refused when set
-        # to something truthy and ignored when falsy, which is what every NSM-owned config
-        # ships -- so a config that asked for nothing keeps loading, and one that asked for
-        # a thing that never happened is told, instead of being ignored a second time.
+        # Deleted arguments a config on disk can still carry. Refused when truthy, ignored
+        # when falsy -- falsy is what every NSM-owned config ships, and it asked for nothing.
         if kwargs.get("xyz_in_all"):
             raise TypeError(
                 "xyz_in_all was never implemented: no NSM decoder injects xyz at each "
@@ -120,11 +118,8 @@ class Decoder(nn.Module):
         self.latent_in = latent_in
         self.progressive_add_depth = progressive_add_depth
         self.progressive_depth_params = progressive_depth_params
-        # `False` means "no split", which is what default_config.json ships and what every
-        # reader takes it to mean -- but the tests below are `is not None`, and
-        # `False is not None`, so it used to mean "split at layer 0" and moved every
-        # state-dict key to layers.N.0.*. `False == 0`, so only an identity check can tell
-        # the shipped "off" from a deliberate split at layer 0 (#46).
+        # `is`, not `==`: `False == 0` makes default_config.json's "off" indistinguishable
+        # by value from a deliberate split at layer 0 (#46; KNOWN_ISSUES History 14).
         self.layer_split = None if layer_split is False else layer_split
         self.n_objects = n_objects
 
@@ -212,11 +207,9 @@ class Decoder(nn.Module):
             if self.epoch >= self.progressive_depth_params["layers"][layer_idx]["start_epoch"]:
                 x = self.progressive_layer(xi, layer, layer_idx)
             else:
-                # Not started yet: skip the block, which is what Curriculum-DeepSDF's
-                # phase-in means and what `progressive_layer` computes at zero weight one
-                # epoch later. Returning None instead handed the *next* layer a None --
-                # only the layer_split path survived it, by discarding the None (#46).
-                # The skip is an identity, so a phased-in block must be hidden-to-hidden.
+                # Not started yet: skip the block, which is what `progressive_layer`
+                # computes at zero weight one epoch later. The skip is an identity, so a
+                # phased-in block has to be hidden-to-hidden (#46).
                 return x
         else:
             x = layer(xi)
@@ -289,10 +282,8 @@ class Decoder(nn.Module):
         start = self.progressive_depth_params["layers"][layer_idx]["start_epoch"]
         warmup = self.progressive_depth_params["layers"][layer_idx]["warmup_epochs"]
         end = start + warmup
-        # `self.epoch < end`, not `start < self.epoch < end`: the caller only reaches here
-        # at `epoch >= start`, and the strict `<` excluded `epoch == start` -- so the first
-        # epoch of the phase-in applied the block at FULL weight, then the second applied
-        # it at (1/warmup)**2, near zero. `<= end` is now the single start condition; the
+        # One start condition, not three. `start < self.epoch < end` excluded epoch ==
+        # start, which then fell through to full weight (KNOWN_ISSUES History 14), and the
         # `epoch < start` RuntimeError it replaced was unreachable from the one caller.
         if self.epoch < end:
             # during warmup... linearly phase this block in
@@ -345,11 +336,8 @@ def get_activation(activation):
     elif activation == "swish":
         return nn.SiLU()
     elif activation == "sin":
-        # One Sine, imported from modulated_periodic_activations. deep_sdf used to define a
-        # second one with w0 hardcoded to 30 and its initializer misspelled `__init`, and
-        # `from .deep_sdf import *` runs first in NSM/models/__init__.py -- so
-        # `NSM.models.Sine` silently meant the hardcoded one. Both computed sin(30 * x)
-        # here, so no run's arithmetic changes.
+        # One Sine, imported rather than redefined here -- ARCHITECTURE.md section 6 for
+        # why the duplicate was invisible. Both computed sin(30 * x).
         return Sine(w0=SIREN_W0)
     elif activation == "linear":
         return None

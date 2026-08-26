@@ -37,13 +37,11 @@ class VAEDecoder(nn.Module):
         norm_type="batch",
         start_with_mlp=True,
     ):
-        # No `activation` argument. The activation it selected was built and never appended
-        # to the layer list, so the conv stack has no pointwise nonlinearity at all and the
-        # argument chose between two modules that neither of them ever ran (#20). Adding
-        # the activations is NOT a fix available here: it shifts every later index inside
-        # self.decoder, so all three shipped checkpoints stop loading, and the weights were
-        # fitted without them. docs/ARCHITECTURE.md section 7.1 has the full account, and
-        # testing/NSM/models/test_model_structure.py pins the shape this leaves behind.
+        # No `activation` argument: the module it selected was built and never appended, so
+        # this conv stack has no pointwise nonlinearity at all (#20). Adding one is NOT
+        # available -- it shifts every later index inside self.decoder and no shipped
+        # checkpoint would load. ARCHITECTURE.md section 7.1; test_model_structure.py pins
+        # the shape that leaves behind.
         super(VAEDecoder, self).__init__()
 
         # self.fc = nn.Linear(latent_dim, hidden_dims[0] * deep_image_size**2)
@@ -315,11 +313,9 @@ class TriplanarDecoder(nn.Module):
         Returns:
             plane_feats: (N, sdf_latent_size) - sampled features
         """
-        # Per-plane width, which is NOT sdf_latent_size when the planes are concatenated:
-        # each of the three then carries a third of the decoder's input width. Until
-        # Aug 2026 this sliced the full width per plane in both modes, so with
-        # sum_sdf_features=False the xz plane took everything and yz and xy took
-        # zero-channel slices -- see KNOWN_ISSUES History 15 (#45).
+        # NOT sdf_latent_size when the planes are concatenated: each carries a third of the
+        # decoder's input width. Slicing the full width in both modes gave yz and xy
+        # zero-channel slices (#45; KNOWN_ISSUES History 15).
         latent_size = self.sdf_latent_size if self.sum_sdf_features else self.sdf_latent_size // 3
         latent_size += self.conv_pred_sdf  # one sdf prediction per plane
 
