@@ -1911,6 +1911,150 @@ one deleted function and `self.bn` against roughly +25 lines of refusal and slic
 | #34 is training-dependent | trained `assd` versus an untrained control built from the same config: measured 9.8× and 17.5×, asserted at a factor with its headroom in the docstring |
 | the suite still passes | 704 passed / 1 skipped / 5 xfailed on `main` at `57ebfbe` is the baseline every commit is compared against |
 
+### 8.0.I The `mesh/` package — plan statement (2026-08-26)
+
+Every claim below was re-run against `main` at `4a16197` before it was written, and two of
+them came back different from what the issue text says.
+
+**The slice index row is wrong about where its own work lives, and that is the first
+finding.** The row reads "`mesh/main.py`" and carries #57 and "#54's sites there". #57 has
+**zero** sites in `mesh/main.py` — its five are in `correspondence_metrics.py` (2),
+`interpolate.py` (2) and `refine_mesh.py` (1) — and #54's two mesh-side sites are in
+`refine_mesh.py` and `correspondence_metrics.py`. So the slice is the `mesh/` **package**:
+2,913 lines across six files, of which `main.py` is 930. That is also the honest framing,
+because ARCHITECTURE §2.1 already records that the other four files are unreachable from
+any other subpackage — nothing else is ever going to open them.
+
+**What is actually wrong, measured.** Fourteen sites, five shapes.
+
+*Shape 1 — a reshape used as a validator, and it is a modular coincidence* (#57, five
+sites). Each site takes a VTK-style flat face array (`[n, i0, …, in, n, …]`) and calls
+`reshape(-1, 4)` or `reshape(-1, 3)` with nothing checking the cell type. The reshape
+succeeds exactly when the flat length happens to divide — which is a fact about the cell
+count mod 3 or mod 4, not about the mesh being triangular:
+
+| input | flat length | `reshape(-1, 4)` | `reshape(-1, 3)` |
+|---|---|---|---|
+| 3 quads | 15 | `ValueError` | **5 silent rows** |
+| 4 quads | 20 | **5 silent rows** for 4 cells | `ValueError` |
+| 96 triangles, VTK-style `.faces` | 384 | correct (96) | **128 silent rows** |
+| 4 triangles + 4 quads | 36 | **9 silent rows** for 8 cells | `ValueError` |
+
+The issue says pure-quad input "raises a bare reshape `ValueError` in two metrics". It does
+for 3 quads and not for 4: measured today, `self_intersection_count` on a 4-quad strip
+returns `0` and `foldover_count` returns `near_degenerate: 2`, both computed from five
+fabricated triangles. On the `(-1, 3)` side, `build_mesh_laplacian(sphere.faces, …)` builds
+a 373-nnz operator where the correct one is 288 and `compute_feature_mask` flags 50
+vertices where the correct answer is 8 — so the interpolation output is wrong rather than
+absent, which is the issue's own headline claim and it holds.
+
+*Shape 2 — one boolean swaps two functions that are not interchangeable* (#60, first half).
+`use_vtk` picks between `sdf_grid_to_mesh_vtk` and `sdf_grid_to_mesh`.
+`sdf_grid_to_mesh(numpy_array, …)` raises `AttributeError: 'numpy.ndarray' object has no
+attribute 'cpu'` on its first line while the VTK twin, which guards with `hasattr`, accepts
+it. Their `narrow_band` defaults are `False` and `True`. **The `narrow_band` half is
+behaviourally inert**: on a 48³ sphere both twins return the same vertex count either way
+and differ by ≤ 8.9e-08, which is below float32 mesh precision — so aligning the defaults
+is API hygiene and needs no § History entry. The `.cpu()` half always crashed, so it needs
+none either.
+
+*Shape 3 — 17 positional arguments across a call boundary* (#60, second half; ARCHITECTURE
+§7 names this exact site as its example of the LR bug's shape). `create_mesh_adaptive`'s
+no-surface fallback forwards its own `voxel_origin` — untouched at the `(-1, -1, -1)`
+default — next to a `voxel_size` it derived from `search_bounds`. Measured with
+`search_bounds=(0.0, 4.0)`, `n_pts_per_axis=17`: the fallback grid covers `[-1, 3]` on
+every axis while the caller asked for `[0, 4]`. Wrong by construction, on a branch a caller
+reaches by passing `search_bounds` and nothing else.
+
+*Shape 4 — constructible but uncallable* (#54; ARCHITECTURE §7 calls this the surviving
+instance of that class and assigns it here by name). `get_target_cells` reads
+`np.zeros_like(max_length_binary)` where it means `max_lengths`, so it raises
+`UnboundLocalError` on its own defaults — and on the `area_threshold`-only path, which is
+the one SCOPE §2.3 gates its "keep" ruling on. `subdivide_large_triangles` inherits it.
+
+*Shape 5 — a fabricated metric sitting next to a sibling that skips* (#54).
+`score_correspondence(roundtrip_points=…, source_mesh=None)` substitutes the **warped**
+mesh for the missing source: measured mean roundtrip distance `0.2500` against a true
+`0.0017`, a factor of 144, returned in the same dict where `foldover_count` correctly says
+`{"skipped": True, "reason": "source_mesh not provided"}`.
+
+**Target shape (all permanent — this slice adds no transitional module).**
+
+- **One validated face accessor**, `triangle_faces()`, in `triangle_metrics.py` — the leaf
+  `correspondence_metrics` and `refine_mesh` already import, and the only file in `mesh/`
+  that is *about* triangles. It accepts a mesh (requiring `is_all_triangles`, since
+  pyvista's `regular_faces` returns a (M, 4) array for quads rather than refusing) or an
+  already-(M, 3) array, and raises a named error otherwise. All five sites route through
+  it. `refine_mesh.get_faces` becomes its forwarder — it *is* the accessor already, just
+  unvalidated.
+- **The twins guard alike and share defaults.** `sdf_grid_to_mesh` gets the `hasattr` guard
+  and `narrow_band=True`, so `use_vtk` chooses an extraction backend and nothing else.
+- **The fallback derives its origin from `search_bounds`**, and the 17 positional arguments
+  become keywords, so the next parameter added to `create_mesh` cannot silently shift them.
+- **`get_target_cells` works**, and SCOPE §2.3's conditions 2 and 3 land with it: the
+  cross-mesh precondition warned at the entry points, and a module docstring saying what
+  the module uniquely provides, why `pyvista.subdivide_adaptive` was rejected, and that
+  `area_threshold` is a relative deviation rather than an area.
+- **`score_correspondence` skips with a reason** when `source_mesh` is absent, which is
+  what its own docstring already promises.
+- **`create_mesh_adaptive`'s tail is shared with `create_mesh`.** The extract → scale →
+  save loop is duplicated near-verbatim in both (the diff is comments plus one `verbose`
+  forward); one private helper removes ~40 duplicated lines and gives the `verbose`
+  divergence a single place to be decided.
+
+**Deliberately NOT in this slice, each for a stated reason.**
+
+- **The `triangle_metrics` merge decision** (SCOPE §2.6, ARCHITECTURE §6's "two edge-ratio
+  implementations"). It is a scope ruling with an open question the maintainer owns, not a
+  defect. This slice feeds it one fact rather than pre-empting it: putting the shared
+  accessor there makes `triangle_metrics` the package's leaf, which argues for keeping it
+  a separate file.
+- **Making the mesh cluster reachable** (ARCHITECTURE §2.1). Adding submodule imports to
+  `NSM/mesh/__init__.py` is a public-surface change and wants §8.0.O's release boundary.
+- **Shrinking `create_mesh_adaptive`'s 26-parameter and `create_mesh`'s 17-parameter public
+  signatures.** Same reason. What this slice does is stop the *internal* call between them
+  being positional.
+- **`correspondence_metrics`' blanket `except Exception` per metric.** It is documented
+  behaviour ("one bad metric cannot sink the rest") and every arm is `# pragma: no cover`.
+  Changing it is a design call, and after this slice the accessor's refusal is the thing it
+  would swallow — which is the argument to make, at §8.0.N, with evidence.
+
+**Size budget.** Roughly flat in `NSM/`: the accessor and the refusals (~+60) against the
+shared tail (~−40) and five reshape lines that get shorter. Past **+30 net** in `NSM/` is
+scope creep. Tests and docstrings are additive and outside the budget.
+
+**Sequence** (one commit each; `make lint` clean and the full suite green at every step):
+
+1. this statement;
+2. characterization — a face-array matrix (triangle / quad / mixed / VTK-style-flat × the
+   five sites), a twin-parity matrix over `sdf_grid_to_mesh` and `sdf_grid_to_mesh_vtk`,
+   the fallback-grid bounds assertion, `get_target_cells()` on its own defaults, and
+   `score_correspondence`'s skip contract. Strict xfails for what is broken;
+3. #57 — `triangle_faces` and its five sites;
+4. #60(a) — the twins guard alike and share defaults;
+5. #60(b) — the fallback grid, and keywords across that call;
+6. #54(a) — `get_target_cells` works, plus SCOPE §2.3's conditions 2 and 3;
+7. #54(b) — `score_correspondence` skips instead of inventing;
+8. `create_mesh_adaptive`: the shared tail extracted;
+9. docs sweep (KNOWN_ISSUES § Open and § History, SCOPE §2.3, ARCHITECTURE §3/§6/§7,
+   CHANGELOG) and this plan's State.
+
+**Verification per claim:**
+
+| Claim | Verification |
+|---|---|
+| the reshape sites accept non-triangular input | the commit-2 matrix, parameterised over the four cell layouts and the five sites; its strict xfails XPASS at commit 3 |
+| the accessor changes nothing for triangle meshes | `regular_faces` equals `faces.reshape(-1, 4)[:, 1:]` element-wise on a triangulated sphere, asserted, so no run through a triangle mesh moves |
+| a quad mesh is refused rather than reshaped | `pytest.raises` on each of the five sites with the 4-quad strip — the case that silently returned `0` and `near_degenerate: 2` today |
+| the twins accept the same inputs | both called with numpy and with torch, same vertex count from each |
+| aligning `narrow_band` changes no geometry | vertex counts equal and the max absolute vertex difference is < 1e-06 between `narrow_band` False and True, on both twins — measured 8.9e-08, and the headroom goes in the test docstring |
+| the fallback grid covers `search_bounds` | `create_mesh` is spied on through the fallback with `search_bounds=(0.0, 4.0)`; the asserted grid span is `[0, 4]`, against the `[-1, 3]` measured today |
+| `get_target_cells` runs on its own defaults | direct call, plus `subdivide_large_triangles` on its defaults; both are `UnboundLocalError` today |
+| `score_correspondence` does not invent | with `source_mesh=None` and `roundtrip_points` given, both roundtrip keys are `{"skipped": True, …}`; and with `source_mesh` given the value is unchanged from today's |
+| the shared tail is a refactor, not a change | `create_mesh` and `create_mesh_adaptive` outputs are compared vertex-for-vertex against the pre-refactor implementation on a fixed analytic decoder |
+| the suite still passes | 812 passed / 1 skipped / 3 xfailed on `main` at `4a16197` is the baseline every commit is compared against |
+
+
 ### 8.1 Make the library plural — added 2026-08-15
 
 > **Deferred 2026-08-26 — this is an upgrade, not the refactor.** All three bullets are
