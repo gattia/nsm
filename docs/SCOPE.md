@@ -66,6 +66,30 @@ fix rather than limitations to document:
   → **Remaining Phase 4 work item: a default config for each *other* model type**
   (deepsdf, two_stage; `implicit` first needs the vocabulary reconciliation above).
 
+**Unsupported by design, since Aug 2026 (§8.0.H):**
+
+- **Per-layer LayerNorm in `deep_sdf.Decoder` (`norm_layers` / the `layers_with_norm`
+  config key).** Introduced Jun 2023 (`01d774a`) and reachable **only** with
+  `weight_norm=False`: the branch that built the norm layers was an `elif` under weight
+  norm, so with weight norm on — every shipped config, and every config known to this repo
+  — nothing was ever built and the key was inert. With weight norm off it worked, and then
+  indexed the norm list by absolute layer index, so any set not starting at layer 0 raised
+  `IndexError` on the first forward.
+
+  The argument is deleted. **What that costs, stated plainly:** a checkpoint from a
+  `weight_norm=False` run with a non-empty `layers_with_norm` carries `bn.*` keys and its
+  architecture can no longer be built here. There is no shim, and the error says so —
+  **pin NSM < 0.3.0 to load one.** No model this repo knows of is in that case (both
+  ShapeMedKnee models and the `361_nsm_femur_cartilage` training config all set
+  `weight_norm: true`), which is why deletion was preferred to carrying a half-working
+  option. This is not a `KNOWN_ISSUES` § History entry: no result was ever silently wrong,
+  and nothing changed numerically — a build stopped being possible, which is a scope
+  question.
+
+  The *intent* behind that commit — weight norm **and** LayerNorm together, which the
+  `elif` is exactly what prevented — was never delivered and is not delivered here. It is
+  new capability with an unmeasured benefit, queued as `NSM_TRAINING_IDEAS.md` Idea 14.
+
 **Genuinely experimental — needs a warning, not a fix:**
 
 - **The Eikonal loss.** Wired into both live loss paths, never executed by any test

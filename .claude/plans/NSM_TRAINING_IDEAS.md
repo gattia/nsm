@@ -618,6 +618,44 @@ a fixable defect and does not meet the tracker bar).
 
 ---
 
+## Idea 14 — Weight norm *and* per-layer normalization together in the MLP decoder
+
+**What.** `deep_sdf.Decoder` applies weight norm to every linear layer, or LayerNorm to
+selected layers, but never both — the branch is an `elif`. Commit `01d774a` (Jun 2023) set
+that structure out with the message *"separate wieght norm and batch norm **so can use
+both**"*, which is precisely what the `elif` prevents, so the stated goal was never
+delivered and no run has ever had both. Make it possible, and measure whether it helps.
+
+**Why.** The two normalizations do different jobs — weight norm reparameterizes the weights,
+LayerNorm normalizes activations — and combining them is standard elsewhere. The reason to
+suspect it is worth trying is that a maintainer deliberately built toward it and the code
+silently did not follow. The reason not to assume it helps is that nobody has run it.
+
+**What is already settled.** The `elif` is verified: with `weight_norm=True` nothing is ever
+appended to the norm list, so every shipped model has weight norm and no LayerNorm. The
+`norm_layers` argument itself is **deleted** (`SCOPE.md` §1, unsupported by design), so this
+is not "un-delete it" — it is a fresh option whose shape can be chosen with the experiment
+rather than inherited. Note the design trap that deletion avoided: the old key indexed the
+norm list by absolute layer index, so any set not starting at layer 0 raised `IndexError`.
+
+**Cost / retrain.** Two training runs plus the option. Like Idea 13, adding the layers
+renumbers state-dict keys, so it must be opt-in with the historical layout as the default.
+
+**Priority — the lowest in this file, and it should stay there.** Every other entry is here
+because a measurement, a defect or a maintainer observation pointed at it. This one is here
+because a 2023 commit message stated a goal the code did not reach. That is a reason to
+*record* it, not a reason to do it: no shipped model wants it, nothing measured suggests
+weight norm alone is the limiting factor, and nobody has asked for it. It also costs more
+than its two runs — it means re-adding an option §8.0.H just deleted, so the bar is a
+result, not a hunch. **Do not pick this up ahead of anything else here**; if the ideas file
+is ever pruned, this is the first entry to go.
+
+**Status.** Idea — not started, very low priority. Surfaced 2026-08-26 while §8.0.H deleted
+the half-working option; recorded here so the intent does not die with the code that failed
+to implement it.
+
+---
+
 ## Related
 
 - `NSM_MESH_INTERPOLATION_IMPROVEMENTS.md` — inference-only numerical fixes;
