@@ -30,6 +30,24 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **`layer_split: false` now means no layer split** ([#46](https://github.com/gattia/nsm/issues/46)).
+  `Decoder` tested `self.layer_split is not None`, and `False is not None`, so the value
+  `default_config.json` ships selected a split at layer 0: every state-dict key moved from
+  `layers.N.weight` to `layers.N.0.weight`, and with `objects_per_decoder > 1` the output
+  head changed shape as well. A `deepsdf` checkpoint built from such a config no longer
+  loads into a model built from the same config — loudly, with `Missing key(s)` — and
+  **passing `layer_split=0` explicitly rebuilds the original architecture**. `0` still
+  means split at layer 0; only `False` is reinterpreted, since `False == 0` leaves nothing
+  but an identity check to tell them apart. No triplanar model is affected:
+  `TriplanarDecoder` builds its inner `Decoder` with `layer_split=None`.
+
+- **`Decoder(activation='linear')` refuses at construction** ([#46](https://github.com/gattia/nsm/issues/46)).
+  `get_activation` returns `None` for `'linear'`, which is correct for the final position
+  and fatal for the hidden one, where `forward` then called `None`. It now raises a
+  `ValueError` naming `final_activation='linear'` as the position where `'linear'` is
+  supported. Nothing that worked stops working: the configuration always died on the first
+  forward pass.
+
 - **The checkpoint format changes: `VAEDecoder` tensors appear once, not twice**
   ([#27](https://github.com/gattia/nsm/issues/27)). Until now every VAE layer was
   registered in both `self.layers` and `self.decoder`, so `state_dict()` emitted each

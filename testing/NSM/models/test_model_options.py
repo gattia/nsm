@@ -122,12 +122,14 @@ def test_every_final_activation_forwards(final_activation):
     assert build_and_forward("deepsdf", final_activation=final_activation).shape == (N_POINTS, 1)
 
 
-@broken("activation='linear' returns a bare None that forward then calls")
 def test_a_linear_hidden_activation_works_or_refuses_at_construction():
     """
     ``get_activation('linear')`` returns ``None``, correctly for the final position and
-    fatally for the hidden one. Either it refuses while building or it forwards; today it
-    does neither.
+    fatally for the hidden one, where until Aug 2026 ``forward`` called it (#46).
+
+    Written as "refuses OR forwards" rather than ``pytest.raises`` on purpose: an
+    implementation that made hidden ``'linear'`` mean ``nn.Identity`` would also be a fix,
+    and this test should not forbid it.
     """
     try:
         model = build("deepsdf", activation="linear")
@@ -139,20 +141,49 @@ def test_a_linear_hidden_activation_works_or_refuses_at_construction():
 @pytest.mark.parametrize("epoch", [0, 100, 300, 700, 1300])
 def test_progressive_add_depth_forwards_at_every_epoch(epoch):
     """
-    ``PROGRESSIVE_PARAMS`` phases layers 5, 6 and 7 in at epochs 200, 600 and 1010, so an
-    epoch below 1010 has at least one not-yet-started block. ``forward_branch_`` returns
-    ``None`` for one of those, and the next layer is handed it.
-
-    1300 (past every ``start_epoch``) is the only value that works today, which is why it
-    is not xfailed: it is what proves the rest is a start-condition defect and not the
-    option being broken outright.
+    ``PROGRESSIVE_PARAMS`` phases layers 5, 6 and 7 in at epochs 200, 600 and 1010, so
+    every epoch below 1010 has at least one not-yet-started block. Until Aug 2026
+    ``forward_branch_`` returned ``None`` for those and the next layer was handed it, so
+    1300 was the only value in this list that worked (#46).
     """
-    if epoch < 1010:
-        pytest.xfail(f"#46: progressive_add_depth propagates None below epoch 1010 ({DEFECT_46})")
     assert build_and_forward("deepsdf", progressive_add_depth=True, epoch=epoch).shape == (
         N_POINTS,
         1,
     )
+
+
+def test_progressive_add_depth_refuses_a_forward_with_no_epoch():
+    """``self.epoch`` starts as ``None``, and ``None >= int`` is a TypeError from inside."""
+    model = build("deepsdf", progressive_add_depth=True)
+    with pytest.raises(ValueError, match="epoch"):
+        forward_once("deepsdf", model)
+
+
+def test_a_block_phases_in_continuously_across_its_start_epoch():
+    """
+    The phase-in weight is ``((epoch - start) / warmup) ** 2``, so at ``epoch == start`` it
+    is zero and the block is an identity -- the same thing skipping it does one epoch
+    earlier. Until Aug 2026 the warmup branch tested ``start < epoch``, so ``epoch ==
+    start`` fell through to applying the block at FULL weight for exactly one epoch before
+    dropping back to ``(1/warmup)**2``.
+
+    Asserted as a ratio against the step the phase-in actually takes, not a fixed
+    tolerance: the step from ``start`` to ``start + 1`` is what the schedule intends to
+    move, and the step across ``start`` must not be larger than it.
+    """
+    from NSM.models.deep_sdf import PROGRESSIVE_PARAMS
+
+    start = PROGRESSIVE_PARAMS["layers"][5]["start_epoch"]
+    model = build("deepsdf", progressive_add_depth=True)
+    before, at, after = (
+        forward_once("deepsdf", model, epoch=e) for e in (start - 1, start, start + 1)
+    )
+
+    across = (at - before).abs().max().item()
+    intended = (after - at).abs().max().item()
+    assert (
+        across <= intended
+    ), f"jump across start_epoch {across:.3e} > one warmup step {intended:.3e}"
 
 
 @pytest.mark.parametrize(
@@ -190,21 +221,26 @@ def test_layer_split_forwards(layer_split, objects_per_decoder):
     assert forwarded.shape == (N_POINTS, objects_per_decoder)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#46: layer_split=False is `is not None`, so it means split-at-layer-0",
-)
 def test_layer_split_false_is_the_same_model_as_no_layer_split():
     """
     ``default_config.json`` ships ``"layer_split": false``. ``Decoder`` tests
-    ``self.layer_split is not None``, and ``False is not None``, so every layer is split --
-    which moves every state-dict key from ``layers.N.weight`` to ``layers.N.0.weight``.
-    ``False == 0`` in Python, so a value check cannot tell the shipped "off" from a
-    deliberate split at layer 0; only ``is`` can.
+    ``self.layer_split is not None``, and ``False is not None``, so until Aug 2026 every
+    layer was split -- which moves every state-dict key from ``layers.N.weight`` to
+    ``layers.N.0.weight``, and with ``objects_per_decoder > 1`` builds a different
+    architecture entirely (#46). ``False == 0`` in Python, so a value check cannot tell the
+    shipped "off" from a deliberate split at layer 0; only ``is`` can.
     """
     absent = build("deepsdf", layer_split=None)
     shipped = build("deepsdf", layer_split=False)
     assert list(shipped.state_dict()) == list(absent.state_dict())
+
+
+def test_layer_split_zero_still_splits_at_layer_zero():
+    """The other half: normalizing ``False`` must not take ``0`` with it."""
+    split = build("deepsdf", layer_split=0)
+    assert all(
+        key.startswith("layers.") and key.split(".")[2].isdigit() for key in split.state_dict()
+    )
 
 
 @pytest.mark.parametrize("concat_latent_input", [False, True])

@@ -93,7 +93,12 @@ class Decoder(nn.Module):
         self.progressive_add_depth = progressive_add_depth
         self.progressive_depth_params = progressive_depth_params
         self.latent_noise_sigma = latent_noise_sigma
-        self.layer_split = layer_split
+        # `False` means "no split", which is what default_config.json ships and what every
+        # reader takes it to mean -- but the tests below are `is not None`, and
+        # `False is not None`, so it used to mean "split at layer 0" and moved every
+        # state-dict key to layers.N.0.*. `False == 0`, so only an identity check can tell
+        # the shipped "off" from a deliberate split at layer 0 (#46).
+        self.layer_split = None if layer_split is False else layer_split
         self.n_objects = n_objects
 
         # layers:
@@ -128,6 +133,14 @@ class Decoder(nn.Module):
 
         self.activation = get_activation(self._activation_)
         self.final_activation = get_activation(self._final_activation_)
+
+        if self.activation is None:
+            raise ValueError(
+                f"activation={self._activation_!r} is not a hidden-layer activation: "
+                f"get_activation returns None for it, and forward would call None. "
+                f"'linear' is supported in the final position only "
+                f"(final_activation='linear'), where forward guards for it."
+            )
 
         self.dropout_prob = dropout_prob
         self.dropout = dropout
@@ -176,7 +189,12 @@ class Decoder(nn.Module):
             if self.epoch >= self.progressive_depth_params["layers"][layer_idx]["start_epoch"]:
                 x = self.progressive_layer(xi, layer, layer_idx)
             else:
-                return
+                # Not started yet: skip the block, which is what Curriculum-DeepSDF's
+                # phase-in means and what `progressive_layer` computes at zero weight one
+                # epoch later. Returning None instead handed the *next* layer a None --
+                # only the layer_split path survived it, by discarding the None (#46).
+                # The skip is an identity, so a phased-in block must be hidden-to-hidden.
+                return x
         else:
             x = layer(xi)
 
@@ -200,6 +218,13 @@ class Decoder(nn.Module):
         # Assign the epoch in case needed (for progressive depth)
         if epoch is not None:
             self.epoch = epoch
+
+        if self.progressive_add_depth is True and self.epoch is None:
+            raise ValueError(
+                "progressive_add_depth needs the epoch to know which blocks have started: "
+                "call forward(input_, epoch=<int>). Without it the comparison against "
+                "start_epoch is None >= int."
+            )
 
         x = input_
 
@@ -244,15 +269,17 @@ class Decoder(nn.Module):
         start = self.progressive_depth_params["layers"][layer_idx]["start_epoch"]
         warmup = self.progressive_depth_params["layers"][layer_idx]["warmup_epochs"]
         end = start + warmup
-        if self.epoch < start:
-            raise RuntimeError("Epoch is before start of progressive depth")
-        elif start < self.epoch < end:
+        # `self.epoch < end`, not `start < self.epoch < end`: the caller only reaches here
+        # at `epoch >= start`, and the strict `<` excluded `epoch == start` -- so the first
+        # epoch of the phase-in applied the block at FULL weight, then the second applied
+        # it at (1/warmup)**2, near zero. `<= end` is now the single start condition; the
+        # `epoch < start` RuntimeError it replaced was unreachable from the one caller.
+        if self.epoch < end:
             # during warmup... linearly phase this block in
             # https://github.com/haidongz-usc/Curriculum-DeepSDF/blob/ca216dda8edc6435139a6f657c45800791be94a7/networks/deep_sdf_decoder_train.py#L113
             new_weight = (self.epoch - start) / warmup
             new_weight = new_weight**2
             base_weight = 1 - new_weight
-            # base_weight = ((end-self.epoch)/warmup)
 
             x_base = xi * base_weight
             x_new = layer(xi) * new_weight

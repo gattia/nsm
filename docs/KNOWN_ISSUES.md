@@ -1029,3 +1029,55 @@ reclaimable disk.
 *Pinned by:* `test_dataset_cache.TestFormerlyCollidingParameters`,
 `test_dataset_cache.TestMeshContentInTheKey`, `test_dataset_cache.TestReferenceMeshHashing`,
 `test_dataset_cache.TestHashedParametersChangeTheKey`.
+
+## 14. `layer_split: false` meant "split at layer 0", and progressive depth's first phase-in epoch ran at full weight
+
+Two `deep_sdf.Decoder` option defects, bundled because they are the same shape — a start
+condition written more than once and inconsistently — and because no shipped model is
+affected by either.
+
+| | |
+|---|---|
+| **Affected** | `deepsdf` models built from a config carrying `"layer_split": false` (what `default_config.json` ships); training runs with `progressive_add_depth: true` **and** `layer_split` set, at exactly `epoch == start_epoch` of each phased-in block |
+| **Unaffected** | Every triplanar model, including both shipped ShapeMedKnee models — `TriplanarDecoder` builds its inner `Decoder` with `layer_split=None` and never passes `progressive_add_depth`; every `progressive_add_depth: true` run without `layer_split`, which raised `TypeError` on the first forward below the last `start_epoch` and so produced no results |
+| **Severity** | `layer_split`: silent, and it changes the architecture. Progressive depth: one epoch per block |
+| **Fixed in** | `models-package-sweep`, Aug 2026 ([#46](https://github.com/gattia/nsm/issues/46)) |
+
+### What was wrong
+
+**`layer_split`.** `Decoder` decides whether to split with `self.layer_split is not None`,
+and `False is not None`. So `"layer_split": false` — the value `default_config.json` ships
+and the value every reader takes to mean *off* — selected a split at layer 0: every layer
+became an `nn.ModuleList` of `n_objects` branches, moving every state-dict key from
+`layers.N.weight` to `layers.N.0.weight`. With `objects_per_decoder > 1` it also changed
+the output head, from one stack emitting `n_objects` channels to `n_objects` stacks each
+emitting one. `False == 0` in Python, so no value comparison can separate the shipped
+"off" from a deliberate split at layer 0 — only an identity check can.
+
+**Progressive depth.** `forward_branch_` phases a block in at `epoch >= start_epoch`, while
+`progressive_layer` blended only for `start < epoch < end`. `epoch == start` therefore fell
+through to the `else` and applied the block at **full weight** — before the warmup, whose
+own first weight is `(1 / warmup) ** 2`, near zero. So the block's contribution went
+0 → 1 → ~0 → ramp. (`progressive_layer` also carried an `epoch < start` `RuntimeError` that
+its one caller could not reach.)
+
+### What changed
+
+`layer_split=False` normalizes to `None` at construction; `0` still means split at layer 0.
+`progressive_layer` blends for `epoch < end`, one condition rather than three, so
+`epoch == start` weights the block at zero — an identity, which is exactly what skipping it
+one epoch earlier does. A not-yet-started block now returns its input rather than `None`.
+
+### How to tell whether one of your runs is affected
+
+Check `model_params_config.json`. `"model_type": "triplanar"` — not affected, by either.
+`"model_type": "deepsdf"` with `"layer_split": false` — that checkpoint was built with
+every layer split, so it no longer loads into a model built from the same config: it fails
+loudly with `Missing key(s)`/`Unexpected key(s)`, and **passing `layer_split=0` explicitly
+reproduces the original architecture exactly**. `"progressive_add_depth": true` with
+`layer_split` set — one epoch per phased-in block trained with that block at full weight;
+everything else in the run is unchanged.
+
+*Pinned by:* `test_model_options.test_layer_split_false_is_the_same_model_as_no_layer_split`,
+`test_model_options.test_layer_split_zero_still_splits_at_layer_zero`,
+`test_model_options.test_a_block_phases_in_continuously_across_its_start_epoch`.
