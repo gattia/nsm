@@ -245,15 +245,22 @@ class TestTheReferenceMeshIsBuiltWhenItIsUsed:
     """
     ``mean_mesh`` has exactly one consumer: the samplers' ``register_to_mean_first``,
     which is set from ``register_similarity`` alone. Building it under ``scale_jointly``
-    buys nothing and costs a whole marching-cubes reconstruction.
+    bought nothing and cost a whole marching-cubes reconstruction.
     """
 
-    @broken("the build is gated on `scale_jointly or register_similarity`")
     def test_scale_jointly_alone_does_not_build_one(self, sphere_path):
         """
-        Measured before the fix at the ``n_pts_per_axis_mean_mesh=128`` default:
+        Was a strict xfail. Measured before the fix at the ``n_pts_per_axis_mean_mesh=128`` default:
         524,968 decoder point-evaluations without ``scale_jointly`` and 1,401,237 with it,
         an extra 876,269 for a mesh that is discarded three lines later.
+
+        Removing the build is numerically inert, checked across the commit rather than
+        argued: a fixed-seed fit under ``register_similarity=True``, under
+        ``scale_jointly=True`` and under neither produced byte-identical latents, vertex
+        arrays, chamfer and ASSD before and after. The premise that makes that possible is
+        ``test_building_a_reference_mesh_consumes_no_randomness`` below -- had
+        ``create_mesh_adaptive`` drawn from either global generator, dropping a call to it
+        would have shifted every subsequent sample.
         """
         counts = {}
         for scale_jointly in (False, True):
@@ -271,10 +278,9 @@ class TestTheReferenceMeshIsBuiltWhenItIsUsed:
             "for a mean mesh nothing reads"
         )
 
-    @broken("the discarded build still raises when it finds no surface")
     def test_scale_jointly_alone_does_not_abort_on_a_surfaceless_mean(self, sphere_path):
         """
-        The sharper half. An under-trained model plus ``scale_jointly=True`` aborts the
+        Was a strict xfail, and the sharper half. An under-trained model plus ``scale_jointly=True`` aborts the
         whole reconstruction over a mean mesh that ``register_to_mean_first=False`` was
         never going to consult.
         """

@@ -166,8 +166,9 @@ def reconstruct_mesh(
         - Otherwise, the bare list of meshes.
 
     Raises:
-        NoZeroLevelSetError: with `register_similarity` or `scale_jointly` set, when
-            the decoder's mean shape has no surface (see the exception's docstring).
+        NoZeroLevelSetError: with `register_similarity` set, when the decoder's mean
+            shape has no surface (see the exception's docstring). `scale_jointly` does
+            not reach it -- it did until Aug 2026, over a mean mesh it never consulted.
     """
 
     _refuse_unknown_kwargs(kwargs)
@@ -225,7 +226,13 @@ def reconstruct_mesh(
 
     tic = time.time()
 
-    if scale_jointly or register_to_mean:
+    # Built when it is *used*, which is `register_to_mean` and nothing else: the mean mesh
+    # has exactly one reader in either sampler (`mesh_sampling.py:141` and `:552`), under
+    # `register_to_mean_first`. This used to fire on `scale_jointly` as well, which bought
+    # a whole marching-cubes reconstruction -- 876,269 decoder point-evaluations at the
+    # 128^3 default, measured -- and discarded it three lines later, or raised
+    # NoZeroLevelSetError over it.
+    if register_to_mean:
         # if register first, then register new mesh to the mean of the decoder (zero latent vector)
         # create mean mesh of only mesh, or "mesh_to_scale" if more than one.
         mean_latent = torch.zeros(1, latent_size)
