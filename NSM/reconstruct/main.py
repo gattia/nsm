@@ -215,9 +215,17 @@ def reconstruct_mesh(
             objects_per_decoder,
         ] * len(decoders)
 
+    # Read once, here, and never again from `register_similarity`. The gate below used to
+    # test `is True` while the forward to the samplers tested truthiness, so a truthy
+    # non-True value skipped the build and then asked the sampler to register to the mean
+    # mesh that skipping had not made -- `Exception: Must provide mean mesh to register
+    # to`, from a module the caller never named. Truthiness is the reading kept: every
+    # other flag on this signature is truthy-tested.
+    register_to_mean = bool(register_similarity)
+
     tic = time.time()
 
-    if (scale_jointly) or (register_similarity is True):
+    if scale_jointly or register_to_mean:
         # if register first, then register new mesh to the mean of the decoder (zero latent vector)
         # create mean mesh of only mesh, or "mesh_to_scale" if more than one.
         mean_latent = torch.zeros(1, latent_size)
@@ -275,8 +283,8 @@ def reconstruct_mesh(
             norm_pts=not scale_jointly,
             scale_method=scale_method,
             get_random=get_rand_pts,
-            register_to_mean_first=True if register_similarity else False,
-            mean_mesh=mean_mesh if register_similarity else None,
+            register_to_mean_first=register_to_mean,
+            mean_mesh=mean_mesh,
             n_pts=n_pts_random,
             include_surf_in_pts=get_rand_pts,
             fix_mesh=fix_mesh,
@@ -292,7 +300,7 @@ def reconstruct_mesh(
             mesh_to_scale=mesh_to_scale,
             scale_method=scale_method,
             get_random=get_rand_pts,
-            register_to_mean_first=True if register_similarity else False,
+            register_to_mean_first=register_to_mean,
             mean_mesh=mean_mesh,
             n_pts=n_pts_random,
             include_surf_in_pts=get_rand_pts,

@@ -212,23 +212,15 @@ class TestUnknownKeywordsAreRefused:
 
 class TestRegisterSimilarityIsDecidedOnce:
     """
-    The gate that builds the mean mesh tests ``register_similarity is True``; the flag
-    that *uses* it (``register_to_mean_first``) is truthy. A truthy non-``True`` value
-    therefore skips the build and then asks the sampler to register to it.
+    The gate that built the mean mesh tested ``register_similarity is True``; the flag
+    that *uses* it (``register_to_mean_first``) was truthy. A truthy non-``True`` value
+    therefore skipped the build and then asked the sampler to register to it.
     """
 
-    @pytest.mark.parametrize(
-        "flag",
-        [
-            True,
-            pytest.param(1, marks=broken("gated with `is True`, forwarded truthily")),
-            pytest.param("similarity", marks=broken("gated with `is True`, forwarded truthily")),
-        ],
-        ids=["True", "one", "similarity"],
-    )
+    @pytest.mark.parametrize("flag", [True, 1, "similarity"], ids=["True", "one", "similarity"])
     def test_a_truthy_value_takes_one_path(self, sphere_path, flag):
         """
-        Measured before the fix: ``1`` and ``"similarity"`` raise a bare
+        Were two strict xfails. Measured before the fix: ``1`` and ``"similarity"`` raise a bare
         ``Exception("Must provide mean mesh to register to")`` from
         ``datasets/mesh_sampling.py:149`` -- a file the caller never named, about a
         parameter ``reconstruct_mesh`` does not have.
