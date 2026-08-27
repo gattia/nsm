@@ -298,7 +298,6 @@ def reconstruct_latent(
         pts_surface, verbose=verbose, device=device
     )
     decoders = reconstruct_latent_decoders_type_check(decoders)
-    adjust_lr_every = reconstruct_latent_get_lr_update_freq(n_lr_updates, num_iterations)
 
     if verbose is True:
         # print info about xyz
@@ -353,6 +352,7 @@ def reconstruct_latent(
 
         # Update total iterations to match the sum
         total_iterations = adam_iterations + lbfgs_iterations
+        n_adam_iterations = adam_iterations
 
         # Initialize both optimizers
         adam_optimizer = torch.optim.Adam([latent], lr=lr)
@@ -369,6 +369,8 @@ def reconstruct_latent(
             logger.info("Total iterations: %s", total_iterations)
     else:
         # Single optimizer mode
+        total_iterations = num_iterations
+        n_adam_iterations = num_iterations
         if optimizer_name == "adam":
             optimizer = torch.optim.Adam([latent], lr=lr)
         elif optimizer_name == "lbfgs":
@@ -378,6 +380,12 @@ def reconstruct_latent(
                 max_iter=10,  # More internal iterations per step
                 history_size=100,
             )  # Larger history for better Hessian approx
+
+    # The LR schedule spans the phase it steps. This used to be derived from
+    # `num_iterations` in both modes, and hybrid mode does not run `num_iterations` steps:
+    # with num_iterations=10 and adam_iterations=100 it applied 11 decays for a caller who
+    # asked for 2, ending at exactly 0.0, so the Adam phase stopped moving the latent.
+    adjust_lr_every = reconstruct_latent_get_lr_update_freq(n_lr_updates, n_adam_iterations)
 
     # Initialize loss
     if loss_type == "l1":
@@ -413,13 +421,7 @@ def reconstruct_latent(
     # Track whether we've switched to LBFGS in hybrid mode
     switched_to_lbfgs = False
 
-    # Determine actual number of iterations to run
-    if hybrid_optimizer:
-        actual_num_iterations = total_iterations
-    else:
-        actual_num_iterations = num_iterations
-
-    for step in range(actual_num_iterations):
+    for step in range(total_iterations):
         # Determine current optimizer and phase
         if hybrid_optimizer:
             current_optimizer_name = "adam" if step < adam_iterations else "lbfgs"

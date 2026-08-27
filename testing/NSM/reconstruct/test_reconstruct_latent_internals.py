@@ -303,10 +303,9 @@ class TestTheLearningRateScheduleSpansThePhaseItSteps:
     read for nothing else, so ``n_lr_updates`` means a different thing in each mode.
     """
 
-    @broken("hybrid mode schedules over num_iterations and steps over adam_iterations")
     def test_hybrid_mode_applies_the_updates_asked_for(self, monkeypatch):
         """
-        Measured before the fix, ``num_iterations=10, adam_iterations=100,
+        Was a strict xfail. Measured before the fix, ``num_iterations=10, adam_iterations=100,
         n_lr_updates=2, lr_update_factor=10``: 11 decays ending at exactly 0.0, where the
         same 100 Adam steps scheduled over their own horizon take one. An Adam phase at
         lr 0.0 stops moving the latent, silently.
