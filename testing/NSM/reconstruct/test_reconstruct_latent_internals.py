@@ -233,9 +233,8 @@ class TestTheReturnedLossIsALoss:
     in its own right.
     """
 
-    @broken("convergence='recon_loss' never updates `loss`, so it returns the sentinel")
     def test_recon_loss_convergence_returns_the_loss_it_selected(self):
-        """Measured before the fix: ``loss`` is the int ``100``, exactly."""
+        """Was a strict xfail. Measured before the fix: ``loss`` is the int ``100``, exactly."""
         loss, _ = reconstruct_latent(
             decoders=LinearDecoder(), **fit_kwargs(convergence="recon_loss")
         )
@@ -243,10 +242,9 @@ class TestTheReturnedLossIsALoss:
         assert float(loss) != 100
 
     @pytest.mark.parametrize("convergence", ["overall_loss", "recon_loss"])
-    @broken("a loss that never drops below 100 leaves `latent_` unbound")
     def test_a_large_loss_still_returns_a_latent(self, convergence):
         """
-        Measured before the fix: ``sdf_gt`` scaled by 1000 puts every step's loss above the
+        Were two strict xfails. Measured before the fix: ``sdf_gt`` scaled by 1000 puts every step's loss above the
         sentinel, so no step is ever recorded and the function raises
         ``UnboundLocalError: local variable 'latent_' referenced before assignment`` --
         after running every iteration it was asked for.
@@ -256,6 +254,15 @@ class TestTheReturnedLossIsALoss:
         _, latent = reconstruct_latent(decoders=LinearDecoder(), **kwargs)
         assert isinstance(latent, torch.Tensor)
         assert torch.isfinite(latent).all()
+
+    def test_no_iterations_still_returns_the_initial_latent(self):
+        """
+        The other half of an always-bound ``latent_``: nothing to record, so the function
+        returns what it started from and a loss of ``inf`` rather than raising.
+        """
+        loss, latent = reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(num_iterations=0))
+        assert loss == float("inf")
+        assert latent.shape == (1, 8)
 
     def test_num_iterations_convergence_returns_the_last_loss(self):
         """The mode that is already right, pinned so the sentinel fix does not move it."""

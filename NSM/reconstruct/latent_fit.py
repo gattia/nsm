@@ -391,10 +391,15 @@ def reconstruct_latent(
     elif loss_type == "l2":
         loss_fn = torch.nn.MSELoss(reduction="none")
 
-    # Initialize convergence tracking
+    # Initialize convergence tracking. These are compared against, so the sentinel has to
+    # be worse than any loss; `100` was not, and a fit whose losses never dropped below it
+    # recorded no step at all and lost the whole run to an UnboundLocalError on `latent_`.
+    # `latent_` is bound here for the same reason: every exit from this function returns
+    # something, including `num_iterations=0` and a loss that is NaN from the first step.
     patience = 0
-    loss = 100
-    recon_loss = 100
+    loss = float("inf")
+    recon_loss = float("inf")
+    latent_ = torch.clone(latent)
 
     # MOVE DECODERS TO GPU
     # SET DECODERS TO EVAL SO NO BATCH NORM ETC.
@@ -755,6 +760,11 @@ def reconstruct_latent(
         elif convergence == "recon_loss":
             if recon_loss_ < recon_loss:
                 recon_loss = recon_loss_
+                # `loss` is what this function returns, so it is recorded with the latent
+                # it belongs to. Without this line only `recon_loss` moved, and the
+                # returned loss was the initial sentinel -- on the mode
+                # `default_config.json` ships (`convergence_type_recon`).
+                loss = loss_
                 latent_ = torch.clone(latent)
                 patience = 0
             else:
