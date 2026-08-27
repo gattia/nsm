@@ -206,6 +206,90 @@ def latent_norm_penalty(latent, target_norm, penalty_weight=1.0, penalty_type="q
     return penalty_weight * penalty
 
 
+def _select_samples(
+    *,
+    xyz,
+    sdf_gt,
+    pts_surface,
+    n_samples,
+    n_samples_init,
+    max_n_samples,
+    n_steps_sample_ramp,
+    step,
+    device,
+):
+    """Draw this step's points, roughly evenly across the surfaces that have ground truth.
+
+    Called once per optimization step. It used to live inside ``compute_loss``, which
+    meant a fresh draw on every *call* of it: Adam calls it once per step so the two
+    coincided, but LBFGS calls it once per line-search evaluation and once more to record
+    the loss, so a single step was measured on seven different point sets and its line
+    search moved the objective under itself.
+
+    Returns ``(xyz_input, sdf_gt_)``, the points and the per-surface ground truth aligned
+    to them; ``sdf_gt_`` keeps ``None`` for a surface that has none.
+    """
+    if n_samples_init is not None:
+        n_samples_ = n_samples_init + int(
+            (max_n_samples - n_samples_init) * min(1.0, (step / n_steps_sample_ramp))
+        )
+        logger.debug("ramping up samples...  %s", n_samples_)
+    else:
+        n_samples_ = n_samples
+
+    # make sure not trying to sample more points than available for a surface
+    n_samples_per_surface = []
+    n_samples_per_surface_ = n_samples_ // len(sdf_gt)
+    for surface_idx in range(len(sdf_gt)):
+        pts_surface_ = (pts_surface == surface_idx).nonzero(as_tuple=True)[0]
+        n_samples_per_surface.append(min(n_samples_per_surface_, pts_surface_.shape[0]))
+
+    n_samples_ = sum(n_samples_per_surface)
+
+    if n_samples_ != xyz.shape[0]:
+        if len(sdf_gt) > 1:
+            # get roughly equal number of samples from each surface
+            # the list pts_surface is a list that indicates
+            # which surface each point in xyz belongs to
+            # pre allocate array to store random samples
+
+            rand_samp = torch.empty(n_samples_, dtype=torch.int64, device=torch.device(device))
+            current_filled = 0
+
+            for idx, n_samples_per_surface_ in enumerate(n_samples_per_surface):
+                # get the locations of the points that belong to the current surface
+                pts_ = (pts_surface == idx).nonzero(as_tuple=True)[0]
+                logger.debug(
+                    "Surface %s has %s points, sampling %s points",
+                    idx,
+                    pts_.shape[0],
+                    n_samples_per_surface_,
+                )
+
+                perm = torch.randperm(pts_.shape[0])
+                pts_ = pts_[perm[:n_samples_per_surface_]]
+
+                start_idx = current_filled
+                end_idx = start_idx + n_samples_per_surface_
+                rand_samp[start_idx:end_idx] = pts_
+                current_filled = end_idx
+            if current_filled < n_samples_:
+                remaining = n_samples_ - current_filled
+                perm = torch.randperm(xyz.shape[0])[:remaining]
+                rand_samp[current_filled:] = perm
+        else:
+            rand_samp = torch.randperm(xyz.shape[0])[:n_samples_]
+
+        # Use rand_samp indices to get xyz and sdf_gt
+        xyz_input = xyz[rand_samp, ...]
+        sdf_gt_ = [x[rand_samp, ...] if x is not None else None for x in sdf_gt]
+    else:
+        xyz_input = xyz
+        sdf_gt_ = sdf_gt
+
+    return xyz_input, sdf_gt_
+
+
 #: The values ``optimizer_name`` and ``loss_type`` are built from, named here so the
 #: refusal and the branch that consumes them cannot drift apart.
 _OPTIMIZER_NAMES = frozenset({"adam", "lbfgs"})
@@ -452,69 +536,20 @@ def reconstruct_latent(
                     adjust_lr_every=adjust_lr_every,
                 )
 
+        xyz_input, sdf_gt_ = _select_samples(
+            xyz=xyz,
+            sdf_gt=sdf_gt,
+            pts_surface=pts_surface,
+            n_samples=n_samples,
+            n_samples_init=n_samples_init,
+            max_n_samples=max_n_samples,
+            n_steps_sample_ramp=n_steps_sample_ramp,
+            step=step,
+            device=device,
+        )
+
         def compute_loss():
             """Compute loss for current latent vector - used by both Adam and LBFGS"""
-
-            # Sample selection
-            if n_samples_init is not None:
-                n_samples_ = n_samples_init + int(
-                    (max_n_samples - n_samples_init) * min(1.0, (step / n_steps_sample_ramp))
-                )
-                logger.debug("ramping up samples...  %s", n_samples_)
-            else:
-                n_samples_ = n_samples
-
-            # make sure not trying to sample more points than available for a surface
-            n_samples_per_surface = []
-            n_samples_per_surface_ = n_samples_ // len(sdf_gt)
-            for surface_idx in range(len(sdf_gt)):
-                pts_surface_ = (pts_surface == surface_idx).nonzero(as_tuple=True)[0]
-                n_samples_per_surface.append(min(n_samples_per_surface_, pts_surface_.shape[0]))
-
-            n_samples_ = sum(n_samples_per_surface)
-
-            if n_samples_ != xyz.shape[0]:
-                if len(sdf_gt) > 1:
-                    # get roughly equal number of samples from each surface
-                    # the list pts_surface is a list that indicates
-                    # which surface each point in xyz belongs to
-                    # pre allocate array to store random samples
-
-                    rand_samp = torch.empty(
-                        n_samples_, dtype=torch.int64, device=torch.device(device)
-                    )
-                    current_filled = 0
-
-                    for idx, n_samples_per_surface_ in enumerate(n_samples_per_surface):
-                        # get the locations of the points that belong to the current surface
-                        pts_ = (pts_surface == idx).nonzero(as_tuple=True)[0]
-                        logger.debug(
-                            "Surface %s has %s points, sampling %s points",
-                            idx,
-                            pts_.shape[0],
-                            n_samples_per_surface_,
-                        )
-
-                        perm = torch.randperm(pts_.shape[0])
-                        pts_ = pts_[perm[:n_samples_per_surface_]]
-
-                        start_idx = current_filled
-                        end_idx = start_idx + n_samples_per_surface_
-                        rand_samp[start_idx:end_idx] = pts_
-                        current_filled = end_idx
-                    if current_filled < n_samples_:
-                        remaining = n_samples_ - current_filled
-                        perm = torch.randperm(xyz.shape[0])[:remaining]
-                        rand_samp[current_filled:] = perm
-                else:
-                    rand_samp = torch.randperm(xyz.shape[0])[:n_samples_]
-
-                # Use rand_samp indices to get xyz and sdf_gt
-                xyz_input = xyz[rand_samp, ...]
-                sdf_gt_ = [x[rand_samp, ...] if x is not None else None for x in sdf_gt]
-            else:
-                xyz_input = xyz
-                sdf_gt_ = sdf_gt
 
             # Decoder forward pass
             recon_loss = 0

@@ -340,10 +340,9 @@ class TestTheObjectiveIsFixedWithinAStep:
     more, without gradients, to record the loss that feeds the convergence test.
     """
 
-    @broken("compute_loss resamples on every call; LBFGS calls it many times per step")
     def test_lbfgs_optimises_one_draw_per_step(self):
         """
-        Measured before the fix, one step at ``n_samples=50`` of 100 points: 7 forward
+        Was a strict xfail. Measured before the fix, one step at ``n_samples=50`` of 100 points: 7 forward
         passes on 7 distinct point sets. L-BFGS's line search and its curvature update both
         assume the objective is a fixed function of the parameter, and the last of the
         seven is the draw the convergence test is measured on -- one the step never fitted.
