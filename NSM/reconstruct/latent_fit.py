@@ -463,6 +463,7 @@ def reconstruct_latent(
     n_samples=None,
     max_n_samples=None,  # 100000,
     n_steps_sample_ramp=None,  # 200,
+    n_samples_per_chunk=None,  # #75: split the step's forward+backward into chunks
     difficulty_weight=None,
     pts_surface=None,
     latent_norm=None,
@@ -492,6 +493,15 @@ def reconstruct_latent(
     ``pts_surface`` labels raises nothing and fits every point against the wrong
     surface. (This is the same positional-identity contract as
     ``reconstruct_mesh``'s result ``mesh`` list — see ``docs/SCOPE.md`` §3.1.)
+
+    ``n_samples_per_chunk`` (#75) splits each step's forward *and* backward into chunks of
+    that many points, accumulating the gradient on the latent, so a step's memory stops
+    scaling with ``n_samples``. ``None``, the default, is one unchunked pass and is what
+    every run before this parameter existed did. Setting it changes the order the
+    per-point losses are summed in, so it moves results in the last few decimals: measured
+    at 2.9e-07 relative on the latent gradient, against a 6.7x reduction in peak
+    allocation (4104 -> 616 MiB for 200k points on a Tesla T4, ``docs/KNOWN_ISSUES.md``
+    § History 22).
 
     Returns:
         (loss, latent): the final loss value and the fitted latent tensor.
@@ -733,12 +743,67 @@ def reconstruct_latent(
 
             return total_loss, recon_loss, latent_loss, eikonal_loss_value, norm_penalty_loss
 
+        def compute_loss_chunked(*, backward):
+            """``compute_loss`` over chunks of the step's points, one backward each (#75).
+
+            The whole point is that each chunk's graph is freed by its own backward, so
+            peak memory is one chunk's activations rather than all of them. Chunk losses
+            are weighted by their share of the points, so the sum is the same mean the
+            unchunked path takes -- in a different summation order, which is why this is
+            an option and not the default.
+
+            ``eikonal_loss_value`` is 0 here as it is there: ``eikonal_weight > 0`` raises
+            at this function's entry.
+            """
+            n_points = xyz_input.shape[0]
+            recon_loss = 0.0
+            for start in range(0, n_points, n_samples_per_chunk):
+                stop = min(start + n_samples_per_chunk, n_points)
+                chunk_loss = _recon_loss(
+                    decoders=decoders,
+                    latent=latent,
+                    xyz_input=xyz_input[start:stop],
+                    sdf_gt_=[None if gt is None else gt[start:stop] for gt in sdf_gt_],
+                    loss_fn=loss_fn,
+                    loss_weight=loss_weight,
+                    clamp_dist=clamp_dist,
+                    difficulty_weight=difficulty_weight,
+                ) * ((stop - start) / n_points)
+                if backward:
+                    chunk_loss.backward()
+                recon_loss = recon_loss + chunk_loss.detach()
+
+            latent_loss, norm_penalty_loss = _regularization_losses(
+                latent=latent,
+                l2reg=l2reg,
+                latent_reg_weight=latent_reg_weight,
+                latent_norm=latent_norm,
+                use_soft_norm_constraint=use_soft_norm_constraint,
+                norm_penalty_weight=norm_penalty_weight,
+                norm_penalty_type=norm_penalty_type,
+            )
+            other_loss = latent_loss + norm_penalty_loss
+            if backward and torch.is_tensor(other_loss):
+                other_loss.backward()
+
+            total_loss = recon_loss + (
+                other_loss.detach() if torch.is_tensor(other_loss) else other_loss
+            )
+            return total_loss, recon_loss, latent_loss, 0, norm_penalty_loss
+
+        def loss_with_gradient(*, retain_graph=False):
+            """The step's loss, with the latent's gradient left on it either way."""
+            if n_samples_per_chunk is None:
+                losses = compute_loss()
+                losses[0].backward(retain_graph=retain_graph)
+                return losses
+            return compute_loss_chunked(backward=True)
+
         def step_closure():
             """LBFGS closure - computes loss and gradients, with optional latent projection"""
             current_optimizer.zero_grad()
-            total_loss, _, _, _, _ = compute_loss()
             # retain_graph=True because LBFGS will call this closure multiple times
-            total_loss.backward(retain_graph=True)
+            total_loss, _, _, _, _ = loss_with_gradient(retain_graph=True)
 
             # Only use hard projection if soft constraint is disabled
             if (
@@ -754,15 +819,20 @@ def reconstruct_latent(
         # Run the appropriate optimizer step
         if current_optimizer_name == "adam":
             current_optimizer.zero_grad()
-            loss_, recon_loss_, latent_loss_, eikonal_loss_, norm_penalty_loss_ = compute_loss()
-            loss_.backward()
+            loss_, recon_loss_, latent_loss_, eikonal_loss_, norm_penalty_loss_ = (
+                loss_with_gradient()
+            )
             current_optimizer.step()
         elif current_optimizer_name == "lbfgs":
             # L-BFGS optimization step
             loss_ = current_optimizer.step(step_closure)
             # Compute final losses for tracking (without gradients)
             with torch.no_grad():
-                _, recon_loss_, latent_loss_, eikonal_loss_, norm_penalty_loss_ = compute_loss()
+                _, recon_loss_, latent_loss_, eikonal_loss_, norm_penalty_loss_ = (
+                    compute_loss()
+                    if n_samples_per_chunk is None
+                    else compute_loss_chunked(backward=False)
+                )
 
         # Log progress at reasonable intervals
         if step % 50 == 0 or (step < 10):

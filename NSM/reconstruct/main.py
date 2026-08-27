@@ -336,6 +336,7 @@ def reconstruct_mesh(
     seed=None,
     n_samples_chamfer=None,
     n_samples_latent_recon=10000,
+    n_samples_per_chunk_latent_recon=None,  # #75: chunk the fit's forward+backward
     max_n_samples_latent_recon=None,  # 100000,
     n_steps_sample_ramp_latent_recon=None,  # 200,
     difficulty_weight_recon=None,
@@ -502,6 +503,7 @@ def reconstruct_mesh(
             # "max_batch_size" parameter removed - now handled automatically
             "optimizer_name": latent_optimizer_name,
             "n_samples": n_samples_latent_recon,
+            "n_samples_per_chunk": n_samples_per_chunk_latent_recon,
             "difficulty_weight": difficulty_weight_recon,
             "pts_surface": sampled["pts_surface"],
             "max_n_samples": max_n_samples_latent_recon,

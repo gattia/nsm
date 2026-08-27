@@ -487,3 +487,137 @@ class TestTheFitIsUnchangedByTheSplit:
         assert torch.equal(first_latent, second_latent)
         assert float(first_loss) == float(second_loss)
         assert torch.isfinite(first_latent).all()
+
+
+# ---------------------------------------------------------------------------
+# #75: a step whose sample count exceeds single-forward memory
+# ---------------------------------------------------------------------------
+
+
+class TestChunkedForwardAndBackward:
+    """
+    Issue #75. One optimization step had to fit its whole forward and backward in memory,
+    so ``n_samples`` had a hardware ceiling. ``n_samples_per_chunk`` splits both, keeping
+    the gradient by accumulating it on the latent.
+
+    Measured on a Tesla T4 -- the hardware #75 used -- one step at 200,000 points with a
+    DeepSDF-shaped decoder (latent 256, 8x512), peak CUDA allocation above baseline:
+    **4104 MiB unchunked, 3412 MiB for 30k chunks with one backward at the end, 616 MiB
+    for 30k chunks with a backward each**. That 6.7x is the reason the option exists and
+    the reason it is per-chunk backward rather than the accumulate-then-backward design
+    removed in 4583246: retaining every chunk's graph saves 17%, freeing each one saves
+    85%. Through ``reconstruct_latent`` itself, same shape and 200,000 points:
+    **4128 MiB at the default, 623 MiB at ``n_samples_per_chunk=30000``**, with the
+    fitted loss agreeing to 1.2e-07 relative.
+
+    Those numbers are recorded rather than asserted because reproducing them needs a GPU;
+    what is asserted below is the part that must hold everywhere -- the gradient, and the
+    default staying bit-identical to the code that had no chunking at all.
+    """
+
+    @staticmethod
+    def _gradient(n_samples_per_chunk, surfaces=2, n_pts=97):
+        """The gradient one step leaves on the latent, chunked or not."""
+        torch.manual_seed(5)
+        latent = torch.zeros(1, 8, requires_grad=True)
+        xyz = torch.rand(n_pts, 3)
+        sdf_gt_ = [torch.rand(n_pts, 1) for _ in range(surfaces)]
+        decoder = LinearDecoder(surfaces=surfaces)
+        loss_fn = torch.nn.L1Loss(reduction="none")
+        if n_samples_per_chunk is None:
+            latent_fit._recon_loss(
+                decoders=[decoder],
+                latent=latent,
+                xyz_input=xyz,
+                sdf_gt_=sdf_gt_,
+                loss_fn=loss_fn,
+                loss_weight=1.0,
+                clamp_dist=0.1,
+                difficulty_weight=None,
+            ).backward()
+        else:
+            for start in range(0, n_pts, n_samples_per_chunk):
+                stop = min(start + n_samples_per_chunk, n_pts)
+                (
+                    latent_fit._recon_loss(
+                        decoders=[decoder],
+                        latent=latent,
+                        xyz_input=xyz[start:stop],
+                        sdf_gt_=[gt[start:stop] for gt in sdf_gt_],
+                        loss_fn=loss_fn,
+                        loss_weight=1.0,
+                        clamp_dist=0.1,
+                        difficulty_weight=None,
+                    )
+                    * ((stop - start) / n_pts)
+                ).backward()
+        return latent.grad.clone()
+
+    @pytest.mark.parametrize("chunk", [10, 32, 97, 200])
+    def test_the_accumulated_gradient_matches_the_unchunked_one(self, chunk):
+        """
+        Chunk sizes that divide the sample count and that do not (97 points), one that is
+        exactly the count, and one larger than it. The weighting is by share of points, so
+        a ragged last chunk must not be over-counted -- which is the arithmetic this
+        catches and an equal-weight average would not.
+        """
+        unchunked = self._gradient(None)
+        chunked = self._gradient(chunk)
+        scale = unchunked.abs().max()
+        assert float((unchunked - chunked).abs().max() / scale) < 1e-6
+
+    @staticmethod
+    def _fit(surfaces=2, **overrides):
+        """A seeded multi-surface fit. Fresh tensors each call: ``sdf_gt`` is clamped and
+        moved in place by the preprocessing pass, so a shared list is a different input
+        the second time round."""
+        torch.manual_seed(3)
+        n_pts = 97
+        xyz = torch.rand(n_pts, 3)
+        sdf_gt = [torch.rand(n_pts, 1) for _ in range(surfaces)]
+        torch.manual_seed(3)
+        return reconstruct_latent(
+            decoders=LinearDecoder(surfaces=surfaces),
+            num_iterations=4,
+            latent_size=8,
+            xyz=xyz,
+            sdf_gt=sdf_gt,
+            pts_surface=[i % surfaces for i in range(n_pts)],
+            n_samples=60,
+            clamp_dist=0.1,
+            device="cpu",
+            **overrides,
+        )
+
+    def test_the_default_is_the_unchunked_path(self):
+        """
+        ``None`` must be what every run before this parameter existed did, bit for bit --
+        the chunked path changes summation order, so a default that quietly took it would
+        move results for callers who never asked.
+        """
+        default_loss, default_latent = self._fit()
+        explicit_loss, explicit_latent = self._fit(n_samples_per_chunk=None)
+        assert torch.equal(default_latent, explicit_latent)
+        assert float(default_loss) == float(explicit_loss)
+
+    def test_a_chunked_fit_lands_in_the_same_place(self):
+        """
+        Not bit-identical -- the summation order differs -- but the same fit. A chunking
+        bug that dropped or double-counted a chunk would show here as a latent that is not
+        close, which the single-step gradient test would not catch across four steps.
+        """
+        _, unchunked = self._fit()
+        _, chunked = self._fit(n_samples_per_chunk=25)
+        assert torch.allclose(unchunked, chunked, atol=1e-6)
+
+    def test_reconstruct_mesh_can_reach_it(self):
+        """
+        The capability has to be reachable from the entry point the consumer calls;
+        ``reconstruct_mesh`` refuses unknown keywords now, so a caller cannot pass it
+        through by accident.
+        """
+        import inspect
+
+        named = inspect.signature(recon_main.reconstruct_mesh).parameters
+        assert "n_samples_per_chunk_latent_recon" in named
+        assert named["n_samples_per_chunk_latent_recon"].default is None
