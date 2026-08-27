@@ -15,10 +15,11 @@
   itself is 159 lines beside it. §8.0.G's residue is **already absent here**: the file has
   zero `if verbose` gates, so §8.0.K's largest single commit has no counterpart in §8.0.L.
   **Blocked on nothing** once #94 merges; #94 is stacked on #93, so **merge #93 first**.
-- **§8.0.K executed (2026-08-27), PR #94 open, stacked on #93:** commits 2–12 — the
+- **§8.0.K executed (2026-08-27), PR #94 open, stacked on #93:** commits 2–13 — the
   characterization, the shared keyword refusal, the value refusals, the `100` sentinel, the
   LR horizon, the ungating, `_select_samples`, the two loss helpers, #75's chunked step, the
-  debug-record deletion, and this update. Suite 884 → 922 passed / 1 skipped / 3 xfailed:
+  debug-record deletion, the dead `broken()` helper in both characterization files, and
+  this update. Suite 884 → 922 passed / 1 skipped / 3 xfailed:
   **all 19 strict xfails commit 2 raised were retired inside the slice**, and the 3 that
   remain are the regression harness's. Four § History entries (20 extended with its second
   site, 21 the returned sentinel, 22 the hybrid LR horizon, 23 the LBFGS resample), three
