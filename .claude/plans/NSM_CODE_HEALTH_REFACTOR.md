@@ -2247,9 +2247,10 @@ count is also stale — it says 43, the measurement today is **54**.
 
 - **Unknown keywords are refused by name.** `**kwargs` keeps
   `batch_size_latent_recon` (the consumer passes it, `run_nsm.py:200`) and raises
-  `TypeError` naming every other key it was given, together with the closest spellings
-  from the signature. Refusing is the fix and honouring is not: NSM's own rule is that an
-  accepted-and-ignored parameter gets deleted rather than implemented.
+  `TypeError` naming every other key it was given. Refusing is the fix and honouring is
+  not: NSM's own rule is that an accepted-and-ignored parameter gets deleted rather than
+  implemented. Nothing beyond the name — the missing signal was the refusal, and a
+  caller holding a `TypeError` that names their own typo does not need help past that.
 - **`register_similarity` is decided once**, into a local the gate and the forward both
   read, so the two cannot disagree again. Truthiness is the reading kept — `is True`
   is the outlier of the two, and the function's other flags are all truthy-tested.
