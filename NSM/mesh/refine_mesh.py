@@ -14,6 +14,16 @@ connectivity and cell ordering, because a cell index means nothing across two di
 tessellations. Violating it produces a wrong mesh, not an error; the entry point warns
 when it can prove the two differ, which it cannot always do.
 
+**Connectivity, not geometry**, and the distinction is the whole design. ``mesh`` is
+normally ``base_mesh`` after a warp, so every vertex has moved and no face has -- the two
+look nothing alike in space and their face arrays are identical, which is what the check
+compares. What breaks the match is a *subdivision*: ``update_mesh`` deletes the split
+cells after appending the new ones, so surviving cells keep their relative order but
+their indices shift. In the iterative loop this module exists for -- warp, flag stretched
+triangles, subdivide the source, re-warp -- that is fine, because the re-warp regenerates
+``mesh`` from the refined base. Skipping the re-warp and reusing the previous ``mesh`` is
+the mistake the warning catches, and it is the one an iterative caller actually makes.
+
 **``area_threshold`` is not an area.** It is compared against
 ``TriangleProperties.areas(norm=True)``, a relative deviation from the mean triangle
 area, so ``0.5`` means "50% larger than average". Three docstrings called it "the maximum

@@ -546,3 +546,46 @@ def test_get_faces_is_reachable_by_its_historical_path():
 
     assert refine_mesh.get_faces is triangle_metrics.get_faces
     assert refine_mesh.get_faces.__module__ == "NSM.mesh.triangle_metrics"
+
+
+def _warp(mesh):
+    """Stand-in for `interpolate_points`: moves every vertex, touches no face."""
+    warped = mesh.copy()
+    pts = np.asarray(mesh.points)
+    warped.points = pts * (1.0 + 0.35 * np.sin(3 * pts[:, [2]]))
+    return warped
+
+
+def test_a_warped_mesh_does_not_warn():
+    """The documented pass is silent, and this is the question the docstring must answer.
+
+    `mesh` is normally `base_mesh` warped: every vertex moved, no face touched. The two
+    look nothing alike in space, and the precondition is about connectivity, so the
+    check compares face arrays and stays quiet. Without this test the two existing
+    warning tests (identical mesh, different mesh) would let someone "tighten" the check
+    to compare points and break the only workflow the module has.
+    """
+    base = pv.Sphere(theta_resolution=12, phi_resolution=12).triangulate()
+    warped = _warp(base)
+    assert np.array_equal(get_faces(base), get_faces(warped))
+    assert not np.allclose(np.asarray(base.points), np.asarray(warped.points))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        subdivide_triangles_on_base_mesh(base, warped, max_length_threshold=0.25)
+
+
+def test_reusing_a_stale_mesh_after_subdividing_warns():
+    """The mistake an iterative caller makes: subdivide the base, forget to re-warp.
+
+    `update_mesh` deletes the split cells after appending the new ones, so cell k in the
+    refined base is a different triangle from cell k in the mesh selection was made on.
+    Measured: the call still "succeeds", taking 624 cells to 1110 — wrong triangles, no
+    error. That is why this has to warn rather than being left to the caller to notice.
+    """
+    base = pv.Sphere(theta_resolution=12, phi_resolution=12).triangulate()
+    refined = subdivide_triangles_on_base_mesh(base, _warp(base), max_length_threshold=0.25)
+    assert refined.n_cells > base.n_cells
+
+    with pytest.warns(UserWarning, match="do not refer to the same triangles"):
+        subdivide_triangles_on_base_mesh(refined, _warp(base), max_length_threshold=0.25)

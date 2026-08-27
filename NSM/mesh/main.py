@@ -224,6 +224,7 @@ def scale_mesh(
 
 
 def _finish_meshes(
+    *,
     flat_sdfs,
     grid_dims,
     voxel_origin,
@@ -249,6 +250,12 @@ def _finish_meshes(
     ``flat_sdfs`` is (N, objects) in get_sdfs' Z-fastest sample order, so the C-order
     reshape to ``grid_dims`` gives array[x, y, z] (module docstring). Remaining
     arguments are create_mesh's own. Returns its return value.
+
+    Keyword-only, and that is the point rather than a style choice: fourteen arguments
+    in a fixed order is the shape that produced #60 one function down, where
+    create_mesh_adaptive's fallback passed seventeen of them positionally and the fourth
+    was wrong. A caller cannot get this list out of order because it cannot supply it in
+    an order at all.
     """
     nx, ny, nz = grid_dims
     sdf_values = torch.zeros((nx, ny, nz, objects))
@@ -336,20 +343,20 @@ def create_mesh(
     )
 
     return _finish_meshes(
-        flat_sdfs,
-        (n_pts_per_axis,) * 3,
-        voxel_origin,
-        voxel_size,
-        objects,
-        use_vtk,
-        scale,
-        offset,
-        path_original_mesh,
-        scale_to_original_mesh,
-        icp_transform,
-        path_save,
-        filename,
-        verbose,
+        flat_sdfs=flat_sdfs,
+        grid_dims=(n_pts_per_axis,) * 3,
+        voxel_origin=voxel_origin,
+        voxel_size=voxel_size,
+        objects=objects,
+        use_vtk=use_vtk,
+        scale=scale,
+        offset=offset,
+        path_original_mesh=path_original_mesh,
+        scale_to_original_mesh=scale_to_original_mesh,
+        icp_transform=icp_transform,
+        path_save=path_save,
+        filename=filename,
+        verbose=verbose,
     )
 
 
@@ -383,7 +390,13 @@ def sdf_grid_to_mesh(
         logger.debug("Starting marching cubes... ")
 
     sub_sdf, crop_origin = _prepare_sdf_grid(
-        sdf_values, voxel_origin, voxel_size, narrow_band, band_width, pad_voxels, verbose
+        sdf_values=sdf_values,
+        voxel_origin=voxel_origin,
+        voxel_size=voxel_size,
+        narrow_band=narrow_band,
+        band_width=band_width,
+        pad_voxels=pad_voxels,
+        verbose=verbose,
     )
 
     verts, faces, normals, values = marching_cubes(
@@ -471,7 +484,7 @@ def crop_sdf_to_narrow_band(
 
 
 def _prepare_sdf_grid(
-    sdf_values, voxel_origin, voxel_size, narrow_band, band_width, pad_voxels, verbose
+    *, sdf_values, voxel_origin, voxel_size, narrow_band, band_width, pad_voxels, verbose
 ):
     """Coerce an SDF grid to numpy and, if asked, crop it to the band around the surface.
 
@@ -493,7 +506,12 @@ def _prepare_sdf_grid(
         return sdf_values, voxel_origin
 
     return crop_sdf_to_narrow_band(
-        sdf_values, voxel_origin, voxel_size, band_width, pad_voxels, verbose
+        sdf_values,
+        voxel_origin=voxel_origin,
+        voxel_size=voxel_size,
+        band_width=band_width,
+        pad_voxels=pad_voxels,
+        verbose=verbose,
     )
 
 
@@ -526,7 +544,13 @@ def sdf_grid_to_mesh_vtk(
         logger.debug("Starting VTK Flying Edges mesh extraction...")
 
     sub_sdf, crop_origin = _prepare_sdf_grid(
-        sdf_values, voxel_origin, voxel_size, narrow_band, band_width, pad_voxels, verbose
+        sdf_values=sdf_values,
+        voxel_origin=voxel_origin,
+        voxel_size=voxel_size,
+        narrow_band=narrow_band,
+        band_width=band_width,
+        pad_voxels=pad_voxels,
+        verbose=verbose,
     )
 
     # Get grid dimensions (cropped or original)
@@ -821,20 +845,20 @@ def create_mesh_adaptive(
     )
 
     return _finish_meshes(
-        flat_sdfs,
-        grid_dims,
-        voxel_origin,
-        original_spacing,
-        objects,
-        use_vtk,
-        scale,
-        offset,
-        path_original_mesh,
-        scale_to_original_mesh,
-        icp_transform,
-        path_save,
-        filename,
-        verbose,
+        flat_sdfs=flat_sdfs,
+        grid_dims=grid_dims,
+        voxel_origin=voxel_origin,
+        voxel_size=original_spacing,
+        objects=objects,
+        use_vtk=use_vtk,
+        scale=scale,
+        offset=offset,
+        path_original_mesh=path_original_mesh,
+        scale_to_original_mesh=scale_to_original_mesh,
+        icp_transform=icp_transform,
+        path_save=path_save,
+        filename=filename,
+        verbose=verbose,
     )
 
 

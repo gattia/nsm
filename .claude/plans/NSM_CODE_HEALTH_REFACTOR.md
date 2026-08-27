@@ -53,6 +53,35 @@
   like NSM symbols — three failures, caught by running it. A checker that decides
   *whether a reference is ours* from the same index it uses to *resolve* it will
   fail that way every time the index widens.
+- **§8.0.I, review round 2 (maintainer, 2026-08-27): the slice reintroduced the
+  defect it had just fixed, one commit later.** Commit 5 turned
+  `create_mesh_adaptive`'s 17 positional arguments into keywords because
+  positional forwarding across a call boundary *is* #60 — ARCHITECTURE §7's named
+  example of the LR bug's shape. Commit 8 then wrote a **14-positional** call to
+  the new `_finish_meshes`, twice, in the same file. `_finish_meshes` and
+  `_prepare_sdf_grid` are now **keyword-only** (`*`), so the list cannot be
+  supplied in an order at all; every call site names its arguments. Bitwise
+  output unchanged against the same pre-refactor baseline. **The lesson is about
+  the fix, not the miss:** a fix applied at the *call sites* leaves the next
+  author free to re-create the defect, and a fix applied at the *signature*
+  does not. CLAUDE.md's "fix the class of defect" has a stronger reading than the
+  one taken here — enumerate the sites, then move the guard to where new sites
+  are born. **Still positional and pre-existing, out of this slice:**
+  `interpolate._advance` (9), `interpolate._tangent_laplacian_step` (8),
+  `interpolate.interpolate_common` (8), `correspondence_metrics._tri_tri_intersect`
+  (6). Same shape; they belong with whichever slice next opens those files.
+- **§8.0.I, review round 2, second item: the connectivity warning's docs answered
+  the wrong question.** The maintainer read `_warn_if_connectivity_differs` and
+  asked why the two meshes have to match when the point of the module is that
+  `mesh` is a *changed* `base_mesh`. The check was right — it compares face arrays,
+  and a warp moves every vertex while touching no face — but the module docstring
+  said only "must share connectivity and cell ordering" and never said the
+  geometry is *supposed* to differ arbitrarily. A doc that is technically accurate
+  and does not preempt the first question a reader has is not doing its job.
+  Verified and now pinned: the documented warp pass is silent, the iterative
+  warp→subdivide→re-warp loop is silent, and reusing a **stale** `mesh` against a
+  refined base warns — which is the mistake an iterative caller actually makes,
+  and which "succeeded" at 624 → 1110 cells with the wrong triangles.
 - **§8.0.I diverged from its slice-index row before any code, and the statement
   says so.** The row reads "`mesh/main.py`". #57 has **zero** sites there — its
   five are in `correspondence_metrics` (2), `interpolate` (2) and `refine_mesh`
