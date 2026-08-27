@@ -403,17 +403,17 @@ def _verbose_gated_log_calls():
 
 class TestLogRecordsReachAConfiguredHost:
     """
-    §8.0.G made logging the mechanism; these ten records still answer to the parameter it
+    §8.0.G made logging the mechanism; ten records went on answering to the parameter it
     deprecated. A host that ran ``logging.getLogger("NSM").setLevel(DEBUG)`` -- the exact
-    replacement the deprecation warning names -- sees none of them.
+    replacement the deprecation warning names -- saw none of them.
     """
 
-    @broken("ten of fifteen logger calls sit under `if verbose is True:`")
     def test_no_log_record_is_gated_on_the_deprecated_flag(self):
+        """Was a strict xfail: ten of fifteen, one of them the skipped-surface warning."""
         assert _verbose_gated_log_calls() == []
 
-    @broken("the stage debug records are gated behind verbose")
     def test_a_host_at_debug_sees_the_stage_records(self, sphere_path, caplog):
+        """Was a strict xfail: empty, for a host that did exactly what the notice said."""
         with caplog.at_level(logging.DEBUG, logger="NSM"):
             recon_main.reconstruct_mesh(
                 path=sphere_path,

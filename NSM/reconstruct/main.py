@@ -1,12 +1,6 @@
-import copy
 import logging
-import os
-import sys
 import time
-from fnmatch import fnmatch
 
-import numpy as np
-import pymskt as mskt
 import torch
 
 # Optional (#5): every wandb use is behind an explicit request that raises when absent.
@@ -17,7 +11,6 @@ except ImportError:
 
 from NSM.datasets import read_mesh_get_sampled_pts, read_meshes_get_sampled_pts
 from NSM.datasets.sdf_dataset import combine_meshes
-from NSM.losses import EIKONAL_UNSUPPORTED, eikonal_loss
 from NSM.mesh import create_mesh_adaptive
 
 from .._verbose_deprecation import honour_verbose
@@ -37,10 +30,20 @@ from .latent_fit import (  # noqa: F401
     reconstruct_latent_pts_surface_type_check,
     reconstruct_latent_sdf_gt_type_check,
 )
-from .predictive_validation_class import Regress
 from .recon_evaluation import compute_recon_loss, get_mean_errors  # noqa: F401
-from .utils import adjust_learning_rate
 from .wandb_logging import _process_meshes_for_wandb, prepare_results_for_wandb  # noqa: F401
+
+# Unused here and re-exported deliberately: these names were importable from
+# ``NSM.reconstruct`` and ``NSM.reconstruct.main`` before the §8.0.C/E splits and stay so.
+# They are the *leaked* half of that contract rather than the endorsed half -- see the
+# module docstring of test_reconstruct_import_compat.py, which freezes them -- so unleaking
+# one is a changelogged decision, not a tidy-up. ``.flake8`` project-ignores F401, so the
+# marks are for the reader; ``KNOWN_ISSUES`` § Open tracks lifting that ignore, and this
+# block is the case that shows a dead import and a deliberate re-export are tellable apart.
+from fnmatch import fnmatch  # noqa: F401  isort:skip
+from NSM.losses import EIKONAL_UNSUPPORTED, eikonal_loss  # noqa: F401  isort:skip
+from .predictive_validation_class import Regress  # noqa: F401  isort:skip
+from .utils import adjust_learning_rate  # noqa: F401  isort:skip
 
 logger = logging.getLogger(__name__)
 
@@ -250,14 +253,12 @@ def reconstruct_mesh(
         )
 
         if objects_per_decoder[decoder_to_scale] > 1:
-            if verbose is True:
-                logger.info("Mean mesh is idx: %s", mesh_to_scale)
+            logger.info("Mean mesh is idx: %s", mesh_to_scale)
             # Support multi-surface mean mesh creation
             if isinstance(mesh_to_scale, (list, tuple)):
-                if verbose is True:
-                    logger.info(
-                        "Combining mean meshes for multi-surface registration: %s", mesh_to_scale
-                    )
+                logger.info(
+                    "Combining mean meshes for multi-surface registration: %s", mesh_to_scale
+                )
                 # Combine multiple mean meshes for registration
                 mean_mesh = combine_meshes(mean_mesh, mesh_to_scale)
             else:
@@ -277,8 +278,7 @@ def reconstruct_mesh(
     toc = time.time()
     time_load_mean = toc - tic
     tic = time.time()
-    if verbose is True:
-        logger.debug("Loaded mean mesh in %.2f seconds", time_load_mean)
+    logger.debug("Loaded mean mesh in %.2f seconds", time_load_mean)
 
     # read in mesh(es) and get sampled points for fitting decoder too
     # handle single or multiple meshes appropriately.
@@ -314,8 +314,6 @@ def reconstruct_mesh(
             fix_mesh=fix_mesh,
             seed=seed,
         )
-    else:
-        raise ValueError("multi_object must be True or False")
 
     xyz = result_["pts"]
     sdf_gt = result_["sdf"]
@@ -327,8 +325,7 @@ def reconstruct_mesh(
     if multi_object is True:
         for sdf_idx, sdf_gt_ in enumerate(sdf_gt):
             if sdf_gt_ is None:
-                if verbose is True:
-                    logger.warning("sdf_gt[%s] is None, skipping surface %s", sdf_idx, sdf_idx)
+                logger.warning("sdf_gt[%s] is None, skipping surface %s", sdf_idx, sdf_idx)
                 continue
             if not isinstance(sdf_gt_, torch.Tensor):
                 sdf_gt[sdf_idx] = torch.from_numpy(sdf_gt_).float()
@@ -344,8 +341,7 @@ def reconstruct_mesh(
 
     toc = time.time()
     time_load_mesh = toc - tic
-    if verbose is True:
-        logger.debug("Loaded mesh in %.2f seconds", time_load_mesh)
+    logger.debug("Loaded mesh in %.2f seconds", time_load_mesh)
 
     tic = time.time()
 
@@ -398,12 +394,10 @@ def reconstruct_mesh(
 
     toc = time.time()
     time_recon_latent = toc - tic
-    if verbose is True:
-        logger.debug("Reconstructed latent in %.2f seconds", time_recon_latent)
+    logger.debug("Reconstructed latent in %.2f seconds", time_recon_latent)
     tic = time.time()
 
-    if verbose is True:
-        logger.debug("%s", result_["icp_transform"])
+    logger.debug("icp_transform: %s", result_["icp_transform"])
 
     # create mesh(es) from latent
     meshes = []
@@ -435,8 +429,7 @@ def reconstruct_mesh(
 
     toc = time.time()
     time_create_mesh = toc - tic
-    if verbose is True:
-        logger.debug("Created mesh in %.2f seconds", time_create_mesh)
+    logger.debug("Created mesh in %.2f seconds", time_create_mesh)
     tic = time.time()
 
     if func is not None:
@@ -444,8 +437,7 @@ def reconstruct_mesh(
 
     toc = time.time()
     time_calc_recon_funcs = toc - tic
-    if verbose is True:
-        logger.debug("metrics in %.2f seconds", time_calc_recon_funcs)
+    logger.debug("Ran the recon functions in %.2f seconds", time_calc_recon_funcs)
     tic = time.time()
 
     if (
@@ -474,8 +466,7 @@ def reconstruct_mesh(
             logger.debug("finished computing recon loss")
             toc = time.time()
             time_calc_recon_loss = toc - tic
-            if verbose is True:
-                logger.debug("metrics in %.2f seconds", time_calc_recon_loss)
+            logger.debug("Computed the recon loss in %.2f seconds", time_calc_recon_loss)
 
             result.update(result_recon_metrics)
 
