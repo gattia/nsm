@@ -290,6 +290,142 @@ def _select_samples(
     return xyz_input, sdf_gt_
 
 
+def _recon_loss(
+    *,
+    decoders,
+    latent,
+    xyz_input,
+    sdf_gt_,
+    loss_fn,
+    loss_weight,
+    clamp_dist,
+    difficulty_weight,
+):
+    """Decode this step's points and score them against their ground truth.
+
+    ``sdf_gt_`` is one flat list across all decoders and ``surface_offset`` maps each
+    decoder's local output columns onto it -- the positional surface contract
+    ``reconstruct_latent``'s docstring states, and the reason this list is never reordered.
+
+    Returns the summed per-decoder mean loss. A decoder that emits more surfaces than there
+    is ground truth for stops early, and a surface whose ground truth is ``None`` is
+    skipped; both say so at ``warning``, because both drop a surface from the objective.
+    """
+    recon_loss = 0
+
+    # Iterate over the decoders (if there are multiple). ``sdf_gt_`` is one flat
+    # list across all decoders; ``surface_offset`` maps each decoder's local
+    # output columns onto it.
+    surface_offset = 0
+    for decoder_idx, decoder in enumerate(decoders):
+        # Fast inference: pass latent and xyz separately
+        pred_sdf = decoder(latent=latent.squeeze(0), xyz=xyz_input)
+
+        # initialize loss as zeros with same device (will be averaged later)
+        _loss_ = 0
+
+        # Apply clamping distance - to ignore points that are too far away
+        if clamp_dist is not None:
+            pred_sdf = torch.clamp(pred_sdf, -clamp_dist, clamp_dist)
+
+        # Compute loss
+        if pred_sdf.shape[1] == 1:
+            # if only one surface - then just loss_fn (l1/l2) between pred_sdf and sdf_gt
+            if difficulty_weight is not None:
+                raise NotImplementedError
+            _loss_ += (
+                loss_fn(
+                    pred_sdf.squeeze(),
+                    sdf_gt_[surface_offset].squeeze(),
+                )
+                * loss_weight
+            )
+
+        else:
+            # if multiple surfaces - then compute loss for each surface and weight them
+            for sdf_idx in range(pred_sdf.shape[1]):
+                gt_idx = surface_offset + sdf_idx
+                if gt_idx >= len(sdf_gt_):
+                    # might only have 1 surface (e.g., bone) and trying to reconstruct both
+                    # (e.g., bone and cartilage) - in this case, break
+                    # TODO: this is a bit of a hack, should be handled better
+                    # right now it assumes the first surface is the bone / only of interest
+                    # but we might want to reconstruct bone from cartilage (maybe?) or maybe we put
+                    # cartilage first? Or maybe we have multiple bones & cartilage?
+                    logger.warning(
+                        "gt_idx (%s) >= len(sdf_gt_) (%s)... exiting",
+                        gt_idx,
+                        len(sdf_gt_),
+                    )
+                    break
+
+                # if sdf_gt_[gt_idx] is None, then skip this surface
+                # in fitting latent
+                if sdf_gt_[gt_idx] is None:
+                    logger.warning("sdf_gt_[gt_idx] is None, skipping surface %s", gt_idx)
+                    continue
+
+                if difficulty_weight is not None:
+                    error_sign = torch.sign(
+                        sdf_gt_[gt_idx].squeeze() - pred_sdf[:, sdf_idx].squeeze()
+                    )
+                    sdf_gt_sign = torch.sign(sdf_gt_[gt_idx].squeeze())
+                    sample_weights = 1 + difficulty_weight * sdf_gt_sign * error_sign
+                else:
+                    sample_weights = torch.ones_like(pred_sdf[:, sdf_idx].squeeze())
+                _loss_ += (
+                    loss_fn(
+                        pred_sdf[:, sdf_idx].squeeze(),
+                        sdf_gt_[gt_idx].squeeze(),
+                    )
+                    * loss_weight
+                    * sample_weights
+                )
+
+                logger.debug("loss_%s shape:  %s", sdf_idx, _loss_.shape)
+                logger.debug("loss_%s mean:  %s", sdf_idx, _loss_.mean())
+                logger.debug("loss_%s std:  %s", sdf_idx, _loss_.std())
+
+        _loss_ = torch.mean(_loss_)
+        # update the local loss
+        recon_loss += _loss_
+        # add the number of surfaces we just iterated over to the surface_offset
+        # for the next decoder
+        surface_offset += pred_sdf.shape[1]
+
+    return recon_loss
+
+
+def _regularization_losses(
+    *,
+    latent,
+    l2reg,
+    latent_reg_weight,
+    latent_norm,
+    use_soft_norm_constraint,
+    norm_penalty_weight,
+    norm_penalty_type,
+):
+    """The two terms that read only the latent: L2 regularization and the norm penalty.
+
+    The norm penalty is the soft alternative to ``project_latent``'s hard rescaling, and
+    the two are mutually exclusive by ``use_soft_norm_constraint``. Both are ``0`` when
+    their parameter is unset, so the caller can always add them.
+
+    Returns ``(latent_loss, norm_penalty_loss)``.
+    """
+    # Constrain new predictions to be close to zero (the mean), penalizing "abnormal" shapes
+    latent_loss = latent_reg_weight * torch.mean(latent**2) if l2reg is True else 0
+
+    norm_penalty_loss = 0
+    if latent_norm is not None and use_soft_norm_constraint:
+        norm_penalty_loss = latent_norm_penalty(
+            latent, latent_norm, norm_penalty_weight, norm_penalty_type
+        )
+
+    return latent_loss, norm_penalty_loss
+
+
 #: The values ``optimizer_name`` and ``loss_type`` are built from, named here so the
 #: refusal and the branch that consumes them cannot drift apart.
 _OPTIMIZER_NAMES = frozenset({"adam", "lbfgs"})
@@ -549,91 +685,21 @@ def reconstruct_latent(
         )
 
         def compute_loss():
-            """Compute loss for current latent vector - used by both Adam and LBFGS"""
+            """The step's objective: reconstruction, regularization, and their sum."""
+            recon_loss = _recon_loss(
+                decoders=decoders,
+                latent=latent,
+                xyz_input=xyz_input,
+                sdf_gt_=sdf_gt_,
+                loss_fn=loss_fn,
+                loss_weight=loss_weight,
+                clamp_dist=clamp_dist,
+                difficulty_weight=difficulty_weight,
+            )
 
-            # Decoder forward pass
-            recon_loss = 0
-
-            # Iterate over the decoders (if there are multiple). ``sdf_gt_`` is one flat
-            # list across all decoders; ``surface_offset`` maps each decoder's local
-            # output columns onto it.
-            surface_offset = 0
-            for decoder_idx, decoder in enumerate(decoders):
-                # Fast inference: pass latent and xyz separately
-                pred_sdf = decoder(latent=latent.squeeze(0), xyz=xyz_input)
-
-                # initialize loss as zeros with same device (will be averaged later)
-                _loss_ = 0
-
-                # Apply clamping distance - to ignore points that are too far away
-                if clamp_dist is not None:
-                    pred_sdf = torch.clamp(pred_sdf, -clamp_dist, clamp_dist)
-
-                # Compute loss
-                if pred_sdf.shape[1] == 1:
-                    # if only one surface - then just loss_fn (l1/l2) between pred_sdf and sdf_gt
-                    if difficulty_weight is not None:
-                        raise NotImplementedError
-                    _loss_ += (
-                        loss_fn(
-                            pred_sdf.squeeze(),
-                            sdf_gt_[surface_offset].squeeze(),
-                        )
-                        * loss_weight
-                    )
-
-                else:
-                    # if multiple surfaces - then compute loss for each surface and weight them
-                    for sdf_idx in range(pred_sdf.shape[1]):
-                        gt_idx = surface_offset + sdf_idx
-                        if gt_idx >= len(sdf_gt_):
-                            # might only have 1 surface (e.g., bone) and trying to reconstruct both
-                            # (e.g., bone and cartilage) - in this case, break
-                            # TODO: this is a bit of a hack, should be handled better
-                            # right now it assumes the first surface is the bone / only of interest
-                            # but we might want to reconstruct bone from cartilage (maybe?) or maybe we put
-                            # cartilage first? Or maybe we have multiple bones & cartilage?
-                            logger.warning(
-                                "gt_idx (%s) >= len(sdf_gt_) (%s)... exiting",
-                                gt_idx,
-                                len(sdf_gt_),
-                            )
-                            break
-
-                        # if sdf_gt_[gt_idx] is None, then skip this surface
-                        # in fitting latent
-                        if sdf_gt_[gt_idx] is None:
-                            logger.warning("sdf_gt_[gt_idx] is None, skipping surface %s", gt_idx)
-                            continue
-
-                        if difficulty_weight is not None:
-                            error_sign = torch.sign(
-                                sdf_gt_[gt_idx].squeeze() - pred_sdf[:, sdf_idx].squeeze()
-                            )
-                            sdf_gt_sign = torch.sign(sdf_gt_[gt_idx].squeeze())
-                            sample_weights = 1 + difficulty_weight * sdf_gt_sign * error_sign
-                        else:
-                            sample_weights = torch.ones_like(pred_sdf[:, sdf_idx].squeeze())
-                        _loss_ += (
-                            loss_fn(
-                                pred_sdf[:, sdf_idx].squeeze(),
-                                sdf_gt_[gt_idx].squeeze(),
-                            )
-                            * loss_weight
-                            * sample_weights
-                        )
-
-                        logger.debug("loss_%s shape:  %s", sdf_idx, _loss_.shape)
-                        logger.debug("loss_%s mean:  %s", sdf_idx, _loss_.mean())
-                        logger.debug("loss_%s std:  %s", sdf_idx, _loss_.std())
-
-                _loss_ = torch.mean(_loss_)
-                # update the local loss
-                recon_loss += _loss_
-                # add the number of surfaces we just iterated over to the surface_offset
-                # for the next decoder
-                surface_offset += pred_sdf.shape[1]
-
+            # Unreachable: `eikonal_weight > 0` raises at this function's entry. Kept
+            # rather than deleted because §8.2 of the code-health plan owns its repair --
+            # it needs a second derivative triplanar models do not have.
             # Eikonal loss computation
             # Compute eikonal loss - enforces ||∇f|| = 1 constraint for valid SDFs
             eikonal_loss_value = 0
@@ -651,20 +717,15 @@ def reconstruct_latent(
                 if len(decoders) > 1:
                     eikonal_loss_value = eikonal_loss_value / len(decoders)
 
-            # Other losses
-            # Compute latent loss - used to constrain new predictions to be close to zero (mean)
-            # penalizing "abnormal" shapes
-            if l2reg is True:
-                latent_loss = latent_reg_weight * torch.mean(latent**2)
-            else:
-                latent_loss = 0
-
-            # Compute norm penalty (soft constraint alternative to hard projection)
-            norm_penalty_loss = 0
-            if latent_norm is not None and use_soft_norm_constraint:
-                norm_penalty_loss = latent_norm_penalty(
-                    latent, latent_norm, norm_penalty_weight, norm_penalty_type
-                )
+            latent_loss, norm_penalty_loss = _regularization_losses(
+                latent=latent,
+                l2reg=l2reg,
+                latent_reg_weight=latent_reg_weight,
+                latent_norm=latent_norm,
+                use_soft_norm_constraint=use_soft_norm_constraint,
+                norm_penalty_weight=norm_penalty_weight,
+                norm_penalty_type=norm_penalty_type,
+            )
 
             total_loss = (
                 recon_loss + latent_loss + eikonal_weight * eikonal_loss_value + norm_penalty_loss
