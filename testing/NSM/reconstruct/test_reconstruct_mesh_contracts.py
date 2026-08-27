@@ -36,13 +36,6 @@ import torch
 import NSM.reconstruct.main as recon_main
 from NSM.mesh import create_mesh_adaptive
 
-PLAN = ".claude/plans/NSM_CODE_HEALTH_REFACTOR.md §8.0.J"
-
-
-def broken(reason):
-    return pytest.mark.xfail(strict=True, reason=f"{reason} ({PLAN})")
-
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

@@ -42,13 +42,6 @@ import NSM.reconstruct.latent_fit as latent_fit
 import NSM.reconstruct.main as recon_main
 from NSM.reconstruct import reconstruct_latent
 
-PLAN = ".claude/plans/NSM_CODE_HEALTH_REFACTOR.md §8.0.K"
-
-
-def broken(reason):
-    return pytest.mark.xfail(strict=True, reason=f"{reason} ({PLAN})")
-
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
