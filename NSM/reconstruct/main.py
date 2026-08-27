@@ -45,6 +45,26 @@ from .wandb_logging import _process_meshes_for_wandb, prepare_results_for_wandb 
 logger = logging.getLogger(__name__)
 
 
+#: The only keyword ``reconstruct_mesh`` takes without naming it in its signature.
+#: kneepipeline passes it on every fit (``steps/run_nsm.py``), so refusing unknown keys
+#: must not refuse this one; it is warned about where it is read.
+_DEPRECATED_KWARGS = frozenset({"batch_size_latent_recon"})
+
+
+def _refuse_unknown_kwargs(kwargs):
+    """Raise on any keyword ``reconstruct_mesh`` neither names nor deprecates.
+
+    ``**kwargs`` used to swallow them, so a misspelling among 58 near-synonymous parameter
+    names ran with the intended parameter's default and said nothing at all.
+    """
+    unknown = sorted(set(kwargs) - _DEPRECATED_KWARGS)
+    if unknown:
+        raise TypeError(
+            "reconstruct_mesh() got unexpected keyword arguments: "
+            + ", ".join(repr(name) for name in unknown)
+        )
+
+
 class NoZeroLevelSetError(RuntimeError):
     """
     The decoder's mean shape (zero latent) has no surface, so registration to the mean
@@ -149,6 +169,8 @@ def reconstruct_mesh(
         NoZeroLevelSetError: with `register_similarity` or `scale_jointly` set, when
             the decoder's mean shape has no surface (see the exception's docstring).
     """
+
+    _refuse_unknown_kwargs(kwargs)
 
     if log_wandb and wandb is None:
         raise ImportError("log_wandb=True requires wandb, which is not installed")

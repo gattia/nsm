@@ -123,16 +123,15 @@ MISSPELLINGS = [
 
 class TestUnknownKeywordsAreRefused:
     """
-    ``**kwargs`` is inspected for exactly one key, ``batch_size_latent_recon``. Every
-    other key reaches the end of the function unread, so the caller gets the default for
-    the parameter they meant to set and no indication that they did not set it.
+    ``**kwargs`` used to be inspected for exactly one key, ``batch_size_latent_recon``.
+    Every other key reached the end of the function unread, so the caller got the default
+    for the parameter they meant to set and no indication that they had not set it.
     """
 
     @pytest.mark.parametrize("wrong", MISSPELLINGS)
-    @broken("**kwargs accepts and ignores every key but batch_size_latent_recon")
     def test_a_misspelled_parameter_raises(self, sphere_path, wrong):
         """
-        Measured before the fix: all five complete the run with no exception, no warning
+        Were five strict xfails. Measured before the fix: all five complete the run with no exception, no warning
         and no log record naming the key -- the run used the intended parameter's default
         while the caller believed they had set it. That measurement is why the fix is a
         refusal and not a warning: there was nowhere for a warning to be noticed.
