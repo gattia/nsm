@@ -20,7 +20,7 @@ except ImportError:
 from NSM.losses import EIKONAL_UNSUPPORTED, eikonal_loss
 
 from .._verbose_deprecation import honour_verbose
-from .utils import adjust_learning_rate
+from .utils import adjust_learning_rate, refuse_unknown_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +209,12 @@ def latent_norm_penalty(latent, target_norm, penalty_weight=1.0, penalty_type="q
     return penalty_weight * penalty
 
 
+#: The only keyword ``reconstruct_latent`` takes without naming it, left over from the
+#: chunked forward removed in 4583246; it is warned about where it is read. Issue #75 is
+#: the capability that went with it, and its replacement is a named parameter.
+_DEPRECATED_KWARGS = frozenset({"max_batch_size"})
+
+
 @honour_verbose
 def reconstruct_latent(
     decoders,
@@ -268,6 +274,8 @@ def reconstruct_latent(
     Returns:
         (loss, latent): the final loss value and the fitted latent tensor.
     """
+    refuse_unknown_kwargs(kwargs, function_name="reconstruct_latent", deprecated=_DEPRECATED_KWARGS)
+
     if log_wandb and wandb is None:
         raise ImportError("log_wandb=True requires wandb, which is not installed")
 

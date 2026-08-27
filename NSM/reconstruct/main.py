@@ -42,6 +42,7 @@ from fnmatch import fnmatch  # noqa: F401  isort:skip
 from NSM.losses import EIKONAL_UNSUPPORTED, eikonal_loss  # noqa: F401  isort:skip
 from .predictive_validation_class import Regress  # noqa: F401  isort:skip
 from .utils import adjust_learning_rate  # noqa: F401  isort:skip
+from .utils import refuse_unknown_kwargs  # isort:skip
 
 logger = logging.getLogger(__name__)
 
@@ -72,20 +73,6 @@ class _StageTimings(dict):
 #: The only keyword ``reconstruct_mesh`` takes without naming it. kneepipeline passes it
 #: on every fit, so a refusal must not refuse this one; it is warned about where it is read.
 _DEPRECATED_KWARGS = frozenset({"batch_size_latent_recon"})
-
-
-def _refuse_unknown_kwargs(kwargs):
-    """Raise on any keyword ``reconstruct_mesh`` neither names nor deprecates.
-
-    ``**kwargs`` used to swallow them, so a misspelling among 58 near-synonymous parameter
-    names ran with the intended parameter's default and said nothing at all.
-    """
-    unknown = sorted(set(kwargs) - _DEPRECATED_KWARGS)
-    if unknown:
-        raise TypeError(
-            "reconstruct_mesh() got unexpected keyword arguments: "
-            + ", ".join(repr(name) for name in unknown)
-        )
 
 
 class NoZeroLevelSetError(RuntimeError):
@@ -401,7 +388,7 @@ def reconstruct_mesh(
             not reach it -- it did until Aug 2026, over a mean mesh it never consulted.
     """
 
-    _refuse_unknown_kwargs(kwargs)
+    refuse_unknown_kwargs(kwargs, function_name="reconstruct_mesh", deprecated=_DEPRECATED_KWARGS)
 
     if log_wandb and wandb is None:
         raise ImportError("log_wandb=True requires wandb, which is not installed")

@@ -128,11 +128,10 @@ class TestUnknownKeywordsAreRefused:
     """
 
     @pytest.mark.parametrize("wrong", MISSPELLINGS)
-    @broken("reconstruct_latent's **kwargs swallows every key but max_batch_size")
     def test_a_misspelled_parameter_raises(self, wrong):
         """
-        Measured before the fix: all seven complete a fit with no exception, no warning and
-        no log record naming the key. That measurement is why the fix is a refusal and not
+        Were seven strict xfails. Measured before the fix: all seven complete a fit with no
+        exception, no warning and no log record naming the key. That measurement is why the fix is a refusal and not
         a warning -- there was nowhere for a warning to be noticed.
         """
         with pytest.raises(TypeError, match=wrong):
