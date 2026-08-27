@@ -4,16 +4,104 @@
 
 ## State
 
-**Updated:** 2026-08-26 · **Status:** open
+**Updated:** 2026-08-27 · **Status:** open
 
-- **Next:** execute **§8.0.J** — `reconstruct_mesh` internals: the 61-parameter
-  signature and the interleaved timing plumbing. Its statement is commit 1 of
-  that slice and is not written yet. Nothing blocks it; §8.0.I touched
-  `reconstruct/` not at all, and left `mesh/main.py`'s two public signatures (17
-  and 26 parameters) deliberately alone as §8.0.O's release-boundary work — the
-  same kind of signature §8.0.J opens, so check whether the two want doing
-  together before writing the statement.
-- **§8.0.I executed (2026-08-26), PR open:** commits 2–9 whole — the
+- **Next:** execute **§8.0.K** — `reconstruct_latent` internals: #75, the 185-line nested
+  `compute_loss`, the hybrid Adam/LBFGS branch. Its statement is commit 1 of that slice
+  and is not written yet. Nothing blocks it; §8.0.J stopped at the
+  `reconstruct_latent(**reconstruct_inputs)` call and left `latent_fit.py` untouched.
+  **Read §8.0.J's size finding before writing the statement** — K opens a 744-line module
+  with the same shape, and the cost of a keyword-only extraction is two lines per
+  parameter, not one.
+- **§8.0.J executed (2026-08-27), PR open:** commits 2–9 whole — the characterization, the
+  keyword refusal, `register_similarity`, the reference mesh, the ungating plus dead code,
+  the timing recorder, the extraction, and this update. Suite 864 → 884 passed / 1 skipped
+  / 3 xfailed at both ends: **all 12 strict xfails commit 2 raised were retired inside the
+  slice**, and the 3 that remain are the regression harness's. One § History entry (20,
+  the swallowed keyword), one CHANGELOG Breaking entry and four Changed, `SCOPE` §3.1's
+  coverage claim corrected, `ARCHITECTURE` §5's table row and §7's accepted-and-ignored
+  row updated, `KNOWN_ISSUES` § Open's F401 count recomputed (43 → 44, having been 54).
+  `reconstruct_mesh`'s executable body is 322 → 189 lines.
+- **§8.0.J, review round 1 (maintainer, 2026-08-27): the keyword refusal was trying to be
+  helpful and that was bloat.** The first version ran `difflib.get_close_matches` over the
+  live signature and appended "did you mean ...?" to every unknown key — 18 lines and two
+  imports. The statement had defended it as "part of the fix, not a courtesy", and that was
+  overreach: the signal that was missing is the *refusal*, and a caller holding a
+  `TypeError` that quotes their own typo does not need the function to guess for them. The
+  general point, since this is the second slice to add prose or machinery answering a
+  question nobody asked (§8.0.I round 2's connectivity docstring was the first): **"the
+  error could be more helpful" is not evidence that it should be.** Applied by rewriting
+  commits 1, 2, 3, 8 and 9 in place and force-pushing, per `CLAUDE.md`; the branch is
+  otherwise unchanged, verified by diffing the replay against the pre-review branch.
+- **The slice's own headline was wrong, and answering why settled the State block's open
+  question.** The row says "the 61-parameter signature"; it is 58 named plus `**kwargs`.
+  More usefully, the signature is not §8.0.J's to shrink at all: `reconstruct_mesh` is
+  frozen public API and kneepipeline calls it with 27 keyword arguments, which is the same
+  release-boundary constraint §8.0.I cited for `create_mesh` (17) and `create_mesh_adaptive`
+  (26). **All three shrink together at §8.0.O or none of them does** — taking a third of a
+  set early is how a release boundary gets crossed twice. What was left for §8.0.J was the
+  internals, and the hole that made 58 parameters dangerous *now*: a `**kwargs` that
+  accepted every misspelling of them.
+- **The size budget was missed for the third slice running, and this time the mechanism is
+  nameable.** Budget +75 net in `NSM/`, ceiling +95, actual **+120** (it was +135 before
+  review round 1 cut the suggestion machinery). It priced three helper
+  signatures and their docstrings and **did not price the call sites**: a keyword-only
+  boundary writes every parameter name twice, and three helpers needing 38 parameters
+  between them is 76 lines that are nothing but names. That cost is not avoidable by
+  writing it better — keyword-only is §8.0.I review round 2's requirement — so **the rule
+  for §8.0.K and §8.0.L is to budget an extraction at two lines per parameter the stage
+  needs, plus the body.** §8.0.H's miss was transitional code priced at zero and §8.0.I's
+  was refusals priced by net lines; all three are the same error of budgeting the part you
+  are thinking about and not the part the language makes you write.
+- **The deletion pass deleted two of the five planned helpers, on a criterion worth
+  keeping: does the call site state something the inline form cannot?** `_decode_meshes`
+  failed it — its call site repeats what the loop says, for 35 lines — and so did the
+  argument coercion, which reads `reconstruct_mesh`'s own parameters and rebinds them, so
+  a helper handing five values back for the caller to rebind is plumbing, and a 5-tuple
+  unpack of two numbers and three sequences is the positional coupling this slice removes.
+  The three that survived each pass it: `_build_reference_mesh` lets the call site say
+  `... if register_to_mean else None`, which is the fix, where inline the same fact is a
+  45-line `if/else`; `_sample_subject` puts one name on a two-reader branch; and
+  `_assemble_result` was moved *further* than planned, taking the return-type switch with
+  it, because a six-flag `if` at the call site and a six-flag body 40 lines away is
+  `time_calc_recon_loss`'s defect in a second location.
+- **Two defects were the same defect in different places, which is what made them findable.**
+  `time_calc_recon_loss` was measured on every scored call and returned by nothing, because
+  recording a stage and returning it were two unrelated edits 90 lines apart. The
+  return-type switch had the identical shape. `_StageTimings` is a `dict` rather than a
+  wrapper around one precisely so that the second edit stops existing: `return_timing` is
+  `result.update(timings)`.
+- **The characterization's source scan would have gone green by measuring nothing.** It
+  matched `time_x = toc - tic` to derive the stages the body measures — and commit 7
+  deleted every instance of that spelling. Left alone it would have passed against an empty
+  set. It now matches both spellings and asserts it matched something. **Any test that
+  derives its expectation from the source is one refactor away from asserting a tautology;
+  the fix is an assertion that the derivation found anything at all.**
+- **§8.0.G's conversion left a residue in every file it touched, and this slice cleared one.**
+  Ten of `reconstruct_mesh`'s fifteen log records sat under `if verbose is True:` — faithful
+  to the `print` gates they replaced, and the reason a host that ran the exact replacement
+  the deprecation notice names saw none of them. Ungated here; **~180 sites of the same
+  shape remain**, one file at a time, with whichever slice opens each. §8.0.N is where the
+  last of them should be checked for.
+- **Measured and *not* a defect, recorded so it is not re-investigated** (and asked about
+  in review): the single- and multi-object readers were passed
+  `mean_mesh if register_similarity else None` and `mean_mesh` respectively. Inert, two
+  ways. By reading, `mean_mesh` has exactly one reader in either sampler
+  (`mesh_sampling.py:141`, `:552`) and both are inside `if register_to_mean_first is True:`.
+  By running, a **decoy** mean mesh — 3× the radius, shifted by (5, 5, 5), so any
+  registration against it would be unmissable — gives byte-identical points, SDF,
+  `icp_transform`, `scale` and `center` against `None` on both readers with
+  `register_to_mean_first=False`. The `else None` was defensive habit and the file said so
+  already: the multi-object call passed `mean_mesh` plain and always had, so a load-bearing
+  guard would have left that path broken all along. After the reference-mesh commit the
+  question closes outright — `mean_mesh` *is* `None` when `register_to_mean` is false, so
+  the conditional is unreachable, not merely inert.
+- **Still positional and pre-existing, out of this slice** (unchanged from §8.0.I's list):
+  `interpolate._advance` (9), `interpolate._tangent_laplacian_step` (8),
+  `interpolate.interpolate_common` (8), `correspondence_metrics._tri_tri_intersect` (6).
+- **§8.0.I merged to `main` in PR #91 (2026-08-27):** both review rounds applied as
+  commits on top, at the maintainer's instruction; #54, #57 and #60 closed by the merge.
+- **§8.0.I executed (2026-08-26), PR #91:** commits 2–9 whole — the
   characterization, #57's accessor, #60 in two commits, #54 in two, the shared
   tail, and this update. Suite 812 → 857 passed / 1 skipped, 3 xfailed at both
   ends: **all 19 strict xfails commit 2 raised were retired inside the slice**.

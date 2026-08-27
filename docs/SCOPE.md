@@ -409,12 +409,18 @@ Two things about that surface are load-bearing and undocumented:
    consumer's own path is untouched, because it never calls `load_model` — §2.6 above
    establishes by execution that it could, and what the one prerequisite is.*
 
-`reconstruct_mesh` has **one executed line** in the entire test suite: its `def`.
+*`reconstruct_mesh` used to have **one executed line** in the entire test suite: its
+`def`. Stale since §8.0.C ran the single-object sampled branch end to end and §8.0.J
+(2026-08-27) added the stage contracts —* `python -m coverage run --source=NSM -m pytest
+testing/NSM/reconstruct` *puts `reconstruct/main.py` at 85%. The reason it was worth
+recording still stands, though: none of that is a fit against a real trained decoder, so
+what the tests cover is the plumbing, not the reconstruction.*
 
 **Deprecated, with a delete-when (audit ruling, re-verified 2026-08-22):**
 `batch_size_latent_recon`. `reconstruct_mesh` dropped the parameter, absorbs it via
-`**kwargs`, and prints a deprecation warning on every call — while the consumer still
-passes it (`steps/run_nsm.py`) and `recon_evaluation.get_mean_errors` still takes it as a real
+`**kwargs` — the only key it still accepts there, since §8.0.J refuses the rest — and
+logs a deprecation warning on every call, while the consumer still passes it
+(`steps/run_nsm.py`) and `recon_evaluation.get_mean_errors` still takes it as a real
 parameter. The shim behaves correctly; what the audit flagged is that it is inline and
 undated, indistinguishable from permanent API (the failure shape CLAUDE.md § "Separate
 permanent from transitional" names). **Delete the shim when kneepipeline stops passing

@@ -150,11 +150,15 @@ values.
 ### `F401` is project-ignored, so unused imports do not appear in `make lint`
 
 `.flake8`'s `extend-ignore` has carried `F401` since before the Aug 2026 lint work. `make
-lint` reports zero violations, and separately there are **43** unused imports it will never
-show. "flake8 is at zero" is true and does not mean the imports are gone.
+lint` reports zero violations, and separately there are **44** unused imports it will never
+show (`flake8 --extend-select=F401 NSM/ testing/`, 2026-08-27; 54 before §8.0.J opened
+`reconstruct/main.py`). "flake8 is at zero" is true and does not mean the imports are gone.
 
 *Fix:* not filed. Removing the ignore is a judgement call — several are deliberate
-re-exports in `__init__.py` files, which is the usual reason `F401` gets ignored wholesale.
+re-exports, which is the usual reason `F401` gets ignored wholesale. `reconstruct/main.py`
+is the worked case: ten hits there were five dead imports, deleted, and five re-exports the
+import-compat test freezes, now carrying `# noqa: F401` and a comment. The two kinds are
+tellable apart one file at a time, which is what lifting the ignore would take.
 
 ## `models/triplanar.py`
 
@@ -1242,3 +1246,35 @@ used the parameter. Those reconstructions should be re-run.
 
 *Pinned by:* `test_mesh_contracts.test_fallback_grid_covers_search_bounds` and
 `test_default_search_bounds_keep_the_historical_fallback_origin`.
+
+## 20. `reconstruct_mesh` accepted a misspelled parameter and used the default instead
+
+| | |
+|---|---|
+| **Affected** | Any `reconstruct_mesh` or `get_mean_errors` call that passed a keyword the signature does not name — a misspelling, a renamed parameter, or one copied from a sibling function |
+| **Unaffected** | Calls whose keywords all spell a real parameter, which is every NSM-internal one and kneepipeline's. `batch_size_latent_recon` was and remains deliberately accepted |
+| **Severity** | Silent — the run completed, reported nothing, and used the default for the parameter the caller believed they had set |
+| **Fixed in** | `reconstruct-mesh-internals`, Aug 2026 (plan §8.0.J) |
+
+### What was wrong
+
+`reconstruct_mesh` takes 58 named parameters and a `**kwargs` that was inspected for
+exactly one key. Every other key reached the end of the function unread. Measured across
+five misspellings of real parameters — `n_pts_per_axes`, `num_iteration`, `calc_assd_`,
+`latent_reg_wieght`, `clamp_distance` — all five completed a reconstruction with no
+exception, no warning and no log record. With 58 near-synonymous names, this is the
+likeliest way to call the function wrongly and it was the only way that produced no signal
+at all.
+
+It now raises `TypeError`, naming the unknown key.
+
+### How to tell whether one of your runs is affected
+
+Re-run the same call under fixed code. If it raises `TypeError`, that keyword was being
+ignored, and the run used the default shown in `reconstruct_mesh`'s signature for whatever
+you meant to set. The two that change a result rather than a diagnostic are the grid
+(`n_pts_per_axis`, default 256) and the fit (`num_iterations` 1000, `lr` 5e-4,
+`latent_reg_weight` 1e-4, `clamp_dist` None); a misspelling among those means the run was
+not configured as recorded and should be re-run.
+
+*Pinned by:* `test_reconstruct_mesh_contracts.TestUnknownKeywordsAreRefused`.
