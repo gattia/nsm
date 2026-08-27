@@ -382,10 +382,6 @@ def _recon_loss(
                     * sample_weights
                 )
 
-                logger.debug("loss_%s shape:  %s", sdf_idx, _loss_.shape)
-                logger.debug("loss_%s mean:  %s", sdf_idx, _loss_.mean())
-                logger.debug("loss_%s std:  %s", sdf_idx, _loss_.std())
-
         _loss_ = torch.mean(_loss_)
         # update the local loss
         recon_loss += _loss_
