@@ -209,6 +209,11 @@ def latent_norm_penalty(latent, target_norm, penalty_weight=1.0, penalty_type="q
     return penalty_weight * penalty
 
 
+#: The values ``optimizer_name`` and ``loss_type`` are built from, named here so the
+#: refusal and the branch that consumes them cannot drift apart.
+_OPTIMIZER_NAMES = frozenset({"adam", "lbfgs"})
+_LOSS_TYPES = frozenset({"l1", "l1_log", "l2"})
+
 #: The only keyword ``reconstruct_latent`` takes without naming it, left over from the
 #: chunked forward removed in 4583246; it is warned about where it is read. Issue #75 is
 #: the capability that went with it, and its replacement is a named parameter.
@@ -320,6 +325,23 @@ def reconstruct_latent(
         mean=latent_init_mean, std=latent_init_std
     )
     latent.requires_grad = True
+
+    # Both of these used to be `if`/`elif` chains with no `else`, so an unrecognised value
+    # left `optimizer` or `loss_fn` unassigned and surfaced 100 lines later as an
+    # UnboundLocalError naming a local the caller has never seen. Refused here, next to the
+    # parameter, rather than normalised: "Adam" is a typo, and accepting it is how a
+    # parameter starts having two spellings.
+    if optimizer_name not in _OPTIMIZER_NAMES:
+        raise ValueError(
+            f"optimizer_name must be one of {sorted(_OPTIMIZER_NAMES)}, got {optimizer_name!r}"
+        )
+    if loss_type not in _LOSS_TYPES:
+        raise ValueError(f"loss_type must be one of {sorted(_LOSS_TYPES)}, got {loss_type!r}")
+    if hybrid_optimizer and optimizer_name != "adam":
+        raise ValueError(
+            "hybrid_optimizer=True runs Adam and then LBFGS, so optimizer_name is not "
+            f"consulted; it was {optimizer_name!r}. Drop one of the two."
+        )
 
     # Initialize optimizer(s)
     if hybrid_optimizer:

@@ -179,10 +179,9 @@ class TestUnknownValuesAreRefusedWhereTheyAreNamed:
     """
 
     @pytest.mark.parametrize("value", ["sgd", "Adam"])
-    @broken("optimizer_name has no else branch; the failure is an UnboundLocalError")
     def test_an_unknown_optimizer_names_the_parameter(self, value):
         """
-        Measured before the fix: both raise ``UnboundLocalError: local variable 'optimizer'
+        Were two strict xfails. Measured before the fix: both raise ``UnboundLocalError: local variable 'optimizer'
         referenced before assignment``, from the step loop. ``"Adam"`` is in the list on
         purpose -- it is the capitalised spelling of the default, and the likeliest way to
         get this wrong.
@@ -191,15 +190,29 @@ class TestUnknownValuesAreRefusedWhereTheyAreNamed:
             reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(optimizer_name=value))
 
     @pytest.mark.parametrize("value", ["l1_smooth", "L1"])
-    @broken("loss_type has no else branch; the failure is a NameError inside a closure")
     def test_an_unknown_loss_type_names_the_parameter(self, value):
         """
-        Measured before the fix: both raise ``NameError: free variable 'loss_fn' referenced
+        Were two strict xfails. Measured before the fix: both raise ``NameError: free variable 'loss_fn' referenced
         before assignment in enclosing scope`` -- raised inside ``compute_loss``, so the
         traceback ends in a nested function the caller cannot see from the signature.
         """
         with pytest.raises(ValueError, match="loss_type"):
             reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(loss_type=value))
+
+    def test_hybrid_mode_refuses_an_optimizer_name_it_will_not_consult(self):
+        """
+        The eighth defect of the same class, found while fixing the second and not in the
+        §8.0.K statement's seven: with ``hybrid_optimizer=True`` the loop derives its
+        optimizer from the step number and ``optimizer_name`` is read nowhere at all. It
+        was accepted and ignored, which is the trap NSM's rule says to close rather than
+        implement -- and there is nothing to implement here, since hybrid mode *is*
+        Adam then LBFGS.
+        """
+        with pytest.raises(ValueError, match="optimizer_name"):
+            reconstruct_latent(
+                decoders=LinearDecoder(),
+                **fit_kwargs(hybrid_optimizer=True, optimizer_name="lbfgs", adam_iterations=2),
+            )
 
 
 # ---------------------------------------------------------------------------
