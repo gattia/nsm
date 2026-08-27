@@ -39,14 +39,13 @@ def reconstruct_latent_sdf_gt_type_check(sdf_gt, verbose=False):
     else:
         raise Exception("Invalid sdf_gt type")
 
-    if verbose is True:
-        logger.debug("\tsdf_gt len: %s", len(sdf_gt))
-        for sdf in sdf_gt:
-            if sdf is not None:
-                logger.debug("\tsdf shape: %s", sdf.shape)
-                logger.debug("\tsdf type: %s", type(sdf))
-            else:
-                logger.debug("\tsdf is None")
+    logger.debug("\tsdf_gt len: %s", len(sdf_gt))
+    for sdf in sdf_gt:
+        if sdf is not None:
+            logger.debug("\tsdf shape: %s", sdf.shape)
+            logger.debug("\tsdf type: %s", type(sdf))
+        else:
+            logger.debug("\tsdf is None")
 
     return sdf_gt
 
@@ -62,9 +61,8 @@ def reconstruct_latent_pts_surface_type_check(pts_surface, verbose=False, device
     else:
         raise ValueError("pts_surface must be list, tuple, np.ndarray, or torch.Tensor")
 
-    if verbose is True:
-        logger.debug("\tpts_surface shape: %s", pts_surface.shape)
-        logger.debug("\tpts_surface type: %s", type(pts_surface))
+    logger.debug("\tpts_surface shape: %s", pts_surface.shape)
+    logger.debug("\tpts_surface type: %s", type(pts_surface))
     return pts_surface
 
 
@@ -97,8 +95,7 @@ def reconstruct_latent_preprocess_sdf_gt(sdf_gt, clamp_dist, device="cuda", verb
     # Set a clamp (maximum) distance to "model"
     for sdf_idx, sdf in enumerate(sdf_gt):
         if sdf is None:
-            if verbose is True:
-                logger.warning("sdf_gt[%s] is None, skipping surface %s", sdf_idx, sdf_idx)
+            logger.warning("sdf_gt[%s] is None, skipping surface %s", sdf_idx, sdf_idx)
             continue
         if clamp_dist is not None:
             sdf = torch.clamp(sdf, -clamp_dist, clamp_dist)
@@ -299,18 +296,16 @@ def reconstruct_latent(
     )
     decoders = reconstruct_latent_decoders_type_check(decoders)
 
-    if verbose is True:
-        # print info about xyz
-        logger.debug("\txyz shape: %s", xyz.shape)
-        logger.debug("\txyz type: %s", type(xyz))
+    # print info about xyz
+    logger.debug("\txyz shape: %s", xyz.shape)
+    logger.debug("\txyz type: %s", type(xyz))
 
     # Setup n_samples, if not specified.
     if n_samples is None:
         n_samples = xyz.shape[0]
 
     if (max_n_samples is not None) and (n_steps_sample_ramp is not None):
-        if verbose is True:
-            logger.debug("Ramping up number of samples")
+        logger.debug("Ramping up number of samples")
         n_samples_init = n_samples
     else:
         n_samples_init = None
@@ -360,13 +355,12 @@ def reconstruct_latent(
             [latent], lr=lbfgs_lr, max_iter=lbfgs_max_iter, history_size=lbfgs_history_size
         )
 
-        if verbose:
-            logger.info(
-                "Hybrid optimizer: %s Adam iterations + %s LBFGS iterations",
-                adam_iterations,
-                lbfgs_iterations,
-            )
-            logger.info("Total iterations: %s", total_iterations)
+        logger.info(
+            "Hybrid optimizer: %s Adam iterations + %s LBFGS iterations",
+            adam_iterations,
+            lbfgs_iterations,
+        )
+        logger.info("Total iterations: %s", total_iterations)
     else:
         # Single optimizer mode
         total_iterations = num_iterations
@@ -466,8 +460,7 @@ def reconstruct_latent(
                 n_samples_ = n_samples_init + int(
                     (max_n_samples - n_samples_init) * min(1.0, (step / n_steps_sample_ramp))
                 )
-                if verbose is True:
-                    logger.debug("ramping up samples...  %s", n_samples_)
+                logger.debug("ramping up samples...  %s", n_samples_)
             else:
                 n_samples_ = n_samples
 
@@ -495,13 +488,12 @@ def reconstruct_latent(
                     for idx, n_samples_per_surface_ in enumerate(n_samples_per_surface):
                         # get the locations of the points that belong to the current surface
                         pts_ = (pts_surface == idx).nonzero(as_tuple=True)[0]
-                        if verbose is True:
-                            logger.debug(
-                                "Surface %s has %s points, sampling %s points",
-                                idx,
-                                pts_.shape[0],
-                                n_samples_per_surface_,
-                            )
+                        logger.debug(
+                            "Surface %s has %s points, sampling %s points",
+                            idx,
+                            pts_.shape[0],
+                            n_samples_per_surface_,
+                        )
 
                         perm = torch.randperm(pts_.shape[0])
                         pts_ = pts_[perm[:n_samples_per_surface_]]
@@ -566,21 +558,17 @@ def reconstruct_latent(
                             # right now it assumes the first surface is the bone / only of interest
                             # but we might want to reconstruct bone from cartilage (maybe?) or maybe we put
                             # cartilage first? Or maybe we have multiple bones & cartilage?
-                            if verbose is True:
-                                logger.warning(
-                                    "gt_idx (%s) >= len(sdf_gt_) (%s)... exiting",
-                                    gt_idx,
-                                    len(sdf_gt_),
-                                )
+                            logger.warning(
+                                "gt_idx (%s) >= len(sdf_gt_) (%s)... exiting",
+                                gt_idx,
+                                len(sdf_gt_),
+                            )
                             break
 
                         # if sdf_gt_[gt_idx] is None, then skip this surface
                         # in fitting latent
                         if sdf_gt_[gt_idx] is None:
-                            if verbose is True:
-                                logger.warning(
-                                    "sdf_gt_[gt_idx] is None, skipping surface %s", gt_idx
-                                )
+                            logger.warning("sdf_gt_[gt_idx] is None, skipping surface %s", gt_idx)
                             continue
 
                         if difficulty_weight is not None:
@@ -600,10 +588,9 @@ def reconstruct_latent(
                             * sample_weights
                         )
 
-                        if verbose is True:
-                            logger.debug("loss_%s shape:  %s", sdf_idx, _loss_.shape)
-                            logger.debug("loss_%s mean:  %s", sdf_idx, _loss_.mean())
-                            logger.debug("loss_%s std:  %s", sdf_idx, _loss_.std())
+                        logger.debug("loss_%s shape:  %s", sdf_idx, _loss_.shape)
+                        logger.debug("loss_%s mean:  %s", sdf_idx, _loss_.mean())
+                        logger.debug("loss_%s std:  %s", sdf_idx, _loss_.std())
 
                 _loss_ = torch.mean(_loss_)
                 # update the local loss
@@ -698,31 +685,27 @@ def reconstruct_latent(
             and current_optimizer_name != "lbfgs"
             and not use_soft_norm_constraint
         ):
-            if verbose is True:
-                logger.info("Projecting latent onto hypersphere of norm in range: %s", latent_norm)
+            logger.info("Projecting latent onto hypersphere of norm in range: %s", latent_norm)
             project_latent(latent, latent_norm)
 
         # Print progress/loss as appropriate
         if step % 50 == 0:
-            if verbose is True:
-                optimizer_info = f" ({current_optimizer_name})" if hybrid_optimizer else ""
-                logger.debug("Step: %s%s, Loss: %s", step, optimizer_info, loss_.item())
-                logger.debug("\tRecon loss:  %s", recon_loss_.item())
-                if eikonal_weight > 0:
-                    eikonal_val = (
-                        eikonal_loss_.item()
-                        if hasattr(eikonal_loss_, "item")
-                        else float(eikonal_loss_)
-                    )
-                    logger.debug("\tEikonal loss: %.6f", eikonal_val)
-                if latent_norm is not None and use_soft_norm_constraint:
-                    norm_penalty_val = (
-                        norm_penalty_loss_.item()
-                        if hasattr(norm_penalty_loss_, "item")
-                        else float(norm_penalty_loss_)
-                    )
-                    logger.debug("\tNorm penalty loss: %.6f", norm_penalty_val)
-                logger.debug("\tLatent norm:  %s", latent.norm().item())
+            optimizer_info = f" ({current_optimizer_name})" if hybrid_optimizer else ""
+            logger.debug("Step: %s%s, Loss: %s", step, optimizer_info, loss_.item())
+            logger.debug("\tRecon loss:  %s", recon_loss_.item())
+            if eikonal_weight > 0:
+                eikonal_val = (
+                    eikonal_loss_.item() if hasattr(eikonal_loss_, "item") else float(eikonal_loss_)
+                )
+                logger.debug("\tEikonal loss: %.6f", eikonal_val)
+            if latent_norm is not None and use_soft_norm_constraint:
+                norm_penalty_val = (
+                    norm_penalty_loss_.item()
+                    if hasattr(norm_penalty_loss_, "item")
+                    else float(norm_penalty_loss_)
+                )
+                logger.debug("\tNorm penalty loss: %.6f", norm_penalty_val)
+            logger.debug("\tLatent norm:  %s", latent.norm().item())
 
         # Log to wandb as appropriate
         if (log_wandb is True) and (step % log_wandb_step == 0):

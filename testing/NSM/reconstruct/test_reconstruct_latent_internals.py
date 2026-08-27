@@ -405,22 +405,20 @@ class TestLogRecordsReachAConfiguredHost:
     dropped a surface.
     """
 
-    @broken("25 of 30 logger calls in latent_fit.py sit under `if verbose is True:`")
     def test_no_log_record_is_gated_on_the_deprecated_flag(self):
+        """Was a strict xfail: 25 of 30, three of them skipped-surface warnings."""
         assert _verbose_gated_log_calls() == []
 
-    @broken("a host that configured logging sees none of the fit's records")
     def test_a_host_at_debug_sees_the_fit_records(self, caplog):
-        """Measured before the fix: empty, for a host that did exactly what the notice said."""
+        """Was a strict xfail: empty, for a host that did exactly what the notice said."""
         with caplog.at_level(logging.DEBUG, logger="NSM"):
             reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs())
         messages = " ".join(record.getMessage() for record in caplog.records)
         assert "xyz shape" in messages
 
-    @broken("the skipped-surface warnings are gated behind verbose")
     def test_a_host_at_warning_is_told_a_surface_was_skipped(self, caplog):
         """
-        The sharpest of the three: the fit dropped a surface from its objective and said so
+        Was a strict xfail, and the sharpest of the three: the fit dropped a surface from its objective and said so
         only to a caller who passed the deprecated flag.
         """
         with caplog.at_level(logging.WARNING, logger="NSM"):
