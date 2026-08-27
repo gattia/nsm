@@ -138,7 +138,7 @@ class TriangleProperties:
         return np.max(self.edge_lengths, axis=1)
 
 
-def triangle_faces(mesh_or_faces):
+def get_faces(mesh_or_faces):
     """(M, 3) triangle connectivity, refusing anything that is not triangles.
 
     The single accessor for #57. Five sites across ``correspondence_metrics``,
@@ -146,6 +146,11 @@ def triangle_faces(mesh_or_faces):
     validates nothing: a VTK-style array reshapes into (-1, 4) or (-1, 3) exactly when
     its flat length happens to divide, so a quad mesh raises or silently yields
     fabricated triangles depending on its cell count mod 4.
+
+    It lives here and is named ``get_faces`` for two reasons: this is the module the
+    ``get_triangle_area`` / ``get_edge_lengths`` convention belongs to, and
+    ``refine_mesh`` imports the name rather than defining its own, so the long-standing
+    ``NSM.mesh.refine_mesh.get_faces`` path keeps resolving to exactly this function.
 
     ``pyvista.PolyData.regular_faces`` is not the guard on its own -- it returns an
     (M, 4) array for an all-quad mesh rather than refusing -- so the cell type is

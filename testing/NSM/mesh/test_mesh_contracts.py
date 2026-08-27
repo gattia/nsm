@@ -42,7 +42,9 @@ from NSM.mesh.main import (
     sdf_grid_to_mesh_vtk,
 )
 from NSM.mesh.refine_mesh import (
-    get_faces,
+    get_faces,  # re-exported from triangle_metrics; imported by this path deliberately
+)
+from NSM.mesh.refine_mesh import (
     get_target_cells,
     subdivide_large_triangles,
     subdivide_triangles_on_base_mesh,
@@ -530,3 +532,17 @@ def test_roundtrip_metrics_are_unchanged_when_the_source_is_given():
     )
     expected = float(np.linalg.norm(roundtrip - np.asarray(source.points), axis=1).mean())
     assert result["roundtrip_distance"]["mean"] == pytest.approx(expected)
+
+
+def test_get_faces_is_reachable_by_its_historical_path():
+    """``NSM.mesh.refine_mesh.get_faces`` still resolves, and to the one accessor.
+
+    The function moved to ``triangle_metrics`` in §8.0.I. ``refine_mesh`` imports the
+    name rather than defining a forwarder, so the path callers have always used keeps
+    working and there is exactly one function object -- no second docstring to drift and
+    no wrapper to keep in step.
+    """
+    from NSM.mesh import refine_mesh, triangle_metrics
+
+    assert refine_mesh.get_faces is triangle_metrics.get_faces
+    assert refine_mesh.get_faces.__module__ == "NSM.mesh.triangle_metrics"

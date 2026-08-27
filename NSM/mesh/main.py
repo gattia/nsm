@@ -382,7 +382,7 @@ def sdf_grid_to_mesh(
     if verbose is True:
         logger.debug("Starting marching cubes... ")
 
-    sub_sdf, crop_origin = _volume_and_origin(
+    sub_sdf, crop_origin = _prepare_sdf_grid(
         sdf_values, voxel_origin, voxel_size, narrow_band, band_width, pad_voxels, verbose
     )
 
@@ -470,10 +470,12 @@ def crop_sdf_to_narrow_band(
     return sub_sdf, crop_origin
 
 
-def _volume_and_origin(
+def _prepare_sdf_grid(
     sdf_values, voxel_origin, voxel_size, narrow_band, band_width, pad_voxels, verbose
 ):
-    """The input handling both extraction twins share, in one place so it cannot drift.
+    """Coerce an SDF grid to numpy and, if asked, crop it to the band around the surface.
+
+    The input handling both extraction twins share, in one place so it cannot drift.
 
     It drifted once (#60): the VTK twin guarded the tensor conversion with ``hasattr``
     and defaulted ``narrow_band`` to True, the skimage twin called ``.cpu()``
@@ -481,7 +483,8 @@ def _volume_and_origin(
     an extraction backend, also picked an accepted input type and a cropping policy.
 
     Returns:
-        tuple: (numpy volume in array[x, y, z] layout, world origin of its index 0).
+        tuple: (numpy grid in array[x, y, z] layout, world origin of its index 0 --
+        which the crop moves, which is why the two are returned together).
     """
     if hasattr(sdf_values, "cpu"):
         sdf_values = sdf_values.cpu().numpy()
@@ -522,7 +525,7 @@ def sdf_grid_to_mesh_vtk(
     if verbose:
         logger.debug("Starting VTK Flying Edges mesh extraction...")
 
-    sub_sdf, crop_origin = _volume_and_origin(
+    sub_sdf, crop_origin = _prepare_sdf_grid(
         sdf_values, voxel_origin, voxel_size, narrow_band, band_width, pad_voxels, verbose
     )
 

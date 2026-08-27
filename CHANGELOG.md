@@ -33,8 +33,10 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 - **`mesh/` refuses a face array it cannot read, where it used to reshape past it**
   ([#57](https://github.com/gattia/nsm/issues/57)). Five sites — `self_intersection_count`,
   `foldover_count`, `refine_mesh.get_faces`, `build_mesh_laplacian`, `compute_feature_mask`
-  — go through `triangle_metrics.triangle_faces`, which takes a triangle mesh or an
-  (M, 3) array and raises a `ValueError` naming what to pass otherwise. For an all-triangle
+  — go through `triangle_metrics.get_faces`, which takes a triangle mesh or an
+  (M, 3) array and raises a `ValueError` naming what to pass otherwise. That function
+  moved out of `refine_mesh`, which now imports the name, so
+  `NSM.mesh.refine_mesh.get_faces` is unchanged as an import path. For an all-triangle
   mesh nothing changes: `regular_faces` is element-equal to the `faces.reshape(-1, 4)[:, 1:]`
   it replaces. What changes is the input that used to *succeed* wrongly — a quad mesh whose
   cell count divides by 4, or a VTK-style flat array handed to `interpolate_points(faces=)`.

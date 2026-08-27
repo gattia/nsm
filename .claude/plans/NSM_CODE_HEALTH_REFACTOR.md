@@ -21,6 +21,38 @@
   fallback grid), five CHANGELOG Breaking entries, SCOPE §2.3's three conditions
   all executed and §2.6 given new input, ARCHITECTURE §2.1/§3/§6/§7 corrected.
   `mesh/main.py` is net −5 lines with the deduplication in it.
+- **§8.0.I, review round 1 (maintainer, 2026-08-27): the accessor is `get_faces`,
+  and `refine_mesh` imports it rather than forwarding.** The slice left
+  `refine_mesh.py` calling *two* names for one operation — `get_faces` at three
+  sites and the new `triangle_faces` at the connectivity warning — and named the
+  accessor against the convention of the file it moved into
+  (`get_triangle_area`, `get_edge_lengths`). The maintainer's move settles both
+  in one edit and beats the two options that had been offered (a marked
+  back-compat alias, or a Breaking deletion deferred to §8.0.O): a named import
+  binds `get_faces` in `refine_mesh`'s namespace, so
+  `NSM.mesh.refine_mesh.get_faces` resolves to the *same object* — verified, with
+  `__module__` reporting `NSM.mesh.triangle_metrics` — and there is no second
+  docstring or wrapper to keep in step. **The general point: "preserve the public
+  path" and "have one definition" are not in tension when the path can be a
+  re-export.** Reaching for an alias or a deprecation was solving a problem the
+  import system does not have. (This is unrelated to ARCHITECTURE §5's re-export
+  trap, which is about *star* imports with no `__all__`.) Also renamed here:
+  `_volume_and_origin` → `_prepare_sdf_grid`, because the name described the
+  return tuple rather than the job, and "volume" is `crop_sdf_to_narrow_band`'s
+  local word — `main.py` says `grid` 68 times and `volume` 11, 8 of them inside
+  that one function. **Landed as a commit on top at the maintainer's instruction,
+  not as a rewrite of commits 3/4/6.**
+- **The re-export exposed a false negative in `test_docs_references`, older than
+  this slice.** `_qualnames` collected only `def`/`class` nodes, so a name a module
+  *re-exports* was invisible to it and any doc citing `refine_mesh.get_faces`
+  would have failed — as would `deep_sdf.Sine`, which §8.0.H created and nothing
+  has cited since. Fixed by registering NSM-internal `from ... import ...` names.
+  **The narrowing to NSM-internal is the part worth remembering:** the first
+  version registered every `from x import y`, which put `nn` into `TOP_LEVEL` and
+  made the docs' `nn.Sequential` / `nn.Embedding` / `nn.ModuleList` citations look
+  like NSM symbols — three failures, caught by running it. A checker that decides
+  *whether a reference is ours* from the same index it uses to *resolve* it will
+  fail that way every time the index widens.
 - **§8.0.I diverged from its slice-index row before any code, and the statement
   says so.** The row reads "`mesh/main.py`". #57 has **zero** sites there — its
   five are in `correspondence_metrics` (2), `interpolate` (2) and `refine_mesh`

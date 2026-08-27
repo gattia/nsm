@@ -43,13 +43,33 @@ NOT_NSM_CLASSES = {
 CAMEL = re.compile(r"^[A-Z][A-Za-z0-9]*$")
 
 
+def _from_nsm(node):
+    """Is this ``from ... import ...`` pulling from inside NSM?"""
+    return node.level > 0 or (node.module or "").split(".")[0] == "NSM"
+
+
 def _qualnames(path):
     """
-    Every def/class in a file as a dotted qualname, plus instance attributes.
+    Every def/class in a file as a dotted qualname, plus instance attributes and
+    names the module re-exports.
 
     ``self.padding = padding`` inside a class body registers ``Class.padding``: the docs
     cite attributes as well as methods, and an attribute that is renamed is exactly the
     kind of drift worth catching.
+
+    ``from .triangle_metrics import get_faces`` registers ``get_faces`` too, because
+    ``NSM.mesh.refine_mesh.get_faces`` **is** a working reference -- Python binds the
+    name in the importing module. Without this the check under-approximates a module's
+    surface and rejects citations that resolve: ``refine_mesh.get_faces`` (§8.0.I, where
+    the function moved but the import path was kept deliberately) and ``deep_sdf.Sine``
+    (§8.0.H, same shape) were both false negatives until this was added. A ``def`` that
+    is *deleted* rather than moved still fails, which is the drift being caught.
+
+    **NSM-internal imports only**, and the narrowing is load-bearing: registering every
+    ``from x import y`` puts third-party names into the module index, and since
+    ``TOP_LEVEL`` is what decides whether a citation is even ours, ``from torch import
+    nn`` made the docs' ``nn.Sequential`` / ``nn.Embedding`` / ``nn.ModuleList`` look
+    like NSM symbols and fail. Measured: three failures.
     """
     out = set()
 
@@ -70,6 +90,8 @@ def _qualnames(path):
 
     def walk(node, prefix):
         for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ImportFrom) and not prefix and _from_nsm(child):
+                out.update(a.asname or a.name for a in child.names if a.name != "*")
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 qual = prefix + child.name
                 out.add(qual)

@@ -32,7 +32,10 @@ import pyvista as pv
 from vtk.util.numpy_support import numpy_to_vtk
 
 from .._verbose_deprecation import honour_verbose
-from .triangle_metrics import TriangleProperties, triangle_faces
+
+# get_faces is re-exported deliberately: it used to be defined here, and
+# NSM.mesh.refine_mesh.get_faces is the path callers have always used.
+from .triangle_metrics import TriangleProperties, get_faces
 
 logger = logging.getLogger(__name__)
 
@@ -49,23 +52,6 @@ def midpoint(vertex1, vertex2):
     - midpoint: A numpy array of the xyz position of the midpoint between the two vertices.
     """
     return (vertex1 + vertex2) / 2
-
-
-def get_faces(mesh):
-    """
-    Get the faces of a mesh.
-
-    Parameters:
-    - mesh: A PyVista mesh.
-
-    Returns:
-    - faces: A numpy array of vertex indices for each face (Nx3).
-
-    Raises:
-    - ValueError: if the mesh is not all-triangular. See
-      ``triangle_metrics.triangle_faces``, which this forwards to.
-    """
-    return triangle_faces(mesh)
 
 
 def find_all_faces_to_split(mesh, cells_to_divide):
@@ -501,7 +487,7 @@ def _warn_if_connectivity_differs(base_mesh, mesh):
             stacklevel=3,
         )
         return
-    if not np.array_equal(triangle_faces(base_mesh), triangle_faces(mesh)):
+    if not np.array_equal(get_faces(base_mesh), get_faces(mesh)):
         warnings.warn(
             "subdivide_triangles_on_base_mesh: base_mesh and mesh have the same cell "
             "count but different connectivity. Cell indices selected on one do not "
