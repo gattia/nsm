@@ -6,16 +6,27 @@
 
 **Updated:** 2026-08-27 · **Status:** open
 
-- **Next:** execute **§8.0.K** — `reconstruct_latent` internals: #75, the 185-line nested
-  `compute_loss`, the hybrid Adam/LBFGS branch. Its statement is commit 1 of that slice
-  and is not written yet. Nothing blocks it; §8.0.J stopped at the
-  `reconstruct_latent(**reconstruct_inputs)` call and left `latent_fit.py` untouched.
-  **Read §8.0.J's size finding before writing the statement** — K opens a 744-line module
-  with the same shape, and the cost of a keyword-only extraction is two lines per
-  parameter, not one.
-- **§8.0.J executed (2026-08-27), PR open:** commits 2–9 whole — the characterization, the
-  keyword refusal, `register_similarity`, the reference mesh, the ungating plus dead code,
-  the timing recorder, the extraction, and this update. Suite 864 → 884 passed / 1 skipped
+- **Next:** write and execute **§8.0.K** — `reconstruct_latent` internals: #75, the
+  **191**-line nested `compute_loss` (the slice index says 185; measured 424–614 on the
+  #92 merge), the hybrid Adam/LBFGS branch. Its statement is commit 1 of that slice and is
+  not written yet. Nothing blocks it: `main` is at PR #92's merge, and §8.0.J stopped at
+  the `reconstruct_latent(**reconstruct_inputs)` call and left `latent_fit.py` untouched.
+  Three things measured for the statement rather than left to it:
+  **(1) the swallowed keyword is here too, unfixed.** `latent_fit.py:254` takes `**kwargs`,
+  reads exactly one key from it (`max_batch_size`, a deprecation warning at `:275`) and
+  discards every other keyword across **38 named parameters** — History entry 20's defect,
+  one call level down. `reconstruct_mesh`'s own callers are covered by §8.0.J's refusal;
+  direct callers of `reconstruct_latent` are not. `_refuse_unknown_kwargs` is written and
+  needs its own `_DEPRECATED_KWARGS` set here. This is CLAUDE.md's "fix the class of
+  defect": §8.0.J enumerated one site and this is the second.
+  **(2) the signature is not this slice's either.** 38 named plus `**kwargs`; it is a
+  public entry point like `reconstruct_mesh`, so it joins §8.0.O's set — the internals are
+  what K owns.
+  **(3) budget the extraction at two lines per parameter** (§8.0.J's finding), against a
+  744-line module whose one function is 532 of it.
+- **§8.0.J merged to `main` in PR #92 (2026-08-27), branch deleted:** commits 2–9 whole —
+  the characterization, the keyword refusal, `register_similarity`, the reference mesh,
+  the ungating plus dead code, the timing recorder, the extraction, and this update. Suite 864 → 884 passed / 1 skipped
   / 3 xfailed at both ends: **all 12 strict xfails commit 2 raised were retired inside the
   slice**, and the 3 that remain are the regression harness's. One § History entry (20,
   the swallowed keyword), one CHANGELOG Breaking entry and four Changed, `SCOPE` §3.1's
@@ -53,6 +64,16 @@
   set early is how a release boundary gets crossed twice. What was left for §8.0.J was the
   internals, and the hole that made 58 parameters dangerous *now*: a `**kwargs` that
   accepted every misspelling of them.
+- **Maintainer ruling on size budgets (2026-08-27): overshooting a stated budget is the
+  good outcome; not stating one is the bad outcome.** Three slices running have recorded
+  their overrun as a miss, and that framing is wrong — the budget exists so growth past it
+  is *visible*, which is what `CLAUDE.md` § Plans already says it is for, and all three
+  overruns were visible, itemised and explained. A slice that aims to shrink and lands a
+  little long has still been steered; a slice with no number blows up unremarked. **So keep
+  stating the number, keep pricing it by part, and keep recording the delta — but a
+  deliberate, itemised overrun is not a defect to be fixed by softer targets.** No rule
+  changes: the mechanism bullets below stay, because naming *why* an estimate was low is
+  what makes the next estimate better.
 - **The size budget was missed for the third slice running, and this time the mechanism is
   nameable.** Budget +75 net in `NSM/`, ceiling +95, actual **+120** (it was +135 before
   review round 1 cut the suggestion machinery). It priced three helper
