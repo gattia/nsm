@@ -339,17 +339,26 @@ class TestTheReferenceMeshIsBuiltWhenItIsUsed:
 
 def _timing_names_measured_in_the_source():
     """
-    Every stage timing the body computes, read from the source rather than listed here,
-    so a stage added later without a ``return_timing`` key turns this red instead of
-    going unnoticed the way ``time_calc_recon_loss`` did.
+    Every stage the body times, read from the source rather than listed here, so a stage
+    added later without a ``return_timing`` key turns this red instead of going unnoticed
+    the way ``time_calc_recon_loss`` did.
+
+    Two spellings, because the fix changed the one that is current and this test has to
+    keep meaning something on either side of it: ``time_x = toc - tic`` was how a stage
+    recorded itself before ``_StageTimings``, and ``timings.stage("x", ...)`` is how it
+    does now. A scan that matched only the retired spelling would pass by finding nothing.
     """
     source = open(recon_main.__file__, encoding="utf-8").read()
-    return set(re.findall(r"\b(time_\w+)\s*=", source))
+    assigned = set(re.findall(r"\b(time_\w+)\s*=\s*toc", source))
+    staged = {f"time_{name}" for name in re.findall(r'timings\.stage\(\s*"(\w+)"', source)}
+    measured = assigned | staged
+    assert measured, "neither spelling matched -- this scan has stopped measuring anything"
+    return measured
 
 
 class TestReturnTimingCoversEveryStage:
-    @broken("time_calc_recon_loss is measured at main.py:439 and never returned")
     def test_every_measured_stage_is_returned(self, sphere_path):
+        """Was a strict xfail: time_calc_recon_loss was measured and dropped."""
         result = recon_main.reconstruct_mesh(
             path=sphere_path,
             decoders=SphereDecoder(),
