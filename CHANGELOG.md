@@ -30,6 +30,44 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **`mesh/` refuses a face array it cannot read, where it used to reshape past it**
+  ([#57](https://github.com/gattia/nsm/issues/57)). Five sites — `self_intersection_count`,
+  `foldover_count`, `refine_mesh.get_faces`, `build_mesh_laplacian`, `compute_feature_mask`
+  — go through `triangle_metrics.get_faces`, which takes a triangle mesh or an
+  (M, 3) array and raises a `ValueError` naming what to pass otherwise. That function
+  moved out of `refine_mesh`, which now imports the name, so
+  `NSM.mesh.refine_mesh.get_faces` is unchanged as an import path. For an all-triangle
+  mesh nothing changes: `regular_faces` is element-equal to the `faces.reshape(-1, 4)[:, 1:]`
+  it replaces. What changes is the input that used to *succeed* wrongly — a quad mesh whose
+  cell count divides by 4, or a VTK-style flat array handed to `interpolate_points(faces=)`.
+  See `docs/KNOWN_ISSUES.md` § History 17 for whether a result you have is affected.
+
+- **`score_correspondence` skips the round-trip metrics when `source_mesh` is absent**
+  ([#54](https://github.com/gattia/nsm/issues/54)). `roundtrip_distance` and
+  `forward_backward_disagreement` used to measure against the *warped* mesh instead, which
+  is a different quantity: 0.2500 where the true answer was 0.0017. Both keys now return
+  `{"skipped": True, "reason": "source_mesh not provided"}`, which is what every other
+  optional-input metric in the same dict already did. Callers reading those keys must
+  handle the skip shape they already had to handle for `foldover_count`. § History 18.
+
+- **`sdf_grid_to_mesh` now accepts numpy and defaults `narrow_band=True`**
+  ([#60](https://github.com/gattia/nsm/issues/60)), matching its `sdf_grid_to_mesh_vtk`
+  twin — `use_vtk` at the callers selects an extraction backend and no longer also selects
+  an accepted input type and a cropping policy. Geometry is unchanged: cropping to the band
+  moves vertices by ~7e-08 against a 0.065 voxel.
+
+- **`create_mesh_adaptive(voxel_origin=)` defaults to `None`, meaning "take it from
+  `search_bounds`"** ([#60](https://github.com/gattia/nsm/issues/60)). It used to default to
+  `(-1, -1, -1)` independently of `search_bounds`, so the no-surface fallback built a grid
+  that did not cover the region the caller asked to search. At the default `search_bounds`
+  the derived value *is* `(-1, -1, -1)`, so no run at NSM's defaults changes; an explicit
+  origin still wins. § History 19.
+
+- **`subdivide_triangles_on_base_mesh` warns when `base_mesh` and `mesh` are shown not to
+  share connectivity.** Cell indices selected on one are applied to the other, which is
+  only meaningful if the two tessellations match; violating it produced a wrong mesh and no
+  error. `docs/SCOPE.md` §2.3.
+
 - **There is one `Sine`, and `NSM.models.Sine` is unambiguously it.** `deep_sdf` defined a
   second one with `w0` hardcoded to 30 and its initializer misspelled `__init` (so
   name-mangled, and never run), and `NSM/models/__init__.py`'s `from .deep_sdf import *`

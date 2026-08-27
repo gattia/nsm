@@ -1127,3 +1127,118 @@ loaded it with state that value? If not, every SDF that model computed is wrong 
 to change.
 
 *Pinned by:* `test_model_roundtrip.TestPaddingIsNotInTheCheckpoint`.
+
+---
+
+## 17. Face arrays were reshaped without validation, so a non-triangle mesh built garbage
+
+| | |
+|---|---|
+| **Affected** | Five functions in `mesh/`, on any input that was not an (M, 3) triangle array: `correspondence_metrics.self_intersection_count` / `foldover_count` given a non-triangular mesh, and `interpolate.build_mesh_laplacian` / `compute_feature_mask` — and through them `interpolate_points(tangent_laplacian=True)` — given a VTK-style flat `faces` array |
+| **Unaffected** | Every call that passed an all-triangle mesh, or an already-(M, 3) array: the reshape and the replacement return the identical array, asserted |
+| **Severity** | Silent on some inputs, a bare `ValueError` on others, and which one you got depended on the cell count |
+| **Fixed in** | `mesh-package-sweep`, Aug 2026 ([#57](https://github.com/gattia/nsm/issues/57)) |
+
+### What was wrong
+
+Each site took a face array and called `reshape(-1, 4)[:, 1:]` or `reshape(-1, 3)`. A
+VTK-style array is `[n, i0, …, in, n, …]`, so the reshape succeeds exactly when its flat
+length happens to divide — a fact about the cell count mod 3 or mod 4, not about the mesh
+being triangular. Measured:
+
+| input | flat length | `reshape(-1, 4)` | `reshape(-1, 3)` |
+|---|---|---|---|
+| 3 quads | 15 | `ValueError` | **5 fabricated rows** |
+| 4 quads | 20 | **5 fabricated rows** for 4 cells | `ValueError` |
+| 96 triangles, VTK-style `.faces` | 384 | correct (96) | **128 fabricated rows** |
+| 4 triangles + 4 quads | 36 | **9 fabricated rows** for 8 cells | `ValueError` |
+
+The rows are interleaved cell-size markers and vertex indices read as triangles, so they
+index real vertices and every downstream computation succeeds. On a 4-quad strip
+`self_intersection_count` returned `0` and `foldover_count` returned
+`near_degenerate: 2`. On `pv.Sphere(8, 8).faces` passed as the `faces=` argument,
+`build_mesh_laplacian` built a 373-non-zero smoothing operator where the correct one has
+288, and `compute_feature_mask` pinned 50 vertices where the correct answer is 8 — so the
+interpolated correspondence was wrong, not absent.
+
+### How to tell whether one of your runs is affected
+
+Two questions, and both have to be "no":
+
+1. Did you pass `interpolate_points(..., faces=)` anything other than an (M, 3) array —
+   `mesh.faces` rather than `mesh.regular_faces`, most likely? If so the tangent-Laplacian
+   smoothing used the wrong neighbourhood graph and pinned the wrong vertices; re-run with
+   `regular_faces`. Without `tangent_laplacian=True` neither function is reached.
+2. Did you score a mesh that was not all-triangles? `mesh.is_all_triangles` answers it. If
+   not, `self_intersection_count` and `foldover_count` are meaningless for it — but only
+   for cell counts that happened to divide by 4; other counts raised. Triangulate and
+   re-score. `triangle_health` in the same result is unaffected either way: it goes
+   through `TriangleProperties`, which has always refused a non-triangle cell.
+
+Under the fix every one of those calls raises a `ValueError` naming what to pass instead,
+so a re-run cannot silently repeat the mistake.
+
+*Pinned by:* `testing/NSM/mesh/test_mesh_contracts.py`, §1.
+
+---
+
+## 18. `score_correspondence` measured the round trip against the wrong mesh
+
+| | |
+|---|---|
+| **Affected** | `score_correspondence(roundtrip_points=…)` called **without** `source_mesh`. Both `roundtrip_distance` and `forward_backward_disagreement` |
+| **Unaffected** | Every call that passed `source_mesh`, and every call that did not pass `roundtrip_points` (those two keys already said `{"skipped": True}`) |
+| **Severity** | Silent — a plausible number where the neighbouring key in the same dict correctly reported a skip |
+| **Fixed in** | `mesh-package-sweep`, Aug 2026 ([#54](https://github.com/gattia/nsm/issues/54)) |
+
+### What was wrong
+
+Both metrics measure how far a forward-then-backward warp lands from where it started, so
+the reference positions are the **source** mesh's. With `source_mesh=None` the code
+substituted `warped_mesh` — which measures the warp itself and reports it as a round-trip
+error. Measured on a 1.5× scaling with a 0.001 round-trip displacement: mean
+`roundtrip_distance` **0.2500** against a true **0.0017**, a factor of 144. In the same
+returned dict, `foldover_count` correctly reported
+`{"skipped": True, "reason": "source_mesh not provided"}`.
+
+### How to tell whether one of your runs is affected
+
+Did the call that produced the numbers pass `source_mesh`? If not, discard
+`roundtrip_distance` and `forward_backward_disagreement` from that result — every other
+key in it is unaffected. Under the fix those two keys skip with a reason instead.
+
+*Pinned by:* `test_mesh_contracts.test_roundtrip_metrics_skip_without_a_source_mesh`.
+
+---
+
+## 19. The adaptive-meshing fallback built its grid where `search_bounds` was not
+
+| | |
+|---|---|
+| **Affected** | `create_mesh_adaptive` calls that set `search_bounds` away from the default `(-1.0, 1.0)`, left `voxel_origin` unset, and hit the fallback — which fires when the coarse pass finds no zero crossing |
+| **Unaffected** | Every run at the defaults, and that is every NSM-owned one: `reconstruct_mesh` builds `search_bounds` from `recon_grid_origin`, which defaults to `1.0` and which no NSM config overrides. The two-pass path never reads `voxel_origin` at all |
+| **Severity** | Silent — a mesh from a grid that did not cover the requested region |
+| **Fixed in** | `mesh-package-sweep`, Aug 2026 ([#60](https://github.com/gattia/nsm/issues/60)) |
+
+### What was wrong
+
+The fallback forwarded `voxel_origin` — its own `(-1, -1, -1)` default — alongside a
+`voxel_size` derived from `search_bounds` a few lines above. The two disagreed by
+construction whenever `search_bounds` was not centred on the origin at unit half-width.
+Measured with `search_bounds=(0.0, 4.0)` and `n_pts_per_axis=17`: the fallback grid spanned
+`[-1, 3]` on every axis, so it searched a region the caller had not asked about and missed
+most of the one they had. The value was one of **17 positional arguments** in that call.
+
+`voxel_origin` now defaults to `None`, meaning "take it from `search_bounds`"; at the
+default `search_bounds` that reproduces `(-1, -1, -1)` exactly, which is why no run at the
+defaults moves. An explicitly passed origin still wins.
+
+### How to tell whether one of your runs is affected
+
+Did you pass a non-default `search_bounds` (or a `recon_grid_origin` other than `1.0`)
+*and* leave `voxel_origin` unset? If so, only reconstructions that logged
+`"Coarse pass found no surface. Falling back."` are affected — the two-pass path never
+used the parameter. Those reconstructions should be re-run.
+
+*Pinned by:* `test_mesh_contracts.test_fallback_grid_covers_search_bounds` and
+`test_default_search_bounds_keep_the_historical_fallback_origin`.

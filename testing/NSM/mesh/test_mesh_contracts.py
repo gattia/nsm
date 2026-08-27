@@ -1,0 +1,591 @@
+"""
+What the ``mesh/`` package promises about its inputs, and what it does with the ones it
+was never meant to take.
+
+Plan §8.0.I. Four independent contracts, one file, because they share the mesh fixtures
+and because splitting them would hide that they are one shape: a function that accepts an
+input it cannot handle and returns a plausible number instead of refusing.
+
+1. **Face arrays** (#57). Five sites reshape a VTK-style face array with nothing checking
+   the cell type. Whether that raises or silently fabricates triangles depends on the cell
+   count mod 3 or mod 4 -- see ``test_reshape_success_is_a_modular_coincidence``, which
+   pins the measurement the plan statement rests on.
+2. **The ``use_vtk`` twins** (#60). ``sdf_grid_to_mesh`` and ``sdf_grid_to_mesh_vtk`` are
+   swapped by one boolean and take different inputs under different defaults.
+3. **The adaptive fallback grid** (#60). It is built from two parameters that disagree.
+4. **Refusal versus invention** (#54). ``get_target_cells`` raises ``UnboundLocalError``
+   on its own defaults; ``score_correspondence`` substitutes the warped mesh for a missing
+   source and reports the resulting number as a measurement.
+
+Strict xfails mark the ones NSM does not honour yet. Each is retired by the commit that
+fixes it.
+"""
+
+import warnings
+
+import numpy as np
+import pytest
+import pyvista as pv
+import torch
+
+import NSM.mesh.main as mesh_main
+from NSM.mesh.correspondence_metrics import (
+    foldover_count,
+    score_correspondence,
+    self_intersection_count,
+)
+from NSM.mesh.interpolate import build_mesh_laplacian, compute_feature_mask
+from NSM.mesh.main import (
+    create_mesh,
+    create_mesh_adaptive,
+    sdf_grid_to_mesh,
+    sdf_grid_to_mesh_vtk,
+)
+from NSM.mesh.refine_mesh import (
+    get_faces,  # re-exported from triangle_metrics; imported by this path deliberately
+)
+from NSM.mesh.refine_mesh import (
+    get_target_cells,
+    subdivide_large_triangles,
+    subdivide_triangles_on_base_mesh,
+)
+
+ISSUE_57 = "https://github.com/gattia/nsm/issues/57"
+ISSUE_60 = "https://github.com/gattia/nsm/issues/60"
+ISSUE_54 = "https://github.com/gattia/nsm/issues/54"
+
+
+def broken(issue, reason):
+    return pytest.mark.xfail(strict=True, reason=f"{reason} ({issue})")
+
+
+# ---------------------------------------------------------------------------
+# Fixtures: the four cell layouts
+# ---------------------------------------------------------------------------
+
+#: A strip of vertices shared by every quad fixture, so cell counts are the only variable.
+STRIP_POINTS = np.array([[i // 2, i % 2, 0.0] for i in range(16)], dtype=float)
+
+
+def quad_strip(n_quads):
+    """``n_quads`` axis-aligned quads sharing edges, as VTK-style face data."""
+    faces = []
+    for k in range(n_quads):
+        faces += [4, 2 * k, 2 * k + 2, 2 * k + 3, 2 * k + 1]
+    return pv.PolyData(STRIP_POINTS, np.array(faces))
+
+
+def mixed_strip(n_tris=4, n_quads=4):
+    """Triangles and quads in one mesh -- ``regular_faces`` is undefined for it."""
+    faces = []
+    for k in range(n_tris):
+        faces += [3, 2 * k, 2 * k + 2, 2 * k + 1]
+    for k in range(n_quads):
+        faces += [4, 2 * k, 2 * k + 2, 2 * k + 3, 2 * k + 1]
+    return pv.PolyData(STRIP_POINTS, np.array(faces))
+
+
+def triangle_sphere():
+    """The control: an all-triangle mesh every site is supposed to accept."""
+    return pv.Sphere(theta_resolution=8, phi_resolution=8).triangulate()
+
+
+#: ``n_quads`` chosen so the two reshape widths disagree about which one raises.
+#: 3 quads -> flat length 15 (15 % 4 == 3, 15 % 3 == 0); 4 quads -> 20 (20 % 4 == 0).
+NON_TRIANGLE_MESHES = {
+    "quads_3": lambda: quad_strip(3),
+    "quads_4": lambda: quad_strip(4),
+    "mixed": lambda: mixed_strip(),
+}
+
+
+def test_reshape_success_is_a_modular_coincidence():
+    """The measurement §8.0.I's statement rests on, kept so the claim cannot go stale.
+
+    A flat VTK face array reshapes into (-1, 4) or (-1, 3) exactly when its length
+    happens to divide -- which is a fact about the cell count, not about the mesh being
+    triangular. Both columns must contain a silent success, or the defect this file
+    characterises has stopped being reachable and the fixtures need rechecking.
+    """
+    table = {}
+    for n in range(1, 7):
+        flat = quad_strip(n).faces
+        table[n] = (flat.size % 4 == 0, flat.size % 3 == 0)
+    assert table[3] == (False, True), table
+    assert table[4] == (True, False), table
+    # A triangle mesh's own VTK-style array is the (-1, 3) sites' real-world case.
+    assert triangle_sphere().faces.size % 3 == 0
+
+
+# ---------------------------------------------------------------------------
+# 1. Face arrays (#57)
+# ---------------------------------------------------------------------------
+
+#: The five sites, each reduced to "call me with a mesh".
+MESH_SITES = {
+    "self_intersection_count": lambda m: self_intersection_count(m),
+    "foldover_count": lambda m: foldover_count(m, np.asarray(m.points)),
+    "refine_mesh.get_faces": lambda m: get_faces(m),
+}
+
+#: The two that take a face *array* rather than a mesh.
+ARRAY_SITES = {
+    "build_mesh_laplacian": lambda f, m: build_mesh_laplacian(f, m.n_points, "cpu"),
+    "compute_feature_mask": lambda f, m: compute_feature_mask(f, np.asarray(m.points)),
+}
+
+
+@pytest.mark.parametrize("site", sorted(MESH_SITES))
+@pytest.mark.parametrize("layout", sorted(NON_TRIANGLE_MESHES))
+def test_mesh_site_refuses_non_triangles(site, layout):
+    """Every mesh-taking site names the problem instead of reshaping past it.
+
+    Was a strict #57 xfail. Before the fix two things happened and neither was this:
+    ``quads_3`` raised a bare ``ValueError: cannot reshape array of size 15 into shape
+    (4)``, and ``quads_4`` succeeded -- returning five fabricated triangles for four
+    real quads.
+    """
+    with pytest.raises(ValueError) as exc:
+        MESH_SITES[site](NON_TRIANGLE_MESHES[layout]())
+    assert "triangle" in str(exc.value).lower()
+
+
+@pytest.mark.parametrize("site", sorted(ARRAY_SITES))
+def test_array_site_refuses_vtk_style_faces(site):
+    """``mesh.faces`` is the array a caller reaches for, and it is the wrong one.
+
+    Was a strict #57 xfail. ``pv.Sphere(8, 8).faces`` has 384 entries and 384 % 3 == 0,
+    so the reshape succeeded and built 128 rows of interleaved counts and indices for 96
+    real triangles.
+    """
+    sphere = triangle_sphere()
+    with pytest.raises(ValueError) as exc:
+        ARRAY_SITES[site](np.asarray(sphere.faces), sphere)
+    assert "triangle" in str(exc.value).lower()
+
+
+@pytest.mark.parametrize("site", sorted(ARRAY_SITES))
+def test_array_site_refuses_quad_arrays(site):
+    """Was a strict #57 xfail. ``regular_faces`` is (M, 4) for quads, not an error."""
+    quads = quad_strip(4)
+    with pytest.raises(ValueError) as exc:
+        ARRAY_SITES[site](np.asarray(quads.regular_faces), quads)
+    assert "triangle" in str(exc.value).lower()
+
+
+def test_vtk_style_faces_would_build_a_different_operator():
+    """Why #57 is a wrong-answer defect and not a hygiene one.
+
+    Measured on ``pv.Sphere(8, 8)``: the smoothing operator built from the VTK-style
+    array has 373 non-zeros against the correct 288, and the feature mask flags 50
+    vertices against 8. The numbers are asserted rather than quoted so that a pyvista
+    change which made them coincide would go red here rather than quietly weaken
+    ``test_array_site_refuses_vtk_style_faces``.
+    """
+    sphere = triangle_sphere()
+    correct = build_mesh_laplacian(np.asarray(sphere.regular_faces), sphere.n_points, "cpu")
+    wrong = build_mesh_laplacian(np.asarray(sphere.faces).reshape(-1, 3), sphere.n_points, "cpu")
+    assert wrong._nnz() != correct._nnz()
+    assert not torch.allclose(wrong.to_dense(), correct.to_dense())
+
+
+def test_regular_faces_matches_the_reshape_for_triangles():
+    """The accessor's compatibility claim: no triangle mesh moves.
+
+    ``regular_faces`` is what the fix reads; ``faces.reshape(-1, 4)[:, 1:]`` is what
+    every site read before it. For an all-triangle mesh they must be the same array, or
+    the fix is a behaviour change rather than a refactor.
+    """
+    sphere = triangle_sphere()
+    assert np.array_equal(
+        np.asarray(sphere.regular_faces), np.asarray(sphere.faces).reshape(-1, 4)[:, 1:]
+    )
+
+
+@pytest.mark.parametrize("site", sorted(MESH_SITES))
+def test_mesh_site_accepts_triangles(site):
+    """The control. Whatever the refusal does, an all-triangle mesh still works."""
+    assert MESH_SITES[site](triangle_sphere()) is not None
+
+
+@pytest.mark.parametrize("site", sorted(ARRAY_SITES))
+def test_array_site_accepts_an_m_by_3_array(site):
+    sphere = triangle_sphere()
+    assert ARRAY_SITES[site](np.asarray(sphere.regular_faces), sphere) is not None
+
+
+# ---------------------------------------------------------------------------
+# 2. The use_vtk twins (#60)
+# ---------------------------------------------------------------------------
+
+GRID_N = 32
+
+
+def sphere_sdf_grid(radius=0.5, n=GRID_N):
+    """An analytic SDF on the (X, Y, Z) grid layout this module documents."""
+    lin = np.linspace(-1, 1, n)
+    x, y, z = np.meshgrid(lin, lin, lin, indexing="ij")
+    return (np.sqrt(x**2 + y**2 + z**2) - radius).astype(np.float32)
+
+
+VOXEL_SIZE = 2.0 / (GRID_N - 1)
+ORIGIN = (-1.0, -1.0, -1.0)
+
+TWINS = {"skimage": sdf_grid_to_mesh, "vtk": sdf_grid_to_mesh_vtk}
+
+
+@pytest.mark.parametrize(
+    "twin",
+    [
+        "skimage",
+        "vtk",
+    ],
+)
+def test_both_twins_accept_numpy(twin):
+    """``use_vtk`` selects an extraction backend; it must not also select an input type.
+
+    Was a strict #60 xfail on the skimage twin only, which is the shape of the defect:
+    the VTK one always guarded with ``hasattr``, and the two differed.
+    """
+    mesh = TWINS[twin](sphere_sdf_grid(), ORIGIN, VOXEL_SIZE)
+    assert mesh.point_coords.shape[0] > 0
+
+
+@pytest.mark.parametrize("twin", sorted(TWINS))
+def test_both_twins_accept_torch(twin):
+    mesh = TWINS[twin](torch.from_numpy(sphere_sdf_grid()), ORIGIN, VOXEL_SIZE)
+    assert mesh.point_coords.shape[0] > 0
+
+
+def test_twins_share_their_narrow_band_default():
+    """Was a strict #60 xfail: False on the skimage twin, True on the VTK one."""
+    import inspect
+
+    def default(fn):
+        target = getattr(fn, "__wrapped__", fn)
+        return inspect.signature(target).parameters["narrow_band"].default
+
+    assert default(sdf_grid_to_mesh) == default(sdf_grid_to_mesh_vtk)
+
+
+@pytest.mark.parametrize("twin", sorted(TWINS))
+def test_narrow_band_does_not_move_the_surface(twin):
+    """What makes aligning the defaults safe, pinned before they are aligned.
+
+    Cropping to the band and extracting the full volume are the same extraction on a
+    surface the band fully contains: measured max vertex displacement 6.2e-08 (skimage)
+    and 7.5e-08 (VTK) on this 32^3 grid, against float32's ~1e-07 at unit magnitude. The
+    1e-06 tolerance leaves roughly an order of magnitude of headroom over that; a
+    regression that actually re-tessellated would move vertices by a voxel (0.065),
+    four orders of magnitude above the tolerance.
+    """
+    grid = torch.from_numpy(sphere_sdf_grid())
+    full = TWINS[twin](grid, ORIGIN, VOXEL_SIZE, narrow_band=False).point_coords
+    band = TWINS[twin](grid, ORIGIN, VOXEL_SIZE, narrow_band=True).point_coords
+    assert full.shape == band.shape
+    assert np.abs(np.sort(full, axis=0) - np.sort(band, axis=0)).max() < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# 3. The adaptive fallback grid (#60)
+# ---------------------------------------------------------------------------
+
+
+class _OffsetSphereDecoder(torch.nn.Module):
+    """A surface small enough that a coarse pass over ``search_bounds`` misses it."""
+
+    def forward(self, x):
+        return torch.linalg.norm(x[:, -3:] - 2.0, dim=1, keepdim=True) - 0.05
+
+
+def test_fallback_grid_covers_search_bounds(monkeypatch):
+    """The fallback searches where the caller asked, not where the default points.
+
+    Was a strict #60 xfail. Measured before the fix with ``search_bounds=(0.0, 4.0)`` and ``n_pts_per_axis=17``: the
+    fallback grid spans [-1, 3] on every axis, because ``voxel_origin`` arrives as its
+    own ``(-1, -1, -1)`` default while ``voxel_size`` was derived from ``search_bounds``.
+    """
+    seen = {}
+
+    def spy(
+        decoder,
+        latent_vector,
+        n_pts_per_axis=256,
+        voxel_origin=(-1, -1, -1),
+        voxel_size=None,
+        *a,
+        **k,
+    ):
+        seen.update(n=n_pts_per_axis, origin=voxel_origin, size=voxel_size)
+        return None
+
+    monkeypatch.setattr(mesh_main, "create_mesh", spy)
+    create_mesh_adaptive(
+        _OffsetSphereDecoder(),
+        None,
+        n_pts_per_axis=17,
+        n_pts_coarse=4,
+        search_bounds=(0.0, 4.0),
+        device="cpu",
+    )
+    assert seen, "the fallback branch did not run -- the fixture no longer misses the surface"
+    span = [
+        (seen["origin"][i], seen["origin"][i] + seen["size"] * (seen["n"] - 1)) for i in range(3)
+    ]
+    assert span == [(0.0, 4.0)] * 3, span
+
+
+def test_default_search_bounds_keep_the_historical_fallback_origin(monkeypatch):
+    """Why #60's fix moves no run anyone has: the two agree at the defaults.
+
+    ``search_bounds`` defaults to (-1.0, 1.0) and ``reconstruct_mesh`` builds it from
+    ``recon_grid_origin``, which defaults to 1.0 and which no NSM-owned config overrides.
+    Deriving the origin from it therefore reproduces the old ``(-1, -1, -1)`` exactly.
+    """
+    seen = {}
+    monkeypatch.setattr(mesh_main, "create_mesh", lambda *a, **k: seen.update(k))
+    create_mesh_adaptive(
+        _OffsetSphereDecoder(), None, n_pts_per_axis=9, n_pts_coarse=4, device="cpu"
+    )
+    assert seen["voxel_origin"] == (-1.0, -1.0, -1.0)
+
+
+def test_an_explicit_fallback_origin_is_still_honoured(monkeypatch):
+    """``None`` is the sentinel for "derive it"; a passed value still wins."""
+    seen = {}
+    monkeypatch.setattr(mesh_main, "create_mesh", lambda *a, **k: seen.update(k))
+    create_mesh_adaptive(
+        _OffsetSphereDecoder(),
+        None,
+        n_pts_per_axis=9,
+        n_pts_coarse=4,
+        search_bounds=(0.0, 4.0),
+        voxel_origin=(7.0, 7.0, 7.0),
+        device="cpu",
+    )
+    assert seen["voxel_origin"] == (7.0, 7.0, 7.0)
+
+
+# ---------------------------------------------------------------------------
+# 3b. The shared mesh-building tail
+# ---------------------------------------------------------------------------
+
+
+class _TwoSpheres(torch.nn.Module):
+    """Two nested analytic surfaces, so the multi-object loop is exercised."""
+
+    def forward(self, x):
+        q = x[:, -3:]
+        return torch.cat(
+            [
+                torch.linalg.norm(q, dim=1, keepdim=True) - 0.5,
+                torch.linalg.norm(q - 0.2, dim=1, keepdim=True) - 0.3,
+            ],
+            dim=1,
+        )
+
+
+class _NoSurface(torch.nn.Module):
+    def forward(self, x):
+        return torch.linalg.norm(x[:, -3:], dim=1, keepdim=True) + 1.0
+
+
+@pytest.mark.parametrize("use_vtk", [True, False])
+def test_dense_and_adaptive_extract_the_same_surface(use_vtk):
+    """The two callers of the shared tail agree, on both extraction backends.
+
+    They evaluate different grids -- the adaptive one is cropped to the detected
+    bounds -- so agreement is a statement about the tail, not a tautology. Measured
+    max vertex displacement 7.0e-07 with VTK and 7.1e-07 with skimage, against a
+    0.087 voxel: five orders of magnitude of headroom under the 1e-05 tolerance.
+    """
+    decoder = _TwoSpheres()
+    common = dict(objects=2, device="cpu", scale_to_original_mesh=False, use_vtk=use_vtk)
+    dense = create_mesh(decoder, None, n_pts_per_axis=24, **common)
+    adaptive = create_mesh_adaptive(decoder, None, n_pts_per_axis=24, n_pts_coarse=12, **common)
+
+    assert len(dense) == len(adaptive) == 2
+    for d, a in zip(dense, adaptive):
+        assert d.point_coords.shape == a.point_coords.shape
+        assert np.abs(d.point_coords - a.point_coords).max() < 1e-5
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda d, **k: create_mesh(d, None, n_pts_per_axis=16, **k),
+        lambda d, **k: create_mesh_adaptive(
+            d, None, n_pts_per_axis=16, n_pts_coarse=8, fallback_to_original=False, **k
+        ),
+    ],
+    ids=["dense", "adaptive"],
+)
+def test_an_object_with_no_zero_crossing_yields_none(build):
+    """The tail's one branch that returns something other than a mesh."""
+    assert build(_NoSurface(), objects=1, device="cpu", scale_to_original_mesh=False) is None
+
+
+def test_scale_and_offset_reach_the_finished_mesh():
+    """`scale_to_original_mesh` with no `old_mesh` applies the passed scale/offset."""
+    decoder = _TwoSpheres()
+    common = dict(objects=2, device="cpu", n_pts_per_axis=24)
+    plain = create_mesh(decoder, None, scale_to_original_mesh=False, **common)
+    scaled = create_mesh(
+        decoder, None, scale=2.5, offset=(0.1, -0.2, 0.3), scale_to_original_mesh=True, **common
+    )
+    expected = plain[0].point_coords * 2.5 + np.array([0.1, -0.2, 0.3])
+    assert np.allclose(scaled[0].point_coords, expected, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# 4. Refusal versus invention (#54)
+# ---------------------------------------------------------------------------
+
+
+def test_get_target_cells_runs_on_its_own_defaults():
+    """SCOPE §2.3 condition 1, and a strict #54 xfail until it landed.
+
+    Documenting a module that raises describes something nobody can run.
+    """
+    assert len(get_target_cells(triangle_sphere())) == 0
+
+
+def test_subdivide_large_triangles_runs_on_its_own_defaults():
+    """The other public entry point, which inherited the same UnboundLocalError."""
+    assert subdivide_large_triangles(triangle_sphere()) is not None
+
+
+@pytest.mark.parametrize(
+    "threshold",
+    ["area_threshold", "length_threshold", "max_length_threshold"],
+)
+def test_each_threshold_selects_cells_on_its_own(threshold):
+    """Each of the three criteria works alone.
+
+    ``max_length_threshold`` always did; the other two were what the
+    ``np.zeros_like(max_length_binary)`` self-reference made unreachable, and they are
+    the ones SCOPE §2.3's "keep" ruling turns on.
+    """
+    sphere = triangle_sphere()
+    value = {"area_threshold": -1.0, "length_threshold": 0.0, "max_length_threshold": 0.0}
+    selected = get_target_cells(sphere, **{threshold: value[threshold]})
+    assert len(selected) == sphere.n_cells
+
+
+def test_subdividing_on_a_mismatched_base_mesh_warns():
+    """SCOPE §2.3 condition 2: the cross-mesh precondition is stated where it is used.
+
+    A cell index selected on one tessellation means nothing in another, and the result
+    is a wrong mesh rather than an error -- so the only place this can surface is here.
+    """
+    mesh = triangle_sphere()
+    base = pv.Sphere(theta_resolution=10, phi_resolution=10).triangulate()
+    assert base.n_cells != mesh.n_cells
+    with pytest.warns(UserWarning, match="do not refer to the same triangles"):
+        subdivide_triangles_on_base_mesh(base, mesh, max_length_threshold=0.5)
+
+
+def test_subdividing_on_a_matching_base_mesh_is_silent():
+    """The counterpart, so the warning cannot degrade into noise on the valid path."""
+    mesh = triangle_sphere()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        subdivide_triangles_on_base_mesh(mesh.copy(), mesh, max_length_threshold=0.5)
+
+
+def test_roundtrip_metrics_skip_without_a_source_mesh():
+    """Every sibling in the same dict skips; these two used to invent.
+
+    Was a strict #54 xfail. Measured before the fix: mean roundtrip distance 0.2500 where the true displacement against
+    the source is 0.0017 -- a factor of 144, reported as a measurement, in the same
+    return value where ``foldover_count`` correctly says it was skipped.
+    """
+    source = triangle_sphere()
+    warped = source.copy()
+    warped.points = np.asarray(source.points) * 1.5
+    roundtrip = np.asarray(source.points) + 0.001
+
+    result = score_correspondence(
+        warped,
+        source,
+        source_mesh=None,
+        roundtrip_points=roundtrip,
+        compute_self_intersection=False,
+    )
+    assert result["roundtrip_distance"] == {"skipped": True, "reason": "source_mesh not provided"}
+    assert result["forward_backward_disagreement"]["skipped"] is True
+
+
+def test_roundtrip_metrics_are_unchanged_when_the_source_is_given():
+    """The other half of the fix: the working path keeps the number it always had."""
+    source = triangle_sphere()
+    warped = source.copy()
+    warped.points = np.asarray(source.points) * 1.5
+    roundtrip = np.asarray(source.points) + 0.001
+
+    result = score_correspondence(
+        warped,
+        source,
+        source_mesh=source,
+        roundtrip_points=roundtrip,
+        compute_self_intersection=False,
+    )
+    expected = float(np.linalg.norm(roundtrip - np.asarray(source.points), axis=1).mean())
+    assert result["roundtrip_distance"]["mean"] == pytest.approx(expected)
+
+
+def test_get_faces_is_reachable_by_its_historical_path():
+    """``NSM.mesh.refine_mesh.get_faces`` still resolves, and to the one accessor.
+
+    The function moved to ``triangle_metrics`` in §8.0.I. ``refine_mesh`` imports the
+    name rather than defining a forwarder, so the path callers have always used keeps
+    working and there is exactly one function object -- no second docstring to drift and
+    no wrapper to keep in step.
+    """
+    from NSM.mesh import refine_mesh, triangle_metrics
+
+    assert refine_mesh.get_faces is triangle_metrics.get_faces
+    assert refine_mesh.get_faces.__module__ == "NSM.mesh.triangle_metrics"
+
+
+def _warp(mesh):
+    """Stand-in for `interpolate_points`: moves every vertex, touches no face."""
+    warped = mesh.copy()
+    pts = np.asarray(mesh.points)
+    warped.points = pts * (1.0 + 0.35 * np.sin(3 * pts[:, [2]]))
+    return warped
+
+
+def test_a_warped_mesh_does_not_warn():
+    """The documented pass is silent, and this is the question the docstring must answer.
+
+    `mesh` is normally `base_mesh` warped: every vertex moved, no face touched. The two
+    look nothing alike in space, and the precondition is about connectivity, so the
+    check compares face arrays and stays quiet. Without this test the two existing
+    warning tests (identical mesh, different mesh) would let someone "tighten" the check
+    to compare points and break the only workflow the module has.
+    """
+    base = pv.Sphere(theta_resolution=12, phi_resolution=12).triangulate()
+    warped = _warp(base)
+    assert np.array_equal(get_faces(base), get_faces(warped))
+    assert not np.allclose(np.asarray(base.points), np.asarray(warped.points))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        subdivide_triangles_on_base_mesh(base, warped, max_length_threshold=0.25)
+
+
+def test_reusing_a_stale_mesh_after_subdividing_warns():
+    """The mistake an iterative caller makes: subdivide the base, forget to re-warp.
+
+    `update_mesh` deletes the split cells after appending the new ones, so cell k in the
+    refined base is a different triangle from cell k in the mesh selection was made on.
+    Measured: the call still "succeeds", taking 624 cells to 1110 — wrong triangles, no
+    error. That is why this has to warn rather than being left to the caller to notice.
+    """
+    base = pv.Sphere(theta_resolution=12, phi_resolution=12).triangulate()
+    refined = subdivide_triangles_on_base_mesh(base, _warp(base), max_length_threshold=0.25)
+    assert refined.n_cells > base.n_cells
+
+    with pytest.warns(UserWarning, match="do not refer to the same triangles"):
+        subdivide_triangles_on_base_mesh(refined, _warp(base), max_length_threshold=0.25)

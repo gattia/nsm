@@ -27,7 +27,12 @@ import numpy as np
 import pyvista as pv
 from scipy.spatial import cKDTree
 
-from NSM.mesh.triangle_metrics import TriangleProperties, calculate_triangle_areas, get_edge_lengths
+from NSM.mesh.triangle_metrics import (
+    TriangleProperties,
+    calculate_triangle_areas,
+    get_edge_lengths,
+    get_faces,
+)
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -287,8 +292,7 @@ def self_intersection_count(
         return None
 
     pts = np.asarray(mesh.points, dtype=float)
-    # faces array: [3, i0, i1, i2, 3, i0, i1, i2, ...]
-    faces = mesh.faces.reshape(-1, 4)[:, 1:]  # shape (n_tris, 3)
+    faces = get_faces(mesh)  # shape (n_tris, 3)
 
     # Precompute triangle vertices as arrays for vectorised ops
     v0 = pts[faces[:, 0]]  # (n_tris, 3)
@@ -481,7 +485,7 @@ def foldover_count(
     src_pts = _mesh_points(source_mesh)
     warped = np.asarray(warped_points, dtype=float)
 
-    faces = source_mesh.faces.reshape(-1, 4)[:, 1:]  # (n_tris, 3)
+    faces = get_faces(source_mesh)  # (n_tris, 3)
     n_tris = len(faces)
 
     i0, i1, i2 = faces[:, 0], faces[:, 1], faces[:, 2]
@@ -596,8 +600,9 @@ def score_correspondence(
             If ``None``, that metric is skipped.
         roundtrip_points: (N, 3) positions after a forward+backward warp
             (A → B → A).  Required for ``roundtrip_distance`` and
-            ``forward_backward_disagreement``.  If ``None``, those metrics are
-            skipped.
+            ``forward_backward_disagreement``, **together with** ``source_mesh``,
+            which supplies the positions they are measured against.  If either is
+            ``None``, those two metrics are skipped.
         compute_self_intersection: If ``False``, skip ``self_intersection_count``
             entirely (useful for large meshes where even the broadphase is slow).
 
@@ -674,10 +679,20 @@ def score_correspondence(
         }
 
     # ---- roundtrip_distance / forward_backward_disagreement -----------------
-    if roundtrip_points is not None:
-        original_pts = (
-            _mesh_points(source_mesh) if source_mesh is not None else _mesh_points(warped_mesh)
+    # Both measure how far a forward+backward warp lands from where it started, so the
+    # starting positions are the *source* mesh's. Substituting the warped mesh (which is
+    # what this did until Aug 2026) measures the warp itself and reports it as a
+    # round-trip error: on a 1.5x scaling, 0.2500 where the true answer was 0.0017.
+    if roundtrip_points is None or source_mesh is None:
+        reason = (
+            "roundtrip_points not provided"
+            if roundtrip_points is None
+            else "source_mesh not provided"
         )
+        results["roundtrip_distance"] = {"skipped": True, "reason": reason}
+        results["forward_backward_disagreement"] = {"skipped": True, "reason": reason}
+    else:
+        original_pts = _mesh_points(source_mesh)
         try:
             results["roundtrip_distance"] = roundtrip_distance(original_pts, roundtrip_points)
         except Exception as exc:  # pragma: no cover
@@ -688,14 +703,5 @@ def score_correspondence(
             )
         except Exception as exc:  # pragma: no cover
             results["forward_backward_disagreement"] = {"error": str(exc)}
-    else:
-        results["roundtrip_distance"] = {
-            "skipped": True,
-            "reason": "roundtrip_points not provided",
-        }
-        results["forward_backward_disagreement"] = {
-            "skipped": True,
-            "reason": "roundtrip_points not provided",
-        }
 
     return results

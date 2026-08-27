@@ -223,6 +223,81 @@ def scale_mesh(
     return mesh
 
 
+def _finish_meshes(
+    *,
+    flat_sdfs,
+    grid_dims,
+    voxel_origin,
+    voxel_size,
+    objects,
+    use_vtk,
+    scale,
+    offset,
+    path_original_mesh,
+    scale_to_original_mesh,
+    icp_transform,
+    path_save,
+    filename,
+    verbose,
+):
+    """Flat per-object SDF values -> extracted, rescaled, saved meshes.
+
+    Everything create_mesh and create_mesh_adaptive do after the decoder has been
+    evaluated; they differ only in how the grid was chosen. Two copies of this is what
+    let them drift over whether ``verbose`` reached the extraction twins -- it did in
+    one and not the other, and it does in both now.
+
+    ``flat_sdfs`` is (N, objects) in get_sdfs' Z-fastest sample order, so the C-order
+    reshape to ``grid_dims`` gives array[x, y, z] (module docstring). Remaining
+    arguments are create_mesh's own. Returns its return value.
+
+    Keyword-only, and that is the point rather than a style choice: fourteen arguments
+    in a fixed order is the shape that produced #60 one function down, where
+    create_mesh_adaptive's fallback passed seventeen of them positionally and the fourth
+    was wrong. A caller cannot get this list out of order because it cannot supply it in
+    an order at all.
+    """
+    nx, ny, nz = grid_dims
+    sdf_values = torch.zeros((nx, ny, nz, objects))
+    for i in range(objects):
+        sdf_values[..., i] = flat_sdfs[..., i].reshape(nx, ny, nz)
+
+    meshes = []
+    for mesh_idx in range(objects):
+        object_sdf = sdf_values[..., mesh_idx]
+
+        # No zero crossing means no surface for this object; the slot stays None.
+        if 0 < object_sdf.min() or 0 > object_sdf.max():
+            if verbose is True:
+                logger.warning("SDF values do not span 0 - there is no surface")
+                logger.warning("\tSDF min:  %s", object_sdf.min())
+                logger.warning("\tSDF max:  %s", object_sdf.max())
+                logger.warning("\tSDF mean:  %s", object_sdf.mean())
+            meshes.append(None)
+            continue
+
+        extract = sdf_grid_to_mesh_vtk if use_vtk else sdf_grid_to_mesh
+        meshes.append(extract(object_sdf, voxel_origin, voxel_size, verbose))
+
+        if scale_to_original_mesh:
+            if verbose is True:
+                logger.debug("Scaling mesh to original mesh... ")
+                logger.debug("%s", icp_transform)
+            meshes[mesh_idx] = scale_mesh(
+                meshes[mesh_idx],
+                old_mesh=path_original_mesh,
+                scale=scale,
+                offset=offset,
+                icp_transform=icp_transform,
+                verbose=verbose,
+            )
+
+        if path_save is not None:
+            meshes[mesh_idx].save_mesh(os.path.join(path_save, filename.format(mesh_idx=mesh_idx)))
+
+    return meshes[0] if objects == 1 else meshes
+
+
 @honour_verbose
 def create_mesh(
     decoder,
@@ -263,64 +338,26 @@ def create_mesh(
     decoder.eval()
 
     samples = create_grid_samples(n_pts_per_axis, voxel_origin, voxel_size)
-    sdf_values_ = get_sdfs(
+    flat_sdfs = get_sdfs(
         decoder, samples, latent_vector, batch_size, objects=objects, device=device
     )
 
-    # Reshape SDFs into grid: C-order reshape (default) makes last index vary fastest.
-    # Since samples have z-fastest order, this gives array[x, y, z] → (X,Y,Z) layout
-    sdf_values = torch.zeros((n_pts_per_axis, n_pts_per_axis, n_pts_per_axis, objects))
-    for i in range(objects):
-        sdf_values[..., i] = sdf_values_[..., i].reshape(
-            n_pts_per_axis, n_pts_per_axis, n_pts_per_axis
-        )
-    # sdf_values = sdf_values.reshape(n_pts_per_axis, n_pts_per_axis, n_pts_per_axis)
-
-    # create mesh from gridded SDFs
-    meshes = []
-    for mesh_idx in range(objects):
-        # iterate over all the meshes
-        sdf_values_ = sdf_values[..., mesh_idx]
-
-        # check if there is a surface
-        if 0 < sdf_values_.min() or 0 > sdf_values_.max():
-            if verbose is True:
-                logger.warning("SDF values do not span 0 - there is no surface")
-                logger.warning("\tSDF min:  %s", sdf_values_.min())
-                logger.warning("\tSDF max:  %s", sdf_values_.max())
-                logger.warning("\tSDF mean:  %s", sdf_values_.mean())
-            meshes.append(None)
-        else:
-            # if there is a surface, then extract it & post-process
-            # for mesh_idx in range(objects):
-            if use_vtk:
-                mesh = sdf_grid_to_mesh_vtk(sdf_values_, voxel_origin, voxel_size)
-            else:
-                mesh = sdf_grid_to_mesh(sdf_values_, voxel_origin, voxel_size)
-            meshes.append(mesh)
-
-            if scale_to_original_mesh:
-                if verbose is True:
-                    logger.debug("Scaling mesh to original mesh... ")
-                    logger.debug("%s", icp_transform)
-                # for mesh_idx, mesh in enumerate(meshes):
-                mesh = scale_mesh(
-                    meshes[mesh_idx],
-                    old_mesh=path_original_mesh,
-                    scale=scale,
-                    offset=offset,
-                    icp_transform=icp_transform,
-                    verbose=verbose,
-                )
-                meshes[mesh_idx] = mesh
-
-            # save the mesh (if desired)
-            if path_save is not None:
-                # for mesh_idx, mesh in enumerate(meshes):
-                meshes[mesh_idx].save_mesh(
-                    os.path.join(path_save, filename.format(mesh_idx=mesh_idx))
-                )
-    return meshes[0] if objects == 1 else meshes
+    return _finish_meshes(
+        flat_sdfs=flat_sdfs,
+        grid_dims=(n_pts_per_axis,) * 3,
+        voxel_origin=voxel_origin,
+        voxel_size=voxel_size,
+        objects=objects,
+        use_vtk=use_vtk,
+        scale=scale,
+        offset=offset,
+        path_original_mesh=path_original_mesh,
+        scale_to_original_mesh=scale_to_original_mesh,
+        icp_transform=icp_transform,
+        path_save=path_save,
+        filename=filename,
+        verbose=verbose,
+    )
 
 
 @honour_verbose
@@ -329,7 +366,7 @@ def sdf_grid_to_mesh(
     voxel_origin,
     voxel_size,
     verbose=False,
-    narrow_band=False,
+    narrow_band=True,
     band_width=3.0,
     pad_voxels=2,
 ):
@@ -349,19 +386,18 @@ def sdf_grid_to_mesh(
     Returns:
         mskt Mesh: the extracted surface.
     """
-    sdf_values = sdf_values.cpu().numpy()
-
     if verbose is True:
         logger.debug("Starting marching cubes... ")
 
-    # Apply narrow band optimization if requested
-    if narrow_band:
-        sub_sdf, crop_origin = crop_sdf_to_narrow_band(
-            sdf_values, voxel_origin, voxel_size, band_width, pad_voxels, verbose
-        )
-    else:
-        sub_sdf = sdf_values
-        crop_origin = voxel_origin
+    sub_sdf, crop_origin = _prepare_sdf_grid(
+        sdf_values=sdf_values,
+        voxel_origin=voxel_origin,
+        voxel_size=voxel_size,
+        narrow_band=narrow_band,
+        band_width=band_width,
+        pad_voxels=pad_voxels,
+        verbose=verbose,
+    )
 
     verts, faces, normals, values = marching_cubes(
         sub_sdf, level=0, spacing=(voxel_size, voxel_size, voxel_size)
@@ -447,6 +483,38 @@ def crop_sdf_to_narrow_band(
     return sub_sdf, crop_origin
 
 
+def _prepare_sdf_grid(
+    *, sdf_values, voxel_origin, voxel_size, narrow_band, band_width, pad_voxels, verbose
+):
+    """Coerce an SDF grid to numpy and, if asked, crop it to the band around the surface.
+
+    The input handling both extraction twins share, in one place so it cannot drift.
+
+    It drifted once (#60): the VTK twin guarded the tensor conversion with ``hasattr``
+    and defaulted ``narrow_band`` to True, the skimage twin called ``.cpu()``
+    unconditionally and defaulted it to False -- so ``use_vtk``, which is meant to pick
+    an extraction backend, also picked an accepted input type and a cropping policy.
+
+    Returns:
+        tuple: (numpy grid in array[x, y, z] layout, world origin of its index 0 --
+        which the crop moves, which is why the two are returned together).
+    """
+    if hasattr(sdf_values, "cpu"):
+        sdf_values = sdf_values.cpu().numpy()
+
+    if not narrow_band:
+        return sdf_values, voxel_origin
+
+    return crop_sdf_to_narrow_band(
+        sdf_values,
+        voxel_origin=voxel_origin,
+        voxel_size=voxel_size,
+        band_width=band_width,
+        pad_voxels=pad_voxels,
+        verbose=verbose,
+    )
+
+
 @honour_verbose
 def sdf_grid_to_mesh_vtk(
     sdf_values,
@@ -461,7 +529,7 @@ def sdf_grid_to_mesh_vtk(
     Create mesh from SDF values using VTK Flying Edges algorithm instead of marching cubes.
 
     Args:
-        sdf_values: PyTorch tensor containing SDF values
+        sdf_values: torch tensor or numpy array containing SDF values
         voxel_origin: Origin point of the voxel grid (x, y, z)
         voxel_size: Size of each voxel
         verbose: Whether to print progress messages
@@ -472,21 +540,18 @@ def sdf_grid_to_mesh_vtk(
     Returns:
         mskt.mesh.Mesh object
     """
-    # Convert to numpy if needed
-    if hasattr(sdf_values, "cpu"):
-        sdf_values = sdf_values.cpu().numpy()
-
     if verbose:
         logger.debug("Starting VTK Flying Edges mesh extraction...")
 
-    # Apply narrow band optimization if requested
-    if narrow_band:
-        sub_sdf, crop_origin = crop_sdf_to_narrow_band(
-            sdf_values, voxel_origin, voxel_size, band_width, pad_voxels, verbose
-        )
-    else:
-        sub_sdf = sdf_values
-        crop_origin = voxel_origin
+    sub_sdf, crop_origin = _prepare_sdf_grid(
+        sdf_values=sdf_values,
+        voxel_origin=voxel_origin,
+        voxel_size=voxel_size,
+        narrow_band=narrow_band,
+        band_width=band_width,
+        pad_voxels=pad_voxels,
+        verbose=verbose,
+    )
 
     # Get grid dimensions (cropped or original)
     nx, ny, nz = sub_sdf.shape
@@ -577,7 +642,7 @@ def create_mesh_adaptive(
     decoder,
     latent_vector,
     n_pts_per_axis=256,
-    voxel_origin=(-1, -1, -1),
+    voxel_origin=None,
     voxel_size=None,
     n_pts_coarse=64,
     search_bounds=(-1.0, 1.0),
@@ -628,7 +693,11 @@ def create_mesh_adaptive(
         n_pts_per_axis: Sets the fine voxel size whenever voxel_size is None
             (extent / (n_pts_per_axis - 1)) — the mean-mesh caller's case — and
             the full-grid resolution on the fallback path
-        voxel_origin: Origin for fallback grid
+        voxel_origin: Origin of the *fallback* full grid, and of nothing else -- the
+            two-pass path derives its own origin from the detected bounds and
+            overwrites this. None (the default) takes it from search_bounds, which
+            is the only value consistent with the voxel_size derived from the same
+            place; see #60
         voxel_size: Voxel size for dense grid (computed if None)
         n_pts_coarse: Coarse grid resolution per axis
         search_bounds: (min, max) bounds for coarse grid
@@ -664,6 +733,13 @@ def create_mesh_adaptive(
     if voxel_size is None:
         original_extent = search_bounds[1] - search_bounds[0]
         voxel_size = original_extent / (n_pts_per_axis - 1)
+
+    # The fallback grid's origin has to come from the same place its spacing does. It
+    # used to default to (-1, -1, -1) independently of search_bounds, so a caller who
+    # moved the search region got a fallback grid that did not cover it (#60): with
+    # search_bounds=(0, 4) and n_pts_per_axis=17 the grid spanned [-1, 3].
+    if voxel_origin is None:
+        voxel_origin = (search_bounds[0],) * 3
 
     # Use voxel_size as the original spacing
     original_spacing = voxel_size
@@ -711,24 +787,28 @@ def create_mesh_adaptive(
         if fallback_to_original:
             if verbose:
                 logger.warning("Falling back to original create_mesh...")
+            # Keywords, not the 17 positionals this used to be: create_mesh's
+            # signature is public and any insertion into it would have shifted them
+            # silently. ARCHITECTURE.md section 7 lists this call as its example of
+            # the LR bug's shape.
             return create_mesh(
                 decoder,
                 latent_vector,
-                n_pts_per_axis,
-                voxel_origin,
-                voxel_size,
-                batch_size,
-                scale,
-                offset,
-                path_save,
-                filename,
-                path_original_mesh,
-                scale_to_original_mesh,
-                icp_transform,
-                objects,
-                verbose,
-                device,
-                use_vtk,
+                n_pts_per_axis=n_pts_per_axis,
+                voxel_origin=voxel_origin,
+                voxel_size=voxel_size,
+                batch_size=batch_size,
+                scale=scale,
+                offset=offset,
+                path_save=path_save,
+                filename=filename,
+                path_original_mesh=path_original_mesh,
+                scale_to_original_mesh=scale_to_original_mesh,
+                icp_transform=icp_transform,
+                objects=objects,
+                verbose=verbose,
+                device=device,
+                use_vtk=use_vtk,
             )
         else:
             return [None] * objects if objects > 1 else None
@@ -760,61 +840,26 @@ def create_mesh_adaptive(
         logger.debug("Speedup: %.1fx fewer points", n_pts_per_axis**3 / samples.shape[0])
 
     # Get SDF values for dense grid
-    sdf_values_ = get_sdfs(
+    flat_sdfs = get_sdfs(
         decoder, samples, latent_vector, batch_size, objects=objects, device=device
     )
 
-    # Reshape SDF values: C-order makes array[x, y, z] correspond to world (X,Y,Z)
-    nx, ny, nz = grid_dims
-    sdf_values = torch.zeros((nx, ny, nz, objects))
-    for i in range(objects):
-        sdf_values[..., i] = sdf_values_[..., i].reshape(nx, ny, nz)
-
-    # Calculate voxel size for the bounded grid
-    voxel_size = original_spacing
-
-    # Create meshes from gridded SDFs (same as original pipeline)
-    meshes = []
-    for mesh_idx in range(objects):
-        sdf_values_ = sdf_values[..., mesh_idx]
-
-        # Check if there is a surface
-        if 0 < sdf_values_.min() or 0 > sdf_values_.max():
-            if verbose is True:
-                logger.warning("SDF values do not span 0 - there is no surface")
-                logger.warning("\tSDF min:  %s", sdf_values_.min())
-                logger.warning("\tSDF max:  %s", sdf_values_.max())
-                logger.warning("\tSDF mean:  %s", sdf_values_.mean())
-            meshes.append(None)
-        else:
-            # Extract surface using VTK or marching cubes
-            if use_vtk:
-                mesh = sdf_grid_to_mesh_vtk(sdf_values_, voxel_origin, voxel_size, verbose)
-            else:
-                mesh = sdf_grid_to_mesh(sdf_values_, voxel_origin, voxel_size, verbose)
-            meshes.append(mesh)
-
-            if scale_to_original_mesh:
-                if verbose is True:
-                    logger.debug("Scaling mesh to original mesh... ")
-                    logger.debug("%s", icp_transform)
-                mesh = scale_mesh(
-                    meshes[mesh_idx],
-                    old_mesh=path_original_mesh,
-                    scale=scale,
-                    offset=offset,
-                    icp_transform=icp_transform,
-                    verbose=verbose,
-                )
-                meshes[mesh_idx] = mesh
-
-            # Save the mesh (if desired)
-            if path_save is not None:
-                meshes[mesh_idx].save_mesh(
-                    os.path.join(path_save, filename.format(mesh_idx=mesh_idx))
-                )
-
-    return meshes[0] if objects == 1 else meshes
+    return _finish_meshes(
+        flat_sdfs=flat_sdfs,
+        grid_dims=grid_dims,
+        voxel_origin=voxel_origin,
+        voxel_size=original_spacing,
+        objects=objects,
+        use_vtk=use_vtk,
+        scale=scale,
+        offset=offset,
+        path_original_mesh=path_original_mesh,
+        scale_to_original_mesh=scale_to_original_mesh,
+        icp_transform=icp_transform,
+        path_save=path_save,
+        filename=filename,
+        verbose=verbose,
+    )
 
 
 def create_grid_samples(

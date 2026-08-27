@@ -136,3 +136,57 @@ class TriangleProperties:
             self.compute_edge_lengths()
 
         return np.max(self.edge_lengths, axis=1)
+
+
+def get_faces(mesh_or_faces):
+    """(M, 3) triangle connectivity, refusing anything that is not triangles.
+
+    The single accessor for #57. Five sites across ``correspondence_metrics``,
+    ``interpolate`` and ``refine_mesh`` used to reshape a face array directly, which
+    validates nothing: a VTK-style array reshapes into (-1, 4) or (-1, 3) exactly when
+    its flat length happens to divide, so a quad mesh raises or silently yields
+    fabricated triangles depending on its cell count mod 4.
+
+    It lives here and is named ``get_faces`` for two reasons: this is the module the
+    ``get_triangle_area`` / ``get_edge_lengths`` convention belongs to, and
+    ``refine_mesh`` imports the name rather than defining its own, so the long-standing
+    ``NSM.mesh.refine_mesh.get_faces`` path keeps resolving to exactly this function.
+
+    ``pyvista.PolyData.regular_faces`` is not the guard on its own -- it returns an
+    (M, 4) array for an all-quad mesh rather than refusing -- so the cell type is
+    checked first.
+
+    Args:
+    - mesh_or_faces: a pyvista mesh, or a face array already in (M, 3) form.
+
+    Returns:
+    - np.ndarray: (M, 3) vertex indices, one row per triangle. A view into the input
+      where the input allows one, as the reshape it replaces was.
+
+    Raises:
+    - ValueError: for a non-triangular mesh, a VTK-style flat array (which is where a
+      caller reaching for ``mesh.faces`` lands), or an array of any other width.
+    """
+    is_all_triangles = getattr(mesh_or_faces, "is_all_triangles", None)
+    if is_all_triangles is not None:
+        if not is_all_triangles:
+            raise ValueError(
+                f"expected a triangle mesh; got one with {mesh_or_faces.n_cells} cells "
+                "of mixed or non-triangular type. Triangulate it first "
+                "(pyvista: mesh.triangulate())."
+            )
+        return np.asarray(mesh_or_faces.regular_faces)
+
+    faces = np.asarray(mesh_or_faces)
+    if faces.ndim == 1:
+        raise ValueError(
+            f"expected (M, 3) triangle connectivity; got a flat array of length "
+            f"{faces.size}, which is the VTK-style [n, i0, ..., in, n, ...] layout. "
+            "Pass mesh.regular_faces (or the mesh itself), not mesh.faces."
+        )
+    if faces.ndim != 2 or faces.shape[1] != 3:
+        raise ValueError(
+            f"expected (M, 3) triangle connectivity; got shape {faces.shape}. "
+            "Triangulate the mesh first (pyvista: mesh.triangulate())."
+        )
+    return faces
