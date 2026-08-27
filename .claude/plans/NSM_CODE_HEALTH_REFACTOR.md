@@ -31,8 +31,19 @@
   general point, since this is the second slice to add prose or machinery answering a
   question nobody asked (§8.0.I round 2's connectivity docstring was the first): **"the
   error could be more helpful" is not evidence that it should be.** Applied by rewriting
-  commits 1, 2, 3, 8 and 9 in place and force-pushing, per `CLAUDE.md`; the branch is
-  otherwise unchanged, verified by diffing the replay against the pre-review branch.
+  commits 1, 2, 3, 8 and 9 in place and force-pushing, which is what `CLAUDE.md` said at
+  the time; the branch was otherwise unchanged, verified by diffing the replay against the
+  pre-review branch.
+- **§8.0.J, review round 2 (maintainer, 2026-08-27): that rewrite is what changed the
+  rule.** Replaying five commits to land an 18-line deletion meant conflicts in three of
+  them and a full re-verification, for an edit the maintainer had described in two
+  sentences — and §8.0.I's round 1 had already been landed as a commit on top, by
+  instruction, for the same reason. `CLAUDE.md` and `.claude/commands/next.md` now default
+  to **a follow-up commit named for the concern it fixes**, with rewrite-in-place reserved
+  for unpushed commits and for when the maintainer asks. The rule it replaces was guarding
+  against the grab-bag "address review" commit; one commit per concern is about what a
+  commit *contains*, not where it sits in the branch, and the follow-up also records what
+  was asked, which a rewrite erases.
 - **The slice's own headline was wrong, and answering why settled the State block's open
   question.** The row says "the 61-parameter signature"; it is 58 named plus `**kwargs`.
   More usefully, the signature is not §8.0.J's to shrink at all: `reconstruct_mesh` is

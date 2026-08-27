@@ -35,8 +35,11 @@ Continue an in-flight initiative. Plan: "$ARGUMENTS"
    point; the State update rides in the same PR.
 6. **Stop when the slice is complete**: sequence done and State updated, push the
    branch, open or update the PR, summarize what each commit contains, and stop —
-   review happens per commit, after the fact, with feedback applied by rewriting
-   that commit in place. Do not start the plan's following item.
+   review happens per commit, after the fact. **Feedback lands as a new commit on
+   top, named for the concern it fixes** (not "address review"); rewrite a commit in
+   place only if it is unpushed or the maintainer asks — replaying six commits to
+   land a one-line edit costs more than it buys. Do not start the plan's following
+   item.
 
 Parallel jobs each get their own `git worktree` — two sessions in one checkout
 collide on the working tree between commits.
