@@ -391,9 +391,12 @@ Two things about that surface are load-bearing and undocumented:
    -ordering shape as the LR bug.
 
    The same assumption is admitted in code one layer down (audit ruling, re-verified
-   2026-08-22): when a fit has fewer ground-truth surfaces than the decoder has outputs,
-   `latent_fit.reconstruct_latent` silently `break`s out of the surface loop under an in-code
-   TODO that says outright "it assumes the first surface is the bone / only of interest".
+   2026-08-27): when a fit has fewer ground-truth surfaces than the decoder has outputs,
+   `latent_fit._recon_loss` `break`s out of the surface loop under an in-code TODO that says
+   outright "it assumes the first surface is the bone / only of interest". Since §8.0.K it
+   is no longer *silent*: that break and the `None`-ground-truth `continue` beside it log at
+   `warning` to whatever the host configured, where before they were gated behind the
+   deprecated `verbose` flag.
    A deliberate, written-down design compromise, not a defect to file — it is recorded
    here because it is one more instance of the positional-surface-identity contract this
    section owns, and any surface-naming fix must cover it.

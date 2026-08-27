@@ -30,6 +30,22 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **`reconstruct_latent` refuses a keyword it does not recognise, and refuses a value it
+  cannot use** (plan §8.0.K). It takes 38 named parameters and a `**kwargs` that read
+  exactly one key, `max_batch_size`; seven of seven misspellings of real parameters ran a
+  whole fit with the intended parameter's default and no signal. It now raises `TypeError`
+  naming the unknown key — the same refusal §8.0.J gave `reconstruct_mesh`, from one shared
+  helper, `reconstruct.utils.refuse_unknown_kwargs`. `max_batch_size` is unchanged, still
+  accepted and still warned about. See `docs/KNOWN_ISSUES.md` § History 20.
+
+  Two values are refused as well, where they used to fail 100 lines later as an
+  `UnboundLocalError` on a local the caller never named: `optimizer_name` outside
+  `{"adam", "lbfgs"}` (`"Adam"` included) and `loss_type` outside
+  `{"l1", "l1_log", "l2"}` now raise `ValueError` naming the parameter and its accepted
+  values. And `hybrid_optimizer=True` with a non-default `optimizer_name` raises rather
+  than silently discarding the second: hybrid mode derives its optimizer from the step
+  number, so `optimizer_name` was accepted and never read. § History 22.
+
 - **`reconstruct_mesh` refuses a keyword it does not recognise** (plan §8.0.J). It takes 58
   named parameters and a `**kwargs` that read exactly one key, `batch_size_latent_recon`;
   every other key was swallowed, so a misspelling ran with the intended parameter's default
@@ -343,6 +359,31 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Changed
 
+- **`reconstruct_latent`'s own diagnostics answer to the host's logging config, not to
+  `verbose=`** (plan §8.0.K). 25 of its 30 log records sat under `if verbose is True:`,
+  three of them warnings that the fit had dropped a surface from its objective — so a host
+  configured at `WARNING` was told nothing about it. Nothing is taken from a `verbose=True`
+  caller: the bridge attaches at `DEBUG`. Three per-surface, per-step `debug` records of
+  the loss tensor's shape, mean and standard deviation are deleted rather than ungated: the
+  mean is already in the step record above them, and `.std()` on a one-point chunk emits a
+  torch warning. Other modules still carry the same gates.
+
+- **`reconstruct_latent` returns a loss under every convergence mode.** With
+  `convergence="recon_loss"` — the mode `NSM/configs/default_config.json` ships — the first
+  element of `(loss, latent)` was the literal `100` the comparison sentinel was initialised
+  to. No reconstruction result is affected: `reconstruct_mesh` never reads that value.
+  § History 21.
+
+- **`hybrid_optimizer`'s learning-rate schedule spans the phase it steps.** It was derived
+  from `num_iterations` while the loop ran `adam_iterations + lbfgs_iterations`, so
+  `n_lr_updates=2` could apply 11 decays and reach exactly 0.0. Non-hybrid runs are
+  bit-identical. § History 22.
+
+- **LBFGS and hybrid fits draw their random sample once per step**, not once per
+  line-search evaluation. Measured at 7 distinct draws inside a single step, which is an
+  objective that moves under the line search that is searching it. Adam is bit-identical
+  — the same draws at the same point in the RNG stream. § History 23.
+
 - **`reconstruct_mesh`'s own diagnostics answer to the host's logging config, not to
   `verbose=`** (plan §8.0.J). Ten of its fifteen log records sat under `if verbose is
   True:` — a faithful conversion of the `print` gates they replaced, and the reason a host
@@ -537,6 +578,16 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   copy now happens inside. A caller written without one is no longer silently corrupted.
 
 ### Added
+
+- **`reconstruct_latent(n_samples_per_chunk=)` and `reconstruct_mesh(
+  n_samples_per_chunk_latent_recon=)`** ([#75](https://github.com/gattia/nsm/issues/75)):
+  split each optimization step's forward *and* backward into chunks of that many points,
+  accumulating the gradient on the latent, so a step's memory stops scaling with
+  `n_samples`. Measured on a Tesla T4 at 200,000 points with a latent-256 8×512 decoder:
+  peak allocation **4128 → 623 MiB**, with the fitted loss agreeing to 1.2e-07 relative.
+  `None`, the default, is the single unchunked pass every earlier run took, bit for bit;
+  setting it changes the order the per-point losses are summed, so it is a
+  numerics-affecting option rather than a transparent optimization.
 
 - **`MultiSurfaceSDFSamples` accepts `mesh_names`, and `train_deep_sdf` trusts the
   dataset over the config** (#52). Surface identity is defined by the order of each

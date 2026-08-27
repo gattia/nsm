@@ -494,10 +494,9 @@ def reconstruct_latent(
     that many points, accumulating the gradient on the latent, so a step's memory stops
     scaling with ``n_samples``. ``None``, the default, is one unchunked pass and is what
     every run before this parameter existed did. Setting it changes the order the
-    per-point losses are summed in, so it moves results in the last few decimals: measured
-    at 2.9e-07 relative on the latent gradient, against a 6.7x reduction in peak
-    allocation (4104 -> 616 MiB for 200k points on a Tesla T4, ``docs/KNOWN_ISSUES.md``
-    § History 22).
+    per-point losses are summed in, so it moves results in the last few decimals, in
+    exchange for a peak allocation that stops scaling with ``n_samples``. The measurements
+    are in ``TestChunkedForwardAndBackward``'s docstring, where they can be re-run.
 
     Returns:
         (loss, latent): the final loss value and the fitted latent tensor.

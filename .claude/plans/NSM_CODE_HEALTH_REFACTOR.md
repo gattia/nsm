@@ -6,24 +6,81 @@
 
 **Updated:** 2026-08-27 · **Status:** open
 
-- **Next:** write and execute **§8.0.K** — `reconstruct_latent` internals: #75, the
-  **191**-line nested `compute_loss` (the slice index says 185; measured 424–614 on the
-  #92 merge), the hybrid Adam/LBFGS branch. Its statement is commit 1 of that slice and is
-  not written yet. Nothing blocks it: `main` is at PR #92's merge, and §8.0.J stopped at
-  the `reconstruct_latent(**reconstruct_inputs)` call and left `latent_fit.py` untouched.
-  Three things measured for the statement rather than left to it:
-  **(1) the swallowed keyword is here too, unfixed.** `latent_fit.py:254` takes `**kwargs`,
-  reads exactly one key from it (`max_batch_size`, a deprecation warning at `:275`) and
-  discards every other keyword across **38 named parameters** — History entry 20's defect,
-  one call level down. `reconstruct_mesh`'s own callers are covered by §8.0.J's refusal;
-  direct callers of `reconstruct_latent` are not. `_refuse_unknown_kwargs` is written and
-  needs its own `_DEPRECATED_KWARGS` set here. This is CLAUDE.md's "fix the class of
-  defect": §8.0.J enumerated one site and this is the second.
-  **(2) the signature is not this slice's either.** 38 named plus `**kwargs`; it is a
-  public entry point like `reconstruct_mesh`, so it joins §8.0.O's set — the internals are
-  what K owns.
-  **(3) budget the extraction at two lines per parameter** (§8.0.J's finding), against a
-  744-line module whose one function is 532 of it.
+- **Next:** write and execute **§8.0.L** — `train_epoch`'s loss pipeline, the statement
+  §8.0.D deferred and said would come due. Its statement is commit 1 of that slice and is
+  not written yet. Measured against `main` rather than left for the statement to discover:
+  **`train_epoch` is 391 lines, not the slice index's ~270**, in a 772-line module it is
+  half of, on 7 parameters with no `**kwargs` — so it is the first slice since §8.0.G with
+  no swallowed-keyword hole to close and no public signature in §8.0.O's set. `train_deep_sdf`
+  itself is 159 lines beside it. §8.0.G's residue is **already absent here**: the file has
+  zero `if verbose` gates, so §8.0.K's largest single commit has no counterpart in §8.0.L.
+  **Blocked on nothing** once #94 merges; #94 is stacked on #93, so **merge #93 first**.
+- **§8.0.K executed (2026-08-27), PR #94 open, stacked on #93:** commits 2–12 — the
+  characterization, the shared keyword refusal, the value refusals, the `100` sentinel, the
+  LR horizon, the ungating, `_select_samples`, the two loss helpers, #75's chunked step, the
+  debug-record deletion, and this update. Suite 884 → 922 passed / 1 skipped / 3 xfailed:
+  **all 19 strict xfails commit 2 raised were retired inside the slice**, and the 3 that
+  remain are the regression harness's. Four § History entries (20 extended with its second
+  site, 21 the returned sentinel, 22 the hybrid LR horizon, 23 the LBFGS resample), three
+  CHANGELOG Breaking/Changed/Added blocks, `ARCHITECTURE` §5's row, `SCOPE` §3.1's
+  positional-surface note. `reconstruct_latent` is 532 → 425 lines; its nested
+  `compute_loss` is 191 → 48. **#75 is closed by the PR.**
+- **The size budget was missed for the fourth slice running, and the mechanism is a new
+  one — not §8.0.J's.** Budget +128 net in `NSM/`, ceiling +155, actual **+193**. §8.0.J's
+  finding (price a keyword-only boundary at two lines per parameter) was applied and was
+  roughly right: the three helpers came in at +96 against +83 budgeted. What was wrong was
+  the *removal* line, budgeted at −55 and delivered at −21. It priced "the inlined bodies
+  the helpers replace" as a removal, and **an extraction removes nothing — it moves.** The
+  only real removals in the slice were the 13 `verbose` gates and the debug records. So the
+  rule for §8.0.L is: **an extraction's budget is signature + docstring + call site, and
+  zero on the removal line.** §8.0.H's miss was transitional code priced at zero, §8.0.I's
+  was refusals priced by net lines, §8.0.J's was call sites priced at zero; this one is
+  moved code priced as deleted code. All four are the same error in different clothes —
+  budgeting the part you are thinking about and not the part the language makes you write.
+- **The other +12 is #75, budgeted +60 and delivered +72**, and it is worth naming because
+  it is a shape, not an overrun: three call sites needed the chunked path (Adam's step,
+  the LBFGS closure, the LBFGS no-grad tracking pass), so a `loss_with_gradient` seam was
+  cheaper than three `if n_samples_per_chunk is None` branches. **A capability with N call
+  sites costs a seam, not N branches** — price the seam.
+- **An eighth defect of the stated seven, found while fixing the second.** With
+  `hybrid_optimizer=True`, `optimizer_name` is read *nowhere*: the loop derives its
+  optimizer from the step number. Accepted and ignored, which is the trap NSM's own rule
+  says to close rather than implement — and there was nothing to implement, because hybrid
+  mode *is* Adam then LBFGS. It is fixed in the same commit as the defect that exposed it
+  rather than filed, per "fix the class of defect": the class here is *the value is
+  consulted somewhere other than where it is named*, and this is that class's third site
+  in one function.
+- **The parameter for #75 is `n_samples_per_chunk`, not the statement's
+  `latent_chunk_size`.** The statement's own justification — "named for what it splits" —
+  ruled out its own name: it splits the step's *points*, not the latent, and
+  `n_samples_per_chunk` sits beside `n_samples` and `max_n_samples` in the same signature.
+  It is threaded through `reconstruct_mesh` as `n_samples_per_chunk_latent_recon`, which
+  the statement did not plan: the refusal landed in commit 3 means an unthreaded parameter
+  would be *unreachable* from the entry point production calls, so the capability would
+  have shipped closed.
+- **Two commits swapped against the statement's order, for a reason worth keeping.**
+  Ungating (planned 8th) ran before the extraction (planned 7th), because a helper
+  extracted first has to take `verbose` as a parameter and then lose it one commit later.
+  **Ungate before you extract**: the gate is what forces the parameter.
+- **Two numbers this slice was about to inherit were wrong, and both were caught by
+  running them.** (1) `KNOWN_ISSUES` § Open's `F401` command,
+  `flake8 --extend-select=F401`, reports **0** — `--extend-select` does not override an
+  `extend-ignore` that already names the code, so the entry read as if the problem had
+  gone away. The count of 44 is right; `--extend-ignore="" --select=F401` is what
+  reproduces it, and the entry now says so. (2) The ungating commit's own claim that the
+  ungated `.mean()`/`.std()` cost "2%" (3.526 → 3.601s) is inside run-to-run variance —
+  repeats of the same build land anywhere in 3.37–3.60s. Corrected in the commit that
+  deleted those records, which stands on the torch warning and the duplication instead.
+  **This is rule 1 in both directions: a number that is not recomputed goes stale, and a
+  number recomputed once is not yet a measurement.**
+- **Measured and deferred, so it is not re-found:** `reconstruct_latent(pts_surface=None)`
+  is the signature default and `None` raises `ValueError` from the type check, so the
+  signature declares optional a parameter that has never been. Correcting it moves a
+  parameter from optional to required — the same release boundary as the four public
+  signatures, so it is §8.0.O's with them.
+- **The State block's "~180 `verbose`-gated records" was an estimate; it is 135.** Measured
+  by AST across `NSM/`. §8.0.K cleared 25 of them, the largest single file after
+  `sdf_dataset.py` (38) and `mesh/main.py` (31); **110 remain** across eight files.
 - **§8.0.J merged to `main` in PR #92 (2026-08-27), branch deleted:** commits 2–9 whole —
   the characterization, the keyword refusal, `register_similarity`, the reference mesh,
   the ungating plus dead code, the timing recorder, the extraction, and this update. Suite 864 → 884 passed / 1 skipped
