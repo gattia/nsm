@@ -2164,6 +2164,181 @@ scope creep. Tests and docstrings are additive and outside the budget.
 | the suite still passes | 812 passed / 1 skipped / 3 xfailed on `main` at `4a16197` is the baseline every commit is compared against |
 
 
+### 8.0.J `reconstruct_mesh` internals — plan statement (2026-08-27)
+
+Every number below was re-run against `main` at `e9ec5d0` before it was written. Two of
+the slice-index row's own numbers came back different, and the first of them changes what
+the slice can do.
+
+**The row's headline is "the 61-parameter signature", and shrinking it is not this
+slice's to do.** Measured: 58 named parameters plus `**kwargs`, in a 409-line body. But
+`reconstruct_mesh` is frozen public API — `testing/NSM/reconstruct/test_reconstruct_import_compat.py`
+pins it on both `NSM.reconstruct` and `NSM.reconstruct.main`, and `kneepipeline`'s
+`steps/run_nsm.py:185` calls it with **27 keyword arguments**. That is the same
+release-boundary constraint §8.0.I cited when it left `create_mesh` (17) and
+`create_mesh_adaptive` (26) alone for §8.0.O, and the State block asked whether the two
+want doing together. **They do not, and the reason is the answer to the question:** all
+three are public signatures, so all three shrink at the same release, and §8.0.O should
+take them as one set rather than §8.0.J taking a third of it early. What §8.0.J owns is
+the half that does not need a version boundary — the internals behind the signature, and
+the hole that makes a 58-parameter signature dangerous *today*.
+
+**What is actually wrong, measured.** Five defects, one dead branch, one dead import set.
+
+*Defect 1 — 58 named parameters and a `**kwargs` that accepts anything.* Nothing in
+`reconstruct_mesh` inspects `kwargs` except a `batch_size_latent_recon` deprecation
+notice; every other key is swallowed. Measured on the single-object sampled run:
+`n_pts_per_axes`, `num_iteration`, `calc_assd_`, `latent_reg_wieght` and
+`clamp_distance` — 5 of 5 — complete without an error, a warning or a log record, having
+silently used the default for the parameter the caller meant. This is the widest surface
+in the repo for the accepted-and-ignored trap and the one where a typo is most likely,
+because the correct spellings are 58 near-synonyms.
+
+*Defect 2 — `register_similarity` is read two ways in the same call.* Line 198 gates the
+mean-mesh build on `register_similarity is True`; line 256 forwards
+`register_to_mean_first=True if register_similarity else False`, which is truthy. A
+truthy non-`True` value therefore skips the build and then asks the reader to register to
+a mean mesh that was never made. Measured: `register_similarity=1` and
+`register_similarity="similarity"` both raise
+`Exception: Must provide mean mesh to register to` from `mesh_sampling.py:149` — a bare
+`Exception`, from a file the caller never named, saying to supply something that is not a
+parameter of the function they called.
+
+*Defect 3 — the reference mesh is built on a path that discards it.* The build fires on
+`scale_jointly or register_similarity is True`, but the mean mesh is only ever *used* by
+`register_to_mean_first`, which is set from `register_similarity` alone (verified: it is
+the only reader of `mean_mesh` in either sampler, `mesh_sampling.py:141` and `:552`). So
+`scale_jointly=True, register_similarity=False` reconstructs a whole mean shape and throws
+it away. Measured by counting decoder point-evaluations on the single-object run at the
+`n_pts_per_axis_mean_mesh=128` default: **524,968 → 1,401,237**, an extra **876,269**
+evaluations for nothing. The sharper half is not the cost: that path also raises
+`NoZeroLevelSetError` when the discarded mean shape has no surface, so an under-trained
+model aborts the run over a mesh it was never going to consult. `NSM/configs`'s shipped
+default has `scale_jointly: True` and `get_mean_errors` defaults `register_similarity=False`,
+so the combination is the one a config-driven caller reaches first. (`train_deep_sdf.py:341`
+passes `register_similarity=True` explicitly, which is why the trainer has never hit it.)
+
+*Defect 4 — six stage timings are measured and five are returned.* `time_calc_recon_loss`
+is computed at `main.py:439` and never reaches the result dict. It is the timing of the
+one stage that is *optional*, so `return_timing` is silent about exactly the stage a
+caller would be trying to attribute cost to.
+
+*Defect 5 — §8.0.G's conversion left the log records gated behind the flag it deprecated.*
+Ten of the function's fifteen `logger` calls sit under `if verbose is True:`. That was
+message-preserving at the time and correct for that slice; the consequence, now, is that a
+host which configures logging — the entire point of the conversion — sees none of them
+unless it *also* passes the parameter §8.0.G deprecated. One of the ten is a
+`logger.warning` that a surface was skipped (`main.py:293`), which is a fact about the
+result, not chatter.
+
+*Dead branch.* `main.py:280` raises `ValueError("multi_object must be True or False")` on
+a variable assigned exactly `False`, `True`, or not at all, three lines above, in the only
+place it is written.
+
+*Dead imports.* Ten `F401`s in the file, and they are two different things: `copy`, `os`,
+`sys`, `numpy as np` and `pymskt as mskt` are unused, while `fnmatch`, `EIKONAL_UNSUPPORTED`,
+`eikonal_loss`, `Regress` and `adjust_learning_rate` are unused *here* and frozen as
+re-exports by the import-compat test. `KNOWN_ISSUES` § Open names `F401` being
+project-ignored and says the blocker is that "several are deliberate re-exports"; this file
+is the case that shows the two kinds are distinguishable by marking them. That entry's
+count is also stale — it says 43, the measurement today is **54**.
+
+**Target shape (all permanent — this slice adds no transitional module).**
+
+- **Unknown keywords are refused by name.** `**kwargs` keeps
+  `batch_size_latent_recon` (the consumer passes it, `run_nsm.py:200`) and raises
+  `TypeError` naming every other key it was given, together with the closest spellings
+  from the signature. Refusing is the fix and honouring is not: NSM's own rule is that an
+  accepted-and-ignored parameter gets deleted rather than implemented.
+- **`register_similarity` is decided once**, into a local the gate and the forward both
+  read, so the two cannot disagree again. Truthiness is the reading kept — `is True`
+  is the outlier of the two, and the function's other flags are all truthy-tested.
+- **The reference mesh is built when it is used**, i.e. on `register_similarity` alone.
+  `scale_jointly` stops implying it. Verified numerically inert for every path that
+  *does* use it, and the removal cannot move a fitted latent because
+  `create_mesh_adaptive` consumes no RNG (measured: torch and numpy states are
+  bit-identical across a call).
+- **`time_calc_recon_loss` is returned**, and the stage timings stop interleaving: one
+  small recorder replaces eleven `tic`/`toc` assignments threaded through the body, so a
+  stage can be moved without moving a clock.
+- **Five stages become keyword-only private helpers** — `_normalize_call`,
+  `_build_reference_mesh`, `_sample_subject`, `_decode_meshes`, `_assemble_result` —
+  leaving `reconstruct_mesh` an orchestrator. Keyword-only (`*`) is not decoration: it is
+  §8.0.I review round 2's lesson applied at the signature, so no later author can write a
+  positional call across one of these boundaries. **Five, not the row's seven.** The fit
+  stage is a 30-key dict literal and one call; wrapping it in a helper with 30 keyword-only
+  parameters moves the list and improves nothing. The metrics stage is one `if` and one
+  call. Extracting either would be structure invented to match a plan sentence.
+- **The log records stop being gated on the deprecated flag.** `verbose=True` still shows
+  all ten, because the bridge attaches at `DEBUG` (`_verbose_deprecation.py:82`); what
+  changes is that a host configured at `DEBUG` sees them too, and the skipped-surface
+  warning reaches a host configured at `WARNING`. This is one file, not the repo-wide
+  sweep of the same shape — that is recorded as a residual for whichever slice opens each
+  remaining file.
+- **The dead branch goes, the five dead imports go, and the five frozen re-exports get
+  `# noqa: F401` and one comment** saying they are the import-compat contract.
+
+**Deliberately NOT in this slice, each for a stated reason.**
+
+- **Shrinking the public signature.** Above: it is §8.0.O's, with `mesh/main.py`'s two, as
+  one set at one boundary.
+- **`reconstruct_latent`'s internals and #75.** That is §8.0.K, the next row. This slice
+  stops at the `reconstruct_latent(**reconstruct_inputs)` call.
+- **The repo-wide `if verbose is True:` gate removal.** Same shape, ~180 more sites across
+  files this slice does not open; opening them here would make the diff unreviewable and
+  duplicate work every later slice has to do anyway.
+- **Removing `F401` from `.flake8`.** The § Open entry's judgement call, and it needs the
+  other 44 sites triaged, not five.
+- **Issue #3's `scale_jointly` sigma semantics.** §8.0.Q, and a behaviour change. This
+  slice only stops `scale_jointly` from implying a mean-mesh build; what it *means* for
+  sampling is untouched.
+
+**Size budget, by part** — a single net-lines ceiling has been missed in §8.0.H and
+§8.0.I both, so this one is named:
+
+| part | budget |
+|---|---|
+| the keyword refusal, with its message | +25 |
+| the timing recorder | +25 |
+| five helper signatures and docstrings | +70 |
+| removed: gates, `tic`/`toc`, dead branch, dead imports | −45 |
+| **net in `NSM/`** | **+75** |
+
+Past **+95** is scope creep. Tests are additive and outside the budget.
+
+**Sequence** (one commit each; `make lint` clean and the full suite green at every step):
+
+1. this statement;
+2. characterization — the five-typo `**kwargs` matrix, the `register_similarity`
+   truthiness matrix, a decoder-evaluation count across `scale_jointly`, the
+   `return_timing` key set against the timings the body measures, the log-record set at
+   `DEBUG` with and without `verbose`, and a stage-handoff pin per seam. Strict xfails for
+   what is broken;
+3. unknown keywords refused by name;
+4. `register_similarity` decided once;
+5. the reference mesh built only when it is used;
+6. the log records ungated; the dead branch and the dead imports;
+7. `time_calc_recon_loss` returned, and the stage-timing recorder;
+8. the five stages extracted, keyword-only — behaviour-preserving;
+9. docs sweep (`KNOWN_ISSUES` § History 20 and the § Open recount, CHANGELOG,
+   ARCHITECTURE) and this plan's State.
+
+**Verification per claim:**
+
+| Claim | Verification |
+|---|---|
+| unknown keywords are accepted and ignored today | the commit-2 matrix: five misspellings of real parameters complete a run with no error, no warning and no log record; its strict xfails XPASS at commit 3 |
+| the refusal does not break the one consumer | `batch_size_latent_recon` still warns and runs — the existing `test_the_shim_warns_and_stays` pin, green untouched — and a call with the consumer's own 27 keywords is asserted to raise nothing |
+| `register_similarity` is read two ways | parameterised over `True`, `1`, `"similarity"`: today the last two raise `Exception: Must provide mean mesh to register to`; after commit 4 all three take the same path |
+| the reference mesh is discarded under `scale_jointly` alone | a counting decoder: point-evaluations equal with and without `scale_jointly` after commit 5, against the measured 524,968 vs 1,401,237 today |
+| the discarded build is numerically inert | the fitted latent is bit-identical across commit 5 on a fixed seed, and `create_mesh_adaptive` leaves `torch.get_rng_state()` and `np.random.get_state()` unchanged |
+| a path that uses the mean mesh is unaffected | `register_similarity=True` output compared vertex-for-vertex against the pre-commit-5 implementation, and `NoZeroLevelSetError` still raised there — the existing regression pin, green untouched |
+| `return_timing` drops a stage it measures | the key set is asserted against the `time_* = toc - tic` assignments the body makes, read from the source, so a stage added later without a key turns it red |
+| ungating changes nothing for `verbose=True` | the record set under `verbose=True` is asserted equal before and after; the added case is a host at `DEBUG` with no `verbose`, empty today |
+| the extraction is a refactor, not a change | the full result dict — meshes vertex-for-vertex, latent, every metric and registration key — compared against the pre-refactor implementation on a fixed analytic decoder and a fixed seed |
+| the suite still passes | 864 passed / 1 skipped / 3 xfailed on `main` at `e9ec5d0` is the baseline every commit is compared against |
+
+
 ### 8.1 Make the library plural — added 2026-08-15
 
 > **Deferred 2026-08-26 — this is an upgrade, not the refactor.** All three bullets are
