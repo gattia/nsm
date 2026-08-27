@@ -66,10 +66,17 @@ Operational facts that are not derivable from the code, and that cost time to re
 - **For code changes, commit as you go — one commit per concern — and the maintainer
   reviews each commit afterward.** Work on a branch; never one bulk diff carved into
   commits after review (the pre-2026-08-22 flow, replaced because splitting a reviewed
-  diff into commits afterwards was the painful part). Branch history stays mutable
-  until merge: feedback on a commit is applied by rewriting that commit in place and
-  force-pushing (`--force-with-lease`) — never by stacking "address review" commits
-  on top, which would break the one-commit-per-concern review unit.
+  diff into commits afterwards was the painful part).
+- **Review feedback lands as a new commit on top. That is the default** (2026-08-27,
+  replacing "rewrite the commit in place"). One commit per concern is about what a
+  commit *contains*, not where it sits in the branch: a follow-up named for the thing it
+  fixes is one concern, and it also records what was asked and what changed, which a
+  rewrite erases. What the old rule was really guarding against is the grab-bag "address
+  review" commit — so name the commit for the fix, not for the review.
+  **Rewrite in place (`--force-with-lease`) only when the commit is unpushed, or when the
+  maintainer asks.** The cost is not the force-push, it is the replay: a rewrite six
+  commits back re-applies every commit after it, conflicts in several, and re-runs the
+  whole verification — for an edit that was small enough to review in one line.
 - **Picking up mid-initiative:** read the relevant plan's **State** block
   (`.claude/plans/`) and do its **Next**. That block is the only handoff mechanism —
   do not write handoff files (see § Documents and work).

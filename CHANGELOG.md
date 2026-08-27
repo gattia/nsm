@@ -30,6 +30,14 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **`reconstruct_mesh` refuses a keyword it does not recognise** (plan §8.0.J). It takes 58
+  named parameters and a `**kwargs` that read exactly one key, `batch_size_latent_recon`;
+  every other key was swallowed, so a misspelling ran with the intended parameter's default
+  and reported nothing. It now raises `TypeError` naming the unknown key.
+  `batch_size_latent_recon` is unchanged — still accepted, still warned about.
+  A caller passing anything else the signature does not name was already being ignored;
+  see `docs/KNOWN_ISSUES.md` § History 20 for whether a result you have is affected.
+
 - **`mesh/` refuses a face array it cannot read, where it used to reshape past it**
   ([#57](https://github.com/gattia/nsm/issues/57)). Five sites — `self_intersection_count`,
   `foldover_count`, `refine_mesh.get_faces`, `build_mesh_laplacian`, `compute_feature_mask`
@@ -334,6 +342,32 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   output with no notice at all.
 
 ### Changed
+
+- **`reconstruct_mesh`'s own diagnostics answer to the host's logging config, not to
+  `verbose=`** (plan §8.0.J). Ten of its fifteen log records sat under `if verbose is
+  True:` — a faithful conversion of the `print` gates they replaced, and the reason a host
+  that ran the exact replacement the deprecation notice names (`logging.getLogger("NSM")`
+  at `DEBUG`) saw none of them. One is a warning that a surface was skipped. Nothing is
+  taken from a `verbose=True` caller: the bridge attaches at `DEBUG`. Other modules still
+  carry the same gates.
+
+- **`register_similarity` is read one way.** The mean-mesh build tested
+  `register_similarity is True` while the forward to the samplers tested truthiness, so a
+  truthy non-`True` value — `1`, `"similarity"` — skipped the build and then raised
+  `Exception: Must provide mean mesh to register to` from inside `datasets/mesh_sampling`.
+  Truthiness is the reading kept, so those values now register.
+
+- **`scale_jointly` no longer builds a mean mesh**, which it built and discarded: the mean
+  mesh has one reader, under `register_to_mean_first`, which comes from
+  `register_similarity` alone. Measured, that was 876,269 decoder point-evaluations per
+  call at the `n_pts_per_axis_mean_mesh=128` default. `NoZeroLevelSetError` no longer
+  fires on a `scale_jointly`-only call either — it was aborting the run over a mesh nothing
+  was going to consult. Reconstruction output is byte-identical either way.
+
+- **`return_timing` returns `time_calc_recon_loss`**, which the body measured on every
+  scored call and no branch ever put in the result dict. It is the timing of the one
+  optional stage, so `return_timing` was silent about exactly the stage a caller profiling
+  a reconstruction would be looking for.
 
 - **NSM's diagnostics go to `logging`, not `print`, and therefore to stderr rather than
   stdout** ([#58](https://github.com/gattia/nsm/issues/58)). A caller that captured NSM's
