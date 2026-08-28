@@ -28,11 +28,34 @@ PARAM_GROUP_TARGET_KEY = "target"
 
 
 class LearningRateSchedule:
+    """
+    A learning rate as a function of epoch, for one target (``model`` or ``latent``).
+
+    Subclasses are built from one ``config["LearningRateSchedule"]`` entry by
+    :func:`get_learning_rate_schedules`, which reads the entry's ``Type`` to choose the
+    class and its ``Target`` to decide which param groups the result drives. The entry's
+    key names and the constructor's parameter names are two vocabularies for the same
+    values and do not always match; each subclass below names its own.
+    """
+
     def get_learning_rate(self, epoch):
-        pass
+        """
+        The rate for ``epoch``. Every subclass implements this; the base refuses.
+
+        Not ``pass``: a ``None`` returned from here is assigned straight into
+        ``param_group["lr"]`` by :func:`adjust_learning_rate` and surfaces two calls later
+        at ``optimizer.step()`` as ``unsupported operand type(s) for /: 'NoneType' and
+        'float'``, naming neither the schedule, nor the group, nor the config entry.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement get_learning_rate(epoch). Every "
+            f"LearningRateSchedule subclass must return the rate for an epoch."
+        )
 
 
 class ConstantLearningRateSchedule(LearningRateSchedule):
+    """``Type: "Constant"``. One rate for the whole run, from the entry's ``Value``."""
+
     def __init__(self, value):
         self.value = value
 
@@ -41,6 +64,13 @@ class ConstantLearningRateSchedule(LearningRateSchedule):
 
 
 class StepLearningRateSchedule(LearningRateSchedule):
+    """
+    ``Type: "Step"``. ``initial * factor ** (epoch // interval)``.
+
+    From the entry's ``Initial``, ``Interval`` and ``Factor``. ``interval`` of 0 is a
+    ``ZeroDivisionError``; "no decay" is ``Factor: 1``, not ``Interval: 0``.
+    """
+
     def __init__(self, initial, interval, factor):
         self.initial = initial
         self.interval = interval
@@ -52,6 +82,14 @@ class StepLearningRateSchedule(LearningRateSchedule):
 
 
 class WarmupLearningRateSchedule(LearningRateSchedule):
+    """
+    ``Type: "Warmup"``. Linear from ``initial`` to ``warmed_up`` over ``length`` epochs,
+    then flat.
+
+    Note the two names for the destination rate: the config entry calls it ``Final`` and
+    this class calls it ``warmed_up``. ``length`` of 0 is a ``ZeroDivisionError``.
+    """
+
     def __init__(self, initial, warmed_up, length):
         self.initial = initial
         self.warmed_up = warmed_up
@@ -64,6 +102,14 @@ class WarmupLearningRateSchedule(LearningRateSchedule):
 
 
 class LogAnnealLearningRateSchedule(LearningRateSchedule):
+    """
+    ``Type: "LogAnneal"``. Geometric decay from ``initial`` to ``final`` at ``n_epochs``.
+
+    The only schedule whose horizon comes from outside its own entry: ``n_epochs`` is the
+    **top-level config key**, so the run length and the anneal length cannot disagree --
+    and a ``Length`` on a ``LogAnneal`` entry is read by nothing.
+    """
+
     def __init__(self, initial, final, n_epochs):
         self.initial = initial
         self.final = final
@@ -243,6 +289,14 @@ def adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False):
 
 
 def save_latent_vectors(config, epoch, latent_vec, latent_codes_subdir="latent_codes"):
+    """
+    Write the latent embedding to ``{experiment_directory}/{subdir}/{epoch}.pth``.
+
+    One file per checkpoint epoch, ``{"epoch": ..., "latent_codes": state_dict}``, read
+    back by ``train_deep_sdf`` on resume. The whole embedding is saved, so with
+    ``variational: true`` each row is the ``2 * latent_size`` mean-and-log-variance pair
+    :func:`get_latent_vecs` allocated.
+    """
     filename = f"{epoch}.pth"
     folder_save = os.path.join(config["experiment_directory"], latent_codes_subdir)
     if not os.path.exists(folder_save):
@@ -307,28 +361,105 @@ def save_model(config, epoch, decoder, model_subdir="model", optimizer=None):
         )
 
 
-def save_model_params(config, list_mesh_paths):
+def _diverging_keys(path_existing, dict_new):
+    """
+    The keys on which ``dict_new`` disagrees with the record already at ``path_existing``.
 
+    Added, removed and changed in one sorted list: all three mean the same thing to the
+    reader of a file that is not going to be rewritten.
+    """
+    with open(path_existing) as f:
+        existing = json.load(f)
+
+    shared = set(existing) & set(dict_new)
+    return sorted(
+        (set(existing) ^ set(dict_new)) | {key for key in shared if existing[key] != dict_new[key]}
+    )
+
+
+def save_model_params(config, list_mesh_paths):
+    """
+    Write ``model_params_config.json``, the record of what produced this experiment.
+
+    ``load_model``, ``examples/load_trained_model.py`` and both consumer scripts rebuild a
+    model from this file (``docs/SCOPE.md`` §5), so it is the run's public contract and not
+    a log. Called on every checkpoint.
+
+    **First write wins, deliberately.** The file records the configuration that produced
+    the weights; a resumed or re-configured run must not replace that record with a
+    description of a run that only partly happened. When the current config disagrees with
+    what is on disk, every diverging key is named in a ``WARNING`` -- the refusal used to
+    be silent, which is the first half of #50.
+
+    ``list_mesh_paths`` is applied **after** ``config``, so the dataset that is training
+    wins over any ``list_mesh_paths`` the config carries; the shipped ``default_config.json``
+    carries ``None`` and a config round-tripped from an earlier run carries that run's
+    subjects. See ``docs/KNOWN_ISSUES.md`` § History 26.
+
+    Values ``json.dumps`` cannot encode are omitted and named in a ``WARNING`` at the write
+    -- the second half of #50. In a normal run that is ``lr_schedules`` alone, which the
+    trainer derived from the ``LearningRateSchedule`` entries this file does carry.
+    """
     if not os.path.exists(config["experiment_directory"]):
         os.makedirs(config["experiment_directory"], exist_ok=True)
 
     path_save = os.path.join(config["experiment_directory"], "model_params_config.json")
 
+    dict_save = dict(config)
+    dict_save["list_mesh_paths"] = list_mesh_paths  # after the merge, so the data wins
+    dropped = sorted(key for key, value in dict_save.items() if not is_jsonable(value))
+    dict_save = filter_non_jsonable(dict_save)
+
     if os.path.exists(path_save):
+        diverging = _diverging_keys(path_save, dict_save)
+        if diverging:
+            logger.warning(
+                "%s already exists and is not being rewritten: it records the "
+                "configuration that produced the weights stored alongside it. %d value(s) "
+                "in the current config disagree with what it holds: %s.",
+                path_save,
+                len(diverging),
+                ", ".join(diverging),
+            )
         return
 
-    dict_save = {
-        "list_mesh_paths": list_mesh_paths,
-    }
-    dict_save.update(config)
+    superseded = config.get("list_mesh_paths")
+    if superseded is not None and superseded != list_mesh_paths:
+        logger.warning(
+            "config declares %d mesh path(s) and the dataset supplies %d; recording the "
+            "dataset's. A config carrying this key usually came from an earlier run's "
+            "model_params_config.json, whose subject list is not this run's.",
+            len(superseded),
+            len(list_mesh_paths),
+        )
 
-    dict_save = filter_non_jsonable(dict_save)
+    # At the write, not at the filter: once per run rather than once per checkpoint.
+    if dropped:
+        logger.warning(
+            "%d config value(s) cannot be JSON-encoded and are omitted from %s: %s. The "
+            "filter is shallow, so a nested value is omitted whole.",
+            len(dropped),
+            os.path.basename(path_save),
+            ", ".join(dropped),
+        )
 
     with open(path_save, "w") as f:
         json.dump(dict_save, f, indent=4)
 
 
 def get_checkpoints(config):
+    """
+    The epochs at which the trainer writes a checkpoint, ascending.
+
+    Every ``checkpoint_epochs``-th epoch up to and including ``n_epochs``, plus everything
+    in ``additional_checkpoints`` -- which is required, not defaulted, so a config missing
+    it raises here rather than silently checkpointing on the regular cadence only.
+
+    An ``additional_checkpoints`` entry that repeats a regular epoch appears twice in the
+    result. Both consumers test membership (``train_deep_sdf``'s epoch loop), so the
+    duplicate cannot save an epoch twice; it is left in rather than deduplicated because
+    the list is recorded verbatim in ``model_params_config.json``.
+    """
     checkpoints = list(
         range(
             config["checkpoint_epochs"],
@@ -424,30 +555,40 @@ def get_optimizer(model, latent_vecs, lr_schedules, optimizer="Adam", weight_dec
 
 
 def is_jsonable(x):
+    """Whether ``json.dumps`` can encode ``x``. Answers, never raises."""
     try:
         json.dumps(x)
         return True
-    except (TypeError, OverflowError):
+    # ValueError is what a cycle raises ("Circular reference detected"). A predicate that
+    # answers True or False must not propagate it out of a checkpoint write.
+    except (TypeError, OverflowError, ValueError):
         return False
 
 
 def filter_non_jsonable(dict_obj):
+    """
+    ``dict_obj`` without the values ``json.dumps`` cannot encode.
+
+    **Shallow**: the test runs on each whole value, so a nested dict holding one
+    unencodable leaf is dropped entire, serialisable siblings and all. Callers that need
+    to tell the user what left the record should compute the dropped set with
+    :func:`is_jsonable` before calling this -- :func:`save_model_params` does.
+    """
     return {k: v for k, v in dict_obj.items() if is_jsonable(v)}
 
 
-def print_gpu_memory():
-    # assert cuda is available
-    if torch.cuda.is_available():
-        allocated = torch.cuda.memory_allocated()
-        cached = torch.cuda.memory_reserved()
-        logger.info("CUDA, GPU Usage:")
-        logger.info("\tAllocated memory: %.2f GB", allocated / 1024**3)
-        logger.info("\tCached memory: %.2f GB", cached / 1024**3)
-    else:
-        logger.info("CUDA not available - GPU stats not available")
-
-
 def clear_gpu_cache(device):
+    """
+    Empty the allocator cache for ``device``, which may be a string or a ``torch.device``.
+
+    Warns and does nothing for anything that is neither CUDA nor MPS; the trainer calls
+    this once an epoch, so a CPU run gets the warning once, from Python's default
+    once-per-location filter.
+    """
+    # str() so a torch.device works as well as the JSON string the trainer passes:
+    # `"cuda" in torch.device("cuda")` is a TypeError, not a False.
+    device = str(device)
+
     if "cuda" in device:
         torch.cuda.empty_cache()
     elif "mps" in device:
