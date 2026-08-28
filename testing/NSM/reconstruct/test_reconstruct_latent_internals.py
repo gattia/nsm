@@ -662,6 +662,68 @@ class TestTheFitIsUnchangedByTheSplit:
         assert torch.isfinite(first_latent).all()
 
 
+class TestTheMultiSurfaceDrawIsShortAndUnbalanced:
+    """
+    Characterization, not approval. ``docs/KNOWN_ISSUES.md`` (Open) describes this: the
+    per-step draw is neither balanced nor the size it was asked for, because each surface
+    gets ``n_samples // n_surfaces`` capped at its own count and nothing redistributes what
+    a small surface cannot use.
+
+    These assertions exist so that fixing it is a deliberate act with a red test attached,
+    rather than something a later refactor does by accident and nobody notices. The numbers
+    are computed from the helper, not transcribed, so they track the code.
+    """
+
+    #: 300 and 90 points: unequal enough that the cap bites, small enough to read.
+    PTS_SURFACE = [0] * 300 + [1] * 90
+
+    def _drawn(self, n_samples):
+        return sum(
+            latent_fit._samples_per_surface(
+                n_samples=n_samples,
+                pts_surface=torch.tensor(self.PTS_SURFACE),
+                n_surfaces=2,
+            )
+        )
+
+    def test_a_budget_equal_to_the_cloud_does_not_draw_the_cloud(self):
+        """The case that makes ``n_samples=None`` mean something other than "all points"."""
+        assert self._drawn(len(self.PTS_SURFACE)) == 285
+
+    def test_the_draw_is_not_balanced_either(self):
+        """
+        The other half. If it were balanced the two surfaces would contribute equally; the
+        smaller one is capped below the share, so it does not.
+        """
+        per_surface = latent_fit._samples_per_surface(
+            n_samples=390, pts_surface=torch.tensor(self.PTS_SURFACE), n_surfaces=2
+        )
+        assert per_surface == [195, 90]
+
+    def test_the_full_cloud_needs_n_surfaces_times_the_largest_surface(self):
+        """The number the subsampling warning tells a caller to raise ``n_samples`` to."""
+        assert self._drawn(2 * 300) == len(self.PTS_SURFACE)
+
+    def test_a_single_surface_fit_is_unaffected(self):
+        assert latent_fit._samples_per_surface(
+            n_samples=100, pts_surface=torch.zeros(100, dtype=torch.long), n_surfaces=1
+        ) == [100]
+
+    def test_the_top_up_branch_is_unreachable(self):
+        """
+        The draw loop ends with ``if current_filled < n_samples_:``, topping up from the
+        whole cloud -- the redistribution that would make the draw the requested size. It
+        cannot run: ``n_samples_`` is rebound to ``sum(n_samples_per_surface)`` above it, so
+        ``current_filled`` always equals it. Asserted from the source rather than by tracing
+        so it stays cheap; the tracing measurement (0 executions across 49 shape and budget
+        combinations) is what established it.
+        """
+        source = open(latent_fit.__file__, encoding="utf-8").read()
+        rebind = source.index("n_samples_ = sum(n_samples_per_surface)")
+        topup = source.index("if current_filled < n_samples_:")
+        assert rebind < topup, "the rebind must precede the top-up for this to be dead"
+
+
 class TestTheLbfgsParametersAreReadOnBothPaths:
     """
     ``lbfgs_lr``, ``lbfgs_max_iter`` and ``lbfgs_history_size`` were read in the hybrid

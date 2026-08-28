@@ -166,6 +166,45 @@ is the worked case: ten hits there were five dead imports, deleted, and five re-
 import-compat test freezes, now carrying `# noqa: F401` and a comment. The two kinds are
 tellable apart one file at a time, which is what lifting the ignore would take.
 
+### A multi-surface draw is neither balanced nor the size it was asked for
+
+`reconstruct_latent`'s per-step draw splits `n_samples` evenly across surfaces and caps
+each share at what that surface has: `share = n_samples // n_surfaces`, then
+`min(share, count)`. Nothing redistributes what a small surface cannot use, so the draw is
+**neither of the two things it could sensibly be** — not balanced, because a surface
+smaller than its share contributes less than the others; and not the requested size,
+because the shortfall is silently dropped. On a 300/90 cloud:
+
+| `n_samples` | points drawn |
+|---|---|
+| 200 | 190 |
+| 390 (= the whole cloud) | **285** |
+| 400 | 290 |
+| 600 | 390 (all of it) |
+
+So `n_samples=len(xyz)` does not mean "every point", and the only way to get the full cloud
+is `n_samples >= n_surfaces × the largest surface`. Single-surface fits are unaffected.
+
+**The redistribution that would fix it is already written and unreachable.** The draw loop
+ends with `if current_filled < n_samples_: ...` topping up from the whole cloud — but
+`n_samples_` is rebound to `sum(n_samples_per_surface)` just above, so `current_filled`
+always equals it. Measured: that branch executes **0 times across 49 surface-count and
+budget combinations**. Someone wrote the top-up and then broke it by reusing the variable.
+
+*Affects:* any multi-surface fit with unequal per-surface point counts, which is the normal
+case — with `get_rand_pts=False` the cloud is mesh vertices, and bone, cartilage and
+menisci differ. Production (`n_samples_latent_recon: 20000` over 4 surfaces of ~30k-95k
+each) is fully balanced at 5000 per surface and hits none of this; the shortfall only
+appears once the budget approaches the surface sizes.
+
+*Fix:* not filed, and not a drive-by. Restoring the top-up changes the draw for every
+multi-surface fit, so it is a numerics change that wants an ablation rather than a patch —
+and the prior question is which of the two behaviours is intended, since "roughly equal
+number of samples from each surface" (the code's own comment) and "draw `n_samples` points"
+cannot both hold when a surface is too small.
+
+*Pinned by:* `test_reconstruct_latent_internals.TestTheMultiSurfaceDrawIsShortAndUnbalanced`.
+
 ### Hybrid / LBFGS reconstruction is unvalidated on current NSM
 
 `optimizer_name="lbfgs"` and `hybrid_optimizer=True` run, and nothing in production uses

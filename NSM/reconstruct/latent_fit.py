@@ -215,6 +215,11 @@ def _samples_per_surface(*, n_samples, pts_surface, n_surfaces):
     unless the surfaces are equal-sized: with 300 and 90 points, ``n_samples=390`` gives
     each surface 195 and draws 195 + 90 = 285.
 
+    Neither balanced nor the requested size, and the top-up that would fix it is written
+    just below and unreachable -- see ``docs/KNOWN_ISSUES.md`` (Open), "A multi-surface
+    draw is neither balanced nor the size it was asked for". Left as it is deliberately:
+    changing it moves the draw for every multi-surface fit.
+
     Shared with the subsampling guard so the warning cannot describe a different draw from
     the one that happens.
     """
