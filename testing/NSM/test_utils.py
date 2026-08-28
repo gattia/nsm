@@ -339,13 +339,11 @@ class TestNonSerialisableValues:
 
         assert "lr_schedules" not in saved_record(running_config)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="§8.0.M: json.dumps raises ValueError on a cycle and is_jsonable catches "
-        "only TypeError and OverflowError",
-    )
     def test_a_cycle_is_not_jsonable_rather_than_an_exception(self):
-        """A predicate answers True or False; this one propagates out of the checkpoint."""
+        """
+        Was a strict xfail. A predicate answers True or False; this one used to propagate
+        ``ValueError: Circular reference detected`` out of the checkpoint write.
+        """
         cyclic = {}
         cyclic["self"] = cyclic
 
@@ -484,13 +482,12 @@ class TestGpuHelpers:
         with pytest.warns(UserWarning, match="Not clearing cache"):
             clear_gpu_cache("cpu")
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason='§8.0.M: `"cuda" in device` needs a str, so the object form raises '
-        "TypeError: argument of type 'torch.device' is not iterable",
-    )
     def test_clear_gpu_cache_accepts_a_torch_device(self):
-        """The form a Python caller holds, as opposed to the form JSON produces."""
+        """
+        Was a strict xfail: ``"cuda" in device`` needs a str, so the object form raised
+        ``TypeError: argument of type 'torch.device' is not iterable``. This is the form a
+        Python caller holds, as opposed to the form JSON produces.
+        """
         with pytest.warns(UserWarning, match="Not clearing cache"):
             clear_gpu_cache(torch.device("cpu"))
 

@@ -491,7 +491,9 @@ def is_jsonable(x):
     try:
         json.dumps(x)
         return True
-    except (TypeError, OverflowError):
+    # ValueError is what a cycle raises ("Circular reference detected"). A predicate that
+    # answers True or False must not propagate it out of a checkpoint write.
+    except (TypeError, OverflowError, ValueError):
         return False
 
 
@@ -500,6 +502,10 @@ def filter_non_jsonable(dict_obj):
 
 
 def clear_gpu_cache(device):
+    # str() so a torch.device works as well as the JSON string the trainer passes:
+    # `"cuda" in torch.device("cuda")` is a TypeError, not a False.
+    device = str(device)
+
     if "cuda" in device:
         torch.cuda.empty_cache()
     elif "mps" in device:
