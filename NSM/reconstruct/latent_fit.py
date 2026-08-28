@@ -207,24 +207,34 @@ def latent_norm_penalty(latent, target_norm, penalty_weight=1.0, penalty_type="q
 
 
 def _samples_per_surface(*, n_samples, pts_surface, n_surfaces):
-    """How many points each surface contributes to one draw.
+    """How many points each surface contributes to one draw. **Equal for every surface.**
 
-    The budget is split evenly and then capped at what each surface actually has, so a
-    surface smaller than its share contributes everything it has and the *total* comes out
-    below ``n_samples``. That is why ``n_samples=len(xyz)`` does not mean "every point"
-    unless the surfaces are equal-sized: with 300 and 90 points, ``n_samples=390`` gives
-    each surface 195 and draws 195 + 90 = 285.
+    The budget is split across the surfaces that have points, and then every surface --
+    the large ones included -- is held to what the *smallest* contributing surface can
+    supply. A draw is therefore balanced by construction: as many points from around the
+    bone as from around the smallest meniscus.
 
-    Neither balanced nor the requested size, and the top-up that would fix it is written
-    just below and unreachable -- see ``docs/KNOWN_ISSUES.md`` (Open), "A multi-surface
-    draw is neither balanced nor the size it was asked for". Left as it is deliberately:
-    changing it moves the draw for every multi-surface fit.
+    That balance is the point. ``pts_surface`` does not route points to losses -- every
+    surface's SDF is evaluated at every drawn point -- so what it controls is where in
+    space the samples come from. An unbalanced draw silently weights the fit towards
+    whichever surface happens to have the most vertices.
 
-    Shared with the subsampling guard so the warning cannot describe a different draw from
-    the one that happens.
+    Two consequences worth knowing:
+
+    - The most a multi-surface fit can draw is ``n_surfaces * smallest_surface``. With
+      unequal surfaces the whole cloud is therefore unreachable, deliberately: reaching it
+      would mean giving up the balance.
+    - Raising ``n_samples`` past that does nothing.
+
+    A surface with no points contributes none and does not cap the others; the budget is
+    divided among the surfaces that can use it.
     """
-    share = n_samples // n_surfaces
-    return [min(share, int((pts_surface == idx).sum())) for idx in range(n_surfaces)]
+    available = [int((pts_surface == idx).sum()) for idx in range(n_surfaces)]
+    contributing = [count for count in available if count > 0]
+    if not contributing:
+        return [0] * n_surfaces
+    per_surface = min(n_samples // len(contributing), min(contributing))
+    return [per_surface if count > 0 else 0 for count in available]
 
 
 def _select_samples(
@@ -304,10 +314,6 @@ def _select_samples(
                 end_idx = start_idx + n_samples_per_surface_
                 rand_samp[start_idx:end_idx] = pts_
                 current_filled = end_idx
-            if current_filled < n_samples_:
-                remaining = n_samples_ - current_filled
-                perm = torch.randperm(xyz.shape[0])[:remaining]
-                rand_samp[current_filled:] = perm
         else:
             rand_samp = torch.randperm(xyz.shape[0])[:n_samples_]
 
@@ -636,18 +642,25 @@ def reconstruct_latent(
     planned = sum(
         _samples_per_surface(n_samples=n_samples, pts_surface=pts_surface, n_surfaces=len(sdf_gt))
     )
-    if (optimizer_name == "lbfgs" or hybrid_optimizer) and planned < xyz.shape[0]:
+    reachable = sum(
+        _samples_per_surface(
+            n_samples=xyz.shape[0] * len(sdf_gt),
+            pts_surface=pts_surface,
+            n_surfaces=len(sdf_gt),
+        )
+    )
+    if (optimizer_name == "lbfgs" or hybrid_optimizer) and planned < reachable:
         logger.warning(
-            "LBFGS is evaluating a subsampled objective: n_samples=%s draws %s of %s "
-            "points, redrawn on every one of its own loss evaluations. For the full cloud "
-            "raise n_samples to at least %s (per-surface budget is n_samples // %s, capped "
-            "at each surface's own size), and bound memory with n_samples_per_chunk "
-            "instead; see docs/KNOWN_ISSUES.md (Open).",
+            "LBFGS is evaluating a subsampled objective: n_samples=%s draws %s points, "
+            "redrawn on every one of its own loss evaluations. Raise n_samples to at least "
+            "%s to draw the most a balanced fit can -- %s of %s points, since every surface "
+            "is held to the smallest -- and bound memory with n_samples_per_chunk instead; "
+            "see docs/KNOWN_ISSUES.md (Open).",
             n_samples,
             planned,
+            reachable,
+            reachable,
             xyz.shape[0],
-            len(sdf_gt) * max(int((pts_surface == i).sum()) for i in range(len(sdf_gt))),
-            len(sdf_gt),
         )
 
     # Initialize random latent vector directly on GPU

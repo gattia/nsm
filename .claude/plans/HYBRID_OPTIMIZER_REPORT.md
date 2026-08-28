@@ -326,10 +326,15 @@ cannot move a number.
 
 **What the sweep's numbers actually mean, corrected against the meshes:**
 
-- `n_samples_latent_recon: 1e6` is **"use every vertex"**, not a 50× sample increase. The
-  per-surface budget is `1e6 // 4 = 250,000` against a largest observed surface of 94,680,
-  so every surface is capped at its full vertex set — ~230k points per knee. Anything above
-  ~379k is identical. The real change versus the 20k baseline was 20k → all points.
+- `n_samples_latent_recon: 1e6` meant **"use every vertex"** when the sweep ran — the
+  per-surface budget was `1e6 // 4 = 250,000` against a largest observed surface of 94,680,
+  so every surface was capped at its own vertex set, ~230k points per knee. The real change
+  versus the 20k baseline was 20k → all points, not 50×.
+  **This is one of the two numbers that moved under the Aug 2026 refactor.** Draws are now
+  balanced — every surface held to the smallest — so on the median knee
+  (62,530 / 48,407 / 82,213 / 35,808) `1e6` draws `4 × 35,808 = 143,232` rather than
+  228,958, and anything above ~143k is identical to it. A re-run is therefore not
+  comparable to the sweep on sample count either; see `docs/KNOWN_ISSUES.md` § History 24.
 - The 14-knee result (**−9.0% mean ASSD, better on 14 of 14**) cost 123 s/knee against
   36 s/knee for Adam. L-BFGS is ~94% of optimization time.
 - `lbfgs_max_iter: 5` holds `max_iter: 20` accuracy at **2.3×** less time (0.0934 vs 0.0933
@@ -340,7 +345,8 @@ cannot move a number.
   "L-BFGS needs the norm constraint" cannot be separated from sample count either.
 
 **What cannot be reproduced:** the 14-knee run happened during the window when a triplanar
-feature cache existed (added and removed the same afternoon, Aug 2025). Any re-run is a new
+feature cache existed (added and removed the same afternoon, Aug 2025), and its draw was
+unbalanced in a way the current code will not reproduce (§ History 24). Any re-run is a new
 measurement, not a reproduction.
 
 **One thing that changed under it since:** `lbfgs_lr`, `lbfgs_max_iter` and

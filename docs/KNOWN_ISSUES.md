@@ -166,45 +166,6 @@ is the worked case: ten hits there were five dead imports, deleted, and five re-
 import-compat test freezes, now carrying `# noqa: F401` and a comment. The two kinds are
 tellable apart one file at a time, which is what lifting the ignore would take.
 
-### A multi-surface draw is neither balanced nor the size it was asked for
-
-`reconstruct_latent`'s per-step draw splits `n_samples` evenly across surfaces and caps
-each share at what that surface has: `share = n_samples // n_surfaces`, then
-`min(share, count)`. Nothing redistributes what a small surface cannot use, so the draw is
-**neither of the two things it could sensibly be** — not balanced, because a surface
-smaller than its share contributes less than the others; and not the requested size,
-because the shortfall is silently dropped. On a 300/90 cloud:
-
-| `n_samples` | points drawn |
-|---|---|
-| 200 | 190 |
-| 390 (= the whole cloud) | **285** |
-| 400 | 290 |
-| 600 | 390 (all of it) |
-
-So `n_samples=len(xyz)` does not mean "every point", and the only way to get the full cloud
-is `n_samples >= n_surfaces × the largest surface`. Single-surface fits are unaffected.
-
-**The redistribution that would fix it is already written and unreachable.** The draw loop
-ends with `if current_filled < n_samples_: ...` topping up from the whole cloud — but
-`n_samples_` is rebound to `sum(n_samples_per_surface)` just above, so `current_filled`
-always equals it. Measured: that branch executes **0 times across 49 surface-count and
-budget combinations**. Someone wrote the top-up and then broke it by reusing the variable.
-
-*Affects:* any multi-surface fit with unequal per-surface point counts, which is the normal
-case — with `get_rand_pts=False` the cloud is mesh vertices, and bone, cartilage and
-menisci differ. Production (`n_samples_latent_recon: 20000` over 4 surfaces of ~30k-95k
-each) is fully balanced at 5000 per surface and hits none of this; the shortfall only
-appears once the budget approaches the surface sizes.
-
-*Fix:* not filed, and not a drive-by. Restoring the top-up changes the draw for every
-multi-surface fit, so it is a numerics change that wants an ablation rather than a patch —
-and the prior question is which of the two behaviours is intended, since "roughly equal
-number of samples from each surface" (the code's own comment) and "draw `n_samples` points"
-cannot both hold when a surface is too small.
-
-*Pinned by:* `test_reconstruct_latent_internals.TestTheMultiSurfaceDrawIsShortAndUnbalanced`.
-
 ### Hybrid / LBFGS reconstruction is unvalidated on current NSM
 
 `optimizer_name="lbfgs"` and `hybrid_optimizer=True` run, and nothing in production uses
@@ -1467,3 +1428,50 @@ affected run used all of them.
 
 *Pinned by:*
 `test_reconstruct_latent_internals.TestUnknownValuesAreRefusedWhereTheyAreNamed`.
+
+
+## 24. A multi-surface draw was weighted towards whichever surface had the most vertices
+
+| | |
+|---|---|
+| **Affected** | `reconstruct_latent` / `reconstruct_mesh` fits with more than one surface where **some surface had fewer points than `n_samples // n_surfaces`** — i.e. the budget was large enough to exhaust the smallest surface |
+| **Unaffected** | Single-surface fits at any setting, and any multi-surface fit whose every surface has at least its share — which is the shipped configuration (`n_samples_latent_recon: 20000` over surfaces of tens of thousands of vertices) and kneepipeline. Both draw identically before and after |
+| **Severity** | Silent — the fit ran, and sampled space unevenly around the surfaces |
+| **Fixed in** | `latent-fit-internals`, Aug 2026 (plan §8.0.K) |
+
+### What was wrong
+
+Each surface was given `n_samples // n_surfaces` points, capped at what it had:
+`min(share, count)`. Nothing redistributed what a small surface could not use, so the draw
+was **neither of the two things it could sensibly be** — not balanced, because a surface
+below its share contributed less than the others while they kept theirs; and not the
+requested size, because the shortfall was dropped without a word. On a 300/90 cloud,
+`n_samples=390` drew `[195, 90]`.
+
+That matters because `pts_surface` does not route points to losses — every surface's SDF is
+evaluated at every drawn point — so what it controls is where in space the samples come
+from. An uneven draw weights the fit towards whichever surface has the most vertices.
+
+A top-up from the whole cloud was written into the draw loop and was unreachable
+(`n_samples_` was rebound above it, so `current_filled` always equalled it; measured at 0
+executions across 49 surface-count and budget combinations). That was the other design —
+draw the requested count and accept the imbalance — and it has been deleted rather than
+repaired.
+
+Every surface now contributes the same count, held to what the smallest contributing
+surface can supply. The cost is stated rather than hidden: with unequal surfaces the whole
+cloud is unreachable, and raising `n_samples` past `n_surfaces × smallest_surface` does
+nothing.
+
+### How to tell whether one of your runs is affected
+
+Compare `n_samples // n_surfaces` against your smallest surface's point count. If every
+surface has at least that many, the draw is unchanged and so is the result. If any surface
+is smaller, that run sampled unevenly: the deficit surface contributed all of itself while
+the others contributed the full share, so the fit was weighted towards the larger surfaces
+by the ratio between them. Re-run if the imbalance was large — with four surfaces of
+62,530 / 48,407 / 82,213 / 35,808 vertices and `n_samples` above ~143,000, the old draw took
+every vertex of each (228,958 points, ratio 2.3:1 largest to smallest) where the new one
+takes 35,808 from each.
+
+*Pinned by:* `test_reconstruct_latent_internals.TestTheMultiSurfaceDrawIsBalanced`.

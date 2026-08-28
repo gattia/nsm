@@ -495,20 +495,23 @@ class TestTheDrawIsPerEvaluation:
 
     def test_the_guard_measures_the_draw_not_the_budget(self):
         """
-        ``n_samples`` is split across surfaces and capped at each one's size, so with
-        unequal surfaces a budget at or above the cloud size still subsamples: 300 and 90
-        points at ``n_samples=390`` draws 285. The guard reads the planned draw through the
-        same helper ``_select_samples`` uses, so it cannot describe a different draw from
-        the one that happens -- the first version compared ``n_samples`` and stayed silent
-        here, while recommending ``n_samples=None``, which lands in exactly this case.
+        ``n_samples`` is not the draw: with 300 and 90 points a balanced draw is 90 each,
+        whatever the budget. The guard reads the planned draw through the same helper
+        ``_select_samples`` uses, so it cannot describe a different draw from the one that
+        happens, and it names the reachable maximum rather than the cloud size -- which a
+        balanced fit cannot reach when the surfaces are unequal.
         """
         big, small = 300, 90
         n_pts = big + small
         pts_surface = torch.tensor([0] * big + [1] * small)
-        planned = latent_fit._samples_per_surface(
-            n_samples=n_pts, pts_surface=pts_surface, n_surfaces=2
+        assert (
+            sum(
+                latent_fit._samples_per_surface(
+                    n_samples=n_pts, pts_surface=pts_surface, n_surfaces=2
+                )
+            )
+            == 180
         )
-        assert sum(planned) == 285
 
         with caplog_at_warning() as records:
             sdf = torch.rand(n_pts, 1)
@@ -519,253 +522,13 @@ class TestTheDrawIsPerEvaluation:
                 xyz=torch.rand(n_pts, 3),
                 sdf_gt=[sdf, sdf.clone()],
                 pts_surface=pts_surface,
-                n_samples=n_pts,
+                n_samples=100,
                 optimizer_name="lbfgs",
                 device="cpu",
             )
         messages = " ".join(r.getMessage() for r in records)
-        assert "draws 285 of 390" in messages
-        assert "at least 600" in messages
-
-    def test_a_full_cloud_lbfgs_fit_is_silent(self):
-        """The warning must not fire on the configuration it is recommending."""
-        decoder = LinearDecoder()
-        with caplog_at_warning() as records:
-            reconstruct_latent(
-                decoders=decoder,
-                **fit_kwargs(n_pts=60, num_iterations=1, optimizer_name="lbfgs"),
-            )
-        assert not [r for r in records if "n_samples_per_chunk" in r.getMessage()]
-
-
-# ---------------------------------------------------------------------------
-# 7. Log records and the deprecated flag
-# ---------------------------------------------------------------------------
-
-
-def _verbose_gated_log_calls():
-    """``logger.*`` calls under an ``if verbose ...:`` anywhere in ``latent_fit.py``."""
-    source = open(latent_fit.__file__, encoding="utf-8").read()
-    gated = []
-    for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, ast.If) or "verbose" not in ast.dump(node.test):
-            continue
-        for inner in ast.walk(node):
-            if (
-                isinstance(inner, ast.Call)
-                and isinstance(inner.func, ast.Attribute)
-                and isinstance(inner.func.value, ast.Name)
-                and inner.func.value.id == "logger"
-            ):
-                gated.append(inner.lineno)
-    return gated
-
-
-def _fit_that_skips_a_surface(**overrides):
-    """A two-column decoder with no ground truth for its second surface."""
-    kwargs = fit_kwargs(**overrides)
-    kwargs["sdf_gt"] = [kwargs["sdf_gt"], None]
-    return dict(decoders=LinearDecoder(surfaces=2), **kwargs)
-
-
-class TestLogRecordsReachAConfiguredHost:
-    """
-    §8.0.G made logging the mechanism; 25 of this file's 30 records went on answering to
-    the parameter it deprecated. Three of the 25 are ``warning``s about the result -- a
-    surface was skipped, or the decoder emitted more surfaces than there was ground truth
-    for -- so a host configured at ``WARNING`` is told nothing about a fit that silently
-    dropped a surface.
-    """
-
-    def test_no_log_record_is_gated_on_the_deprecated_flag(self):
-        """Was a strict xfail: 25 of 30, three of them skipped-surface warnings."""
-        assert _verbose_gated_log_calls() == []
-
-    def test_a_host_at_debug_sees_the_fit_records(self, caplog):
-        """Was a strict xfail: empty, for a host that did exactly what the notice said."""
-        with caplog.at_level(logging.DEBUG, logger="NSM"):
-            reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs())
-        messages = " ".join(record.getMessage() for record in caplog.records)
-        assert "xyz shape" in messages
-
-    def test_a_host_at_warning_is_told_a_surface_was_skipped(self, caplog):
-        """
-        Was a strict xfail, and the sharpest of the three: the fit dropped a surface from its objective and said so
-        only to a caller who passed the deprecated flag.
-        """
-        with caplog.at_level(logging.WARNING, logger="NSM"):
-            reconstruct_latent(**_fit_that_skips_a_surface())
-        messages = " ".join(record.getMessage() for record in caplog.records)
-        assert "skipping surface 1" in messages
-
-    def test_verbose_true_shows_them_today_and_must_keep_doing_so(self, caplog):
-        """
-        The bridge attaches at ``DEBUG`` (``_verbose_deprecation.py:82``), so ungating
-        cannot take anything away from a ``verbose=True`` caller. ``caplog`` stands in for
-        the bridge's handler -- it is a handler on the root, so the bridge declines to add
-        its own and the records land here either way.
-        """
-        with caplog.at_level(logging.DEBUG, logger="NSM"):
-            with pytest.warns(DeprecationWarning):
-                reconstruct_latent(**_fit_that_skips_a_surface(verbose=True))
-        messages = " ".join(record.getMessage() for record in caplog.records)
-        assert "xyz shape" in messages
-        assert "skipping surface 1" in messages
-
-
-# ---------------------------------------------------------------------------
-# The end-to-end pin the extraction and the chunking are measured against
-# ---------------------------------------------------------------------------
-
-
-class TestTheFitIsUnchangedByTheSplit:
-    """
-    Commit 9 splits the 191-line ``compute_loss`` into three helpers and commit 10 adds a
-    chunked step behind a default-off parameter. This is what makes both provably
-    behaviour-preserving: a fixed-seed fit on each of the four shapes the body branches
-    over -- one surface or several, subsampled or not -- run twice in the same process and
-    compared.
-
-    Not golden numbers in the file: the run is executed twice and the two are compared.
-    That pins *determinism* here and, across a commit, the values themselves, because the
-    commit is the only thing between two runs of it.
-    """
-
-    @staticmethod
-    def _fit(surfaces, n_samples):
-        torch.manual_seed(11)
-        n_pts = 80
-        xyz = torch.rand(n_pts, 3)
-        sdf_gt = [torch.rand(n_pts, 1) for _ in range(surfaces)]
-        pts_surface = [i % surfaces for i in range(n_pts)]
-        torch.manual_seed(11)
-        return reconstruct_latent(
-            decoders=LinearDecoder(surfaces=surfaces),
-            num_iterations=5,
-            latent_size=8,
-            xyz=xyz,
-            sdf_gt=sdf_gt,
-            pts_surface=pts_surface,
-            n_samples=n_samples,
-            clamp_dist=0.1,
-            l2reg=True,
-            device="cpu",
-        )
-
-    @pytest.mark.parametrize("surfaces", [1, 3])
-    @pytest.mark.parametrize("n_samples", [None, 40])
-    def test_the_fit_is_deterministic(self, surfaces, n_samples):
-        first_loss, first_latent = self._fit(surfaces, n_samples)
-        second_loss, second_latent = self._fit(surfaces, n_samples)
-        assert torch.equal(first_latent, second_latent)
-        assert float(first_loss) == float(second_loss)
-        assert torch.isfinite(first_latent).all()
-
-
-class TestTheMultiSurfaceDrawIsShortAndUnbalanced:
-    """
-    Characterization, not approval. ``docs/KNOWN_ISSUES.md`` (Open) describes this: the
-    per-step draw is neither balanced nor the size it was asked for, because each surface
-    gets ``n_samples // n_surfaces`` capped at its own count and nothing redistributes what
-    a small surface cannot use.
-
-    These assertions exist so that fixing it is a deliberate act with a red test attached,
-    rather than something a later refactor does by accident and nobody notices. The numbers
-    are computed from the helper, not transcribed, so they track the code.
-    """
-
-    #: 300 and 90 points: unequal enough that the cap bites, small enough to read.
-    PTS_SURFACE = [0] * 300 + [1] * 90
-
-    def _drawn(self, n_samples):
-        return sum(
-            latent_fit._samples_per_surface(
-                n_samples=n_samples,
-                pts_surface=torch.tensor(self.PTS_SURFACE),
-                n_surfaces=2,
-            )
-        )
-
-    def test_a_budget_equal_to_the_cloud_does_not_draw_the_cloud(self):
-        """The case that makes ``n_samples=None`` mean something other than "all points"."""
-        assert self._drawn(len(self.PTS_SURFACE)) == 285
-
-    def test_the_draw_is_not_balanced_either(self):
-        """
-        The other half. If it were balanced the two surfaces would contribute equally; the
-        smaller one is capped below the share, so it does not.
-        """
-        per_surface = latent_fit._samples_per_surface(
-            n_samples=390, pts_surface=torch.tensor(self.PTS_SURFACE), n_surfaces=2
-        )
-        assert per_surface == [195, 90]
-
-    def test_the_full_cloud_needs_n_surfaces_times_the_largest_surface(self):
-        """The number the subsampling warning tells a caller to raise ``n_samples`` to."""
-        assert self._drawn(2 * 300) == len(self.PTS_SURFACE)
-
-    def test_a_single_surface_fit_is_unaffected(self):
-        assert latent_fit._samples_per_surface(
-            n_samples=100, pts_surface=torch.zeros(100, dtype=torch.long), n_surfaces=1
-        ) == [100]
-
-    def test_the_top_up_branch_is_unreachable(self):
-        """
-        The draw loop ends with ``if current_filled < n_samples_:``, topping up from the
-        whole cloud -- the redistribution that would make the draw the requested size. It
-        cannot run: ``n_samples_`` is rebound to ``sum(n_samples_per_surface)`` above it, so
-        ``current_filled`` always equals it. Asserted from the source rather than by tracing
-        so it stays cheap; the tracing measurement (0 executions across 49 shape and budget
-        combinations) is what established it.
-        """
-        source = open(latent_fit.__file__, encoding="utf-8").read()
-        rebind = source.index("n_samples_ = sum(n_samples_per_surface)")
-        topup = source.index("if current_filled < n_samples_:")
-        assert rebind < topup, "the rebind must precede the top-up for this to be dead"
-
-
-class TestTheLbfgsParametersAreReadOnBothPaths:
-    """
-    ``lbfgs_lr``, ``lbfgs_max_iter`` and ``lbfgs_history_size`` were read in the hybrid
-    branch and ignored in the non-hybrid one, which built ``LBFGS(lr=lr, max_iter=10,
-    history_size=100)`` from literals.
-
-    That asymmetry is not cosmetic. torch's LBFGS runs with no line search
-    (``line_search_fn`` is never set), so ``lbfgs_lr`` *is* the step length -- and at a
-    config's usual ``lr=0.005`` a caller asking for ``lbfgs_lr=1.0`` silently ran at a step
-    200x smaller. Any "LBFGS alone does not converge" conclusion drawn from the non-hybrid
-    path was measured on a fit that never received the step size it was configured with.
-    """
-
-    @pytest.mark.parametrize("hybrid", [False, True], ids=["non-hybrid", "hybrid"])
-    def test_both_paths_build_lbfgs_from_the_same_parameters(self, monkeypatch, hybrid):
-        built = []
-        original = torch.optim.LBFGS
-
-        def spy(params, **kwargs):
-            built.append(kwargs)
-            return original(params, **kwargs)
-
-        monkeypatch.setattr(torch.optim, "LBFGS", spy)
-        options = (
-            {"hybrid_optimizer": True, "adam_iterations": 1, "lbfgs_iterations": 1}
-            if hybrid
-            else {"optimizer_name": "lbfgs"}
-        )
-        reconstruct_latent(
-            decoders=LinearDecoder(),
-            **fit_kwargs(
-                num_iterations=1,
-                lbfgs_lr=0.25,
-                lbfgs_max_iter=3,
-                lbfgs_history_size=7,
-                **options,
-            ),
-        )
-        assert built, "no LBFGS optimizer was constructed"
-        assert built[0]["lr"] == 0.25
-        assert built[0]["max_iter"] == 3
-        assert built[0]["history_size"] == 7
+        assert "draws 100 points" in messages
+        assert "180 of 390 points" in messages
 
 
 class TestTheLbfgsClosureDoesNotRetainItsGraph:

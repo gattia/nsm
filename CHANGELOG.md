@@ -387,6 +387,17 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   mean is already in the step record above them, and `.std()` on a one-point chunk emits a
   torch warning. Other modules still carry the same gates.
 
+- **A multi-surface draw is balanced.** Every surface now contributes the same number of
+  points, held to what the smallest one can supply; it used to get
+  `min(n_samples // n_surfaces, its own count)`, so a surface too small for its share fell
+  below the others and the shortfall was silently dropped. `pts_surface` decides where in
+  space samples come from, not which loss they feed, so the old draw weighted the fit
+  towards whichever surface had the most vertices. Unchanged for single-surface fits and
+  for any fit whose every surface has at least its share — which includes both shipped
+  configs and kneepipeline. The cost of balance is explicit: with unequal surfaces the
+  whole cloud is now unreachable, and raising `n_samples` past
+  `n_surfaces × smallest_surface` does nothing. § History 24.
+
 - **`reconstruct_latent` returns a loss under every convergence mode.** With
   `convergence="recon_loss"` — the mode `NSM/configs/default_config.json` ships — the first
   element of `(loss, latent)` was the literal `100` the comparison sentinel was initialised
