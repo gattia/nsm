@@ -26,11 +26,14 @@ lazily for its error text and needs the plain message in its place.
 """
 
 #: Keys that have never named anything in NSM -- zero occurrences in ``NSM/`` at any
-#: commit. They read like tolerances an optimizer might take; nothing ever read them.
+#: commit, checked with ``git log -S``. They read like tolerances an optimizer might take;
+#: nothing ever read them. They turn up in configs *and* in harness scripts that pass a
+#: fixed keyword set, which is the case that raises on every run rather than on some.
 _NEVER_EXISTED = {
     "min_rel_improve": "no such parameter; use convergence/convergence_patience instead",
     "grad_tol": "no such parameter; torch's LBFGS has tolerance_grad, not exposed here",
     "param_change_tol": "no such parameter; torch's LBFGS has tolerance_change, not exposed",
+    "recon_tol": "no such parameter; use convergence/convergence_patience instead",
 }
 
 #: Keys naming a real ``reconstruct_latent`` parameter that ``reconstruct_mesh`` does not

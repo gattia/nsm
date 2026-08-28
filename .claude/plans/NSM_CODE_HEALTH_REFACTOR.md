@@ -82,6 +82,18 @@
   the same class and the worst of them: `convergence`'s missing `else` is the *default
   branch*, so `"Recon_Loss"`, `""` and `None` were all accepted and silently meant
   `"num_iterations"` — early stopping off, no signal. § History 23.
+- **The refusal's blast radius is a harness script, not a config file, and that is worse.**
+  Reported back from the Torino run store (2026-08-28): `test_optimization.py` does *not*
+  splat its config — it builds an explicit 53-key dict and passes **18 non-core keywords
+  unconditionally, regardless of what the config says**. Five of the eighteen name nothing
+  in NSM at any commit (`min_rel_improve`, `grad_tol`, `param_change_tol`, `recon_tol`,
+  `log_wandb_step`; `recon_tol` was not in the config this repo has a copy of, and was
+  found only from the harness's key list). So against current `main` **every run of that
+  harness raises, including a plain Adam baseline that never mentioned any of them**. A
+  config-shaped migration was the right idea and the wrong unit: `_config_migration` now
+  covers the harness's keyword set too, and its test asserts the 13 real ones survive.
+  **The general lesson for the refusals still to come: the thing that breaks is whatever
+  passes a *fixed* keyword set, and its failure is total rather than per-config.**
 - **§8.0.K, review round 3 (maintainer, 2026-08-28): two approvals and a standing
   mandate.** (a) `retain_graph=True` in the LBFGS closure is deleted — it was justified by
   a comment saying LBFGS calls the closure many times, which is true and irrelevant, since

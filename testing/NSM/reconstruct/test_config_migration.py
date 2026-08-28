@@ -41,6 +41,7 @@ HISTORICAL_CONFIG = {
     "min_rel_improve": 0.001,
     "grad_tol": 1e-05,
     "param_change_tol": 0.001,
+    "recon_tol": 0.001,
 }
 
 
@@ -51,13 +52,14 @@ class TestMigratingAHistoricalConfig:
         named = set(inspect.signature(reconstruct_mesh).parameters)
         assert sorted(set(cleaned) - named) == []
 
-    def test_the_five_removed_keys_are_the_inert_ones(self):
+    def test_the_six_removed_keys_are_the_inert_ones(self):
         cleaned, _ = migrate_reconstruct_config(HISTORICAL_CONFIG)
         removed = set(HISTORICAL_CONFIG) - set(cleaned)
         assert removed == {
             "min_rel_improve",
             "grad_tol",
             "param_change_tol",
+            "recon_tol",
             "log_wandb_step",
             "latent_optimizer_name",
         }
@@ -119,6 +121,48 @@ class TestMigratingAHistoricalConfig:
         config = dict(HISTORICAL_CONFIG, hybrid_optimizer=False)
         cleaned, _ = migrate_reconstruct_config(config)
         assert cleaned["latent_optimizer_name"] == "lbfgs"
+
+
+class TestAHarnessThatPassesAFixedKeywordSet:
+    """
+    The sharper case than a stale config file. A harness script that builds an explicit
+    keyword dict and passes it on every run -- rather than splatting the config -- fails
+    on *every* run once one of its fixed keys is refused, including runs whose config
+    never mentioned the key. Five of the eighteen non-core keywords one such harness
+    passes unconditionally name nothing in NSM.
+    """
+
+    #: Passed unconditionally by a real harness, regardless of what its config says.
+    HARNESS_KEYWORDS = [
+        "latent_norm",
+        "use_soft_norm_constraint",
+        "norm_penalty_weight",
+        "norm_penalty_type",
+        "hybrid_optimizer",
+        "adam_iterations",
+        "lbfgs_iterations",
+        "lbfgs_lr",
+        "lbfgs_max_iter",
+        "lbfgs_history_size",
+        "min_rel_improve",
+        "grad_tol",
+        "param_change_tol",
+        "recon_tol",
+        "log_wandb_step",
+        "return_registration_params",
+        "max_n_samples_latent_recon",
+        "n_steps_sample_ramp_latent_recon",
+    ]
+
+    def test_migrating_the_keyword_set_leaves_only_real_parameters(self):
+        cleaned, _ = migrate_reconstruct_config({k: None for k in self.HARNESS_KEYWORDS})
+        named = set(inspect.signature(reconstruct_mesh).parameters)
+        assert sorted(set(cleaned) - named) == []
+
+    def test_the_thirteen_real_ones_survive(self):
+        """Nothing that reaches the optimizer is dropped, so the harness keeps working."""
+        cleaned, _ = migrate_reconstruct_config({k: None for k in self.HARNESS_KEYWORDS})
+        assert len(cleaned) == 13
 
 
 class TestTheRefusalPointsAtTheMigrator:
