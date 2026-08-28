@@ -4,7 +4,8 @@
 
 **Updated:** 2026-08-28 · **Status:** open
 
-- **Next:** run the six-config comparison in §7 on the 139-case femur validation set. The
+- **Next:** make the two edits in §8b — five keys out of the harness, one migrator pass per
+  config — then run the six-config comparison in §7 on the 139-case femur validation set. The
   synthetic version is measured and in `docs/KNOWN_ISSUES.md` § Open; what it cannot tell
   us is whether a Wolfe line search still dominates on a trained decoder over real meshes.
   That single run also answers the questions the Aug-2025 sweep never wrote down: fastest,
@@ -24,6 +25,10 @@
   3. Three of the recipe's tuned parameters have never existed in NSM (§4.1).
   4. There is no line search. `lbfgs_lr=1.0` is an unguarded full quasi-Newton step, and
      `convergence="recon_loss"` is the only reason the sweep's numbers looked sane (§7).
+  5. The non-hybrid LBFGS path ignored `lbfgs_lr` until Aug 2026, so "L-BFGS alone does not
+     work" was concluded from fits running at `lr`, 200× smaller than configured (§8b).
+  6. `n_samples_latent_recon: 1e6` was a large no-op: it means "every vertex", ~230k
+     points, and any value above ~379k is identical to it (§8b).
 
 ---
 
@@ -295,6 +300,55 @@ The hard-projection path (`use_soft_norm_constraint: false`) is *not* on this li
 explains why it is close to a duplicate of the soft path at w=100. If it is tried anyway,
 note that `step_closure` applies the projection **after** computing the step's loss and
 gradients, mutating the parameter under the optimizer between its own inner iterations.
+
+## 8b. Resurrecting this: what to change before anything runs
+
+Distilled from the Torino run store (2026-08-28); those notes are not in this repo and do
+not need to be. Two mechanical edits, then the science.
+
+**1. The harness breaks on every run, not just hybrid ones.** `test_optimization.py`
+builds an explicit keyword dict and passes 18 non-core keys **unconditionally**, whatever
+the config says. Five name nothing in NSM at any commit — `min_rel_improve`, `grad_tol`,
+`param_change_tol`, `recon_tol`, `log_wandb_step` — so with `reconstruct_mesh` now refusing
+unknown keywords, a plain Adam baseline raises too. Delete those five from that dict.
+
+**2. Each config needs one pass of the migrator.**
+
+```python
+from NSM.reconstruct._config_migration import migrate_reconstruct_config
+clean, notes = migrate_reconstruct_config(config["optimization"])
+```
+
+On the 14-case winner: 42 keys in, 37 out, and it then runs. It removes the five above plus
+`latent_optimizer_name`, which `hybrid_optimizer=True` never read and which now raises when
+both are set. Every key that reaches the optimizer is asserted to survive, so migrating
+cannot move a number.
+
+**What the sweep's numbers actually mean, corrected against the meshes:**
+
+- `n_samples_latent_recon: 1e6` is **"use every vertex"**, not a 50× sample increase. The
+  per-surface budget is `1e6 // 4 = 250,000` against a largest observed surface of 94,680,
+  so every surface is capped at its full vertex set — ~230k points per knee. Anything above
+  ~379k is identical. The real change versus the 20k baseline was 20k → all points.
+- The 14-knee result (**−9.0% mean ASSD, better on 14 of 14**) cost 123 s/knee against
+  36 s/knee for Adam. L-BFGS is ~94% of optimization time.
+- `lbfgs_max_iter: 5` holds `max_iter: 20` accuracy at **2.3×** less time (0.0934 vs 0.0933
+  mean ASSD, 55.7 s vs 127.5 s). Projected, that is ~77 s/knee — still ~2× the Adam
+  baseline, so it makes the accuracy win cheaper without meeting the original speed goal.
+- The −9.0% is **confounded three ways** (optimizer, sample count, latent-norm) and no
+  ablation was run. All seven unconstrained-norm runs also used 20k samples, so
+  "L-BFGS needs the norm constraint" cannot be separated from sample count either.
+
+**What cannot be reproduced:** the 14-knee run happened during the window when a triplanar
+feature cache existed (added and removed the same afternoon, Aug 2025). Any re-run is a new
+measurement, not a reproduction.
+
+**One thing that changed under it since:** `lbfgs_lr`, `lbfgs_max_iter` and
+`lbfgs_history_size` are now read on the non-hybrid path too. They were hybrid-only, so a
+bare `optimizer_name="lbfgs"` ran at `lr` — 0.005 in these configs against the 1.0 the
+config asked for, a 200× smaller step with no line search to correct it. **Any conclusion
+that "L-BFGS alone does not work" drawn from that server was measured on a fit that never
+received its configured step size, and is worth re-testing before it is believed.**
 
 ## 9. How to run
 

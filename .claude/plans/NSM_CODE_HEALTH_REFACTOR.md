@@ -123,15 +123,19 @@
   it". Proposed as **§8.0.R**, after the release, because closing a site is either a
   refusal (no boundary) or a signature change (§8.0.O's boundary) and the set should be
   triaged once, together.
-- **Queued from review round 2, not yet done, both small:** (1) the subsampled-LBFGS
-  warning has two false negatives — it reads `optimizer_name` before `_normalized_choice`
-  folds case, so `"LBFGS"` skips it, and its guard compares `n_samples` against the cloud
-  size when the per-surface split is what decides the draw. (2) **The remedy that warning
-  and `KNOWN_ISSUES` § Open both recommend is wrong**: `n_samples=None` does *not* mean
-  the full cloud when surfaces have unequal point counts — measured, a 390-point cloud
-  split 300/90 draws **285**, and 250/250/100 draws 500 of 600. Since `get_rand_pts_recon`
-  is `false`, production's cloud *is* mesh vertices and bone/cartilage counts differ, so
-  the unequal case is the normal one. The guidance has to name a count, not `None`.
+- **Deferred to after the refactor, deliberately, so it is not re-opened mid-slice:** the
+  Aug-2025 reconstruction collapse (23 runs frozen at initialization) correlates with a
+  triplanar feature cache added and removed the same afternoon, but the mechanism does not
+  hold — the cache was gated to LBFGS steps and the divergence is at step 0, an Adam step,
+  where the forward was bit-identical and only the backward can have differed. One query
+  settles it (step-0 `total_loss` on a failed run against a good one) and **nothing acts on
+  the answer**: no production run used that path. Listed here rather than chased.
+- **Closed from review round 2 (2026-08-28):** both warning false negatives, and the wrong
+  `n_samples=None` remedy that went with them. The validation block moved to the top of
+  the function so the case fold precedes the guard, and `_samples_per_surface` is now one
+  helper shared by the draw and the guard — the class of defect being that a *signal*
+  described something other than what runs, which is the same shape as the five the slice
+  opened with.
 - **§8.0.K executed (2026-08-27), PR #94 open, stacked on #93:** commits 2–15 — the
   characterization, the shared keyword refusal, the value refusals, the `100` sentinel, the
   LR horizon, the ungating, `_select_samples`, the two loss helpers, #75's chunked step, the
