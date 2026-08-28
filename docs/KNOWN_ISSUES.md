@@ -151,14 +151,48 @@ values.
 
 `.flake8`'s `extend-ignore` has carried `F401` since before the Aug 2026 lint work. `make
 lint` reports zero violations, and separately there are **44** unused imports it will never
-show (`flake8 --extend-select=F401 NSM/ testing/`, 2026-08-27; 54 before §8.0.J opened
-`reconstruct/main.py`). "flake8 is at zero" is true and does not mean the imports are gone.
+show (`flake8 --extend-ignore="" --select=F401 NSM/ testing/`, re-run 2026-08-27; 54 before
+§8.0.J opened `reconstruct/main.py`). "flake8 is at zero" is true and does not mean the
+imports are gone.
+
+The command matters and the one recorded here until §8.0.K did not work:
+`--extend-select=F401` does not override an `extend-ignore` that already names `F401`, so
+it reports **0** and reads like the problem went away. `--extend-ignore=""` clears the
+ignore list; `--select` then narrows to the one code.
 
 *Fix:* not filed. Removing the ignore is a judgement call — several are deliberate
 re-exports, which is the usual reason `F401` gets ignored wholesale. `reconstruct/main.py`
 is the worked case: ten hits there were five dead imports, deleted, and five re-exports the
 import-compat test freezes, now carrying `# noqa: F401` and a comment. The two kinds are
 tellable apart one file at a time, which is what lifting the ignore would take.
+
+### Hybrid / LBFGS reconstruction is unvalidated on current NSM
+
+`optimizer_name="lbfgs"` and `hybrid_optimizer=True` run, and nothing in production uses
+them: both shipped configs and kneepipeline fit with Adam. Three things a caller should
+know before relying on either.
+
+**torch's LBFGS here has no line search.** `line_search_fn` is never set, so `lbfgs_lr` is
+the raw step length rather than a trust region, and a full quasi-Newton step at
+`lbfgs_lr=1.0` diverges routinely — latent norms of 172, 560 and 3444 have been observed.
+Setting `latent_norm` is the workaround that has been used; it caps the symptom.
+
+**A subsampled objective is redrawn on every loss evaluation**, and LBFGS evaluates several
+times per step, so it optimizes something that moves. Removing the redraw is not the fix —
+it is how the fit covers the point cloud, and the full cloud beats every subsampled regime
+measured. `reconstruct_latent` warns when it sees the combination and names the sample
+count to raise to. Note that `n_samples` is split per surface and capped at each surface's
+size, so a budget equal to the cloud size still subsamples when the surfaces are unequal.
+
+**The one multi-case result on record was produced on a code path that no longer exists**
+(a triplanar feature cache added and removed the same afternoon, Aug 2025), so it cannot be
+reproduced as measured.
+
+*Fix:* not filed. The measurements, the validated configuration and what it would take to
+resurrect are in `.claude/plans/HYBRID_OPTIMIZER_REPORT.md`.
+
+*Pinned by:* `test_reconstruct_latent_internals.TestTheDrawIsPerEvaluation` and
+`TestTheLbfgsParametersAreReadOnBothPaths`.
 
 ## `models/triplanar.py`
 
@@ -1251,10 +1285,10 @@ used the parameter. Those reconstructions should be re-run.
 
 | | |
 |---|---|
-| **Affected** | Any `reconstruct_mesh` or `get_mean_errors` call that passed a keyword the signature does not name — a misspelling, a renamed parameter, or one copied from a sibling function |
-| **Unaffected** | Calls whose keywords all spell a real parameter, which is every NSM-internal one and kneepipeline's. `batch_size_latent_recon` was and remains deliberately accepted |
+| **Affected** | Any `reconstruct_mesh`, `get_mean_errors` or `reconstruct_latent` call that passed a keyword the signature does not name — a misspelling, a renamed parameter, or one copied from a sibling function |
+| **Unaffected** | Calls whose keywords all spell a real parameter, which is every NSM-internal one and kneepipeline's. `batch_size_latent_recon` (`reconstruct_mesh`) and `max_batch_size` (`reconstruct_latent`) were and remain deliberately accepted |
 | **Severity** | Silent — the run completed, reported nothing, and used the default for the parameter the caller believed they had set |
-| **Fixed in** | `reconstruct-mesh-internals`, Aug 2026 (plan §8.0.J) |
+| **Fixed in** | `reconstruct-mesh-internals`, Aug 2026 (plan §8.0.J); the `reconstruct_latent` site in `latent-fit-internals`, Aug 2026 (plan §8.0.K) |
 
 ### What was wrong
 
@@ -1268,13 +1302,176 @@ at all.
 
 It now raises `TypeError`, naming the unknown key.
 
+**The same hole was one call level down and was fixed a slice later.**
+`reconstruct_latent` takes 38 named parameters and a `**kwargs` read for exactly one key,
+`max_batch_size`. Measured across seven misspellings — `num_iteration`,
+`latent_reg_wieght`, `clamp_distance`, `lattent_size`, `optimiser_name`, `n_iterations`,
+`lr_` — all seven completed a fit with no exception, no warning and no log record.
+`reconstruct_mesh` splats a dict of 36 keys into it, all of them real parameters, so a
+caller who reached this second site had called `reconstruct_latent` directly.
+
 ### How to tell whether one of your runs is affected
 
 Re-run the same call under fixed code. If it raises `TypeError`, that keyword was being
-ignored, and the run used the default shown in `reconstruct_mesh`'s signature for whatever
-you meant to set. The two that change a result rather than a diagnostic are the grid
+ignored, and the run used the default shown in the signature for whatever you meant to
+set. The two that change a result rather than a diagnostic are the grid
 (`n_pts_per_axis`, default 256) and the fit (`num_iterations` 1000, `lr` 5e-4,
 `latent_reg_weight` 1e-4, `clamp_dist` None); a misspelling among those means the run was
-not configured as recorded and should be re-run.
+not configured as recorded and should be re-run. For `reconstruct_latent` the fit
+parameters are the whole list — there is no grid.
 
-*Pinned by:* `test_reconstruct_mesh_contracts.TestUnknownKeywordsAreRefused`.
+*Pinned by:* `test_reconstruct_mesh_contracts.TestUnknownKeywordsAreRefused` and
+`test_reconstruct_latent_internals.TestUnknownKeywordsAreRefused`.
+
+
+## 21. `reconstruct_latent` returned the number 100 instead of a loss
+
+| | |
+|---|---|
+| **Affected** | Any `reconstruct_latent` call with `convergence="recon_loss"` — the mode `NSM/configs/default_config.json` ships as `convergence_type_recon` — that read the first element of the returned `(loss, latent)` |
+| **Unaffected** | `convergence="overall_loss"` and `convergence="num_iterations"`, and every `reconstruct_mesh` / `get_mean_errors` caller: `reconstruct_mesh` binds the returned loss and never reads it, so no reconstruction result, metric or mesh is touched. The fitted latent was always correct |
+| **Severity** | Silent — a plausible-looking constant where a loss was expected |
+| **Fixed in** | `latent-fit-internals`, Aug 2026 (plan §8.0.K) |
+
+### What was wrong
+
+`loss` and `recon_loss` were both initialised to the literal `100` and each did two jobs:
+the sentinel the next step is compared against, and the value returned. Under
+`convergence="recon_loss"` only `recon_loss` was ever updated, so `loss` was still `100` at
+the `return`. Measured exactly: the returned loss is the int `100`, not a tensor.
+
+The same sentinel had a second failure. It was not worse than every loss, so a fit whose
+losses never dropped below 100 recorded no step at all and raised
+`UnboundLocalError: local variable 'latent_' referenced before assignment` — after running
+every iteration it was asked for. That half always crashed, so it costs nobody a result;
+it is recorded here because it is the same line.
+
+`loss` is now recorded with the latent it belongs to, and the sentinel is `float("inf")`.
+
+### How to tell whether one of your runs is affected
+
+Only a number you logged is affected, never a latent or a mesh. If you have a
+`reconstruct_latent` loss recorded as exactly `100` — or `100` for every subject in a
+cohort — that is this, and the fit itself was fine. Re-running is not necessary; the
+recorded loss is simply not a loss.
+
+*Pinned by:* `test_reconstruct_latent_internals.TestTheReturnedLossIsALoss`.
+
+
+## 22. `hybrid_optimizer` decayed its learning rate to zero, and ignored `optimizer_name`
+
+| | |
+|---|---|
+| **Affected** | Any `reconstruct_latent` or `reconstruct_mesh` call with `hybrid_optimizer=True`, `n_lr_updates` set, and `adam_iterations` larger than `num_iterations` |
+| **Unaffected** | Every run at the default `hybrid_optimizer=False`, which is both shipped configs and kneepipeline. Hybrid mode has never been on a production path |
+| **Severity** | Silent — the Adam phase stopped moving the latent partway through and reported nothing |
+| **Fixed in** | `latent-fit-internals`, Aug 2026 (plan §8.0.K) |
+
+### What was wrong
+
+`adjust_lr_every` was derived from `num_iterations`, but with `hybrid_optimizer=True` the
+loop runs `adam_iterations + lbfgs_iterations` and `num_iterations` is read for nothing
+else. So `n_lr_updates` meant a different thing in each mode. Measured at
+`num_iterations=10, adam_iterations=100, n_lr_updates=2, lr_update_factor=10`: **11 decays
+ending at exactly 0.0**, where the same 100 Adam steps scheduled over their own horizon
+take one. An Adam phase at learning rate 0.0 leaves the latent where the previous step put
+it, for the rest of the phase.
+
+Separately, `optimizer_name` was not consulted at all in hybrid mode — the loop derives its
+optimizer from the step number. `hybrid_optimizer=True` with a non-default
+`optimizer_name` now raises rather than discarding one half of the pair.
+
+### How to tell whether one of your runs is affected
+
+If `adam_iterations <= num_iterations` the schedule was already right. Otherwise the
+learning rate reached `lr * lr_update_factor ** -(adam_iterations // (num_iterations //
+n_lr_updates))`; if that is at or below float underflow, the tail of the Adam phase did
+nothing and the latent is whatever the last non-zero-LR step produced. Re-run affected
+fits — the fitted latent is not the one the configuration describes.
+
+*Pinned by:*
+`test_reconstruct_latent_internals.TestTheLearningRateScheduleSpansThePhaseItSteps`.
+
+
+## 23. An unrecognised `convergence` silently meant "num_iterations"
+
+| | |
+|---|---|
+| **Affected** | Any `reconstruct_latent` or `reconstruct_mesh` call whose `convergence` was not exactly `"num_iterations"`, `"overall_loss"` or `"recon_loss"` — a typo, a capitalisation such as `"Recon_Loss"`, `None`, or `""` |
+| **Unaffected** | The three exact spellings, which is every NSM-internal call, both shipped configs and kneepipeline (`convergence_type_recon` is `"recon_loss"`) |
+| **Severity** | Silent — the fit ran to completion with early stopping disabled, and reported nothing |
+| **Fixed in** | `latent-fit-internals`, Aug 2026 (plan §8.0.K) |
+
+### What was wrong
+
+The convergence block is `if convergence == "overall_loss": ... elif convergence ==
+"recon_loss": ... else: <treat as num_iterations>`. The `else` is a real branch, not a
+missing one, so an unrecognised value selected it. Measured across `"Recon_Loss"`,
+`"recon_los"`, `""`, `None` and `"banana"`: all five completed and returned a latent
+bit-identical to `convergence="num_iterations"`.
+
+The consequence is not a wrong number but a missing behaviour: `convergence_patience`
+never applies, the fit runs every one of `num_iterations` steps, and the returned latent is
+the last one rather than the best one. For a fit that would have converged and stopped
+early, the difference is however far the latent drifted afterwards.
+
+`convergence` is now case-folded and then refused, alongside `optimizer_name` and
+`loss_type`.
+
+### How to tell whether one of your runs is affected
+
+Check the spelling in the config or call that produced the run, against the three values
+above; case matters only in the sense that it used to. If it does not match one of them
+exactly, the run had no early stopping. Re-running matters if `convergence_patience` was
+meant to be doing something — compare the recorded step count against `num_iterations`: an
+affected run used all of them.
+
+*Pinned by:*
+`test_reconstruct_latent_internals.TestUnknownValuesAreRefusedWhereTheyAreNamed`.
+
+
+## 24. A multi-surface draw was weighted towards whichever surface had the most vertices
+
+| | |
+|---|---|
+| **Affected** | `reconstruct_latent` / `reconstruct_mesh` fits with more than one surface where **some surface had fewer points than `n_samples // n_surfaces`** — i.e. the budget was large enough to exhaust the smallest surface |
+| **Unaffected** | Single-surface fits at any setting, and any multi-surface fit whose every surface has at least its share — which is the shipped configuration (`n_samples_latent_recon: 20000` over surfaces of tens of thousands of vertices) and kneepipeline. Both draw identically before and after |
+| **Severity** | Silent — the fit ran, and sampled space unevenly around the surfaces |
+| **Fixed in** | `latent-fit-internals`, Aug 2026 (plan §8.0.K) |
+
+### What was wrong
+
+Each surface was given `n_samples // n_surfaces` points, capped at what it had:
+`min(share, count)`. Nothing redistributed what a small surface could not use, so the draw
+was **neither of the two things it could sensibly be** — not balanced, because a surface
+below its share contributed less than the others while they kept theirs; and not the
+requested size, because the shortfall was dropped without a word. On a 300/90 cloud,
+`n_samples=390` drew `[195, 90]`.
+
+That matters because `pts_surface` does not route points to losses — every surface's SDF is
+evaluated at every drawn point — so what it controls is where in space the samples come
+from. An uneven draw weights the fit towards whichever surface has the most vertices.
+
+A top-up from the whole cloud was written into the draw loop and was unreachable
+(`n_samples_` was rebound above it, so `current_filled` always equalled it; measured at 0
+executions across 49 surface-count and budget combinations). That was the other design —
+draw the requested count and accept the imbalance — and it has been deleted rather than
+repaired.
+
+Every surface now contributes the same count, held to what the smallest contributing
+surface can supply. The cost is stated rather than hidden: with unequal surfaces the whole
+cloud is unreachable, and raising `n_samples` past `n_surfaces × smallest_surface` does
+nothing.
+
+### How to tell whether one of your runs is affected
+
+Compare `n_samples // n_surfaces` against your smallest surface's point count. If every
+surface has at least that many, the draw is unchanged and so is the result. If any surface
+is smaller, that run sampled unevenly: the deficit surface contributed all of itself while
+the others contributed the full share, so the fit was weighted towards the larger surfaces
+by the ratio between them. Re-run if the imbalance was large — with four surfaces of
+62,530 / 48,407 / 82,213 / 35,808 vertices and `n_samples` above ~143,000, the old draw took
+every vertex of each (228,958 points, ratio 2.3:1 largest to smallest) where the new one
+takes 35,808 from each.
+
+*Pinned by:* `test_reconstruct_latent_internals.TestTheMultiSurfaceDrawIsBalanced`.

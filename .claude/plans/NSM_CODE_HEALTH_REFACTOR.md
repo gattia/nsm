@@ -6,24 +6,203 @@
 
 **Updated:** 2026-08-27 · **Status:** open
 
-- **Next:** write and execute **§8.0.K** — `reconstruct_latent` internals: #75, the
-  **191**-line nested `compute_loss` (the slice index says 185; measured 424–614 on the
-  #92 merge), the hybrid Adam/LBFGS branch. Its statement is commit 1 of that slice and is
-  not written yet. Nothing blocks it: `main` is at PR #92's merge, and §8.0.J stopped at
-  the `reconstruct_latent(**reconstruct_inputs)` call and left `latent_fit.py` untouched.
-  Three things measured for the statement rather than left to it:
-  **(1) the swallowed keyword is here too, unfixed.** `latent_fit.py:254` takes `**kwargs`,
-  reads exactly one key from it (`max_batch_size`, a deprecation warning at `:275`) and
-  discards every other keyword across **38 named parameters** — History entry 20's defect,
-  one call level down. `reconstruct_mesh`'s own callers are covered by §8.0.J's refusal;
-  direct callers of `reconstruct_latent` are not. `_refuse_unknown_kwargs` is written and
-  needs its own `_DEPRECATED_KWARGS` set here. This is CLAUDE.md's "fix the class of
-  defect": §8.0.J enumerated one site and this is the second.
-  **(2) the signature is not this slice's either.** 38 named plus `**kwargs`; it is a
-  public entry point like `reconstruct_mesh`, so it joins §8.0.O's set — the internals are
-  what K owns.
-  **(3) budget the extraction at two lines per parameter** (§8.0.J's finding), against a
-  744-line module whose one function is 532 of it.
+- **Next:** write and execute **§8.0.L** — `train_epoch`'s loss pipeline, the statement
+  §8.0.D deferred and said would come due. Its statement is commit 1 of that slice and is
+  not written yet. Measured against `main` rather than left for the statement to discover:
+  **`train_epoch` is 391 lines, not the slice index's ~270**, in a 772-line module it is
+  half of, on 7 parameters with no `**kwargs` — so it is the first slice since §8.0.G with
+  no swallowed-keyword hole to close and no public signature in §8.0.O's set. `train_deep_sdf`
+  itself is 159 lines beside it. §8.0.G's residue is **already absent here**: the file has
+  zero `if verbose` gates, so §8.0.K's largest single commit has no counterpart in §8.0.L.
+  **Blocked on nothing** once #94 merges; #94 is stacked on #93, so **merge #93 first**.
+- **§8.0.K, review round 2 (2026-08-28): the accepted-and-ignored class has a fourth site
+  in this function, and the § Open entry named the wrong mechanism.** Audited while
+  re-deriving `HYBRID_OPTIMIZER_REPORT.md` against the code. (1) `optimizer_name="lbfgs"`
+  reads **none** of `lbfgs_lr`, `lbfgs_max_iter`, `lbfgs_history_size` — it builds the
+  optimizer from `lr` with `max_iter=10, history_size=100` hardcoded. Requested (1.0, 3, 7),
+  constructed (0.005, 10, 100). The slice found three sites of "the value is consulted
+  somewhere other than where it is named" and stopped at three; this is the fourth, and
+  it is the one that silently changes a step size by 200×. **Not fixed here**: the repair is
+  a signature decision — drop the `lbfgs_` prefix and read them on both paths, or delete the
+  non-hybrid path — so it belongs with §8.0.O. § Open records it. (2) The new subsampled-LBFGS
+  warning has two false negatives: it reads `optimizer_name` at line 573, *before*
+  `_normalized_choice` folds case at line 607, so the spelling round 1 deliberately started
+  accepting is the one that skips the warning; and its guard `n_samples < xyz.shape[0]`
+  misses a surface capped at its `n_samples // n_surfaces` share (390k cloud, one 300k
+  surface, `n_samples=1e6` → draws 340k, no warning). Both one-line fixes; both wait on the
+  same slice. **The lesson: a refusal added late in a slice does not know about the checks
+  written earlier in it.** (3) `line_search_fn` is never set, so § Open's "the line search
+  searches something that moves" named a mechanism that does not run — the redraw corrupts
+  `y = g_{k+1} - g_k`, not a search. Corrected. The measurement was unaffected, which is the
+  point: it was made on the code. (4) `retain_graph=True` in `step_closure` is unnecessary
+  — each closure call builds its own graph — and inflates the peak memory #75 exists to
+  bound. Verified bit-identical without it. Cheapest of the four to fix and the only one
+  that is not a signature change.
+- **§8.0.K, review round 1 (maintainer, 2026-08-28): the LBFGS resampling was strategy,
+  not a defect, and the measurement I had not run says so.** The slice hoisted sample
+  selection out of the loss on the argument that a line search over a moving objective is
+  undefined. The theory is right and is not what dominates: the redraw is how the fit
+  *covers the point cloud*, so hoisting it cuts coverage in proportion. LBFGS, 20 problems
+  at equal decoder evaluations, median held-out error against noise-free truth, by sampling
+  ratio — 1.6%: **0.034 → 0.202**; 5%: **0.007 → 0.029**; 20%: 0.0049 → 0.0054; 50%:
+  0.0042 → 0.0045, with cloud coverage 95% → 41% at the 5% ratio. The gap tracks coverage
+  and closes as the ratio rises. My stale-curvature explanation was tested and eliminated
+  (resetting LBFGS's history each draw made it *worse*: 13/20 diverged against 7/20).
+  Reverted; the fit is bit-identical to the pre-change code, LBFGS included, and § History
+  23 was deleted rather than shipped. `_select_samples` stays — extracting it was the good
+  half. **The lesson is narrower than "measure first", which the slice did: every other
+  claim in it was measured on the code, and this one needed a measurement of the
+  *outcome*. A defect that is a defect only in theory needs an experiment, not a probe.**
+  **The follow-up question — "can we just use pymskt's blue-noise sampler?" — is measured
+  and the answer is no, twice over.** (1) `rand_sample_pts_mesh(..., method="bluenoise")`
+  is `pcu.sample_mesh_poisson_disk`: it samples points *on a mesh surface*.
+  `_select_samples` picks a subset of an existing N×3 cloud of already-scored points, most
+  of them off-surface, and has no mesh. Wrong shape of problem. (2) The strategy it
+  suggests was measured anyway — drawing per step *without replacement* from a rotating
+  permutation, which gives a fixed objective and 100% coverage per epoch — and it does not
+  rescue it: 0.056 median / 11 of 20 diverged, against 0.0066 / 2 for the redraw. **What
+  wins is not subsampling at all**: the full cloud is 0.0038 / 0 of 20 at every ratio, and
+  is better than the per-evaluation redraw rather than a compromise with it, because a
+  deterministic objective is what lets LBFGS converge. The memory ceiling that forced
+  subsampling is exactly what #75 removed one commit earlier, so the recommendation costs
+  nothing to take. Recorded in `KNOWN_ISSUES` § Open with a runtime warning naming the
+  remedy; **no issue filed, because the remaining sampling-strategy question now has thin
+  motivation.**
+  **Separately and not in this slice:** `mesh_sampling.py` passes `surface_method="random"`
+  at both of its call sites, where pymskt offers `"bluenoise"`. That is the layer where the
+  blue-noise sampler *does* fit — cloud generation, not subset selection — and it changes
+  every cached dataset, so it belongs to the dataset slices, not here.
+- **§8.0.K, review round 1, second item: case is folded, not refused, and `convergence`
+  joins the set.** The slice refused `optimizer_name="Adam"` on the grounds that accepting
+  it is how a parameter grows two spellings. That was wrong on its own evidence: NSM's
+  training path spells its optimizers `"Adam"` and `"AdamW"` (`utils.get_optimizer`,
+  `default_config.json`'s `optimizer` key), so refusing that spelling is the library
+  disagreeing with itself — and folding creates no second spelling, because everything
+  downstream reads the normalised value. Asking the question found a **ninth** defect of
+  the same class and the worst of them: `convergence`'s missing `else` is the *default
+  branch*, so `"Recon_Loss"`, `""` and `None` were all accepted and silently meant
+  `"num_iterations"` — early stopping off, no signal. § History 23.
+- **The refusal's blast radius is a harness script, not a config file, and that is worse.**
+  Reported back from the Torino run store (2026-08-28): `test_optimization.py` does *not*
+  splat its config — it builds an explicit 53-key dict and passes **18 non-core keywords
+  unconditionally, regardless of what the config says**. Five of the eighteen name nothing
+  in NSM at any commit (`min_rel_improve`, `grad_tol`, `param_change_tol`, `recon_tol`,
+  `log_wandb_step`; `recon_tol` was not in the config this repo has a copy of, and was
+  found only from the harness's key list). So against current `main` **every run of that
+  harness raises, including a plain Adam baseline that never mentioned any of them**. A
+  config-shaped migration was the right idea and the wrong unit: `_config_migration` now
+  covers the harness's keyword set too, and its test asserts the 13 real ones survive.
+  **The general lesson for the refusals still to come: the thing that breaks is whatever
+  passes a *fixed* keyword set, and its failure is total rather than per-config.**
+- **§8.0.K, review round 3 (maintainer, 2026-08-28): two approvals and a standing
+  mandate.** (a) `retain_graph=True` in the LBFGS closure is deleted — it was justified by
+  a comment saying LBFGS calls the closure many times, which is true and irrelevant, since
+  each call builds its own graph and none is backwarded twice. Measured 2265 → 1240 MiB
+  peak for one step at 60k points, bit-identical latent; the 1.83× landed on exactly the
+  allocation `n_samples_per_chunk` exists to bound. (b) The refusals stay a raise, on the
+  condition that a config they break can be repaired by a function rather than by trial
+  and error — `_config_migration.migrate_reconstruct_config`, transitional, delete-when in
+  its header, and every key it drops asserted inert so migrating cannot move a number.
+- **The maintainer's standing mandate — "this library is too big and has too many
+  options; start simplifying things that are not used" — needs its premise corrected
+  before it becomes a slice, and the correction is measured.** Across `reconstruct_mesh`,
+  `reconstruct_latent`, `create_mesh`, `create_mesh_adaptive`, `get_mean_errors` and
+  `train_epoch` — **148 parameters, 0 never referenced in their own body.** Restricting to
+  the production surface (NSM itself, the shipped configs, kneepipeline; tests excluded
+  because the suite sets nearly everything by construction), only **5 of 100** are never
+  set: `n_pts_per_axis_mean_mesh`, `decoder_to_scale`, `recon_grid_origin`,
+  `return_timing` (a legitimate opt-in diagnostic) and `n_samples_per_chunk_latent_recon`
+  (added by this slice). **A "delete the unused options" pass would find about two.**
+  The size is real; *unused* is not the reason for it. What §8.0.K actually kept finding
+  is the other shape — **a parameter read on one path and ignored on another**, five
+  sites in one function: `optimizer_name` under `hybrid_optimizer`, `lbfgs_lr` /
+  `lbfgs_max_iter` / `lbfgs_history_size` on the non-hybrid path, and `log_wandb_step`,
+  which `reconstruct_latent` names and `reconstruct_mesh` never forwards. **That is the
+  sweep worth running, and it is a different slice from a deletion pass:** the question
+  per parameter is not "does anyone set it" but "is it read on every path that accepts
+  it". Proposed as **§8.0.R**, after the release, because closing a site is either a
+  refusal (no boundary) or a signature change (§8.0.O's boundary) and the set should be
+  triaged once, together.
+- **Deferred to after the refactor, deliberately, so it is not re-opened mid-slice:** the
+  Aug-2025 reconstruction collapse (23 runs frozen at initialization) correlates with a
+  triplanar feature cache added and removed the same afternoon, but the mechanism does not
+  hold — the cache was gated to LBFGS steps and the divergence is at step 0, an Adam step,
+  where the forward was bit-identical and only the backward can have differed. One query
+  settles it (step-0 `total_loss` on a failed run against a good one) and **nothing acts on
+  the answer**: no production run used that path. Listed here rather than chased.
+- **Closed from review round 2 (2026-08-28):** both warning false negatives, and the wrong
+  `n_samples=None` remedy that went with them. The validation block moved to the top of
+  the function so the case fold precedes the guard, and `_samples_per_surface` is now one
+  helper shared by the draw and the guard — the class of defect being that a *signal*
+  described something other than what runs, which is the same shape as the five the slice
+  opened with.
+- **§8.0.K executed (2026-08-27), PR #94 open, stacked on #93:** commits 2–15 — the
+  characterization, the shared keyword refusal, the value refusals, the `100` sentinel, the
+  LR horizon, the ungating, `_select_samples`, the two loss helpers, #75's chunked step, the
+  debug-record deletion, the dead `broken()` helper in both characterization files, the two
+  review rounds above, and this update. Suite 884 → 929 passed / 1 skipped / 3 xfailed:
+  **all 19 strict xfails commit 2 raised were retired inside the slice**, and the 3 that
+  remain are the regression harness's. Four § History entries (20 extended with its second
+  site, 21 the returned sentinel, 22 the hybrid LR horizon, 23 the silent `convergence`), three
+  CHANGELOG Breaking/Changed/Added blocks, `ARCHITECTURE` §5's row, `SCOPE` §3.1's
+  positional-surface note. `reconstruct_latent` is 532 → 425 lines; its nested
+  `compute_loss` is 191 → 48. **#75 is closed by the PR.**
+- **The size budget was missed for the fourth slice running, and the mechanism is a new
+  one — not §8.0.J's.** Budget +128 net in `NSM/`, ceiling +155, actual **+193**. §8.0.J's
+  finding (price a keyword-only boundary at two lines per parameter) was applied and was
+  roughly right: the three helpers came in at +96 against +83 budgeted. What was wrong was
+  the *removal* line, budgeted at −55 and delivered at −21. It priced "the inlined bodies
+  the helpers replace" as a removal, and **an extraction removes nothing — it moves.** The
+  only real removals in the slice were the 13 `verbose` gates and the debug records. So the
+  rule for §8.0.L is: **an extraction's budget is signature + docstring + call site, and
+  zero on the removal line.** §8.0.H's miss was transitional code priced at zero, §8.0.I's
+  was refusals priced by net lines, §8.0.J's was call sites priced at zero; this one is
+  moved code priced as deleted code. All four are the same error in different clothes —
+  budgeting the part you are thinking about and not the part the language makes you write.
+- **The other +12 is #75, budgeted +60 and delivered +72**, and it is worth naming because
+  it is a shape, not an overrun: three call sites needed the chunked path (Adam's step,
+  the LBFGS closure, the LBFGS no-grad tracking pass), so a `loss_with_gradient` seam was
+  cheaper than three `if n_samples_per_chunk is None` branches. **A capability with N call
+  sites costs a seam, not N branches** — price the seam.
+- **An eighth defect of the stated seven, found while fixing the second.** With
+  `hybrid_optimizer=True`, `optimizer_name` is read *nowhere*: the loop derives its
+  optimizer from the step number. Accepted and ignored, which is the trap NSM's own rule
+  says to close rather than implement — and there was nothing to implement, because hybrid
+  mode *is* Adam then LBFGS. It is fixed in the same commit as the defect that exposed it
+  rather than filed, per "fix the class of defect": the class here is *the value is
+  consulted somewhere other than where it is named*, and this is that class's third site
+  in one function.
+- **The parameter for #75 is `n_samples_per_chunk`, not the statement's
+  `latent_chunk_size`.** The statement's own justification — "named for what it splits" —
+  ruled out its own name: it splits the step's *points*, not the latent, and
+  `n_samples_per_chunk` sits beside `n_samples` and `max_n_samples` in the same signature.
+  It is threaded through `reconstruct_mesh` as `n_samples_per_chunk_latent_recon`, which
+  the statement did not plan: the refusal landed in commit 3 means an unthreaded parameter
+  would be *unreachable* from the entry point production calls, so the capability would
+  have shipped closed.
+- **Two commits swapped against the statement's order, for a reason worth keeping.**
+  Ungating (planned 8th) ran before the extraction (planned 7th), because a helper
+  extracted first has to take `verbose` as a parameter and then lose it one commit later.
+  **Ungate before you extract**: the gate is what forces the parameter.
+- **Two numbers this slice was about to inherit were wrong, and both were caught by
+  running them.** (1) `KNOWN_ISSUES` § Open's `F401` command,
+  `flake8 --extend-select=F401`, reports **0** — `--extend-select` does not override an
+  `extend-ignore` that already names the code, so the entry read as if the problem had
+  gone away. The count of 44 is right; `--extend-ignore="" --select=F401` is what
+  reproduces it, and the entry now says so. (2) The ungating commit's own claim that the
+  ungated `.mean()`/`.std()` cost "2%" (3.526 → 3.601s) is inside run-to-run variance —
+  repeats of the same build land anywhere in 3.37–3.60s. Corrected in the commit that
+  deleted those records, which stands on the torch warning and the duplication instead.
+  **This is rule 1 in both directions: a number that is not recomputed goes stale, and a
+  number recomputed once is not yet a measurement.**
+- **Measured and deferred, so it is not re-found:** `reconstruct_latent(pts_surface=None)`
+  is the signature default and `None` raises `ValueError` from the type check, so the
+  signature declares optional a parameter that has never been. Correcting it moves a
+  parameter from optional to required — the same release boundary as the four public
+  signatures, so it is §8.0.O's with them.
+- **The State block's "~180 `verbose`-gated records" was an estimate; it is 135.** Measured
+  by AST across `NSM/`. §8.0.K cleared 25 of them, the largest single file after
+  `sdf_dataset.py` (38) and `mesh/main.py` (31); **110 remain** across eight files.
 - **§8.0.J merged to `main` in PR #92 (2026-08-27), branch deleted:** commits 2–9 whole —
   the characterization, the keyword refusal, `register_similarity`, the reference mesh,
   the ungating plus dead code, the timing recorder, the extraction, and this update. Suite 864 → 884 passed / 1 skipped
@@ -2459,6 +2638,212 @@ Past **+95** is scope creep. Tests are additive and outside the budget.
 | the extraction is a refactor, not a change | the full result dict — meshes vertex-for-vertex, latent, every metric and registration key — compared against the pre-refactor implementation on a fixed analytic decoder and a fixed seed |
 | the suite still passes | 864 passed / 1 skipped / 3 xfailed on `main` at `e9ec5d0` is the baseline every commit is compared against |
 
+### 8.0.K `reconstruct_latent` internals — plan statement (2026-08-27)
+
+Every number below was re-run against `main` at `7f1da23` before it was written. Two of
+the slice-index row's numbers came back different, and one of the State block's did.
+
+**What the row says and what is there.** `reconstruct_latent` is **38 named parameters
+plus `**kwargs`** in a **532-line** function (344 executable lines of body, 43 of
+signature), inside a 744-line module it is 71% of. The nested `compute_loss` is **191**
+lines, not the row's 185. Repo-wide, **135** log records sit behind a `verbose` gate, not
+the State block's estimate of ~180; **25 of them are in this file**, the third-largest
+concentration after `sdf_dataset.py` (38) and `mesh/main.py` (31).
+
+**The signature is not this slice's to shrink**, for §8.0.J's reason and by the same
+evidence: `reconstruct_latent` is frozen public API on both `NSM.reconstruct` and
+`NSM.reconstruct.main` (`test_reconstruct_import_compat`), so it is the fourth member of
+§8.0.O's set — with `reconstruct_mesh` (58), `create_mesh_adaptive` (26) and `create_mesh`
+(17). All four shrink at one release boundary or none of them does. What §8.0.K owns is
+the 474 lines behind it.
+
+**What is actually wrong, measured.** Seven defects. Six of them are one shape — *a value
+is accepted where it is named and consulted somewhere else*, so the failure surfaces
+detached from its cause, or does not surface at all.
+
+*Defect 1 — the swallowed keyword, one call level down from §8.0.J's.* `**kwargs` is read
+for exactly one key (`max_batch_size`, a deprecation warning at `:275`) and every other
+keyword is discarded, across 38 near-synonymous parameter names. Measured: `num_iteration`,
+`latent_reg_wieght`, `clamp_distance`, `lattent_size`, `optimiser_name`, `n_iterations`
+and `lr_` — **7 of 7** — complete a fit with no exception, no warning and no log record
+naming the key. This is `KNOWN_ISSUES` § History 20's defect at its second site;
+§8.0.J fixed `reconstruct_mesh`'s callers and left `reconstruct_latent`'s own.
+
+*Defect 2 — `optimizer_name` is validated nowhere and consulted 100 lines later.* The
+`if/elif` that builds the optimizer has no `else`, so any third value leaves `optimizer`
+unassigned. Measured: `optimizer_name="sgd"` and `optimizer_name="Adam"` — the capitalised
+spelling of the default — both raise `UnboundLocalError: local variable 'optimizer'
+referenced before assignment`, from the step loop, naming a local the caller has never
+heard of instead of the parameter they set.
+
+*Defect 3 — the same shape for `loss_type`, and it escapes into a closure.*
+`loss_type="l1_smooth"` or `"L1"` raises `NameError: free variable 'loss_fn' referenced
+before assignment in enclosing scope` — from inside `compute_loss`, so the traceback's
+last frame is a nested function that does not appear in the signature the caller read.
+
+*Defect 4 — the `100` sentinel returns itself, on the shipped default.* `loss` and
+`recon_loss` are initialised to the literal `100`. Under `convergence="recon_loss"` only
+`recon_loss` is ever updated, so the function **returns the int `100`** as the first half
+of its documented `(loss, latent)` — measured exactly, and `convergence_type_recon` is
+`"recon_loss"` in `NSM/configs/default_config.json`, which is what kneepipeline passes
+(`steps/run_nsm.py:207`). The second half of the same sentinel is worse: a fit whose losses
+never drop below 100 leaves `latent_` unassigned, so both convergence modes raise
+`UnboundLocalError: local variable 'latent_' referenced before assignment` **after running
+every iteration** — measured by scaling `sdf_gt` by 1000. `reconstruct_mesh` is unaffected
+by the first half: it discards the returned loss (`main.py:537` binds it and nothing reads
+it), which is why this has stood.
+
+*Defect 5 — hybrid mode's LR schedule is computed over a horizon it does not run.*
+`adjust_lr_every` comes from `num_iterations`, but with `hybrid_optimizer=True` the loop
+runs `adam_iterations + lbfgs_iterations` and `num_iterations` is otherwise ignored.
+Measured, `num_iterations=10, adam_iterations=100, n_lr_updates=2, lr_update_factor=10`:
+the LR is decayed **11 times, ending at exactly 0.0**, for a caller who asked for 2. The
+Adam phase of a hybrid fit therefore stops moving the latent partway through, silently.
+
+*Defect 6 — `compute_loss` draws a fresh random sample every time it is called, and LBFGS
+calls it many times per step.* Measured on one LBFGS step at `n_samples=50` of 100 points:
+**7 forward passes on 7 distinct sample sets**. L-BFGS's line search and curvature update
+both assume the objective is a fixed function of the parameter; here it changes under
+them. The seventh call is the no-grad tracking pass, so the loss that feeds the convergence
+test is measured on a draw the step never optimised. Adam is unaffected — it calls
+`compute_loss` once per step — which is why production has not seen it.
+
+*Defect 7 — §8.0.G's residue, 25 records of it.* 25 of this file's 30 `logger` calls sit
+under `if verbose is True:`. Three are `warning`s about the result rather than chatter: a
+surface's `sdf_gt` was `None` and was skipped (`:544`), the decoder emits more surfaces
+than there is ground truth for and the loop exited early (`:533`), and a `sdf_gt` entry was
+`None` during preprocessing (`:101`). A host that configures logging — the point of
+§8.0.G — sees none of the three unless it also passes the parameter §8.0.G deprecated.
+
+**#75 — the capability gap, re-measured on the hardware the issue used.** Tesla T4, one
+step at 200,000 points, DeepSDF-shaped decoder (latent 256, 8×512), peak CUDA allocation
+above baseline:
+
+| design | issue #75 (2026-08-23) | re-measured (2026-08-27) |
+|---|---|---|
+| unchunked — the current code | 4120 MiB | **4104 MiB** |
+| 30k chunks, one backward at the end | 3412 MiB | **3412 MiB** |
+| 30k chunks, backward per chunk | 624 MiB | **616 MiB** |
+
+**6.7×**, and the gradient agrees with the unchunked one to `2.2e-11` absolute
+(`2.9e-07` relative). The issue's warning is the design constraint: restoring
+`batch_size_latent_recon`'s *name* without per-chunk backward would be the
+accepted-and-ignored trap twice over.
+
+**Target shape (all permanent — this slice adds no transitional module).**
+
+- **Unknown keywords are refused by name, from one helper.** §8.0.J's
+  `_refuse_unknown_kwargs` moves to `NSM/reconstruct/utils.py` — where
+  `adjust_learning_rate` already lives and both entry points already import from — taking
+  the function name and its deprecated-key set as arguments. `reconstruct_mesh` keeps
+  `batch_size_latent_recon`, `reconstruct_latent` keeps `max_batch_size`. Two call sites,
+  one implementation: this is CLAUDE.md's "fix the class of defect", and a third entry
+  point later should not be a third copy.
+- **`optimizer_name` and `loss_type` are refused where they are named**, with a message
+  listing the accepted values. Refusing is the fix, not normalising case: `"Adam"` is a
+  typo, and silently accepting it is how a parameter starts having two spellings.
+- **The `100` sentinels go.** The comparison sentinel becomes `math.inf`, so the first
+  step always wins and `latent_` is bound before any `break` can be reached; and
+  `convergence="recon_loss"` returns the total loss at the step it selected, so
+  `(loss, latent)` means what the docstring says under all three convergence modes.
+- **The hybrid LR schedule spans the phase it steps**: `adjust_lr_every` is derived from
+  the number of Adam iterations that will actually run, so `n_lr_updates` means the same
+  thing in both modes.
+- **Sample selection happens once per optimization step**, above `compute_loss` rather
+  than inside it. Bit-identical for Adam — the RNG is consumed in the same order at the
+  same point — and it is what makes the LBFGS closure a fixed objective.
+- **The loss body becomes three keyword-only private helpers** — `_select_samples`,
+  `_recon_loss`, `_regularization_losses` — leaving a `compute_loss` that reads as the
+  three-line sum it is. Keyword-only (`*`) for §8.0.I review round 2's reason: no later
+  author can write a positional call across one of these boundaries. **Three, not more.**
+  The optimizer-step branch is two `if` arms of four lines; the wandb block is one dict
+  and one call. Extracting either would be structure invented to match a plan sentence.
+- **#75 is fixed with a parameter that is read**: `latent_chunk_size=None` (default:
+  today's single forward, bit-identical), and when set, the per-step sample is split into
+  chunks whose losses are backwarded one at a time, accumulating on the latent. Named for
+  what it splits, not for the parameter that never did this.
+- **The 25 log records stop being gated on the deprecated flag**, the three `warning`s
+  included. `verbose=True` still shows all 25 — the bridge attaches at `DEBUG`
+  (`_verbose_deprecation.py:82`); what changes is that a host configured at `DEBUG` sees
+  them too, and the three warnings reach a host configured at `WARNING`.
+
+**Deliberately NOT in this slice, each for a stated reason.**
+
+- **Shrinking the 38-parameter signature.** §8.0.O's, with the other three, at one
+  release boundary.
+- **`reconstruct_latent_S3.py`.** A separate 365-line module with its own copy of this
+  loop and 16 more gated records. It is not on the production path, it is not what the row
+  names, and merging the two is a design question, not a defect fix. It stays for §8.0.M's
+  sweep or a row of its own.
+- **The remaining 110 `verbose`-gated records.** Same shape, in `sdf_dataset.py` (38),
+  `mesh/main.py` (31) and six other files this slice does not open. §8.0.N is where the
+  last of them is checked for.
+- **`max_batch_size`'s deprecation warning itself.** It stays warning; deleting an
+  accepted-and-warned parameter is a Breaking change and belongs at §8.0.O with the
+  signature it is attached to.
+- **Making `pts_surface` a required parameter.** Its default is `None` and `None` raises
+  `ValueError` from the type check, so the signature declares optional something that has
+  never been. Correcting it moves a parameter from keyword-optional to required, which is
+  the same release boundary as everything else above.
+
+**Size budget, by part** — priced at §8.0.J's finding of **two lines per parameter** for a
+keyword-only boundary, plus the body:
+
+| part | budget |
+|---|---|
+| the shared keyword refusal (net: moved, generalised, second call site) | +10 |
+| `optimizer_name` / `loss_type` refusals, with their messages | +20 |
+| convergence bookkeeping | +5 |
+| hybrid LR horizon | +5 |
+| `_select_samples` — 9 parameters, signature + docstring | +30 |
+| `_recon_loss` — 8 parameters, signature + docstring | +28 |
+| `_regularization_losses` — 7 parameters, signature + docstring | +25 |
+| #75: the chunked step, its parameter and its docstring | +60 |
+| removed: 13 `verbose` gates, the sentinels, the inlined bodies the helpers replace | −55 |
+| **net in `NSM/`** | **+128** |
+
+Past **+155** is scope creep. Tests are additive and outside the budget. This is a larger
+budget than §8.0.J's because #75 is new capability rather than a fix, and it is stated
+separately above so that growth in the *refactor* half is still visible against +68.
+
+**Sequence** (one commit each; `make lint` clean and the full suite green at every step):
+
+1. this statement;
+2. characterization — the seven-typo `**kwargs` matrix, the `optimizer_name` and
+   `loss_type` value matrices, the returned-loss identity under all three convergence
+   modes, the `latent_` binding under a >100 loss, the hybrid LR trajectory, the LBFGS
+   per-step sample-set count, the record set at `DEBUG` without `verbose`, and a
+   handoff pin per seam the extraction will cut. Strict xfails for what is broken;
+3. the keyword refusal shared between the two entry points;
+4. `optimizer_name` and `loss_type` refused where they are named;
+5. the `100` sentinels, and the loss `convergence="recon_loss"` returns;
+6. the hybrid LR schedule spans the phase it steps;
+7. sample selection happens once per step — `_select_samples`, and the LBFGS objective
+   stops moving under its own line search;
+8. the 25 log records ungated;
+9. `_recon_loss` and `_regularization_losses` extracted, keyword-only —
+   behaviour-preserving;
+10. #75: `latent_chunk_size`, chunked forward with per-chunk backward, default off;
+11. docs sweep (`KNOWN_ISSUES` § History, CHANGELOG, `SCOPE` and `ARCHITECTURE` where they
+    describe this function) and this plan's State.
+
+**Verification per claim:**
+
+| Claim | Verification |
+|---|---|
+| unknown keywords are accepted and ignored today | the commit-2 matrix: seven misspellings of real parameters complete a fit with no exception, no warning and no log record naming the key; its strict xfails XPASS at commit 3 |
+| the refusal does not break the one caller | `reconstruct_mesh`'s own `reconstruct_inputs` dict is 36 keys and every one is a named parameter (asserted against the live signature by AST, so a key added later without a parameter turns it red), and `max_batch_size` still warns and runs |
+| `optimizer_name` / `loss_type` fail detached from their cause | parameterised over `"sgd"`, `"Adam"`, `"l1_smooth"`, `"L1"`: today `UnboundLocalError`/`NameError` naming `optimizer` and `loss_fn`; after commit 4 a `ValueError` naming the parameter and its accepted values |
+| `convergence="recon_loss"` returns the sentinel | `loss is 100` asserted exactly, and after commit 5 the returned loss equals the total loss recorded at the step whose recon loss was selected |
+| a >100 loss loses the whole fit | `sdf_gt * 1000`, both convergence modes: today `UnboundLocalError` on `latent_`; after commit 5 a fitted latent is returned |
+| hybrid mode annihilates its LR | a spy on `adjust_learning_rate`: today 11 decays to 0.0 for `n_lr_updates=2`; after commit 6, 2 decays, and the non-hybrid trajectory for the same total step count is unchanged |
+| LBFGS optimises a moving objective | a recording decoder counts distinct sample sets within one step: 7 today, 1 after commit 7 |
+| moving sample selection is inert for Adam | the fitted latent is bit-identical across commit 7 on a fixed seed, for both the subsampled and the full-sample paths |
+| ungating changes nothing for `verbose=True` | the record set under `verbose=True` asserted equal before and after; the added case is a host at `DEBUG` with no `verbose`, empty today, and a host at `WARNING` seeing the three skipped-surface warnings |
+| the extraction is a refactor, not a change | the returned `(loss, latent)` bit-identical against the pre-refactor implementation on a fixed seed, across single- and multi-surface decoders, subsampled and not |
+| `latent_chunk_size=None` is today's code | the fitted latent bit-identical to the pre-#75 implementation on a fixed seed |
+| chunking bounds memory and preserves the gradient | on CPU, the accumulated `latent.grad` matches the unchunked one to `<1e-6` relative for every chunk size that divides and does not divide the sample count; the 4104 → 616 MiB measurement above is recorded in the test's docstring as the evidence for why the option exists, since it needs a GPU to reproduce |
+| the suite still passes | 884 passed / 1 skipped / 3 xfailed on `main` at `7f1da23` is the baseline every commit is compared against |
 
 ### 8.1 Make the library plural — added 2026-08-15
 
