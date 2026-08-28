@@ -166,6 +166,48 @@ is the worked case: ten hits there were five dead imports, deleted, and five re-
 import-compat test freezes, now carrying `# noqa: F401` and a comment. The two kinds are
 tellable apart one file at a time, which is what lifting the ignore would take.
 
+### LBFGS on a subsampled objective: the line search searches something that moves
+
+`reconstruct_latent` redraws its random subsample on **every loss evaluation**. For Adam
+that is once per step, so the draw and the step coincide. L-BFGS evaluates the loss several
+times per step — line search, then a no-gradient pass to record the loss — and both its
+line search and its secant condition assume the objective is a fixed function of the
+parameter. It is not.
+
+The redraw is not gratuitous: it is how the fit covers the point cloud. Removing it makes
+things worse, which is why this entry is Open rather than fixed. Measured over 20 problems
+at an equal 12,000-decoder-evaluation budget, LBFGS, median held-out error against
+noise-free truth:
+
+| draw | 5% ratio | 20% ratio | cloud seen (5%) |
+|---|---|---|---|
+| per evaluation (today) | 0.0066, 2/20 diverged | 0.0049, 0/20 | 95% |
+| per step | 0.115, 12/20 | 0.0061, 3/20 | 47% |
+| per step, without replacement | 0.056, 11/20 | 0.0066, 3/20 | 54% |
+| **full cloud** (`n_samples=None`) | **0.0038, 0/20** | **0.0038, 0/20** | **100%** |
+
+**The full cloud is not a compromise between the two, it is better than both**, because a
+deterministic objective is what lets L-BFGS converge at all — it reached that error in one
+outer step of the budget. Cycling a permutation so each step gets a disjoint block is the
+obvious way to have a fixed objective *and* full coverage; it was measured and does not
+rescue it.
+
+*Affects:* `optimizer_name="lbfgs"` or `hybrid_optimizer=True` **with** `n_samples` below
+the supplied point count. Adam is unaffected at any `n_samples`. Neither shipped config nor
+kneepipeline selects LBFGS, so no production result is involved.
+
+*What to do:* pass `n_samples=None` and bound memory with `n_samples_per_chunk` instead —
+the memory ceiling that made subsampling necessary is what
+[#75](https://github.com/gattia/nsm/issues/75) removed. `reconstruct_latent` logs a warning
+naming that remedy when it sees the combination.
+
+*Not fixed because* the remaining question is a sampling-strategy one, not a cadence one,
+and it is not obviously worth solving: a deterministic well-covering draw (stratified, or
+blue noise) would give a subsampled LBFGS fit both properties, but the full cloud already
+beats every subsampled regime measured, so the motivation is thin.
+
+*Pinned by:* `test_reconstruct_latent_internals.TestTheDrawIsPerEvaluation`.
+
 ## `models/triplanar.py`
 
 ### Latent gradients are summed over query points, so the reg balance depends on N

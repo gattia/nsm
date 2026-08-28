@@ -230,10 +230,14 @@ def _select_samples(
     rises (identical at 50%), so it is coverage that is doing the work, not the line
     search. See ``TestTheDrawIsPerEvaluation``.
 
-    The theoretical objection is real but is not this function's to answer: L-BFGS assumes
-    a deterministic objective, and a *deterministic* draw with good coverage -- stratified,
-    or blue noise -- would satisfy both. That is a sampling-strategy change, not a cadence
-    one.
+    L-BFGS assumes a deterministic objective, so subsampling and LBFGS genuinely collide.
+    The answer measured is not a cleverer draw but no draw at all: at the same decoder
+    budget, the **full cloud** beats every subsampled regime -- median held-out 0.0038 and
+    0/20 divergences, against 0.0066 and 2/20 for the per-evaluation redraw at a 5% ratio
+    -- because a deterministic objective lets LBFGS actually converge. Drawing per step
+    without replacement, the obvious middle option, was measured and does not rescue it
+    (0.056 median, 11/20). The memory ceiling that forced subsampling is what
+    ``n_samples_per_chunk`` (#75) removes, so the full cloud is now affordable.
 
     Returns ``(xyz_input, sdf_gt_)``, the points and the per-surface ground truth aligned
     to them; ``sdf_gt_`` keeps ``None`` for a surface that has none.
@@ -560,6 +564,21 @@ def reconstruct_latent(
     # Setup n_samples, if not specified.
     if n_samples is None:
         n_samples = xyz.shape[0]
+
+    # A subsampled objective is redrawn on every loss evaluation, which is what gives the
+    # fit its coverage of the point cloud (see `_select_samples`). L-BFGS evaluates the
+    # loss several times per step and assumes a deterministic objective while doing so, so
+    # this combination is the one place the two requirements collide -- and it is
+    # measurably the worst of the options, not merely the least principled.
+    if (optimizer_name == "lbfgs" or hybrid_optimizer) and n_samples < xyz.shape[0]:
+        logger.warning(
+            "LBFGS is evaluating a subsampled objective (n_samples=%s of %s points), which "
+            "redraws between its own line-search evaluations. Prefer the full cloud "
+            "(n_samples=None) with n_samples_per_chunk set to bound memory; see "
+            "docs/KNOWN_ISSUES.md (Open) for the measurement.",
+            n_samples,
+            xyz.shape[0],
+        )
 
     if (max_n_samples is not None) and (n_steps_sample_ramp is not None):
         logger.debug("Ramping up number of samples")

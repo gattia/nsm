@@ -30,9 +30,25 @@
   half. **The lesson is narrower than "measure first", which the slice did: every other
   claim in it was measured on the code, and this one needed a measurement of the
   *outcome*. A defect that is a defect only in theory needs an experiment, not a probe.**
-  The theoretical objection survives and cadence does not answer it: a *deterministic*
-  draw with good coverage — stratified, or blue noise — gives the line search a fixed
-  objective and keeps the coverage. Drafted as an issue, not filed.
+  **The follow-up question — "can we just use pymskt's blue-noise sampler?" — is measured
+  and the answer is no, twice over.** (1) `rand_sample_pts_mesh(..., method="bluenoise")`
+  is `pcu.sample_mesh_poisson_disk`: it samples points *on a mesh surface*.
+  `_select_samples` picks a subset of an existing N×3 cloud of already-scored points, most
+  of them off-surface, and has no mesh. Wrong shape of problem. (2) The strategy it
+  suggests was measured anyway — drawing per step *without replacement* from a rotating
+  permutation, which gives a fixed objective and 100% coverage per epoch — and it does not
+  rescue it: 0.056 median / 11 of 20 diverged, against 0.0066 / 2 for the redraw. **What
+  wins is not subsampling at all**: the full cloud is 0.0038 / 0 of 20 at every ratio, and
+  is better than the per-evaluation redraw rather than a compromise with it, because a
+  deterministic objective is what lets LBFGS converge. The memory ceiling that forced
+  subsampling is exactly what #75 removed one commit earlier, so the recommendation costs
+  nothing to take. Recorded in `KNOWN_ISSUES` § Open with a runtime warning naming the
+  remedy; **no issue filed, because the remaining sampling-strategy question now has thin
+  motivation.**
+  **Separately and not in this slice:** `mesh_sampling.py` passes `surface_method="random"`
+  at both of its call sites, where pymskt offers `"bluenoise"`. That is the layer where the
+  blue-noise sampler *does* fit — cloud generation, not subset selection — and it changes
+  every cached dataset, so it belongs to the dataset slices, not here.
 - **§8.0.K, review round 1, second item: case is folded, not refused, and `convergence`
   joins the set.** The slice refused `optimizer_name="Adam"` on the grounds that accepting
   it is how a parameter grows two spellings. That was wrong on its own evidence: NSM's
