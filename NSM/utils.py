@@ -29,7 +29,14 @@ PARAM_GROUP_TARGET_KEY = "target"
 
 class LearningRateSchedule:
     def get_learning_rate(self, epoch):
-        pass
+        # Not `pass`. A None returned from here is assigned straight into param_group["lr"]
+        # by adjust_learning_rate, and surfaces at optimizer.step() as "unsupported operand
+        # type(s) for /: 'NoneType' and 'float'" -- naming neither the schedule, nor the
+        # group, nor the config entry behind it.
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement get_learning_rate(epoch). Every "
+            f"LearningRateSchedule subclass must return the rate for an epoch."
+        )
 
 
 class ConstantLearningRateSchedule(LearningRateSchedule):

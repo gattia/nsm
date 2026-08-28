@@ -363,16 +363,13 @@ class TestTheScheduleBaseClass:
     before anything looks at it.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="§8.0.M: the base body is `pass`, so an unoverridden get_learning_rate "
-        "returns None and the failure surfaces inside torch.optim",
-    )
     def test_a_subclass_that_forgets_to_override_refuses(self):
+        """Was a strict xfail: the base body was ``pass``, so it returned ``None``."""
+
         class Forgot(LearningRateSchedule):
             pass
 
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(NotImplementedError, match="Forgot"):
             Forgot().get_learning_rate(0)
 
     def test_the_none_it_returns_today_reaches_the_optimizer(self):
