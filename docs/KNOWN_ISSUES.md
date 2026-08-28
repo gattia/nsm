@@ -166,13 +166,20 @@ is the worked case: ten hits there were five dead imports, deleted, and five re-
 import-compat test freezes, now carrying `# noqa: F401` and a comment. The two kinds are
 tellable apart one file at a time, which is what lifting the ignore would take.
 
-### LBFGS on a subsampled objective: the line search searches something that moves
+### LBFGS on a subsampled objective: the curvature pairs are differenced across two objectives
 
 `reconstruct_latent` redraws its random subsample on **every loss evaluation**. For Adam
 that is once per step, so the draw and the step coincide. L-BFGS evaluates the loss several
-times per step — line search, then a no-gradient pass to record the loss — and both its
-line search and its secant condition assume the objective is a fixed function of the
-parameter. It is not.
+times per step — `max_iter` inner iterations, then a no-gradient pass to record the loss
+— and it builds its inverse-Hessian approximation from `y = g_{k+1} - g_k`, a difference of
+two gradients that is only a curvature estimate if both are gradients of the *same*
+function. Under the redraw they are not.
+
+**Not, as an earlier version of this entry said, a line search.** `line_search_fn` is
+`None`, torch's default, and `reconstruct_latent` never sets it — so no line search runs at
+all, and each inner iteration takes a fixed step of size `lr` along the quasi-Newton
+direction. That has its own consequence, in the entry below. The measurement here is
+unaffected: it was made on the code as it runs.
 
 The redraw is not gratuitous: it is how the fit covers the point cloud. Removing it makes
 things worse, which is why this entry is Open rather than fixed. Measured over 20 problems
@@ -201,12 +208,80 @@ the memory ceiling that made subsampling necessary is what
 [#75](https://github.com/gattia/nsm/issues/75) removed. `reconstruct_latent` logs a warning
 naming that remedy when it sees the combination.
 
+**That warning has two holes, so its silence is not evidence.** (1) It reads
+`optimizer_name` before `_normalized_choice` folds case, so the now-accepted spelling
+`"LBFGS"` skips it. (2) Its guard is `n_samples < xyz.shape[0]`, but `_select_samples`
+splits `n_samples` evenly across surfaces — on a 390,000-point cloud whose largest surface
+holds 300,000, `n_samples=1,000,000` draws 340,000 and the guard is `False`. Both verified;
+both are one-line fixes waiting on the same slice as the entry below.
+
 *Not fixed because* the remaining question is a sampling-strategy one, not a cadence one,
 and it is not obviously worth solving: a deterministic well-covering draw (stratified, or
 blue noise) would give a subsampled LBFGS fit both properties, but the full cloud already
 beats every subsampled regime measured, so the motivation is thin.
 
 *Pinned by:* `test_reconstruct_latent_internals.TestTheDrawIsPerEvaluation`.
+
+### `optimizer_name="lbfgs"` ignores every `lbfgs_*` parameter it is offered
+
+`reconstruct_latent` names four LBFGS knobs — `lbfgs_lr`, `lbfgs_max_iter`,
+`lbfgs_history_size`, and through them `lbfgs_iterations` — and reads the first three
+**only when `hybrid_optimizer=True`**. On the plain `optimizer_name="lbfgs"` path the
+optimizer is built from `lr` with `max_iter` and `history_size` hardcoded:
+
+```python
+>>> # requested lbfgs_lr=1.0, lbfgs_max_iter=3, lbfgs_history_size=7, lr=0.005
+>>> # constructed: {'lr': 0.005, 'max_iter': 10, 'history_size': 100}
+```
+
+`lr` is typically the Adam learning rate a config was written around — `0.005` in every
+shipped model config — so a caller who switches `optimizer_name` to `"lbfgs"` and sets
+`lbfgs_lr=1.0` gets a step **200× smaller** than they asked for, silently. This is
+`ARCHITECTURE.md` §7's "parameter accepted and silently ignored" class, at a fourth site in
+the function where §8.0.K closed three.
+
+*Affects:* `optimizer_name="lbfgs"` with `hybrid_optimizer=False`, at either entry point.
+Hybrid mode reads all three correctly. Neither shipped config nor kneepipeline selects
+LBFGS.
+
+*Fix:* not filed — the repair is a decision, not a patch. Either the three parameters drop
+their `lbfgs_` prefix and are read on both paths, or the non-hybrid path is deleted and
+`hybrid_optimizer` with `adam_iterations=0` becomes the only way to reach LBFGS. Both are
+signature changes, so they belong with §8.0.O's release boundary.
+
+### LBFGS takes an unguarded fixed step, and early stopping is what hides it
+
+`line_search_fn` is never set, so torch's LBFGS takes a step of exactly `lr` along the
+quasi-Newton direction (`min(1, 1/‖g‖₁) · lr` on the first inner iteration) with nothing
+checking that the step decreased the loss. At the `lbfgs_lr=1.0` the hybrid path defaults
+to — the value that is standard *because* it is normally paired with a Wolfe line search —
+this diverges routinely on a nonconvex latent fit.
+
+Measured on 20 synthetic fitted-latent problems (frozen random MLP decoder, 16-d latent,
+1500-point full cloud, L1, held-out median |pred − truth| against noise-free truth):
+
+| config | `convergence="num_iterations"` | `convergence="recon_loss"` | decoder evals |
+|---|---|---|---|
+| Adam, `lr=0.01`, 1000 steps | 0.0073 | 0.0048 | 1001 |
+| LBFGS, `lr=1.0`, 90 steps | 5.62 (worst 1.0e6) | 0.184 | 554 |
+| hybrid, Adam 10 + LBFGS 50 | 3.24 (worst 2.1e9) | 0.200 | 373 |
+| hybrid, Adam 200 + LBFGS 20 | 3.10 (worst 1.1e18) | 0.104 | 414 |
+| **LBFGS + `line_search_fn="strong_wolfe"`** | **0.0000** | **0.0000** | **738** |
+
+Two things to read off it. **`convergence="recon_loss"` is load-bearing for every LBFGS
+path**, not a tuning preference: it snapshots the best latent seen, which is what discards
+the divergence — 5.62 → 0.18 for LBFGS, 3.24 → 0.20 for the hybrid. Under
+`convergence="num_iterations"` the fit returns the last latent, blow-up included. And **a
+Wolfe line search removes the problem rather than surviving it**: it is the best result in
+the table under both convergence modes and the cheapest of the accurate ones.
+
+*Affects:* every LBFGS and hybrid fit. Adam is unaffected — it has no line search to want.
+
+*Not fixed because* adding `line_search_fn` changes the result of every LBFGS fit, and the
+measurement above is synthetic: the direction is credible, the magnitudes are not
+transferable to a trained NSM decoder on real meshes. What it justifies is running the same
+comparison on the 139-case femur validation set, which is
+`.claude/plans/HYBRID_OPTIMIZER_REPORT.md`'s **Next**.
 
 ## `models/triplanar.py`
 
