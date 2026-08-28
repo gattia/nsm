@@ -289,22 +289,11 @@ def _schedule_free_eval_warmup(model, latent_vecs, data_loader, optimizer, confi
     optimizer.eval()
     with torch.no_grad():
         for sdf_data, indices in itertools.islice(data_loader, 50):
-            xyz = sdf_data["xyz"].to(config["device"]).reshape(-1, 3)
-            indices = (
-                indices.to(config["device"])
-                .unsqueeze(-1)
-                .repeat(1, config["samples_per_object_per_batch"])
-                .view(-1)
-            )
-            xyz = torch.chunk(xyz, config["batch_split"])
-            indices = torch.chunk(indices, config["batch_split"])
-            for split_idx in range(config["batch_split"]):
-                batch_vecs = latent_vecs(indices[split_idx])
-                if "variational" in config and config["variational"] is True:
-                    mu = batch_vecs[:, : config["latent_size"]]
-                    logvar = batch_vecs[:, config["latent_size"] :]
-                    std = torch.exp(0.5 * logvar)
-                    batch_vecs = std * torch.randn_like(std) + mu
+            xyz, indices, _ = _split_batch(sdf_data=sdf_data, indices=indices, config=config)
+            for split_idx in range(len(xyz)):
+                batch_vecs, _, _ = _batch_latents(
+                    latent_vecs=latent_vecs, indices=indices[split_idx], config=config
+                )
                 model(torch.cat([batch_vecs, xyz[split_idx]], dim=1), epoch=epoch)
 
 
@@ -378,6 +367,226 @@ def _run_validation(config, model):
     )
 
 
+def _surface_l1_loss(
+    *,
+    pred_sdf,
+    sdf_gt,
+    split_idx,
+    num_sdf_samples,
+    surface_weights,
+    epoch,
+    config,
+):
+    """
+    One split's L1 term, and the per-surface parts it is built from.
+
+    Returns ``(l1_loss, l1_losses)``, one entry per surface of ``sdf_gt``, which is where
+    the surface count comes from. ``l1_losses`` is the per-surface, per-sample error
+    after the two curriculum-SDF stages and after division by ``num_sdf_samples`` -- the
+    *batch's* point count, not the split's, which is what makes the splits sum to the
+    batch mean. ``l1_loss`` is those parts weighted by ``surface_weights`` and divided by
+    the surface count.
+
+    The reported per-surface metrics are taken from ``l1_losses``, i.e. before weighting,
+    so ``l1_loss`` equals their mean under uniform weights and does not under an explicit
+    ``surface_weighting``. That is deliberate: the decomposition is the raw per-surface
+    error beside the weighted objective.
+
+    Curriculum SDF equations 5 and 6 (``surface_accuracy_e``, ``sample_difficulty_weight``)
+    are both epoch-scheduled and both no-ops when their config value is ``None``.
+    """
+    logger.debug("pred_sdf shape %s", pred_sdf.shape)
+    l1_losses = []
+    for surf_idx in range(len(sdf_gt)):
+        logger.debug("surf idx %s", surf_idx)
+        logger.debug("pred_sdf surface slice shape %s", pred_sdf[:, surf_idx].shape)
+        logger.debug("sdf_gt shape %s", sdf_gt[surf_idx][split_idx].shape)
+        l1_losses.append(
+            loss_l1(
+                pred_sdf[:, surf_idx],
+                sdf_gt[surf_idx][split_idx].squeeze(1).to(config["device"]),
+            )
+        )
+
+    # curriculum SDF equation 5
+    # progressively fine-tune the regions of surface cared about by the network.
+    if config["surface_accuracy_e"] is not None:
+        weight_schedule = 1 - calc_weight(
+            epoch,
+            config["n_epochs"],
+            config["surface_accuracy_schedule"],
+            config["surface_accuracy_cooldown"],
+        )
+        for l1_idx, l1_loss in enumerate(l1_losses):
+            l1_losses[l1_idx] = torch.maximum(
+                l1_loss - (weight_schedule * config["surface_accuracy_e"]),
+                torch.zeros_like(l1_loss),
+            )
+
+    # curriculum SDF equation 6
+    # progressively fine-tune the regions of surface cared about by the network.
+    # weighting gives higher preference to regions closer to surface / with opposite sign.
+    if config["sample_difficulty_weight"] is not None:
+        weight_schedule = calc_weight(
+            epoch,
+            config["n_epochs"],
+            config["sample_difficulty_weight_schedule"],
+            config["sample_difficulty_cooldown"],
+        )
+        difficulty_weight = weight_schedule * config["sample_difficulty_weight"]
+        for surf_idx, surf_gt_ in enumerate(sdf_gt):
+            # Weights points independently
+            # so, if hard for one surface - then we weight it heavily, but if
+            # easy for another surface - then we weight it less.
+            error_sign = torch.sign(
+                surf_gt_[split_idx].squeeze(1).to(config["device"]) - pred_sdf[:, surf_idx]
+            )
+            sdf_gt_sign = torch.sign(surf_gt_[split_idx].squeeze(1).to(config["device"]))
+            sample_weights = 1 + difficulty_weight * sdf_gt_sign * error_sign
+            l1_losses[surf_idx] = l1_losses[surf_idx] * sample_weights
+
+    # Weight each surface loss by the number of samples it has
+    # so that the sum of them all is the same as the mean loss.
+    for idx, l1_loss_ in enumerate(l1_losses):
+        l1_losses[idx] = l1_loss_ / num_sdf_samples
+
+    l1_loss = 0
+    for l1_idx, l1_loss_ in enumerate(l1_losses):
+        l1_loss += l1_loss_.sum() * surface_weights[l1_idx]
+    l1_loss = l1_loss / len(l1_losses)
+
+    logger.debug("l1 losses: %s", [l1_loss_.sum().item() for l1_loss_ in l1_losses])
+    logger.debug("l1 loss: %s", l1_loss.item())
+    return l1_loss, l1_losses
+
+
+def _code_regularization_loss(*, batch_vecs, mu, logvar, num_sdf_samples, epoch, config):
+    """
+    The latent-code regularization term for one split, warmed up and optionally annealed.
+
+    Four priors, and they normalize differently on purpose. The variational branch is a
+    KLD against a unit Gaussian, already a per-subject mean, so it is not divided again;
+    the three non-variational priors are sums over the split's rows and are divided by the
+    batch's point count, the same normalizer the L1 term uses.
+
+    ``mu`` and ``logvar`` come from :func:`_batch_latents` and are ``None`` unless the
+    model is variational -- in which case they are what the KLD is computed from, and
+    ``batch_vecs`` is the sample drawn from them.
+    """
+    if "variational" in config and config["variational"] is True:
+        reg_loss = torch.mean(-0.5 * torch.sum(1 + logvar - mu**2 - logvar.exp(), dim=1), dim=0)
+        code_reg_norm = 1
+    else:
+        prior = config["code_regularization_type_prior"]
+        if prior == "spherical":
+            # spherical prior
+            # all latent vectors should have the same unit length
+            # therefore, the latent dimensions will be correlated
+            # with one another - this is as opposed to PCA (and below).
+            reg_loss = torch.sum(torch.norm(batch_vecs, dim=1))
+        elif prior == "identity":
+            # independently penalize each dimension/value of latent code
+            # therefore latent code ends up having identity covariance matrix
+            reg_loss = torch.sum(torch.square(batch_vecs))
+        elif prior == "kld_diagonal":
+            reg_loss = get_kld(batch_vecs)
+        else:
+            raise ValueError(f"Unknown code regularization type prior: {prior}")
+        code_reg_norm = num_sdf_samples
+
+    reg_loss = (
+        config["code_regularization_weight"]
+        * min(1, epoch / config["code_regularization_warmup"])
+        * reg_loss
+    ) / code_reg_norm
+
+    if config["code_cyclic_anneal"] is True:
+        reg_loss = reg_loss * cyclic_anneal_linear(epoch=epoch, n_epochs=config["n_epochs"])
+    return reg_loss
+
+
+def _split_batch(*, sdf_data, indices, config):
+    """
+    One batch's points and per-sample subject indices, moved to the device and split.
+
+    Returns ``(xyz_chunks, index_chunks, n_points)``. ``n_points`` is the whole batch's
+    point count, before splitting -- the per-surface losses are divided by it, so that the
+    splits sum to the batch mean whatever ``batch_split`` is.
+
+    ``torch.chunk`` returns **at most** ``batch_split`` pieces: it splits into pieces of
+    ``ceil(len / k)`` and stops when the tensor runs out, so ``chunk(16, 5)`` is 4 and
+    ``chunk(16, 7)`` is 5. Callers must iterate ``len(xyz_chunks)``, not the config value.
+
+    ``config["samples_per_object_per_batch"]`` restates the dataset's ``subsample`` -- the
+    two are set on different objects and nothing else holds them together -- so it is
+    checked against the batch here, rather than surfacing as a ``torch.cat`` size error
+    further down.
+
+    Shared with :func:`_schedule_free_eval_warmup`, which has to unpack a batch the same
+    way the epoch does (#42): one implementation is what keeps them in step.
+    """
+    xyz = sdf_data["xyz"].to(config["device"]).reshape(-1, 3)
+    xyz.requires_grad = False
+    indices = indices.to(config["device"])
+
+    per_object = config["samples_per_object_per_batch"]
+    if xyz.shape[0] != indices.shape[0] * per_object:
+        raise ValueError(
+            f"samples_per_object_per_batch is {per_object}, but this batch carries "
+            f"{xyz.shape[0]} points across {indices.shape[0]} objects. That key restates "
+            f"the dataset's `subsample`; set the two to the same value."
+        )
+    per_sample_indices = indices.unsqueeze(-1).repeat(1, per_object).view(-1)
+    return (
+        torch.chunk(xyz, config["batch_split"]),
+        torch.chunk(per_sample_indices, config["batch_split"]),
+        xyz.shape[0],
+    )
+
+
+def _batch_latents(*, latent_vecs, indices, config):
+    """
+    The latent rows one split needs, reparameterised when the model is variational.
+
+    Returns ``(batch_vecs, mu, logvar)``, with ``mu`` and ``logvar`` ``None`` outside the
+    variational branch. A variational embedding is ``2 * latent_size`` wide -- mean and
+    log-variance per row (:func:`NSM.utils.get_latent_vecs`) -- and what the decoder gets
+    is a sample from it, so the returned ``batch_vecs`` is ``latent_size`` wide either way.
+
+    Shared with :func:`_schedule_free_eval_warmup` for the same reason as
+    :func:`_split_batch`: the warm-up recalibrates normalization statistics and has to feed
+    the decoder what the epoch feeds it.
+    """
+    batch_vecs = latent_vecs(indices)
+    if "variational" in config and config["variational"] is True:
+        mu = batch_vecs[:, : config["latent_size"]]
+        logvar = batch_vecs[:, config["latent_size"] :]
+        std = torch.exp(0.5 * logvar)
+        return std * torch.randn_like(std) + mu, mu, logvar
+    return batch_vecs, None, None
+
+
+def _surface_weights(config, n_surfaces):
+    """
+    Per-surface loss weights, normalized to sum to ``n_surfaces`` so that the weighted
+    mean is on the same scale as the unweighted one.
+
+    ``config["surface_weighting"]`` must have one entry per surface. Absent or not a
+    sequence means uniform.
+    """
+    weighting = config.get("surface_weighting", None)
+    if not isinstance(weighting, (list, tuple)):
+        return [1] * n_surfaces
+    if len(weighting) != n_surfaces:
+        raise ValueError(
+            f"surface_weighting has {len(weighting)} entries but the decoder emits "
+            f"{n_surfaces} surfaces. These must match: the entries are read positionally, "
+            f"and the normalization sums all of them whether they are read or not."
+        )
+    total = sum(weighting)
+    return [weight / total * n_surfaces for weight in weighting]
+
+
 def train_epoch(
     model,
     data_loader,
@@ -398,13 +607,43 @@ def train_epoch(
     Returns a flat dict: ``loss``, ``epoch_time_s``, ``l1_loss``,
     ``latent_code_regularization_loss``, ``mean_vec_length``/``std_vec_length`` (epoch
     means over batches), per-surface ``l1_loss_{i}``, the four load-timing keys only
-    when the dataset actually timed a disk load (#22), ``eikonal_loss`` only when the
-    (gated) eikonal weight is on, and ``latent_{i}`` wandb histograms with their
-    mean/std when ``config["log_latent"]`` is set.
+    when the dataset actually timed a disk load (#22), and ``latent_{i}`` wandb histograms
+    with their mean/std when ``config["log_latent"]`` is set.
+
+    ``l1_loss`` equals the mean of the per-surface ``l1_loss_{i}`` under uniform weighting
+    and does not under an explicit ``surface_weighting``: the per-surface records are the
+    raw error, the total is the weighted objective.
 
     ``n_surfaces`` must match the decoder's ``objects_per_decoder`` and the dataset's
-    per-subject surface count: ``gt_sdf`` columns are read positionally by surface.
+    per-subject surface count: ``gt_sdf`` columns are read positionally by surface. The
+    per-object sample count is checked against ``config["samples_per_object_per_batch"]``,
+    and ``multi_object_overlap``, ``eikonal_weight`` and a mis-sized ``surface_weighting``
+    are refused below before any batch is fetched.
     """
+    # Refused here rather than where they are consulted. train_deep_sdf gates
+    # eikonal_weight at its own entry, but train_epoch is public
+    # (test_train_import_compat) and train_deep_sdf_multi_head calls it with no gate, so
+    # the loss the plan calls gated ran through this function. multi_object_overlap used
+    # to raise a bare Exception from the innermost loop, 174 lines below the read and
+    # after a full forward and backward.
+    if config.get("eikonal_weight", 0) > 0:
+        raise NotImplementedError(EIKONAL_UNSUPPORTED)
+    if config.get("multi_object_overlap", False) is True:
+        raise NotImplementedError(
+            "multi_object_overlap is accepted by the config and not implemented. It would "
+            "penalize two surfaces both predicting a negative SDF at the same point -- one "
+            "object inside another -- without penalizing the gaps between them, and neither "
+            "half is written."
+        )
+
+    # Once per epoch, where the value is named. This used to sit in the innermost loop
+    # behind a bare `assert`, which python -O strips -- and what is behind it is not a
+    # crash: weights_sum is taken over the whole declared list while weights_total is
+    # n_surfaces, so a list one entry too long rescales every weight it does use.
+    # Measured under -O on two surfaces: [1, 1] gives the unweighted loss, [1, 1, 1]
+    # gives 2/3 of it, and [3, 1, 99] gives 1/25 of it from an entry never indexed.
+    surface_weights = _surface_weights(config, n_surfaces)
+
     # n_surfaces = len(models)
     start = time.time()
     # for model in models:
@@ -433,18 +672,9 @@ def train_epoch(
     timing_batches = 0
 
     for sdf_data, indices in data_loader:
-        if config["verbose"] is True:
-            logger.debug("sdf index size: %s", indices.size())
-            logger.debug("xyz data size: %s", sdf_data["xyz"].size())
-            logger.debug("sdf gt size: %s", sdf_data["gt_sdf"].size())
-
-        xyz = sdf_data["xyz"].to(config["device"])
-        xyz = xyz.reshape(-1, 3)
-
-        num_sdf_samples = xyz.shape[0]
-        xyz.requires_grad = False
-
-        indices = indices.to(config["device"])
+        logger.debug("sdf index size: %s", indices.size())
+        logger.debug("xyz data size: %s", sdf_data["xyz"].size())
+        logger.debug("sdf gt size: %s", sdf_data["gt_sdf"].size())
 
         sdf_gt = []
         if n_surfaces == 1:
@@ -462,53 +692,41 @@ def train_epoch(
                 sdf_gt_.requires_grad = False
                 sdf_gt.append(sdf_gt_)
 
-        if config["verbose"] is True:
-            logger.debug("sdf gt size: %s", [x_.size() for x_ in sdf_gt])
+        logger.debug("sdf gt sizes per surface: %s", [x_.size() for x_ in sdf_gt])
 
-        xyz = torch.chunk(xyz, config["batch_split"])
-        indices = torch.chunk(
-            indices.unsqueeze(-1)
-            .repeat(1, config["samples_per_object_per_batch"])
-            .view(-1),  # repeat the index for every sample
-            config[
-                "batch_split"
-            ],  # split the data into the appropriate number of batches - so can fit in ram.
+        xyz, indices, num_sdf_samples = _split_batch(
+            sdf_data=sdf_data, indices=indices, config=config
         )
 
         for surf_idx in range(n_surfaces):
             sdf_gt[surf_idx] = torch.chunk(sdf_gt[surf_idx], config["batch_split"])
 
-        if config["verbose"] is True:
-            logger.debug("len sdf_gt %s", len(sdf_gt))
-            logger.debug("len sdf_gt chunks: %s", [len(x_) for x_ in sdf_gt])
-            logger.debug("len xyz chunks %s", len(xyz))
+        logger.debug("len sdf_gt %s", len(sdf_gt))
+        logger.debug("len sdf_gt chunks: %s", [len(x_) for x_ in sdf_gt])
+        logger.debug("len xyz chunks %s", len(xyz))
 
         batch_loss = 0.0
         batch_l1_loss = 0.0
         batch_l1_losses = [0.0 for _ in range(n_surfaces)]
         batch_code_reg_loss = 0.0
         batch_eikonal_loss = 0.0
+        batch_vec_lengths = []
 
         optimizer.zero_grad()
 
-        for split_idx in range(config["batch_split"]):
-            if config["verbose"] is True:
-                logger.debug("Split idx:  %s", split_idx)
+        # len(xyz), not config["batch_split"] -- see _split_batch.
+        for split_idx in range(len(xyz)):
+            logger.debug("Split idx:  %s", split_idx)
 
-            batch_vecs = latent_vecs(indices[split_idx])
-            if "variational" in config and config["variational"] is True:
-                mu = batch_vecs[:, : config["latent_size"]]
-                logvar = batch_vecs[:, config["latent_size"] :]
-                std = torch.exp(0.5 * logvar)
-                err = torch.randn_like(std)
-                batch_vecs = std * err + mu
+            batch_vecs, mu, logvar = _batch_latents(
+                latent_vecs=latent_vecs, indices=indices[split_idx], config=config
+            )
 
             inputs = torch.cat([batch_vecs, xyz[split_idx]], dim=1)
             # inputs = inputs.to(config['device'])
 
-            if config["verbose"] is True:
-                logger.debug("model dtype %s", next(model.parameters()).dtype)
-                logger.debug("inputs dtype %s", inputs.dtype)
+            logger.debug("model dtype %s", next(model.parameters()).dtype)
+            logger.debug("inputs dtype %s", inputs.dtype)
             # pred_sdfs = []
             # for model in models:
             pred_sdf = model(inputs, epoch=epoch)
@@ -532,109 +750,25 @@ def train_epoch(
             # elif config['hard_sample_difficulty_weight'] is not None:
             #     pred_sdf = torch.clamp(pred_sdf, -1, 1)
 
-            if config["verbose"] is True:
-                logger.debug("len pred_sdf %s", pred_sdf.shape)
-                logger.debug("split idx %s", split_idx)
-            l1_losses = []
-            for surf_idx in range(n_surfaces):
-                if config["verbose"] is True:
-                    logger.debug("surf idx %s", surf_idx)
-                    logger.debug("%s", len(sdf_gt))
-                    logger.debug("%s", len(sdf_gt[surf_idx]))
-                    logger.debug("pred_sdf shape %s", pred_sdf.shape)
-                    logger.debug("unsqueezed pred_sdf shape %s", pred_sdf[:, surf_idx].shape)
-                    logger.debug("sdf_gt shape %s", sdf_gt[surf_idx][split_idx].shape)
-                l1_losses.append(
-                    loss_l1(
-                        pred_sdf[:, surf_idx],
-                        sdf_gt[surf_idx][split_idx].squeeze(1).to(config["device"]),
-                    )
-                )
-
-            if config.get("multi_object_overlap", False) is True:
-                raise Exception("Not implemented yet")
-                # Should add some weighted penalty to the l1 loss
-                # this is similar to surface_accuracy_e below
-                # The idea being - the signs of the objects should never have 2 objects as (-) becuase it
-                # means one object is inside the other.
-                # However, we dont want there to be any gaps between them - so we need to be intelligent about
-                # how to penalize this so that it doesnt end up with weird artefacts.
-
-            # curriculum SDF equation 5
-            # progressively fine-tune the regions of surface cared about by the network.
-            if config["surface_accuracy_e"] is not None:
-                weight_schedule = 1 - calc_weight(
-                    epoch,
-                    config["n_epochs"],
-                    config["surface_accuracy_schedule"],
-                    config["surface_accuracy_cooldown"],
-                )
-                for l1_idx, l1_loss in enumerate(l1_losses):
-                    l1_losses[l1_idx] = torch.maximum(
-                        l1_loss - (weight_schedule * config["surface_accuracy_e"]),
-                        torch.zeros_like(l1_loss),
-                    )
-
-            # curriculum SDF equation 6
-            # progressively fine-tune the regions of surface cared about by the network.
-            # weighting gives higher preference to regions closer to surface / with opposite sign.
-            if config["sample_difficulty_weight"] is not None:
-                weight_schedule = calc_weight(
-                    epoch,
-                    config["n_epochs"],
-                    config["sample_difficulty_weight_schedule"],
-                    config["sample_difficulty_cooldown"],
-                )
-                difficulty_weight = weight_schedule * config["sample_difficulty_weight"]
-                for surf_idx, surf_gt_ in enumerate(sdf_gt):
-                    # Weights points independently
-                    # so, if hard for one surface - then we weight it heavily, but if
-                    # easy for another surface - then we weight it less.
-                    error_sign = torch.sign(
-                        surf_gt_[split_idx].squeeze(1).to(config["device"]) - pred_sdf[:, surf_idx]
-                    )
-                    sdf_gt_sign = torch.sign(surf_gt_[split_idx].squeeze(1).to(config["device"]))
-                    sample_weights = 1 + difficulty_weight * sdf_gt_sign * error_sign
-                    l1_losses[surf_idx] = l1_losses[surf_idx] * sample_weights
-
-            # Weight each surface loss by the number of samples it has
-            # so that the sum of them all is the same as the mean loss.
-            for idx, l1_loss_ in enumerate(l1_losses):
-                l1_losses[idx] = l1_loss_ / num_sdf_samples
-
-            # Comput total loss for each mesh (which is the same as the
-            # mean).
-            l1_loss = 0
-
-            # Create weights for each surface
-            if isinstance(config.get("surface_weighting", None), (list, tuple)):
-                assert len(config["surface_weighting"]) == n_surfaces
-                weights_total = n_surfaces
-                weights_sum = sum(config["surface_weighting"])
-                weights = []
-                for weight in config["surface_weighting"]:
-                    weights.append(weight / weights_sum * weights_total)
-            else:
-                weights = [
-                    1,
-                ] * n_surfaces
-
-            for l1_idx, l1_loss_ in enumerate(l1_losses):
-                l1_loss += l1_loss_.sum() * weights[l1_idx]
-
-            # Normalize by number of surfaces
-            l1_loss = l1_loss / len(l1_losses)
-
-            if config["verbose"] is True:
-                logger.debug("l1 losses: %s", [l1_loss_.sum().item() for l1_loss_ in l1_losses])
-                logger.debug("l1 loss: %s", l1_loss.item())
+            l1_loss, l1_losses = _surface_l1_loss(
+                pred_sdf=pred_sdf,
+                sdf_gt=sdf_gt,
+                split_idx=split_idx,
+                num_sdf_samples=num_sdf_samples,
+                surface_weights=surface_weights,
+                epoch=epoch,
+                config=config,
+            )
 
             batch_l1_loss += l1_loss.item()
             for l1_idx, l1_loss_ in enumerate(l1_losses):
                 batch_l1_losses[l1_idx] += l1_loss_.sum().item()
             chunk_loss = l1_loss
 
-            # Add eikonal loss if enabled
+            # Unreachable behind the gate at the top of this function, and kept: the
+            # plan's §8.2 cites these lines as the evidence for repairing the loss --
+            # among other things it forwards the UNCLAMPED prediction, where the L1 term
+            # above uses the clamped one, at the cost of a second full forward pass.
             eikonal_loss_value = 0
             if config.get("eikonal_weight", 0) > 0:
                 # Recompute SDF with gradients for eikonal loss
@@ -647,46 +781,18 @@ def train_epoch(
                 chunk_loss = chunk_loss + config["eikonal_weight"] * eik_loss
 
             if config["code_regularization"] is True:
-                if "variational" in config and config["variational"] is True:
-                    kld = torch.mean(
-                        -0.5 * torch.sum(1 + logvar - mu**2 - logvar.exp(), dim=1), dim=0
-                    )
-                    reg_loss = kld
-                    code_reg_norm = 1
-                else:
-                    if config["code_regularization_type_prior"] == "spherical":
-                        # spherical prior
-                        # all latent vectors should have the same unit length
-                        # therefore, the latent dimensions will be correlated
-                        # with one another - this is as opposed to PCA (and below).
-                        reg_loss = torch.sum(torch.norm(batch_vecs, dim=1))
-                    elif config["code_regularization_type_prior"] == "identity":
-                        # independently penalize each dimension/value of latent code
-                        # therefore latent code ends up having identity covariance matrix
-                        reg_loss = torch.sum(torch.square(batch_vecs))
-                    elif config["code_regularization_type_prior"] == "kld_diagonal":
-                        reg_loss = get_kld(batch_vecs)
-                    else:
-                        raise ValueError(
-                            f'Unknown code regularization type prior: {config["code_regularization_type_prior"]}'
-                        )
-                    code_reg_norm = num_sdf_samples
-
-                reg_loss = (
-                    config["code_regularization_weight"]
-                    * min(1, epoch / config["code_regularization_warmup"])
-                    * reg_loss
-                ) / code_reg_norm
-
-                if config["code_cyclic_anneal"] is True:
-                    anneal_weight = cyclic_anneal_linear(epoch=epoch, n_epochs=config["n_epochs"])
-                    reg_loss = reg_loss * anneal_weight
-
+                reg_loss = _code_regularization_loss(
+                    batch_vecs=batch_vecs,
+                    mu=mu,
+                    logvar=logvar,
+                    num_sdf_samples=num_sdf_samples,
+                    epoch=epoch,
+                    config=config,
+                )
                 chunk_loss = chunk_loss + reg_loss.to(config["device"])
                 batch_code_reg_loss += reg_loss.item()
 
-            mean_vec_length = torch.mean(torch.norm(batch_vecs, dim=1))
-            std_vec_length = torch.std(torch.norm(batch_vecs, dim=1))
+            batch_vec_lengths.append(torch.norm(batch_vecs, dim=1).detach())
 
             chunk_loss.backward()
 
@@ -699,8 +805,15 @@ def train_epoch(
         for l1_idx, l1_loss_ in enumerate(batch_l1_losses):
             step_l1_losses[l1_idx] += l1_loss_  # l1_loss_
 
-        step_mean_vec_length += mean_vec_length.item()
-        step_std_vec_length += std_vec_length.item()
+        # Over the whole batch, not over whichever split ran last. These used to be
+        # computed inside the split loop and read after it, so batch_split -- a memory
+        # knob -- moved the reported number: 0.1445 / 0.2026 / 0.3201 for 1 / 2 / 4 on
+        # one fixture, and NaN wherever a split held a single row, since torch.std of
+        # one value is undefined. KNOWN_ISSUES History 25; History 12 (#59) is the same
+        # defect one loop out.
+        vec_lengths = torch.cat(batch_vec_lengths)
+        step_mean_vec_length += torch.mean(vec_lengths).item()
+        step_std_vec_length += torch.std(vec_lengths).item()
 
         if config["grad_clip"] is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), config["grad_clip"])

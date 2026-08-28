@@ -1475,3 +1475,54 @@ every vertex of each (228,958 points, ratio 2.3:1 largest to smallest) where the
 takes 35,808 from each.
 
 *Pinned by:* `test_reconstruct_latent_internals.TestTheMultiSurfaceDrawIsBalanced`.
+
+---
+
+## 25. The logged latent-norm stats were the last *split*'s whenever `batch_split` > 1
+
+| | |
+|---|---|
+| **Affected** | The `mean_vec_length` and `std_vec_length` metrics of any run with `batch_split` above 1. `train_epoch` computed both inside the split loop and accumulated them outside it, so whichever split ran last was the one counted. Nov 2024 (`0638e31`, the commit that added the metric) → Aug 2026 |
+| **Unaffected** | `batch_split: 1`, which is the shipped `default_config.json` and what the training regression baselines run — the split loop runs once and the two forms agree exactly, bit for bit. Weights, gradients and checkpoints at any `batch_split`: the stats sit outside the loss path |
+| **Severity** | Silent, wandb-only, and sometimes `NaN` — see below |
+| **Fixed in** | `train-epoch-internals`, Aug 2026 (plan §8.0.L) |
+
+### What was wrong
+
+This is [§12](#12-the-logged-latent-norm-stats-were-the-last-batchs-scaled-down-by-the-batch-count)
+at its second site. That fix changed `=` to `+=` on the **batch** loop; underneath it is a
+**split** loop, and the two statistics were computed inside that one:
+
+```python
+for split_idx in range(...):
+    ...
+    mean_vec_length = torch.mean(torch.norm(batch_vecs, dim=1))   # rebound every split
+step_mean_vec_length += mean_vec_length.item()                    # only the last survives
+```
+
+`batch_split` exists to bound memory — `torch.chunk` partitions the batch and the
+per-surface losses are divided by the whole batch's point count, so the loss is invariant
+to it. These two metrics were not. Measured on a 4-subject fixture, same seed and data,
+only `batch_split` changing: `mean_vec_length` 0.1445 / 0.2026 / 0.3201 for 1 / 2 / 4 and
+`std_vec_length` 0.1031 / 0.1213 / 0.0, against a `loss` invariant across the same three
+runs to 1.5e-08.
+
+The `std` is worse than wrong where a split holds a single row: `torch.std` of one value is
+undefined, so the epoch's payload carried `NaN`. On the same fixture `batch_split` 6 and 16
+both reported `nan`.
+
+Both statistics are now collected across the splits and reduced over the whole batch, which
+is what "the epoch mean over batches" has always meant and what removes the `NaN` as well
+as the drift.
+
+### How to tell whether one of your runs is affected
+
+Read `batch_split` from the run's config. At 1 the series is unchanged. Above 1 the series
+is the last split's statistic per batch, averaged over batches: not recoverable by scaling,
+because which subjects landed in the final chunk depends on the shuffle. `NaN` in the
+series means some batch's final chunk held one row. Nothing else about the run is affected
+— re-training buys only the metric.
+
+*Pinned by:*
+`test_train_epoch_internals.TestTheLatentNormStatsAreTheEpochMean` (independence from
+`batch_split`, the epoch mean computed from the embedding at latent LR 0, and the `NaN`).

@@ -262,7 +262,8 @@ When you touch code a `docs/` file describes, verify it in the same commit or pu
 - `interpolate.py`: Mesh interpolation utilities
 
 **`NSM/losses.py`** - Eikonal loss for enforcing ||∇SDF|| = 1 constraint.
-**Gated: `eikonal_weight > 0` raises `NotImplementedError`** at both entry points. It was
+**Gated: `eikonal_weight > 0` raises `NotImplementedError`** at all three entry points
+(`train_deep_sdf`, `train_epoch`, `reconstruct_latent`). It was
 tested in Aug 2026 and found unrunnable on three independent counts — it crashes on the
 first backward pass, it cannot work at all for triplanar models (`grid_sample` has no
 second derivative), and it opposes the clamped regime NSM actually trains in. Production
