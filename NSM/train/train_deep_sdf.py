@@ -380,6 +380,27 @@ def _run_validation(config, model):
     )
 
 
+def _surface_weights(config, n_surfaces):
+    """
+    Per-surface loss weights, normalized to sum to ``n_surfaces`` so that the weighted
+    mean is on the same scale as the unweighted one.
+
+    ``config["surface_weighting"]`` must have one entry per surface. Absent or not a
+    sequence means uniform.
+    """
+    weighting = config.get("surface_weighting", None)
+    if not isinstance(weighting, (list, tuple)):
+        return [1] * n_surfaces
+    if len(weighting) != n_surfaces:
+        raise ValueError(
+            f"surface_weighting has {len(weighting)} entries but the decoder emits "
+            f"{n_surfaces} surfaces. These must match: the entries are read positionally, "
+            f"and the normalization sums all of them whether they are read or not."
+        )
+    total = sum(weighting)
+    return [weight / total * n_surfaces for weight in weighting]
+
+
 def train_epoch(
     model,
     data_loader,
@@ -422,6 +443,14 @@ def train_epoch(
             "object inside another -- without penalizing the gaps between them, and neither "
             "half is written."
         )
+
+    # Once per epoch, where the value is named. This used to sit in the innermost loop
+    # behind a bare `assert`, which python -O strips -- and what is behind it is not a
+    # crash: weights_sum is taken over the whole declared list while weights_total is
+    # n_surfaces, so a list one entry too long rescales every weight it does use.
+    # Measured under -O on two surfaces: [1, 1] gives the unweighted loss, [1, 1, 1]
+    # gives 2/3 of it, and [3, 1, 99] gives 1/25 of it from an entry never indexed.
+    surface_weights = _surface_weights(config, n_surfaces)
 
     # n_surfaces = len(models)
     start = time.time()
@@ -622,21 +651,8 @@ def train_epoch(
             # mean).
             l1_loss = 0
 
-            # Create weights for each surface
-            if isinstance(config.get("surface_weighting", None), (list, tuple)):
-                assert len(config["surface_weighting"]) == n_surfaces
-                weights_total = n_surfaces
-                weights_sum = sum(config["surface_weighting"])
-                weights = []
-                for weight in config["surface_weighting"]:
-                    weights.append(weight / weights_sum * weights_total)
-            else:
-                weights = [
-                    1,
-                ] * n_surfaces
-
             for l1_idx, l1_loss_ in enumerate(l1_losses):
-                l1_loss += l1_loss_.sum() * weights[l1_idx]
+                l1_loss += l1_loss_.sum() * surface_weights[l1_idx]
 
             # Normalize by number of surfaces
             l1_loss = l1_loss / len(l1_losses)

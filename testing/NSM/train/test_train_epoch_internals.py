@@ -369,29 +369,24 @@ class TestSurfaceWeightingIsValidatedOnce:
     normalisation it guards are epoch-constant yet re-evaluated once per split per batch.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="§8.0.L: the check is a bare assert, so it raises AssertionError with no text",
-    )
-    def test_a_mismatched_weighting_names_both_lengths(self):
+    @pytest.mark.parametrize("weighting", [[1, 1, 1], [1], [3, 1, 99]])
+    def test_a_mismatched_weighting_names_both_lengths(self, weighting):
+        """Was a strict xfail: a bare ``AssertionError`` with no text, and only one case."""
         with pytest.raises(ValueError, match="surface_weighting"):
-            run_epoch(surface_weighting=[1, 1, 1])
+            run_epoch(surface_weighting=weighting)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="§8.0.L: -O strips the assert and the epoch then trains on rescaled weights",
-    )
     def test_a_mismatched_weighting_is_still_refused_under_O(self, tmp_path):
         """
-        ``python -O`` strips ``assert``, and what is behind this one is not a crash.
+        Was a strict xfail. ``python -O`` strips ``assert``, and what was behind this one
+        was not a crash.
 
-        ``weights_sum`` is taken over the whole declared list while ``weights_total`` is
-        ``n_surfaces``, so a list one entry too long rescales every weight it *does* use.
+        ``weights_sum`` was taken over the whole declared list while ``weights_total`` was
+        ``n_surfaces``, so a list one entry too long rescaled every weight it *did* use.
         Measured under ``-O`` on this fixture, 2 surfaces: unweighted and ``[1, 1]`` both
-        give 0.2752, ``[1, 1, 1]`` gives **0.1835** and ``[3, 1, 99]`` gives **0.0109** --
-        the third entry is never indexed and still moves the loss by two orders of
-        magnitude. A list one entry too *short* raises ``IndexError: list index out of
-        range``, which names nothing either.
+        give 0.2752, ``[1, 1, 1]`` gave **0.1835** and ``[3, 1, 99]`` gave **0.0109** --
+        the third entry is never indexed and still moved the loss by two orders of
+        magnitude. A list one entry too *short* raised ``IndexError: list index out of
+        range``, which named nothing either.
 
         Run in a subprocess because ``-O`` is an interpreter flag, not a runtime setting:
         the suite cannot be under it and test it at the same time.
@@ -422,9 +417,9 @@ class TestSurfaceWeightingIsValidatedOnce:
     @pytest.mark.parametrize("weighting", [None, [1, 1], [3, 1]])
     def test_hoisting_the_weights_may_not_move_the_loss(self, weighting):
         """
-        The pin for commit 6's other half: the weights are a pure function of the config, so
-        computing them once per epoch instead of once per split must be inert. Recorded
-        here at both ends rather than asserted against a stored number.
+        The weights are a pure function of the config, so computing them once per epoch
+        instead of once per split is inert. Asserted against ``batch_split`` rather than
+        against a stored number, so it holds at both ends of the change.
         """
         overrides = {} if weighting is None else {"surface_weighting": weighting}
         assert run_epoch(**overrides)["loss"] == pytest.approx(
