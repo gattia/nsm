@@ -166,31 +166,72 @@ class TestUnknownKeywordsAreRefused:
 
 class TestUnknownValuesAreRefusedWhereTheyAreNamed:
     """
-    Two ``if``/``elif`` chains with no ``else``. The name each chain would have assigned is
-    read much later, so the caller is told about ``optimizer`` or ``loss_fn`` -- neither of
-    which appears in the signature they wrote against.
+    Three ``if``/``elif`` chains with no ``else``. Two leave a name unassigned that is read
+    much later, so the caller is told about ``optimizer`` or ``loss_fn`` -- neither of which
+    appears in the signature they wrote against. The third, ``convergence``, has no name to
+    leave unassigned: its missing ``else`` is the default branch, so an unrecognised value
+    was accepted and quietly meant ``"num_iterations"``.
+
+    Values are normalised for case and then refused, which is not the same as accepting two
+    spellings: everything downstream reads the normalised name.
     """
 
-    @pytest.mark.parametrize("value", ["sgd", "Adam"])
-    def test_an_unknown_optimizer_names_the_parameter(self, value):
+    @pytest.mark.parametrize(
+        "parameter,value",
+        [
+            ("optimizer_name", "sgd"),
+            ("loss_type", "l1_smooth"),
+            ("convergence", "banana"),
+            ("convergence", None),
+        ],
+    )
+    def test_an_unknown_value_names_the_parameter(self, parameter, value):
         """
-        Were two strict xfails. Measured before the fix: both raise ``UnboundLocalError: local variable 'optimizer'
-        referenced before assignment``, from the step loop. ``"Adam"`` is in the list on
-        purpose -- it is the capitalised spelling of the default, and the likeliest way to
-        get this wrong.
-        """
-        with pytest.raises(ValueError, match="optimizer_name"):
-            reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(optimizer_name=value))
+        Were strict xfails. Measured before the fix: ``optimizer_name`` raised
+        ``UnboundLocalError: local variable 'optimizer' referenced before assignment`` from
+        the step loop; ``loss_type`` raised ``NameError: free variable 'loss_fn' referenced
+        before assignment in enclosing scope``, from inside ``compute_loss``, so the
+        traceback ended in a nested function the caller cannot see from the signature.
 
-    @pytest.mark.parametrize("value", ["l1_smooth", "L1"])
-    def test_an_unknown_loss_type_names_the_parameter(self, value):
+        ``convergence`` is the third of the same shape and the worst of the three, because
+        its missing ``else`` is a live branch rather than an unassigned name: every
+        unrecognised value -- ``None`` and ``""`` included -- was accepted and silently
+        meant ``"num_iterations"``, so a mis-capitalised ``"Recon_Loss"`` turned convergence
+        checking off and returned a plausible result.
         """
-        Were two strict xfails. Measured before the fix: both raise ``NameError: free variable 'loss_fn' referenced
-        before assignment in enclosing scope`` -- raised inside ``compute_loss``, so the
-        traceback ends in a nested function the caller cannot see from the signature.
+        with pytest.raises(ValueError, match=parameter):
+            reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(**{parameter: value}))
+
+    @pytest.mark.parametrize(
+        "parameter,value",
+        [
+            ("optimizer_name", "Adam"),
+            ("optimizer_name", "LBFGS"),
+            ("loss_type", "L1"),
+            ("loss_type", "L1_LOG"),
+            ("convergence", "Recon_Loss"),
+        ],
+    )
+    def test_case_is_folded_rather_than_refused(self, parameter, value):
         """
-        with pytest.raises(ValueError, match="loss_type"):
-            reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(loss_type=value))
+        Case is the one difference that is never a different intent, and NSM's own training
+        path spells its optimizers ``"Adam"`` and ``"AdamW"`` (``utils.get_optimizer``, and
+        ``default_config.json``'s ``optimizer`` key). A caller writing ``"Adam"`` here is
+        being consistent with the rest of the library, so refusing it would be the library
+        disagreeing with itself.
+        """
+        _, latent = reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(**{parameter: value}))
+        assert isinstance(latent, torch.Tensor)
+
+    def test_folding_case_selects_the_same_branch(self):
+        """
+        The point of folding rather than merely accepting: the normalised value is what
+        every branch downstream reads, so a capitalised spelling is not a second code path.
+        """
+        lower = reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(convergence="recon_loss"))
+        upper = reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(convergence="Recon_Loss"))
+        assert torch.equal(lower[1], upper[1])
+        assert float(lower[0]) == float(upper[0])
 
     def test_hybrid_mode_refuses_an_optimizer_name_it_will_not_consult(self):
         """

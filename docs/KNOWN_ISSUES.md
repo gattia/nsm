@@ -1364,3 +1364,39 @@ fits — the fitted latent is not the one the configuration describes.
 *Pinned by:*
 `test_reconstruct_latent_internals.TestTheLearningRateScheduleSpansThePhaseItSteps`.
 
+
+## 23. An unrecognised `convergence` silently meant "num_iterations"
+
+| | |
+|---|---|
+| **Affected** | Any `reconstruct_latent` or `reconstruct_mesh` call whose `convergence` was not exactly `"num_iterations"`, `"overall_loss"` or `"recon_loss"` — a typo, a capitalisation such as `"Recon_Loss"`, `None`, or `""` |
+| **Unaffected** | The three exact spellings, which is every NSM-internal call, both shipped configs and kneepipeline (`convergence_type_recon` is `"recon_loss"`) |
+| **Severity** | Silent — the fit ran to completion with early stopping disabled, and reported nothing |
+| **Fixed in** | `latent-fit-internals`, Aug 2026 (plan §8.0.K) |
+
+### What was wrong
+
+The convergence block is `if convergence == "overall_loss": ... elif convergence ==
+"recon_loss": ... else: <treat as num_iterations>`. The `else` is a real branch, not a
+missing one, so an unrecognised value selected it. Measured across `"Recon_Loss"`,
+`"recon_los"`, `""`, `None` and `"banana"`: all five completed and returned a latent
+bit-identical to `convergence="num_iterations"`.
+
+The consequence is not a wrong number but a missing behaviour: `convergence_patience`
+never applies, the fit runs every one of `num_iterations` steps, and the returned latent is
+the last one rather than the best one. For a fit that would have converged and stopped
+early, the difference is however far the latent drifted afterwards.
+
+`convergence` is now case-folded and then refused, alongside `optimizer_name` and
+`loss_type`.
+
+### How to tell whether one of your runs is affected
+
+Check the spelling in the config or call that produced the run, against the three values
+above; case matters only in the sense that it used to. If it does not match one of them
+exactly, the run had no early stopping. Re-running matters if `convergence_patience` was
+meant to be doing something — compare the recorded step count against `num_iterations`: an
+affected run used all of them.
+
+*Pinned by:*
+`test_reconstruct_latent_internals.TestUnknownValuesAreRefusedWhereTheyAreNamed`.

@@ -38,13 +38,23 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   helper, `reconstruct.utils.refuse_unknown_kwargs`. `max_batch_size` is unchanged, still
   accepted and still warned about. See `docs/KNOWN_ISSUES.md` § History 20.
 
-  Two values are refused as well, where they used to fail 100 lines later as an
-  `UnboundLocalError` on a local the caller never named: `optimizer_name` outside
-  `{"adam", "lbfgs"}` (`"Adam"` included) and `loss_type` outside
-  `{"l1", "l1_log", "l2"}` now raise `ValueError` naming the parameter and its accepted
-  values. And `hybrid_optimizer=True` with a non-default `optimizer_name` raises rather
-  than silently discarding the second: hybrid mode derives its optimizer from the step
-  number, so `optimizer_name` was accepted and never read. § History 22.
+  Three string parameters are **case-folded and then refused**, where all three had an
+  `if`/`elif` chain with no `else`: `optimizer_name` (`{"adam", "lbfgs"}`), `loss_type`
+  (`{"l1", "l1_log", "l2"}`) and `convergence` (`{"num_iterations", "overall_loss",
+  "recon_loss"}`). `"Adam"`, `"L1"` and `"Recon_Loss"` now work — NSM's training path
+  spells its own optimizers `"Adam"` / `"AdamW"`, so refusing that spelling here would be
+  the library disagreeing with itself — and anything else raises `ValueError` naming the
+  parameter and its accepted values. Folding is not the same as accepting two spellings:
+  every branch downstream reads the normalised value.
+
+  `convergence` is the one that changes a result rather than an error. Its missing `else`
+  was the *default branch*, so any unrecognised value — `None` and `""` included — was
+  accepted and silently meant `"num_iterations"`, turning convergence checking off.
+  § History 23.
+
+  And `hybrid_optimizer=True` with a non-default `optimizer_name` raises rather than
+  silently discarding the second: hybrid mode derives its optimizer from the step number,
+  so `optimizer_name` was accepted and never read. § History 22.
 
 - **`reconstruct_mesh` refuses a keyword it does not recognise** (plan §8.0.J). It takes 58
   named parameters and a `**kwargs` that read exactly one key, `batch_size_latent_recon`;

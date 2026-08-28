@@ -431,10 +431,33 @@ def _regularization_losses(
     return latent_loss, norm_penalty_loss
 
 
-#: The values ``optimizer_name`` and ``loss_type`` are built from, named here so the
-#: refusal and the branch that consumes them cannot drift apart.
+#: The values the string parameters are built from, named here so the refusal and the
+#: branch that consumes them cannot drift apart. Matching is case-insensitive: NSM's own
+#: training path spells its optimizers ``"Adam"`` / ``"AdamW"`` (``utils.get_optimizer``,
+#: and ``default_config.json``'s ``optimizer`` key), so ``"Adam"`` here is a caller being
+#: consistent with the rest of the library rather than a typo.
 _OPTIMIZER_NAMES = frozenset({"adam", "lbfgs"})
 _LOSS_TYPES = frozenset({"l1", "l1_log", "l2"})
+_CONVERGENCE_TYPES = frozenset({"num_iterations", "overall_loss", "recon_loss"})
+
+
+def _normalized_choice(value, *, allowed, parameter):
+    """Lower-case ``value`` and check it against ``allowed``; raise naming both if not.
+
+    Case is folded, everything else is refused. The three parameters this guards each had
+    an ``if``/``elif`` chain with no ``else``, so an unrecognised value either failed 100
+    lines later on a name the caller had never seen or -- for ``convergence`` -- silently
+    selected the default branch.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"{parameter} must be one of {sorted(allowed)}, got {value!r}")
+    normalized = value.lower()
+    if normalized not in allowed:
+        raise ValueError(
+            f"{parameter} must be one of {sorted(allowed)} (case-insensitive), got {value!r}"
+        )
+    return normalized
+
 
 #: The only keyword ``reconstruct_latent`` takes without naming it, left over from the
 #: chunked forward removed in 4583246; it is warned about where it is read. Issue #75 is
@@ -554,17 +577,21 @@ def reconstruct_latent(
     )
     latent.requires_grad = True
 
-    # Both of these used to be `if`/`elif` chains with no `else`, so an unrecognised value
-    # left `optimizer` or `loss_fn` unassigned and surfaced 100 lines later as an
-    # UnboundLocalError naming a local the caller has never seen. Refused here, next to the
-    # parameter, rather than normalised: "Adam" is a typo, and accepting it is how a
-    # parameter starts having two spellings.
-    if optimizer_name not in _OPTIMIZER_NAMES:
-        raise ValueError(
-            f"optimizer_name must be one of {sorted(_OPTIMIZER_NAMES)}, got {optimizer_name!r}"
-        )
-    if loss_type not in _LOSS_TYPES:
-        raise ValueError(f"loss_type must be one of {sorted(_LOSS_TYPES)}, got {loss_type!r}")
+    # All three used to be `if`/`elif` chains with no `else`. Two left `optimizer` or
+    # `loss_fn` unassigned and surfaced 100 lines later as an UnboundLocalError naming a
+    # local the caller has never seen; `convergence` was worse, because its missing `else`
+    # is a real branch -- any unrecognised value silently meant "num_iterations", so a
+    # capitalised `"Recon_Loss"` turned convergence checking off and said nothing.
+    # Normalised, then refused: case is the one difference that is never a different
+    # intent, and folding it costs nothing downstream because everything past this point
+    # reads the normalised name.
+    optimizer_name = _normalized_choice(
+        optimizer_name, allowed=_OPTIMIZER_NAMES, parameter="optimizer_name"
+    )
+    loss_type = _normalized_choice(loss_type, allowed=_LOSS_TYPES, parameter="loss_type")
+    convergence = _normalized_choice(
+        convergence, allowed=_CONVERGENCE_TYPES, parameter="convergence"
+    )
     if hybrid_optimizer and optimizer_name != "adam":
         raise ValueError(
             "hybrid_optimizer=True runs Adam and then LBFGS, so optimizer_name is not "

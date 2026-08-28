@@ -15,14 +15,42 @@
   itself is 159 lines beside it. §8.0.G's residue is **already absent here**: the file has
   zero `if verbose` gates, so §8.0.K's largest single commit has no counterpart in §8.0.L.
   **Blocked on nothing** once #94 merges; #94 is stacked on #93, so **merge #93 first**.
-- **§8.0.K executed (2026-08-27), PR #94 open, stacked on #93:** commits 2–13 — the
+- **§8.0.K, review round 1 (maintainer, 2026-08-28): the LBFGS resampling was strategy,
+  not a defect, and the measurement I had not run says so.** The slice hoisted sample
+  selection out of the loss on the argument that a line search over a moving objective is
+  undefined. The theory is right and is not what dominates: the redraw is how the fit
+  *covers the point cloud*, so hoisting it cuts coverage in proportion. LBFGS, 20 problems
+  at equal decoder evaluations, median held-out error against noise-free truth, by sampling
+  ratio — 1.6%: **0.034 → 0.202**; 5%: **0.007 → 0.029**; 20%: 0.0049 → 0.0054; 50%:
+  0.0042 → 0.0045, with cloud coverage 95% → 41% at the 5% ratio. The gap tracks coverage
+  and closes as the ratio rises. My stale-curvature explanation was tested and eliminated
+  (resetting LBFGS's history each draw made it *worse*: 13/20 diverged against 7/20).
+  Reverted; the fit is bit-identical to the pre-change code, LBFGS included, and § History
+  23 was deleted rather than shipped. `_select_samples` stays — extracting it was the good
+  half. **The lesson is narrower than "measure first", which the slice did: every other
+  claim in it was measured on the code, and this one needed a measurement of the
+  *outcome*. A defect that is a defect only in theory needs an experiment, not a probe.**
+  The theoretical objection survives and cadence does not answer it: a *deterministic*
+  draw with good coverage — stratified, or blue noise — gives the line search a fixed
+  objective and keeps the coverage. Drafted as an issue, not filed.
+- **§8.0.K, review round 1, second item: case is folded, not refused, and `convergence`
+  joins the set.** The slice refused `optimizer_name="Adam"` on the grounds that accepting
+  it is how a parameter grows two spellings. That was wrong on its own evidence: NSM's
+  training path spells its optimizers `"Adam"` and `"AdamW"` (`utils.get_optimizer`,
+  `default_config.json`'s `optimizer` key), so refusing that spelling is the library
+  disagreeing with itself — and folding creates no second spelling, because everything
+  downstream reads the normalised value. Asking the question found a **ninth** defect of
+  the same class and the worst of them: `convergence`'s missing `else` is the *default
+  branch*, so `"Recon_Loss"`, `""` and `None` were all accepted and silently meant
+  `"num_iterations"` — early stopping off, no signal. § History 23.
+- **§8.0.K executed (2026-08-27), PR #94 open, stacked on #93:** commits 2–15 — the
   characterization, the shared keyword refusal, the value refusals, the `100` sentinel, the
   LR horizon, the ungating, `_select_samples`, the two loss helpers, #75's chunked step, the
-  debug-record deletion, the dead `broken()` helper in both characterization files, and
-  this update. Suite 884 → 922 passed / 1 skipped / 3 xfailed:
+  debug-record deletion, the dead `broken()` helper in both characterization files, the two
+  review rounds above, and this update. Suite 884 → 929 passed / 1 skipped / 3 xfailed:
   **all 19 strict xfails commit 2 raised were retired inside the slice**, and the 3 that
   remain are the regression harness's. Four § History entries (20 extended with its second
-  site, 21 the returned sentinel, 22 the hybrid LR horizon, 23 the LBFGS resample), three
+  site, 21 the returned sentinel, 22 the hybrid LR horizon, 23 the silent `convergence`), three
   CHANGELOG Breaking/Changed/Added blocks, `ARCHITECTURE` §5's row, `SCOPE` §3.1's
   positional-surface note. `reconstruct_latent` is 532 → 425 lines; its nested
   `compute_loss` is 191 → 48. **#75 is closed by the PR.**
