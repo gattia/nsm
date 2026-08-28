@@ -492,18 +492,6 @@ def filter_non_jsonable(dict_obj):
     return {k: v for k, v in dict_obj.items() if is_jsonable(v)}
 
 
-def print_gpu_memory():
-    # assert cuda is available
-    if torch.cuda.is_available():
-        allocated = torch.cuda.memory_allocated()
-        cached = torch.cuda.memory_reserved()
-        logger.info("CUDA, GPU Usage:")
-        logger.info("\tAllocated memory: %.2f GB", allocated / 1024**3)
-        logger.info("\tCached memory: %.2f GB", cached / 1024**3)
-    else:
-        logger.info("CUDA not available - GPU stats not available")
-
-
 def clear_gpu_cache(device):
     if "cuda" in device:
         torch.cuda.empty_cache()

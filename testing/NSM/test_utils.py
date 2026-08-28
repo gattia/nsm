@@ -461,13 +461,14 @@ class TestTheScheduleBaseClass:
 
 
 class TestGpuHelpers:
-    def test_print_gpu_memory_has_no_caller(self):
+    def test_print_gpu_memory_is_gone(self):
         """
         §8.0.G converted its four ``print`` calls to ``logger.info`` and left the name.
-        One occurrence in the code and the docs, its own ``def`` -- which is what makes the
-        fix a deletion rather than a rename. Kept after the deletion so a later import
-        cannot quietly bring it back. ``testing/`` is outside the sweep because this file
-        names the symbol in prose; the frozen-name list below is what covers the suite.
+        Before the deletion there was one occurrence in the code and the docs, its own
+        ``def``, which is what made the fix a deletion rather than a rename. Kept after it
+        so a later import cannot quietly bring the name back. ``testing/`` is outside the
+        sweep because this file names the symbol in prose; the frozen-name list below is
+        what covers the suite.
         """
         searched = [REPO_ROOT / d for d in ("NSM", "examples", "docs")]
         hits = [
@@ -479,7 +480,7 @@ class TestGpuHelpers:
             and "print_gpu_memory" in path.read_text(encoding="utf-8")
         ]
 
-        assert hits == ["NSM/utils.py"]
+        assert hits == []
 
     def test_clear_gpu_cache_no_ops_on_a_cpu_string(self):
         """Both in-repo callers pass ``config["device"]``, which comes from JSON."""
@@ -568,7 +569,6 @@ PUBLIC_NAMES = [
     "get_optimizer",
     "honour_verbose",
     "is_jsonable",
-    "print_gpu_memory",
     "resolve_schedule_targets",
     "save_latent_vectors",
     "save_model",
