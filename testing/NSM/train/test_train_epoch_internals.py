@@ -215,36 +215,23 @@ class TestBatchSplitIsTheNumberOfSplitsThatRan:
         assert produced <= splits
         assert (produced == splits) is (splits in HONOURED_SPLITS)
 
-    @pytest.mark.parametrize(
-        "splits",
-        HONOURED_SPLITS
-        + [
-            pytest.param(
-                value,
-                marks=pytest.mark.xfail(
-                    strict=True,
-                    reason="§8.0.L: the split loop is range(config['batch_split']), so a "
-                    "batch_split torch.chunk cannot honour indexes past the last chunk",
-                ),
-            )
-            for value in UNHONOURED_SPLITS
-        ],
-    )
+    @pytest.mark.parametrize("splits", UNHONOURED_SPLITS + HONOURED_SPLITS)
     def test_every_batch_split_completes_an_epoch(self, splits):
         """
-        Today ``batch_split`` 5, 7, 9 and 11 raise ``IndexError: tuple index out of range``
-        from ``latent_vecs(indices[split_idx])`` -- naming a local tuple, not the config key
-        the caller set -- while 3 and 6 on the same batch complete.
+        Were four strict xfails. Before the fix ``batch_split`` 5, 7, 9 and 11 raised
+        ``IndexError: tuple index out of range`` from ``latent_vecs(indices[split_idx])``
+        -- naming a local tuple, not the config key the caller set -- while 3 and 6 on the
+        same batch completed.
         """
         assert run_epoch(batch_split=splits)["loss"] > 0
 
-    @pytest.mark.parametrize("splits", HONOURED_SPLITS)
+    @pytest.mark.parametrize("splits", UNHONOURED_SPLITS + HONOURED_SPLITS)
     def test_the_epoch_loss_does_not_depend_on_batch_split(self, splits):
         """
         ``batch_split`` exists to bound memory, and ``chunk`` partitions the batch, so every
-        split count covers the same samples exactly once. This holds today for the values
-        that run, and it is what says the commit-3 fix makes the unhonoured values *correct*
-        rather than merely uncrashed.
+        split count covers the same samples exactly once. It held before the fix for the
+        values that ran, which is what says the fix makes the unhonoured values *correct*
+        rather than merely uncrashed: they are now on the same number, not on a new one.
         """
         assert run_epoch(batch_split=splits)["loss"] == pytest.approx(
             run_epoch(batch_split=1)["loss"], rel=1e-6
@@ -264,21 +251,9 @@ class TestTheEvalWarmupSharesTheSplitBound:
         def eval(self):
             pass
 
-    @pytest.mark.parametrize(
-        "splits",
-        [1, 2]
-        + [
-            pytest.param(
-                value,
-                marks=pytest.mark.xfail(
-                    strict=True,
-                    reason="§8.0.L: the warm-up's split loop is range(config['batch_split']) too",
-                ),
-            )
-            for value in UNHONOURED_SPLITS
-        ],
-    )
+    @pytest.mark.parametrize("splits", [1, 2] + UNHONOURED_SPLITS)
     def test_the_warmup_runs_at_every_batch_split(self, splits):
+        """Were four strict xfails, retired by the same one-line change at both sites."""
         model, data_loader, latent_vecs, _, config = epoch_inputs(batch_split=splits)
         config["optimizer"] = "schedule_free_AdamW"
         _schedule_free_eval_warmup(

@@ -298,7 +298,9 @@ def _schedule_free_eval_warmup(model, latent_vecs, data_loader, optimizer, confi
             )
             xyz = torch.chunk(xyz, config["batch_split"])
             indices = torch.chunk(indices, config["batch_split"])
-            for split_idx in range(config["batch_split"]):
+            # len(xyz), not config["batch_split"]: torch.chunk returns AT MOST the
+            # requested number of pieces. See train_epoch's loop for the measurement.
+            for split_idx in range(len(xyz)):
                 batch_vecs = latent_vecs(indices[split_idx])
                 if "variational" in config and config["variational"] is True:
                     mu = batch_vecs[:, : config["latent_size"]]
@@ -491,7 +493,13 @@ def train_epoch(
 
         optimizer.zero_grad()
 
-        for split_idx in range(config["batch_split"]):
+        # len(xyz), not config["batch_split"]: torch.chunk splits into pieces of
+        # ceil(len / k) and stops when the tensor runs out, so it returns AT MOST k --
+        # chunk(16, 5) is 4 pieces and chunk(16, 7) is 5. Iterating the request walked
+        # past the end for those values while 3 and 6 on the same batch worked. The
+        # chunks still partition the batch, so every split count covers the same samples
+        # exactly once and the loss is unchanged.
+        for split_idx in range(len(xyz)):
             if config["verbose"] is True:
                 logger.debug("Split idx:  %s", split_idx)
 
