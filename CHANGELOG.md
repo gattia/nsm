@@ -379,10 +379,12 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   `n_lr_updates=2` could apply 11 decays and reach exactly 0.0. Non-hybrid runs are
   bit-identical. § History 22.
 
-- **LBFGS and hybrid fits draw their random sample once per step**, not once per
-  line-search evaluation. Measured at 7 distinct draws inside a single step, which is an
-  objective that moves under the line search that is searching it. Adam is bit-identical
-  — the same draws at the same point in the RNG stream. § History 23.
+  The sampling *cadence* is deliberately unchanged: `reconstruct_latent` draws a new
+  random subsample on every loss evaluation, so LBFGS draws several times per step. §8.0.K
+  proposed making that once-per-step — a line search over a moving objective is undefined —
+  and the measurement refused it: the redraw is how the fit covers the point cloud, and at
+  a 5% sampling ratio dropping it took median held-out error from 0.007 to 0.029. See
+  `TestTheDrawIsPerEvaluation`.
 
 - **`reconstruct_mesh`'s own diagnostics answer to the host's logging config, not to
   `verbose=`** (plan §8.0.J). Ten of its fifteen log records sat under `if verbose is

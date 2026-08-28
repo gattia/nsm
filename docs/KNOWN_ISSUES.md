@@ -1364,35 +1364,3 @@ fits — the fitted latent is not the one the configuration describes.
 *Pinned by:*
 `test_reconstruct_latent_internals.TestTheLearningRateScheduleSpansThePhaseItSteps`.
 
-
-## 23. LBFGS drew a new random sample inside its own line search
-
-| | |
-|---|---|
-| **Affected** | Any `reconstruct_latent` or `reconstruct_mesh` fit with `optimizer_name="lbfgs"` or `hybrid_optimizer=True` **and** `n_samples` smaller than the number of points supplied |
-| **Unaffected** | Adam, which calls the loss once per step so the draw and the step coincided; and any LBFGS fit that used every point (`n_samples` unset or equal to the point count), where the loss was already deterministic |
-| **Severity** | Silent — the fit ran and converged, against an objective that changed between evaluations |
-| **Fixed in** | `latent-fit-internals`, Aug 2026 (plan §8.0.K) |
-
-### What was wrong
-
-Sample selection lived inside the loss function, so it ran on every *call* rather than
-every step. L-BFGS calls the loss once per line-search evaluation, and this code calls it
-once more per step, without gradients, to record the value the convergence test reads.
-Measured on one step at `n_samples=50` of 100 points: **7 forward passes on 7 distinct
-point sets**. L-BFGS's line search and its curvature update both assume the objective is a
-fixed function of the parameter; here it moved under them, and the loss driving
-`convergence="recon_loss"` was measured on the one draw the step had not fitted.
-
-Selection now happens once per step, above the loss. Adam is bit-identical across the fix
-— the same random numbers are drawn at the same point — and LBFGS results move.
-
-### How to tell whether one of your runs is affected
-
-Check the three parameters in the **Affected** row. There is no signature in the output:
-an affected fit produced a plausible latent and a plausible loss. Re-run affected fits; on
-the reference fit in the test suite the final loss dropped from `0x1.639ab4p-7` to
-`0x1.d2cbbcp-8`, so the direction is an improvement rather than a wash, but the size is
-problem-dependent.
-
-*Pinned by:* `test_reconstruct_latent_internals.TestTheObjectiveIsFixedWithinAStep`.

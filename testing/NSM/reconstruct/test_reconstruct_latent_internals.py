@@ -326,29 +326,52 @@ class TestTheLearningRateScheduleSpansThePhaseItSteps:
 # ---------------------------------------------------------------------------
 
 
-class TestTheObjectiveIsFixedWithinAStep:
+class TestTheDrawIsPerEvaluation:
     """
-    ``compute_loss`` draws its own random subsample. Adam calls it once per step, so the
-    draw and the step coincide; LBFGS calls it once per line-search evaluation and once
-    more, without gradients, to record the loss that feeds the convergence test.
+    ``_select_samples`` runs on every loss evaluation, not once per optimization step.
+    Adam evaluates the loss once per step so the two coincide; LBFGS evaluates it several
+    times per step, and each of those redraws.
+
+    **§8.0.K proposed hoisting this to once per step and the measurement refused it.**
+    The argument was that L-BFGS's line search and its secant condition both assume a
+    deterministic objective, which is true. What it missed is that the redraw is also how
+    the fit covers the point cloud: at equal compute, fewer draws means less of the cloud
+    seen. Measured over 20 problems at 12,000 decoder evaluations, LBFGS, median held-out
+    error against noise-free truth (`sampling ratio: per-evaluation vs per-step`):
+
+    | ratio | per evaluation | per step | cloud seen |
+    |---|---|---|---|
+    | 1.6% | 0.034 | 0.202 | 96% vs 82% |
+    | 5%   | 0.007 | 0.029 | 95% vs 41% |
+    | 20%  | 0.0049 | 0.0054 | 99% vs 37% |
+    | 50%  | 0.0042 | 0.0045 | 100% vs 50% |
+
+    The gap tracks coverage and closes as the ratio rises, so coverage is the mechanism,
+    not the line search. Resetting LBFGS's curvature history at each draw -- the obvious
+    repair if stale curvature were the problem -- made it *worse* (13/20 diverged against
+    7/20), which is how that explanation was eliminated.
+
+    The theoretical objection stands and is not answered by cadence: a **deterministic**
+    draw with good coverage (stratified, or blue noise) would give the line search a fixed
+    objective *and* keep the coverage. That is a sampling-strategy change and it is not in
+    this slice.
     """
 
-    def test_lbfgs_optimises_one_draw_per_step(self):
+    def test_the_draw_changes_between_evaluations_within_a_step(self):
         """
-        Was a strict xfail. Measured before the fix, one step at ``n_samples=50`` of 100 points: 7 forward
-        passes on 7 distinct point sets. L-BFGS's line search and its curvature update both
-        assume the objective is a fixed function of the parameter, and the last of the
-        seven is the draw the convergence test is measured on -- one the step never fitted.
+        The property the coverage measurement above depends on. If a later change makes
+        the draw per-step, this goes red and the table says what it costs.
         """
         decoder = RecordingDecoder()
         reconstruct_latent(
             decoders=decoder,
             **fit_kwargs(n_pts=100, num_iterations=1, optimizer_name="lbfgs", n_samples=50),
         )
-        assert len(set(decoder.draws)) == 1
+        assert len(decoder.draws) > 1, "LBFGS should evaluate the loss more than once per step"
+        assert len(set(decoder.draws)) == len(decoder.draws)
 
-    def test_adam_already_draws_once_per_step(self):
-        """The mode that is already right, pinned so the fix does not move it."""
+    def test_adam_draws_once_per_step(self):
+        """Adam evaluates once per step, so per-evaluation and per-step coincide for it."""
         decoder = RecordingDecoder()
         reconstruct_latent(
             decoders=decoder,
@@ -356,6 +379,19 @@ class TestTheObjectiveIsFixedWithinAStep:
         )
         assert len(decoder.draws) == 4
         assert len(set(decoder.draws)) == 4
+
+    def test_a_full_sample_draw_is_the_same_points_every_time(self):
+        """
+        With ``n_samples`` at or above the point count there is no subsampling, so the
+        objective is already deterministic and the line search already well-posed. This is
+        the configuration a caller who wants LBFGS to be sound today should use.
+        """
+        decoder = RecordingDecoder()
+        reconstruct_latent(
+            decoders=decoder,
+            **fit_kwargs(n_pts=60, num_iterations=1, optimizer_name="lbfgs", n_samples=60),
+        )
+        assert len(set(decoder.draws)) == 1
 
 
 # ---------------------------------------------------------------------------

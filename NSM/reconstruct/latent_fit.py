@@ -218,13 +218,22 @@ def _select_samples(
     step,
     device,
 ):
-    """Draw this step's points, roughly evenly across the surfaces that have ground truth.
+    """Draw points for one loss evaluation, roughly evenly across the surfaces with ground truth.
 
-    Called once per optimization step. It used to live inside ``compute_loss``, which
-    meant a fresh draw on every *call* of it: Adam calls it once per step so the two
-    coincided, but LBFGS calls it once per line-search evaluation and once more to record
-    the loss, so a single step was measured on seven different point sets and its line
-    search moved the objective under itself.
+    **Per evaluation, not per step, and that is load-bearing.** Adam evaluates the loss
+    once per step so the two coincide; LBFGS evaluates it several times per step, and each
+    redraw is what gives the fit its coverage of the point cloud. §8.0.K proposed hoisting
+    this to once per step on the grounds that a line search over a moving objective is
+    undefined, and the measurement said otherwise: at 12,000 decoder evaluations and a 5%
+    sampling ratio, per-evaluation draws reach 95% of the cloud and a median held-out error
+    of 0.007, against 41% and 0.029 for one draw per step. The gap closes as the ratio
+    rises (identical at 50%), so it is coverage that is doing the work, not the line
+    search. See ``TestTheDrawIsPerEvaluation``.
+
+    The theoretical objection is real but is not this function's to answer: L-BFGS assumes
+    a deterministic objective, and a *deterministic* draw with good coverage -- stratified,
+    or blue noise -- would satisfy both. That is a sampling-strategy change, not a cadence
+    one.
 
     Returns ``(xyz_input, sdf_gt_)``, the points and the per-surface ground truth aligned
     to them; ``sdf_gt_`` keeps ``None`` for a surface that has none.
@@ -677,20 +686,27 @@ def reconstruct_latent(
                     adjust_lr_every=adjust_lr_every,
                 )
 
-        xyz_input, sdf_gt_ = _select_samples(
-            xyz=xyz,
-            sdf_gt=sdf_gt,
-            pts_surface=pts_surface,
-            n_samples=n_samples,
-            n_samples_init=n_samples_init,
-            max_n_samples=max_n_samples,
-            n_steps_sample_ramp=n_steps_sample_ramp,
-            step=step,
-            device=device,
-        )
+        def draw_samples():
+            """This *evaluation's* points -- drawn per call, deliberately.
+
+            LBFGS calls the loss several times per step, and each call redrawing is what
+            gives the fit its coverage of the point cloud: see ``_select_samples``.
+            """
+            return _select_samples(
+                xyz=xyz,
+                sdf_gt=sdf_gt,
+                pts_surface=pts_surface,
+                n_samples=n_samples,
+                n_samples_init=n_samples_init,
+                max_n_samples=max_n_samples,
+                n_steps_sample_ramp=n_steps_sample_ramp,
+                step=step,
+                device=device,
+            )
 
         def compute_loss():
             """The step's objective: reconstruction, regularization, and their sum."""
+            xyz_input, sdf_gt_ = draw_samples()
             recon_loss = _recon_loss(
                 decoders=decoders,
                 latent=latent,
@@ -750,6 +766,7 @@ def reconstruct_latent(
             ``eikonal_loss_value`` is 0 here as it is there: ``eikonal_weight > 0`` raises
             at this function's entry.
             """
+            xyz_input, sdf_gt_ = draw_samples()
             n_points = xyz_input.shape[0]
             recon_loss = 0.0
             for start in range(0, n_points, n_samples_per_chunk):
