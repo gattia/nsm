@@ -206,6 +206,22 @@ def latent_norm_penalty(latent, target_norm, penalty_weight=1.0, penalty_type="q
     return penalty_weight * penalty
 
 
+def _samples_per_surface(*, n_samples, pts_surface, n_surfaces):
+    """How many points each surface contributes to one draw.
+
+    The budget is split evenly and then capped at what each surface actually has, so a
+    surface smaller than its share contributes everything it has and the *total* comes out
+    below ``n_samples``. That is why ``n_samples=len(xyz)`` does not mean "every point"
+    unless the surfaces are equal-sized: with 300 and 90 points, ``n_samples=390`` gives
+    each surface 195 and draws 195 + 90 = 285.
+
+    Shared with the subsampling guard so the warning cannot describe a different draw from
+    the one that happens.
+    """
+    share = n_samples // n_surfaces
+    return [min(share, int((pts_surface == idx).sum())) for idx in range(n_surfaces)]
+
+
 def _select_samples(
     *,
     xyz,
@@ -251,12 +267,9 @@ def _select_samples(
         n_samples_ = n_samples
 
     # make sure not trying to sample more points than available for a surface
-    n_samples_per_surface = []
-    n_samples_per_surface_ = n_samples_ // len(sdf_gt)
-    for surface_idx in range(len(sdf_gt)):
-        pts_surface_ = (pts_surface == surface_idx).nonzero(as_tuple=True)[0]
-        n_samples_per_surface.append(min(n_samples_per_surface_, pts_surface_.shape[0]))
-
+    n_samples_per_surface = _samples_per_surface(
+        n_samples=n_samples_, pts_surface=pts_surface, n_surfaces=len(sdf_gt)
+    )
     n_samples_ = sum(n_samples_per_surface)
 
     if n_samples_ != xyz.shape[0]:
@@ -526,6 +539,13 @@ def reconstruct_latent(
     surface. (This is the same positional-identity contract as
     ``reconstruct_mesh``'s result ``mesh`` list — see ``docs/SCOPE.md`` §3.1.)
 
+    ``lbfgs_lr``, ``lbfgs_max_iter`` and ``lbfgs_history_size`` configure the LBFGS
+    optimizer on **both** paths -- ``optimizer_name="lbfgs"`` and the LBFGS half of
+    ``hybrid_optimizer=True``. Before Aug 2026 the non-hybrid path ignored all three, so
+    ``lr`` stood in for ``lbfgs_lr``; torch's LBFGS runs without a line search
+    (``line_search_fn`` is never set), which makes ``lbfgs_lr`` the raw step length and
+    therefore the parameter that decides whether the fit converges or diverges.
+
     ``n_samples_per_chunk`` (#75) splits each step's forward *and* backward into chunks of
     that many points, accumulating the gradient on the latent, so a step's memory stops
     scaling with ``n_samples``. ``None``, the default, is one unchunked pass and is what
@@ -538,6 +558,29 @@ def reconstruct_latent(
         (loss, latent): the final loss value and the fitted latent tensor.
     """
     refuse_unknown_kwargs(kwargs, function_name="reconstruct_latent", deprecated=_DEPRECATED_KWARGS)
+
+    # All three used to be `if`/`elif` chains with no `else`. Two left `optimizer` or
+    # `loss_fn` unassigned and surfaced 100 lines later as an UnboundLocalError naming a
+    # local the caller has never seen; `convergence` was worse, because its missing `else`
+    # is a real branch -- any unrecognised value silently meant "num_iterations", so a
+    # capitalised `"Recon_Loss"` turned convergence checking off and said nothing.
+    # Normalised, then refused: case is the one difference that is never a different
+    # intent, and folding it costs nothing downstream because everything past this point
+    # reads the normalised name.
+    optimizer_name = _normalized_choice(
+        optimizer_name, allowed=_OPTIMIZER_NAMES, parameter="optimizer_name"
+    )
+    loss_type = _normalized_choice(loss_type, allowed=_LOSS_TYPES, parameter="loss_type")
+    convergence = _normalized_choice(
+        convergence, allowed=_CONVERGENCE_TYPES, parameter="convergence"
+    )
+    if hybrid_optimizer and optimizer_name != "adam":
+        raise ValueError(
+            "hybrid_optimizer=True runs Adam and then LBFGS, so optimizer_name is not "
+            f"consulted; it was {optimizer_name!r}. Drop one of the two -- "
+            "NSM.reconstruct._config_migration.migrate_reconstruct_config() removes the "
+            "optimizer_name for you and says what else in the config was never read."
+        )
 
     if log_wandb and wandb is None:
         raise ImportError("log_wandb=True requires wandb, which is not installed")
@@ -565,21 +608,6 @@ def reconstruct_latent(
     if n_samples is None:
         n_samples = xyz.shape[0]
 
-    # A subsampled objective is redrawn on every loss evaluation, which is what gives the
-    # fit its coverage of the point cloud (see `_select_samples`). L-BFGS evaluates the
-    # loss several times per step and assumes a deterministic objective while doing so, so
-    # this combination is the one place the two requirements collide -- and it is
-    # measurably the worst of the options, not merely the least principled.
-    if (optimizer_name == "lbfgs" or hybrid_optimizer) and n_samples < xyz.shape[0]:
-        logger.warning(
-            "LBFGS is evaluating a subsampled objective (n_samples=%s of %s points), which "
-            "redraws between its own line-search evaluations. Prefer the full cloud "
-            "(n_samples=None) with n_samples_per_chunk set to bound memory; see "
-            "docs/KNOWN_ISSUES.md (Open) for the measurement.",
-            n_samples,
-            xyz.shape[0],
-        )
-
     if (max_n_samples is not None) and (n_steps_sample_ramp is not None):
         logger.debug("Ramping up number of samples")
         n_samples_init = n_samples
@@ -590,32 +618,38 @@ def reconstruct_latent(
         sdf_gt, clamp_dist, device=device, verbose=verbose
     )
 
+    # A subsampled objective is redrawn on every loss evaluation, which is what gives the
+    # fit its coverage of the point cloud (see `_select_samples`). LBFGS evaluates the loss
+    # several times per step and assumes a deterministic objective while doing so, so this
+    # combination is the one place the two requirements collide.
+    #
+    # Placed after the case fold, not before it: reading `optimizer_name` above would miss
+    # "LBFGS". Measured against the draw `_select_samples` will make, not against
+    # `n_samples`, because the per-surface cap means the two differ whenever the surfaces
+    # are unequal -- which is the normal case, since a cloud of mesh vertices has as many
+    # points per surface as that mesh has vertices.
+    planned = sum(
+        _samples_per_surface(n_samples=n_samples, pts_surface=pts_surface, n_surfaces=len(sdf_gt))
+    )
+    if (optimizer_name == "lbfgs" or hybrid_optimizer) and planned < xyz.shape[0]:
+        logger.warning(
+            "LBFGS is evaluating a subsampled objective: n_samples=%s draws %s of %s "
+            "points, redrawn on every one of its own loss evaluations. For the full cloud "
+            "raise n_samples to at least %s (per-surface budget is n_samples // %s, capped "
+            "at each surface's own size), and bound memory with n_samples_per_chunk "
+            "instead; see docs/KNOWN_ISSUES.md (Open).",
+            n_samples,
+            planned,
+            xyz.shape[0],
+            len(sdf_gt) * max(int((pts_surface == i).sum()) for i in range(len(sdf_gt))),
+            len(sdf_gt),
+        )
+
     # Initialize random latent vector directly on GPU
     latent = torch.ones(1, latent_size, device=device).normal_(
         mean=latent_init_mean, std=latent_init_std
     )
     latent.requires_grad = True
-
-    # All three used to be `if`/`elif` chains with no `else`. Two left `optimizer` or
-    # `loss_fn` unassigned and surfaced 100 lines later as an UnboundLocalError naming a
-    # local the caller has never seen; `convergence` was worse, because its missing `else`
-    # is a real branch -- any unrecognised value silently meant "num_iterations", so a
-    # capitalised `"Recon_Loss"` turned convergence checking off and said nothing.
-    # Normalised, then refused: case is the one difference that is never a different
-    # intent, and folding it costs nothing downstream because everything past this point
-    # reads the normalised name.
-    optimizer_name = _normalized_choice(
-        optimizer_name, allowed=_OPTIMIZER_NAMES, parameter="optimizer_name"
-    )
-    loss_type = _normalized_choice(loss_type, allowed=_LOSS_TYPES, parameter="loss_type")
-    convergence = _normalized_choice(
-        convergence, allowed=_CONVERGENCE_TYPES, parameter="convergence"
-    )
-    if hybrid_optimizer and optimizer_name != "adam":
-        raise ValueError(
-            "hybrid_optimizer=True runs Adam and then LBFGS, so optimizer_name is not "
-            f"consulted; it was {optimizer_name!r}. Drop one of the two."
-        )
 
     # Initialize optimizer(s)
     if hybrid_optimizer:
@@ -648,12 +682,16 @@ def reconstruct_latent(
         if optimizer_name == "adam":
             optimizer = torch.optim.Adam([latent], lr=lr)
         elif optimizer_name == "lbfgs":
+            # The same three parameters the hybrid branch reads. They used to be ignored
+            # here -- `lr` stood in for `lbfgs_lr`, and max_iter/history_size were 10/100
+            # literals -- so a caller setting lbfgs_lr=1.0 silently ran at `lr`, which at a
+            # config's usual 0.005 is a step 200x smaller than asked for.
             optimizer = torch.optim.LBFGS(
                 [latent],
-                lr=lr,  # LBFGS typically uses lr=1.0
-                max_iter=10,  # More internal iterations per step
-                history_size=100,
-            )  # Larger history for better Hessian approx
+                lr=lbfgs_lr,
+                max_iter=lbfgs_max_iter,
+                history_size=lbfgs_history_size,
+            )
 
     # The LR schedule spans the phase it steps. This used to be derived from
     # `num_iterations` in both modes, and hybrid mode does not run `num_iterations` steps:

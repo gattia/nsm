@@ -471,13 +471,19 @@ class TestTheDrawIsPerEvaluation:
 
     @pytest.mark.parametrize(
         "options",
-        [{"optimizer_name": "lbfgs"}, {"hybrid_optimizer": True, "adam_iterations": 1}],
-        ids=["lbfgs", "hybrid"],
+        [
+            {"optimizer_name": "lbfgs"},
+            {"optimizer_name": "LBFGS"},
+            {"hybrid_optimizer": True, "adam_iterations": 1},
+        ],
+        ids=["lbfgs", "LBFGS", "hybrid"],
     )
     def test_a_subsampled_lbfgs_fit_says_so(self, caplog, options):
         """
-        The one combination where coverage and a well-posed line search genuinely collide,
-        and it was silent. The warning names the remedy rather than describing the problem.
+        The one combination where coverage and a deterministic objective genuinely collide,
+        and it was silent. ``"LBFGS"`` is parameterised because the first version of this
+        guard read ``optimizer_name`` *before* the case fold and missed it -- the fold and
+        the guard now both sit at the top of the function, in that order.
         """
         with caplog.at_level(logging.WARNING, logger="NSM"):
             reconstruct_latent(
@@ -486,6 +492,40 @@ class TestTheDrawIsPerEvaluation:
             )
         messages = " ".join(record.getMessage() for record in caplog.records)
         assert "n_samples_per_chunk" in messages
+
+    def test_the_guard_measures_the_draw_not_the_budget(self):
+        """
+        ``n_samples`` is split across surfaces and capped at each one's size, so with
+        unequal surfaces a budget at or above the cloud size still subsamples: 300 and 90
+        points at ``n_samples=390`` draws 285. The guard reads the planned draw through the
+        same helper ``_select_samples`` uses, so it cannot describe a different draw from
+        the one that happens -- the first version compared ``n_samples`` and stayed silent
+        here, while recommending ``n_samples=None``, which lands in exactly this case.
+        """
+        big, small = 300, 90
+        n_pts = big + small
+        pts_surface = torch.tensor([0] * big + [1] * small)
+        planned = latent_fit._samples_per_surface(
+            n_samples=n_pts, pts_surface=pts_surface, n_surfaces=2
+        )
+        assert sum(planned) == 285
+
+        with caplog_at_warning() as records:
+            sdf = torch.rand(n_pts, 1)
+            reconstruct_latent(
+                decoders=LinearDecoder(surfaces=2),
+                num_iterations=1,
+                latent_size=8,
+                xyz=torch.rand(n_pts, 3),
+                sdf_gt=[sdf, sdf.clone()],
+                pts_surface=pts_surface,
+                n_samples=n_pts,
+                optimizer_name="lbfgs",
+                device="cpu",
+            )
+        messages = " ".join(r.getMessage() for r in records)
+        assert "draws 285 of 390" in messages
+        assert "at least 600" in messages
 
     def test_a_full_cloud_lbfgs_fit_is_silent(self):
         """The warning must not fire on the configuration it is recommending."""
@@ -620,6 +660,50 @@ class TestTheFitIsUnchangedByTheSplit:
         assert torch.equal(first_latent, second_latent)
         assert float(first_loss) == float(second_loss)
         assert torch.isfinite(first_latent).all()
+
+
+class TestTheLbfgsParametersAreReadOnBothPaths:
+    """
+    ``lbfgs_lr``, ``lbfgs_max_iter`` and ``lbfgs_history_size`` were read in the hybrid
+    branch and ignored in the non-hybrid one, which built ``LBFGS(lr=lr, max_iter=10,
+    history_size=100)`` from literals.
+
+    That asymmetry is not cosmetic. torch's LBFGS runs with no line search
+    (``line_search_fn`` is never set), so ``lbfgs_lr`` *is* the step length -- and at a
+    config's usual ``lr=0.005`` a caller asking for ``lbfgs_lr=1.0`` silently ran at a step
+    200x smaller. Any "LBFGS alone does not converge" conclusion drawn from the non-hybrid
+    path was measured on a fit that never received the step size it was configured with.
+    """
+
+    @pytest.mark.parametrize("hybrid", [False, True], ids=["non-hybrid", "hybrid"])
+    def test_both_paths_build_lbfgs_from_the_same_parameters(self, monkeypatch, hybrid):
+        built = []
+        original = torch.optim.LBFGS
+
+        def spy(params, **kwargs):
+            built.append(kwargs)
+            return original(params, **kwargs)
+
+        monkeypatch.setattr(torch.optim, "LBFGS", spy)
+        options = (
+            {"hybrid_optimizer": True, "adam_iterations": 1, "lbfgs_iterations": 1}
+            if hybrid
+            else {"optimizer_name": "lbfgs"}
+        )
+        reconstruct_latent(
+            decoders=LinearDecoder(),
+            **fit_kwargs(
+                num_iterations=1,
+                lbfgs_lr=0.25,
+                lbfgs_max_iter=3,
+                lbfgs_history_size=7,
+                **options,
+            ),
+        )
+        assert built, "no LBFGS optimizer was constructed"
+        assert built[0]["lr"] == 0.25
+        assert built[0]["max_iter"] == 3
+        assert built[0]["history_size"] == 7
 
 
 class TestTheLbfgsClosureDoesNotRetainItsGraph:
