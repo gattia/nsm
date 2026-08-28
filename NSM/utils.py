@@ -317,10 +317,22 @@ def save_model_params(config, list_mesh_paths):
     if os.path.exists(path_save):
         return
 
-    dict_save = {
-        "list_mesh_paths": list_mesh_paths,
-    }
-    dict_save.update(config)
+    dict_save = dict(config)
+    # After the merge, not before it: `list_mesh_paths` is the dataset that is training,
+    # and a config's own copy of the key is either the shipped default's None or a previous
+    # run's list, round-tripped back in from that run's saved file. Either way the data
+    # wins over the record. See plan §8.0.M and docs/KNOWN_ISSUES.md History 26.
+    dict_save["list_mesh_paths"] = list_mesh_paths
+
+    superseded = config.get("list_mesh_paths")
+    if superseded is not None and superseded != list_mesh_paths:
+        logger.warning(
+            "config declares %d mesh path(s) and the dataset supplies %d; recording the "
+            "dataset's. A config carrying this key usually came from an earlier run's "
+            "model_params_config.json, whose subject list is not this run's.",
+            len(superseded),
+            len(list_mesh_paths),
+        )
 
     dict_save = filter_non_jsonable(dict_save)
 

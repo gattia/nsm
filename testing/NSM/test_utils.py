@@ -121,14 +121,10 @@ class TestTheRecordNamesItsSubjects:
     authoritative source and the config's copy is the stale artifact.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="§8.0.M: default_config.json carries list_mesh_paths: null, and "
-        "dict_save.update(config) applies it over the argument",
-    )
     def test_the_shipped_default_records_the_subjects_it_was_given(self, shipped_config):
         """
-        The measurement that made this the slice's first defect rather than #50's footnote.
+        Was a strict xfail, and the measurement that made this the slice's first defect
+        rather than #50's footnote.
 
         ``default_config.json`` carries ``"list_mesh_paths": null``. Every run started from
         it records ``null`` -- not a stale list, no list -- in the file ``load_model``,
@@ -140,14 +136,10 @@ class TestTheRecordNamesItsSubjects:
 
         assert saved_record(shipped_config)["list_mesh_paths"] == SUBJECTS
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="§8.0.M: a config round-tripped from a previous run's saved file wins "
-        "over the dataset that is actually training",
-    )
-    def test_a_config_from_a_previous_run_does_not_win(self, shipped_config):
+    def test_a_config_from_a_previous_run_does_not_win(self, shipped_config, caplog):
         """
-        The second reachable case, and the one that records a plausible wrong answer.
+        Was a strict xfail. The second reachable case, and the one that recorded a
+        plausible wrong answer rather than an obviously empty one.
 
         A real ``model_params_config.json`` carries this key --
         ``generate_sdf_default_config.py``'s header lists it among the machine paths it had
@@ -156,9 +148,11 @@ class TestTheRecordNamesItsSubjects:
         """
         shipped_config["list_mesh_paths"] = ["/data/PREVIOUS_RUN.vtk"]
 
-        save_model_params(config=shipped_config, list_mesh_paths=SUBJECTS)
+        with caplog.at_level(logging.WARNING, logger="NSM.utils"):
+            save_model_params(config=shipped_config, list_mesh_paths=SUBJECTS)
 
         assert saved_record(shipped_config)["list_mesh_paths"] == SUBJECTS
+        assert "model_params_config.json" in caplog.text
 
     def test_a_config_without_the_key_records_the_argument(self, tmp_path):
         """The control: with no shadow there is no defect, and that must stay true."""
