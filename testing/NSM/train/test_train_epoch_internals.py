@@ -504,11 +504,12 @@ DEBUG_TEMPLATES = {
 
 class TestTheDebugRecordsAreNotGatedOnAConfigKey:
     """
-    All 20 records are already ``logger.debug``, so the gate only ever subtracts. The
-    shipped ``NSM/configs/default_config.json`` sets ``verbose: true``, which leaves the
+    All 20 records are already ``logger.debug``, so the gate only ever subtracted. The
+    shipped ``NSM/configs/default_config.json`` sets ``verbose: true``, which left the
     gate permanently open and the *level* doing the filtering; a config with
-    ``verbose: false`` hides all 20 from a host that configured ``DEBUG`` and asked for
-    them.
+    ``verbose: false`` hid all 20 from a host that configured ``DEBUG`` and asked for
+    them. ``config["verbose"]`` is still read -- ``_run_validation`` forwards it -- so
+    ungating these did not turn the key into an accepted-and-ignored one.
     """
 
     def test_the_record_set_under_verbose_true_is_what_it_is(self):
@@ -521,11 +522,8 @@ class TestTheDebugRecordsAreNotGatedOnAConfigKey:
             run_epoch(verbose=True)
         assert {record.msg for record in collected} == DEBUG_TEMPLATES
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="§8.0.L: the records are gated on config['verbose'], not on the log level",
-    )
     def test_a_host_at_debug_sees_them_without_the_config_key(self):
+        """Was a strict xfail: the set was empty, whatever the host had configured."""
         with records_at(logging.DEBUG) as collected:
             run_epoch(verbose=False)
         assert {record.msg for record in collected} == DEBUG_TEMPLATES

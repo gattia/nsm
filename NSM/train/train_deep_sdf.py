@@ -500,10 +500,9 @@ def train_epoch(
     timing_batches = 0
 
     for sdf_data, indices in data_loader:
-        if config["verbose"] is True:
-            logger.debug("sdf index size: %s", indices.size())
-            logger.debug("xyz data size: %s", sdf_data["xyz"].size())
-            logger.debug("sdf gt size: %s", sdf_data["gt_sdf"].size())
+        logger.debug("sdf index size: %s", indices.size())
+        logger.debug("xyz data size: %s", sdf_data["xyz"].size())
+        logger.debug("sdf gt size: %s", sdf_data["gt_sdf"].size())
 
         xyz = sdf_data["xyz"].to(config["device"])
         xyz = xyz.reshape(-1, 3)
@@ -529,8 +528,7 @@ def train_epoch(
                 sdf_gt_.requires_grad = False
                 sdf_gt.append(sdf_gt_)
 
-        if config["verbose"] is True:
-            logger.debug("sdf gt size: %s", [x_.size() for x_ in sdf_gt])
+        logger.debug("sdf gt size: %s", [x_.size() for x_ in sdf_gt])
 
         samples_per_object = _samples_per_object(num_sdf_samples, indices.shape[0], config)
 
@@ -547,10 +545,9 @@ def train_epoch(
         for surf_idx in range(n_surfaces):
             sdf_gt[surf_idx] = torch.chunk(sdf_gt[surf_idx], config["batch_split"])
 
-        if config["verbose"] is True:
-            logger.debug("len sdf_gt %s", len(sdf_gt))
-            logger.debug("len sdf_gt chunks: %s", [len(x_) for x_ in sdf_gt])
-            logger.debug("len xyz chunks %s", len(xyz))
+        logger.debug("len sdf_gt %s", len(sdf_gt))
+        logger.debug("len sdf_gt chunks: %s", [len(x_) for x_ in sdf_gt])
+        logger.debug("len xyz chunks %s", len(xyz))
 
         batch_loss = 0.0
         batch_l1_loss = 0.0
@@ -568,8 +565,7 @@ def train_epoch(
         # chunks still partition the batch, so every split count covers the same samples
         # exactly once and the loss is unchanged.
         for split_idx in range(len(xyz)):
-            if config["verbose"] is True:
-                logger.debug("Split idx:  %s", split_idx)
+            logger.debug("Split idx:  %s", split_idx)
 
             batch_vecs = latent_vecs(indices[split_idx])
             if "variational" in config and config["variational"] is True:
@@ -582,9 +578,8 @@ def train_epoch(
             inputs = torch.cat([batch_vecs, xyz[split_idx]], dim=1)
             # inputs = inputs.to(config['device'])
 
-            if config["verbose"] is True:
-                logger.debug("model dtype %s", next(model.parameters()).dtype)
-                logger.debug("inputs dtype %s", inputs.dtype)
+            logger.debug("model dtype %s", next(model.parameters()).dtype)
+            logger.debug("inputs dtype %s", inputs.dtype)
             # pred_sdfs = []
             # for model in models:
             pred_sdf = model(inputs, epoch=epoch)
@@ -608,18 +603,16 @@ def train_epoch(
             # elif config['hard_sample_difficulty_weight'] is not None:
             #     pred_sdf = torch.clamp(pred_sdf, -1, 1)
 
-            if config["verbose"] is True:
-                logger.debug("len pred_sdf %s", pred_sdf.shape)
-                logger.debug("split idx %s", split_idx)
+            logger.debug("len pred_sdf %s", pred_sdf.shape)
+            logger.debug("split idx %s", split_idx)
             l1_losses = []
             for surf_idx in range(n_surfaces):
-                if config["verbose"] is True:
-                    logger.debug("surf idx %s", surf_idx)
-                    logger.debug("%s", len(sdf_gt))
-                    logger.debug("%s", len(sdf_gt[surf_idx]))
-                    logger.debug("pred_sdf shape %s", pred_sdf.shape)
-                    logger.debug("unsqueezed pred_sdf shape %s", pred_sdf[:, surf_idx].shape)
-                    logger.debug("sdf_gt shape %s", sdf_gt[surf_idx][split_idx].shape)
+                logger.debug("surf idx %s", surf_idx)
+                logger.debug("%s", len(sdf_gt))
+                logger.debug("%s", len(sdf_gt[surf_idx]))
+                logger.debug("pred_sdf shape %s", pred_sdf.shape)
+                logger.debug("unsqueezed pred_sdf shape %s", pred_sdf[:, surf_idx].shape)
+                logger.debug("sdf_gt shape %s", sdf_gt[surf_idx][split_idx].shape)
                 l1_losses.append(
                     loss_l1(
                         pred_sdf[:, surf_idx],
@@ -679,9 +672,8 @@ def train_epoch(
             # Normalize by number of surfaces
             l1_loss = l1_loss / len(l1_losses)
 
-            if config["verbose"] is True:
-                logger.debug("l1 losses: %s", [l1_loss_.sum().item() for l1_loss_ in l1_losses])
-                logger.debug("l1 loss: %s", l1_loss.item())
+            logger.debug("l1 losses: %s", [l1_loss_.sum().item() for l1_loss_ in l1_losses])
+            logger.debug("l1 loss: %s", l1_loss.item())
 
             batch_l1_loss += l1_loss.item()
             for l1_idx, l1_loss_ in enumerate(l1_losses):
