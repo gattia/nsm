@@ -356,6 +356,29 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   former belongs to #51's repair, the latter to the quarantine decision (`SCOPE.md` §2).
   **No numerical output changes.**
 
+- **`train_epoch` refuses three config values it used to accept** (plan §8.0.L).
+  `multi_object_overlap: true` used to raise a bare `Exception("Not implemented yet")`
+  from inside the innermost loop, after a full forward and backward and after every
+  earlier batch had already stepped; it now raises `NotImplementedError` before the first
+  batch is fetched. `eikonal_weight > 0` used to *run* — `train_deep_sdf` and
+  `reconstruct_latent` gate it and `train_epoch` is the code they guard, so a caller
+  reaching it directly (it is public) or through `train_deep_sdf_multi_head` got the loss
+  the rest of the library refuses; it now raises the same `NotImplementedError`, and
+  the plan's §8.2 repair order is unaffected because the code is untouched. A
+  `surface_weighting` whose length is not the surface count used to be caught by a bare
+  `assert` — stripped by `python -O`, and what was behind it is not a crash: one entry too
+  long rescaled every weight that *was* used (measured on two surfaces: `[1, 1, 1]` gave
+  2/3 of the unweighted loss, `[3, 1, 99]` gave 1/25 of it), one entry too short raised
+  `IndexError`. It is now a `ValueError` naming both counts, under `-O` as well.
+  **No working configuration changes.**
+
+- **`train_epoch` refuses a `samples_per_object_per_batch` that disagrees with its batch**
+  (plan §8.0.L). The key restates the dataset's `subsample` and the two are declared on
+  different objects, so nothing held them together; a disagreement surfaced as a
+  `torch.cat` size error 35 lines below the config read, naming neither key. It is now a
+  `ValueError` naming both. The same check covers `_schedule_free_eval_warmup`, which
+  rebuilds the index tensor the same way. **No working configuration changes.**
+
 ### Deprecated
 
 - **`verbose=` on the 28 functions that take it**, in favour of `logging` ([#58](https://github.com/gattia/nsm/issues/58)).
@@ -377,6 +400,17 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   output with no notice at all.
 
 ### Changed
+
+- **`train_epoch`'s diagnostics answer to the host's logging config, not to
+  `config["verbose"]`** (plan §8.0.L). Its 20 `logger.debug` records sat behind eight
+  `if config["verbose"] is True:` gates. All 20 were already at `DEBUG`, so the gate only
+  ever subtracted: the shipped `default_config.json` sets `verbose: true`, which left it
+  permanently open and the level doing the filtering, and a config with `verbose: false`
+  hid all 20 from a host that had configured `DEBUG` and asked for them. Four of the
+  records were then deleted — one repeated another 39 lines up, two had no message text at
+  all, one repeated the record seven lines above it — and three were renamed to describe
+  what they log. `config["verbose"]` keeps its other meaning (`_run_validation` forwards
+  it) and is still not deprecated.
 
 - **`reconstruct_latent`'s own diagnostics answer to the host's logging config, not to
   `verbose=`** (plan §8.0.K). 25 of its 30 log records sat under `if verbose is True:`,
@@ -457,6 +491,16 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Fixed — affects results
 
+- **The logged `mean_vec_length` / `std_vec_length` are epoch means at every `batch_split`**
+  (plan §8.0.L). #59 fixed this on the batch loop; underneath it is a split loop, and both
+  statistics were computed inside that one and read after it, so with `batch_split` above 1
+  the logged value was the last split's. Measured on one fixture, same seed, only
+  `batch_split` changing: `mean_vec_length` 0.1445 / 0.2026 / 0.3201 for 1 / 2 / 4, against
+  a loss invariant to 1.5e-08 — and `NaN` wherever a split held a single row, since
+  `torch.std` of one value is undefined. `batch_split: 1` is bit-unchanged, which is the
+  shipped default. Weights, gradients and checkpoints were never affected at any setting.
+  See `docs/KNOWN_ISSUES.md` § History 25.
+
 - **The logged `mean_vec_length` / `std_vec_length` are epoch means** (#59). They were
   assigned (`=` for `+=`) and then divided by the batch count, so every wandb run since
   Nov 2024 logged the last batch's stat shrunk by ~×n_batches. Weights, gradients and
@@ -519,6 +563,14 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   Python list. See `docs/KNOWN_ISSUES.md` § History §6.
 
 ### Fixed
+
+- **`batch_split` values `torch.chunk` cannot honour no longer crash the epoch** (plan
+  §8.0.L). `torch.chunk(t, k)` returns *at most* `k` pieces — it splits into pieces of
+  `ceil(len / k)` and stops when the tensor runs out — and both split loops in
+  `train_deep_sdf.py` were bounded by the requested `k`, so `batch_split=5` on a 16-row
+  batch raised `IndexError: tuple index out of range` while 3 and 6 on the same batch
+  worked. The chunks still partition the batch, so the affected values now produce the loss
+  they would have produced, not a new one. Second site is `_schedule_free_eval_warmup`.
 
 - **wandb is optional** (#5). It was an undeclared import-time dependency: without it,
   `import NSM.reconstruct` — the inference path, which never logs — and

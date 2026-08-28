@@ -4,17 +4,89 @@
 
 ## State
 
-**Updated:** 2026-08-27 · **Status:** open
+**Updated:** 2026-08-28 · **Status:** open
 
-- **Next:** write and execute **§8.0.L** — `train_epoch`'s loss pipeline, the statement
-  §8.0.D deferred and said would come due. Its statement is commit 1 of that slice and is
-  not written yet. Measured against `main` rather than left for the statement to discover:
-  **`train_epoch` is 391 lines, not the slice index's ~270**, in a 772-line module it is
-  half of, on 7 parameters with no `**kwargs` — so it is the first slice since §8.0.G with
-  no swallowed-keyword hole to close and no public signature in §8.0.O's set. `train_deep_sdf`
-  itself is 159 lines beside it. §8.0.G's residue is **already absent here**: the file has
-  zero `if verbose` gates, so §8.0.K's largest single commit has no counterpart in §8.0.L.
-  **Blocked on nothing** once #94 merges; #94 is stacked on #93, so **merge #93 first**.
+- **Next:** write and execute **§8.0.M** — `NSM/utils.py`, #50 and the module's remaining
+  undocumented surface, plus the residual items the slice index assigns to whoever opens
+  that file: `print_gpu_memory`, whose name says print and whose body logs (rename or
+  delete, both Breaking). Its statement is commit 1 of that slice and is not written yet.
+  **Blocked on nothing** once #95 merges; #95 is based directly on `main`, not stacked.
+- **§8.0.L executed (2026-08-28), PR #95, based on `main` at `7bd29b3`:** commits 2–12 —
+  the characterization, the split-loop bound at both sites, the latent-norm accumulation,
+  the two refusals, `surface_weighting`, `samples_per_object_per_batch`, the ungating, the
+  record deletions, the two shared helpers, the two loss helpers, and this update. Suite
+  940 → 1037 passed / 1 skipped / 3 xfailed: **all 25 strict xfails commit 2 raised were
+  retired inside the slice**, and the 3 that remain are the regression harness's. One
+  § History entry (25, the split-level latent norms), two CHANGELOG Breaking entries plus
+  one Fixed-affects-results, one Fixed and one Changed, `ARCHITECTURE` §7's
+  accepted-and-ignored row, and `CLAUDE.md`'s eikonal line corrected from two entry points
+  to three. `train_epoch` is **391 → 295 lines** (260 → ~180 executable), the module
+  771 → 884.
+- **The statement's "the file has zero `if verbose` gates" was inherited from this State
+  block and was right about the wrong spelling.** There are no `if verbose is True:` gates
+  in `train_deep_sdf.py` — that form is a *parameter*, and §8.0.G's bridge decorates it —
+  and there were **eight `if config["verbose"] is True:` gates carrying 20 records**, all
+  inside `train_epoch`. Measuring the parameter form and reporting it as "no gates" is the
+  same error in miniature as the ones the slice fixed: the check answered a question next
+  to the one asked. **16 config-key gates remain**, 7 in `train_deep_sdf_multi_head` and 9
+  in `train/deprecated/`, both out of the documented surface; the 25 parameter-form gates
+  are unchanged and belong to §8.0.N.
+- **Two of the seven defects measured worse than the statement said, and both were found
+  by writing the characterization rather than by reading the code.** (1) `surface_weighting`
+  was priced as a check that `python -O` strips. What is behind it is not a crash:
+  `weights_sum` is taken over the whole declared list while `weights_total` is
+  `n_surfaces`, so a list one entry too long **silently rescales every weight it does
+  use** — two surfaces under `-O`, `[1, 1, 1]` gives 2/3 of the unweighted loss and
+  `[3, 1, 99]` gives 1/25 of it, from an entry that is never indexed. (2) `std_vec_length`
+  is not merely wrong at `batch_split > 1`, it is **`NaN`** wherever a split holds a single
+  row, since `torch.std` of one value is undefined. **The lesson: a defect measured by
+  reproducing its stated symptom is measured only as far as the statement imagined it.**
+  Both were found by parameterising the test over values the statement had not named.
+- **The same defect was at both sites three times, and the third time bought the
+  helper.** The split-loop bound, the `samples_per_object_per_batch` check and the index
+  repeat are all shared between `train_epoch` and `_schedule_free_eval_warmup`, whose
+  docstring says it unpacks the batch "exactly the way `train_epoch` does" — which is what
+  #42 was, when the two disagreed and every schedule_free run died at its first
+  checkpoint. Two commits fixed the class by hand before `_split_batch` and
+  `_batch_latents` made it structural. **A docstring asserting two functions agree is a
+  standing invitation to a fourth instance; the extraction is the mechanism it was
+  standing in for.**
+- **The size budget was missed for the fifth slice running, and the mechanism is the
+  fourth variant of one error.** Budget +78 net in `NSM/`, ceiling +100, actual **+113**.
+  Two parts, both measured after the fact: (1) **§8.0.J's "two lines per keyword-only
+  parameter" holds to about five parameters and not past it.** `_surface_l1_loss` takes 7
+  and cost 11 signature lines — black puts each on its own line once the signature wraps,
+  plus the `*` and the `):` — and a 10-line call site: **3 lines per parameter, not 2**.
+  The other three helpers, at 3, 3 and 6 parameters, came in at or under budget.
+  (2) **`_surface_weights` was priced inside another line item and therefore not priced at
+  all**: the `surface_weighting` row read "checked once, weights hoisted: −5", which
+  counted the removal and not the new function's signature and docstring (+9). §8.0.H
+  priced transitional code at zero, §8.0.I priced refusals by net lines, §8.0.J priced
+  call sites at zero, §8.0.K priced moved code as deleted code, and this one **priced a
+  helper as a line item's side effect**. Same error each time: the part you are thinking
+  about gets a number, the part the language makes you write does not.
+- **The deletion pass took one helper back out**, which is the pass working rather than a
+  miss: `_samples_per_object` had exactly one caller once `_split_batch` existed, and its
+  docstring restated its caller's. `_surface_l1_loss` also lost its `n_surfaces`
+  parameter — the count is `len(sdf_gt)`, so it cannot disagree with the data it indexes.
+- **The statement's "bit-identical against the pre-refactor implementation" row was
+  satisfied by invariance, not by a stored `log_dict`, and that is the better pin.** A
+  stored matrix would have had to be regenerated at the latent-norm commit and the
+  `samples_per_object` commit, where the fixes legitimately move it — a pin that moves
+  three times in a slice pins nothing. What the file asserts instead is `loss == l1 + reg`,
+  `l1 == mean(l1_loss_i)` under uniform weights, the documented key set, and independence
+  from `batch_split`, across 1/2/3 surfaces, three priors and the variational branch. The
+  production path stays pinned by the committed regression baselines, which stayed green
+  at every commit and are what says `batch_split: 1` is bit-unchanged.
+- **`grad_clip` re-measured and still deferred**, so §8.0.R does not have to rediscover it:
+  `clip_grad_norm_` is handed the decoder's tensors and never the latent embedding, and an
+  epoch at `grad_clip=1e-8` leaves the latents bit-identical to an unclipped one while the
+  model weights move. `KNOWN_ISSUES` § Open already carries it with the maintainer's
+  "worth an experiment rather than a permanent shrug"; nothing in this slice changed it.
+- **Measured and not fixed, so it is not re-found:** `code_regularization_warmup=0` raises
+  `ZeroDivisionError` from inside the split loop. "Off" has never been spelled `0` here —
+  the shipped config is `100` — so it is config validation with no reported instance
+  behind it. §8.0.N or §8.0.R.
 - **§8.0.K, review round 2 (2026-08-28): the accepted-and-ignored class has a fourth site
   in this function, and the § Open entry named the wrong mechanism.** Audited while
   re-deriving `HYBRID_OPTIMIZER_REPORT.md` against the code. (1) `optimizer_name="lbfgs"`
@@ -1304,7 +1376,7 @@ below exists so a decomposition bullet cannot be satisfied by relocation again.
 
 ### 8.0 Slice index — scheduled 2026-08-26
 
-§8.0.A–I are executed and keep their statements below. J–Q are scheduled. **Each gets its
+§8.0.A–L are executed and keep their statements below. M–Q are scheduled. **Each gets its
 own §8.0-style statement as commit 1 of its own slice**, with every claim re-run against
 `main` first — writing eleven statements up front is the "size docs to your uncertainty"
 mistake `CLAUDE.md` names. What is fixed here is the *order* and each slice's *scope*.
@@ -1316,7 +1388,7 @@ mistake `CLAUDE.md` names. What is fixed here is the *order* and each slice's *s
 | **I** | `mesh/main.py` | #60, #57 (five sites, one helper), #54's sites there, `create_mesh_adaptive` | Second-largest file in the repo, on the production path, and **never named anywhere in this plan** — §7.3's priority list has four files and this is not one of them. |
 | **J** | `reconstruct_mesh` internals | the 61-parameter signature, the interleaved timing plumbing | Seams are already clean: coerce → reference → sample → fit → build → metrics → assemble. |
 | **K** | `reconstruct_latent` internals | #75, the 185-line nested `compute_loss`, the hybrid Adam/LBFGS branch | The last unopened production monolith. #75 (cannot chunk its forward pass) is a defect the decomposition has to make expressible. |
-| **L** | `train_epoch`'s loss pipeline | the ~270-line batch loop | The statement §8.0.D said this needs, deferred deliberately, now due. |
+| **L** | `train_epoch`'s loss pipeline | the ~270-line batch loop | The statement §8.0.D said this needs, deferred deliberately, now due. *Executed, PR #95 — 391 lines, not ~270.* |
 | **M** | `NSM/utils.py` | #50, the module's remaining undocumented surface | §1.2's exhibit: the file that held the founding bug. Phase A documented the LR path and nothing else. |
 | **N** | Phase 2 close + lint gate | the §6 checkboxes, `flake8-docstrings` in `make lint`, `CLAUDE.md` §Architecture rewrite | Must follow G–M — that is where the missing docstrings are — and the lint gate is what stops G–M's accuracy rotting. |
 | **O** | v0.3.0 release | the pending Breaking set, setuptools-scm (§10.1), §7.1's GPU note, **`NSM.configs` ships in no wheel** (SCOPE §5), and **two items §8.0.H deferred here by name**: (a) a **combined pre-v0.3.0 config message** — the release adds three required triplanar keys (`padding`, `conv_norm_type`, `conv_activation`), each refused separately, so an old config is fixed one round-trip at a time; one message naming every missing key at once is the `_lr_migration` pattern applied to the set. (b) **`TriplanarDecoder`/`VAEDecoder`'s signature defaults**, still `conv_norm_type="batch"` against the `"layer"` everything trained — unreachable from a config now that the loader requires the key, but reachable by direct construction, and changing a public-stable signature needs the version boundary. | Maintainer-gated timing. Nothing in G–N waits on it. |

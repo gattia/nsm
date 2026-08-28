@@ -607,12 +607,18 @@ def train_epoch(
     Returns a flat dict: ``loss``, ``epoch_time_s``, ``l1_loss``,
     ``latent_code_regularization_loss``, ``mean_vec_length``/``std_vec_length`` (epoch
     means over batches), per-surface ``l1_loss_{i}``, the four load-timing keys only
-    when the dataset actually timed a disk load (#22), ``eikonal_loss`` only when the
-    (gated) eikonal weight is on, and ``latent_{i}`` wandb histograms with their
-    mean/std when ``config["log_latent"]`` is set.
+    when the dataset actually timed a disk load (#22), and ``latent_{i}`` wandb histograms
+    with their mean/std when ``config["log_latent"]`` is set.
+
+    ``l1_loss`` equals the mean of the per-surface ``l1_loss_{i}`` under uniform weighting
+    and does not under an explicit ``surface_weighting``: the per-surface records are the
+    raw error, the total is the weighted objective.
 
     ``n_surfaces`` must match the decoder's ``objects_per_decoder`` and the dataset's
-    per-subject surface count: ``gt_sdf`` columns are read positionally by surface.
+    per-subject surface count: ``gt_sdf`` columns are read positionally by surface. The
+    per-object sample count is checked against ``config["samples_per_object_per_batch"]``,
+    and ``multi_object_overlap``, ``eikonal_weight`` and a mis-sized ``surface_weighting``
+    are refused below before any batch is fetched.
     """
     # Refused here rather than where they are consulted. train_deep_sdf gates
     # eikonal_weight at its own entry, but train_epoch is public
@@ -759,7 +765,10 @@ def train_epoch(
                 batch_l1_losses[l1_idx] += l1_loss_.sum().item()
             chunk_loss = l1_loss
 
-            # Add eikonal loss if enabled
+            # Unreachable behind the gate at the top of this function, and kept: the
+            # plan's §8.2 cites these lines as the evidence for repairing the loss --
+            # among other things it forwards the UNCLAMPED prediction, where the L1 term
+            # above uses the clamped one, at the cost of a second full forward pass.
             eikonal_loss_value = 0
             if config.get("eikonal_weight", 0) > 0:
                 # Recompute SDF with gradients for eikonal loss
