@@ -528,7 +528,7 @@ def train_epoch(
                 sdf_gt_.requires_grad = False
                 sdf_gt.append(sdf_gt_)
 
-        logger.debug("sdf gt size: %s", [x_.size() for x_ in sdf_gt])
+        logger.debug("sdf gt sizes per surface: %s", [x_.size() for x_ in sdf_gt])
 
         samples_per_object = _samples_per_object(num_sdf_samples, indices.shape[0], config)
 
@@ -603,15 +603,11 @@ def train_epoch(
             # elif config['hard_sample_difficulty_weight'] is not None:
             #     pred_sdf = torch.clamp(pred_sdf, -1, 1)
 
-            logger.debug("len pred_sdf %s", pred_sdf.shape)
-            logger.debug("split idx %s", split_idx)
+            logger.debug("pred_sdf shape %s", pred_sdf.shape)
             l1_losses = []
             for surf_idx in range(n_surfaces):
                 logger.debug("surf idx %s", surf_idx)
-                logger.debug("%s", len(sdf_gt))
-                logger.debug("%s", len(sdf_gt[surf_idx]))
-                logger.debug("pred_sdf shape %s", pred_sdf.shape)
-                logger.debug("unsqueezed pred_sdf shape %s", pred_sdf[:, surf_idx].shape)
+                logger.debug("pred_sdf surface slice shape %s", pred_sdf[:, surf_idx].shape)
                 logger.debug("sdf_gt shape %s", sdf_gt[surf_idx][split_idx].shape)
                 l1_losses.append(
                     loss_l1(

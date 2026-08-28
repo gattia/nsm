@@ -478,24 +478,23 @@ class TestSamplesPerObjectPerBatchMatchesItsBatch:
 # ---------------------------------------------------------------------------
 
 #: The message templates ``train_epoch`` emits at ``DEBUG`` for one 2-surface epoch.
-#: Written out rather than counted so that commit 9's deletions are visible in this file's
-#: diff, and so a record added later without a reason turns this red.
+#: Written out rather than counted so that a deletion is visible in this file's diff, and
+#: so a record added later without a reason turns this red. Every template is distinct:
+#: two records that say the same thing about the same value are one record.
 DEBUG_TEMPLATES = {
     "sdf index size: %s",
     "xyz data size: %s",
     "sdf gt size: %s",
+    "sdf gt sizes per surface: %s",
     "len sdf_gt %s",
     "len sdf_gt chunks: %s",
     "len xyz chunks %s",
     "Split idx:  %s",
     "model dtype %s",
     "inputs dtype %s",
-    "len pred_sdf %s",
-    "split idx %s",
-    "surf idx %s",
-    "%s",
     "pred_sdf shape %s",
-    "unsqueezed pred_sdf shape %s",
+    "surf idx %s",
+    "pred_sdf surface slice shape %s",
     "sdf_gt shape %s",
     "l1 losses: %s",
     "l1 loss: %s",
@@ -514,9 +513,9 @@ class TestTheDebugRecordsAreNotGatedOnAConfigKey:
 
     def test_the_record_set_under_verbose_true_is_what_it_is(self):
         """
-        The before-and-after pin for commit 8: ungating may not change what a host with
-        ``verbose: true`` sees. Commit 9 then deletes four of these templates, and that
-        deletion shows up here rather than in a count.
+        The before-and-after pin for the ungating: it may not change what a host with
+        ``verbose: true`` sees. The deletion pass that followed removed four templates and
+        renamed three, and both show up in this set rather than in a count.
         """
         with records_at(logging.DEBUG) as collected:
             run_epoch(verbose=True)
