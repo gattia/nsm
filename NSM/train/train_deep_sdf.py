@@ -293,7 +293,7 @@ def _schedule_free_eval_warmup(model, latent_vecs, data_loader, optimizer, confi
             indices = (
                 indices.to(config["device"])
                 .unsqueeze(-1)
-                .repeat(1, config["samples_per_object_per_batch"])
+                .repeat(1, _samples_per_object(xyz.shape[0], indices.shape[0], config))
                 .view(-1)
             )
             xyz = torch.chunk(xyz, config["batch_split"])
@@ -378,6 +378,26 @@ def _run_validation(config, model):
         fix_mesh=config["fix_mesh_recon"],
         device=config["device"],
     )
+
+
+def _samples_per_object(n_points, n_objects, config):
+    """
+    The per-object sample count, checked against the config key that restates it.
+
+    ``config["samples_per_object_per_batch"]`` is a second declaration of the dataset's
+    ``subsample``: the two are set on different objects -- one a config key, one a
+    constructor argument -- and nothing else holds them together. The batch carries the
+    answer, so a disagreement is caught here rather than surfacing as a ``torch.cat`` size
+    error further down.
+    """
+    declared = config["samples_per_object_per_batch"]
+    if n_points != n_objects * declared:
+        raise ValueError(
+            f"samples_per_object_per_batch is {declared}, but this batch carries "
+            f"{n_points} points across {n_objects} objects. That key restates the "
+            f"dataset's `subsample`; set the two to the same value."
+        )
+    return declared
 
 
 def _surface_weights(config, n_surfaces):
@@ -512,10 +532,12 @@ def train_epoch(
         if config["verbose"] is True:
             logger.debug("sdf gt size: %s", [x_.size() for x_ in sdf_gt])
 
+        samples_per_object = _samples_per_object(num_sdf_samples, indices.shape[0], config)
+
         xyz = torch.chunk(xyz, config["batch_split"])
         indices = torch.chunk(
             indices.unsqueeze(-1)
-            .repeat(1, config["samples_per_object_per_batch"])
+            .repeat(1, samples_per_object)
             .view(-1),  # repeat the index for every sample
             config[
                 "batch_split"

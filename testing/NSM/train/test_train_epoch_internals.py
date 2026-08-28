@@ -441,24 +441,36 @@ class TestSamplesPerObjectPerBatchMatchesItsBatch:
     (``subsample``), one a config key -- so nothing but a check can hold them together.
     """
 
-    @pytest.mark.parametrize("declared", [4, 16])
-    @pytest.mark.xfail(
-        strict=True,
-        reason="§8.0.L: a disagreement surfaces as a torch.cat size error 35 lines below",
-    )
+    @pytest.mark.parametrize("declared", [4, 7, 16])
     def test_a_disagreement_names_the_config_key(self, declared):
+        """
+        Were two strict xfails. It has never been silent, which is why this is a message
+        defect and not a numerical one: before the fix a ``RuntimeError`` from
+        ``torch.cat`` naming tensor sizes, 35 lines below the config read.
+        """
         with pytest.raises(ValueError, match="samples_per_object_per_batch"):
             run_epoch(samples_per_object_per_batch=declared)
 
-    @pytest.mark.parametrize("declared", [4, 16])
-    def test_a_disagreement_is_refused_somehow(self, declared):
+    @pytest.mark.parametrize("declared", [4, 7, 16])
+    def test_the_warmup_refuses_it_too(self, declared):
         """
-        It has never been silent, which is why this is a message defect and not a numerical
-        one: today ``RuntimeError`` from ``torch.cat`` naming tensor sizes, after commit 7 a
-        ``ValueError`` naming both counts. Passes at both ends.
+        The second site, for the same reason as the split bound: the warm-up rebuilds the
+        index tensor the same way, so a config the trainer refuses must not be one the
+        warm-up accepts.
         """
-        with pytest.raises((ValueError, RuntimeError)):
-            run_epoch(samples_per_object_per_batch=declared)
+        model, data_loader, latent_vecs, _, config = epoch_inputs(
+            samples_per_object_per_batch=declared
+        )
+        config["optimizer"] = "schedule_free_AdamW"
+        with pytest.raises(ValueError, match="samples_per_object_per_batch"):
+            _schedule_free_eval_warmup(
+                model,
+                latent_vecs,
+                data_loader,
+                TestTheEvalWarmupSharesTheSplitBound._StubScheduleFree(),
+                config,
+                epoch=1,
+            )
 
 
 # ---------------------------------------------------------------------------
