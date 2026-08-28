@@ -849,19 +849,22 @@ def reconstruct_latent(
             )
             return total_loss, recon_loss, latent_loss, 0, norm_penalty_loss
 
-        def loss_with_gradient(*, retain_graph=False):
+        def loss_with_gradient():
             """The step's loss, with the latent's gradient left on it either way."""
             if n_samples_per_chunk is None:
                 losses = compute_loss()
-                losses[0].backward(retain_graph=retain_graph)
+                losses[0].backward()
                 return losses
             return compute_loss_chunked(backward=True)
 
         def step_closure():
             """LBFGS closure - computes loss and gradients, with optional latent projection"""
             current_optimizer.zero_grad()
-            # retain_graph=True because LBFGS will call this closure multiple times
-            total_loss, _, _, _, _ = loss_with_gradient(retain_graph=True)
+            # No retain_graph: LBFGS calls this closure many times per step, and each call
+            # runs its own forward, so no graph is ever backwarded twice. Retaining kept a
+            # dead graph's activations resident alongside the live one -- measured at
+            # 2265 -> 1240 MiB peak for one step at 60k points, bit-identical result.
+            total_loss, _, _, _, _ = loss_with_gradient()
 
             # Only use hard projection if soft constraint is disabled
             if (

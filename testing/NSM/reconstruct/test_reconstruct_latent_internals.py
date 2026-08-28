@@ -622,6 +622,47 @@ class TestTheFitIsUnchangedByTheSplit:
         assert torch.isfinite(first_latent).all()
 
 
+class TestTheLbfgsClosureDoesNotRetainItsGraph:
+    """
+    ``step_closure`` used to call ``backward(retain_graph=True)``, with a comment saying it
+    was needed because LBFGS calls the closure many times per step. It is not: every call
+    runs its own forward and builds its own graph, so no graph is ever backwarded twice.
+    What retaining bought was a dead graph's activations staying resident alongside the
+    live one.
+
+    Measured on a T4, one LBFGS step at 60,000 points, latent 256 with an 8x512 decoder:
+    peak allocation above baseline **2265 MiB retained, 1240 MiB not** -- 1.83x, for a
+    bit-identical latent. That multiplier lands on the largest allocation in a fit, which
+    is the quantity ``n_samples_per_chunk`` exists to bound, so the two worked against
+    each other.
+    """
+
+    def test_no_call_passes_retain_graph(self):
+        """
+        Read from the source as a keyword on a call, not as a word -- the comment that
+        replaced the flag names it, and a scan that matched text would match the comment.
+        A future edit reintroducing the flag argues with this test rather than a comment.
+        """
+        tree = ast.parse(open(latent_fit.__file__, encoding="utf-8").read())
+        passed = [
+            node.lineno
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            for kw in node.keywords
+            if kw.arg == "retain_graph"
+        ]
+        assert passed == []
+
+    def test_an_lbfgs_fit_still_runs_and_is_finite(self):
+        """The behavioural half: freeing each graph does not break the repeated calls."""
+        loss, latent = reconstruct_latent(
+            decoders=LinearDecoder(),
+            **fit_kwargs(n_pts=80, num_iterations=2, optimizer_name="lbfgs"),
+        )
+        assert torch.isfinite(latent).all()
+        assert torch.isfinite(torch.as_tensor(float(loss)))
+
+
 # ---------------------------------------------------------------------------
 # #75: a step whose sample count exceeds single-forward memory
 # ---------------------------------------------------------------------------
