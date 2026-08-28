@@ -245,6 +245,55 @@ class TestTheEvalWarmupSharesTheSplitBound:
     issue about those two drifting apart; this is them still in step, on a defect.
     """
 
+    @pytest.mark.parametrize("splits", [1, 2, 5])
+    def test_the_warmup_feeds_the_decoder_what_the_epoch_feeds_it(self, splits):
+        """
+        What ``_split_batch`` and ``_batch_latents`` are for. #42 was the warm-up unpacking
+        the batch differently from the epoch -- it forwarded the raw dataloader item, so
+        every schedule_free run died at its first checkpoint. A docstring saying the two
+        agree is not a mechanism; one implementation is.
+
+        Both learning rates are 0, so nothing moves between the two runs and the decoder
+        inputs are comparable tensor for tensor.
+        """
+        recorded = {"epoch": [], "warmup": []}
+
+        class _Recording(LinearDecoder):
+            def __init__(self, into):
+                super().__init__()
+                self.into = into
+
+            def forward(self, x, epoch=None):
+                self.into.append(x.detach().clone())
+                return super().forward(x, epoch=epoch)
+
+        common = dict(batch_split=splits, model_lr=0.0, latent_lr=0.0)
+        _, data_loader, latent_vecs, optimizer, config = epoch_inputs(**common)
+        train_epoch(
+            _Recording(recorded["epoch"]),
+            data_loader,
+            latent_vecs,
+            optimizer,
+            config,
+            epoch=1,
+            n_surfaces=2,
+        )
+
+        _, data_loader, latent_vecs, _, config = epoch_inputs(**common)
+        config["optimizer"] = "schedule_free_AdamW"
+        _schedule_free_eval_warmup(
+            _Recording(recorded["warmup"]),
+            latent_vecs,
+            data_loader,
+            self._StubScheduleFree(),
+            config,
+            epoch=1,
+        )
+
+        assert len(recorded["warmup"]) == len(recorded["epoch"]) > 0
+        for from_epoch, from_warmup in zip(recorded["epoch"], recorded["warmup"]):
+            assert torch.equal(from_epoch, from_warmup)
+
     class _StubScheduleFree:
         """Only ``eval()`` is reached before the loop the test is about."""
 

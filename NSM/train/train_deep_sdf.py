@@ -289,24 +289,11 @@ def _schedule_free_eval_warmup(model, latent_vecs, data_loader, optimizer, confi
     optimizer.eval()
     with torch.no_grad():
         for sdf_data, indices in itertools.islice(data_loader, 50):
-            xyz = sdf_data["xyz"].to(config["device"]).reshape(-1, 3)
-            indices = (
-                indices.to(config["device"])
-                .unsqueeze(-1)
-                .repeat(1, _samples_per_object(xyz.shape[0], indices.shape[0], config))
-                .view(-1)
-            )
-            xyz = torch.chunk(xyz, config["batch_split"])
-            indices = torch.chunk(indices, config["batch_split"])
-            # len(xyz), not config["batch_split"]: torch.chunk returns AT MOST the
-            # requested number of pieces. See train_epoch's loop for the measurement.
+            xyz, indices, _ = _split_batch(sdf_data=sdf_data, indices=indices, config=config)
             for split_idx in range(len(xyz)):
-                batch_vecs = latent_vecs(indices[split_idx])
-                if "variational" in config and config["variational"] is True:
-                    mu = batch_vecs[:, : config["latent_size"]]
-                    logvar = batch_vecs[:, config["latent_size"] :]
-                    std = torch.exp(0.5 * logvar)
-                    batch_vecs = std * torch.randn_like(std) + mu
+                batch_vecs, _, _ = _batch_latents(
+                    latent_vecs=latent_vecs, indices=indices[split_idx], config=config
+                )
                 model(torch.cat([batch_vecs, xyz[split_idx]], dim=1), epoch=epoch)
 
 
@@ -378,6 +365,58 @@ def _run_validation(config, model):
         fix_mesh=config["fix_mesh_recon"],
         device=config["device"],
     )
+
+
+def _split_batch(*, sdf_data, indices, config):
+    """
+    One batch's points and per-sample subject indices, moved to the device and split.
+
+    Returns ``(xyz_chunks, index_chunks, n_points)``. ``n_points`` is the whole batch's
+    point count, before splitting -- the per-surface losses are divided by it, so that the
+    splits sum to the batch mean whatever ``batch_split`` is.
+
+    ``torch.chunk`` returns **at most** ``batch_split`` pieces: it splits into pieces of
+    ``ceil(len / k)`` and stops when the tensor runs out, so ``chunk(16, 5)`` is 4 and
+    ``chunk(16, 7)`` is 5. Callers must iterate ``len(xyz_chunks)``, not the config value.
+
+    Shared with :func:`_schedule_free_eval_warmup`, which has to unpack a batch the same
+    way the epoch does (#42): one implementation is what keeps them in step.
+    """
+    xyz = sdf_data["xyz"].to(config["device"]).reshape(-1, 3)
+    xyz.requires_grad = False
+    indices = indices.to(config["device"])
+    per_sample_indices = (
+        indices.unsqueeze(-1)
+        .repeat(1, _samples_per_object(xyz.shape[0], indices.shape[0], config))
+        .view(-1)
+    )
+    return (
+        torch.chunk(xyz, config["batch_split"]),
+        torch.chunk(per_sample_indices, config["batch_split"]),
+        xyz.shape[0],
+    )
+
+
+def _batch_latents(*, latent_vecs, indices, config):
+    """
+    The latent rows one split needs, reparameterised when the model is variational.
+
+    Returns ``(batch_vecs, mu, logvar)``, with ``mu`` and ``logvar`` ``None`` outside the
+    variational branch. A variational embedding is ``2 * latent_size`` wide -- mean and
+    log-variance per row (:func:`NSM.utils.get_latent_vecs`) -- and what the decoder gets
+    is a sample from it, so the returned ``batch_vecs`` is ``latent_size`` wide either way.
+
+    Shared with :func:`_schedule_free_eval_warmup` for the same reason as
+    :func:`_split_batch`: the warm-up recalibrates normalization statistics and has to feed
+    the decoder what the epoch feeds it.
+    """
+    batch_vecs = latent_vecs(indices)
+    if "variational" in config and config["variational"] is True:
+        mu = batch_vecs[:, : config["latent_size"]]
+        logvar = batch_vecs[:, config["latent_size"] :]
+        std = torch.exp(0.5 * logvar)
+        return std * torch.randn_like(std) + mu, mu, logvar
+    return batch_vecs, None, None
 
 
 def _samples_per_object(n_points, n_objects, config):
@@ -504,14 +543,6 @@ def train_epoch(
         logger.debug("xyz data size: %s", sdf_data["xyz"].size())
         logger.debug("sdf gt size: %s", sdf_data["gt_sdf"].size())
 
-        xyz = sdf_data["xyz"].to(config["device"])
-        xyz = xyz.reshape(-1, 3)
-
-        num_sdf_samples = xyz.shape[0]
-        xyz.requires_grad = False
-
-        indices = indices.to(config["device"])
-
         sdf_gt = []
         if n_surfaces == 1:
             # Handle the case where there is only one surface
@@ -530,16 +561,8 @@ def train_epoch(
 
         logger.debug("sdf gt sizes per surface: %s", [x_.size() for x_ in sdf_gt])
 
-        samples_per_object = _samples_per_object(num_sdf_samples, indices.shape[0], config)
-
-        xyz = torch.chunk(xyz, config["batch_split"])
-        indices = torch.chunk(
-            indices.unsqueeze(-1)
-            .repeat(1, samples_per_object)
-            .view(-1),  # repeat the index for every sample
-            config[
-                "batch_split"
-            ],  # split the data into the appropriate number of batches - so can fit in ram.
+        xyz, indices, num_sdf_samples = _split_batch(
+            sdf_data=sdf_data, indices=indices, config=config
         )
 
         for surf_idx in range(n_surfaces):
@@ -558,22 +581,13 @@ def train_epoch(
 
         optimizer.zero_grad()
 
-        # len(xyz), not config["batch_split"]: torch.chunk splits into pieces of
-        # ceil(len / k) and stops when the tensor runs out, so it returns AT MOST k --
-        # chunk(16, 5) is 4 pieces and chunk(16, 7) is 5. Iterating the request walked
-        # past the end for those values while 3 and 6 on the same batch worked. The
-        # chunks still partition the batch, so every split count covers the same samples
-        # exactly once and the loss is unchanged.
+        # len(xyz), not config["batch_split"] -- see _split_batch.
         for split_idx in range(len(xyz)):
             logger.debug("Split idx:  %s", split_idx)
 
-            batch_vecs = latent_vecs(indices[split_idx])
-            if "variational" in config and config["variational"] is True:
-                mu = batch_vecs[:, : config["latent_size"]]
-                logvar = batch_vecs[:, config["latent_size"] :]
-                std = torch.exp(0.5 * logvar)
-                err = torch.randn_like(std)
-                batch_vecs = std * err + mu
+            batch_vecs, mu, logvar = _batch_latents(
+                latent_vecs=latent_vecs, indices=indices[split_idx], config=config
+            )
 
             inputs = torch.cat([batch_vecs, xyz[split_idx]], dim=1)
             # inputs = inputs.to(config['device'])
