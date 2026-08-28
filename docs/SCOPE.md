@@ -510,7 +510,7 @@ consumers silently.
 
 | Artifact | Written by | Read by | Versioned? |
 |---|---|---|---|
-| `model_params_config.json` | `utils.save_model_params` | `load_model`, `examples/load_trained_model.py`, **both consumer scripts (hand-rolled)** | No |
+| `model_params_config.json` | `utils.save_model_params` — **first write wins**, and a later checkpoint whose config disagrees warns rather than rewriting (#50, §8.0.M) | `load_model`, `examples/load_trained_model.py`, **both consumer scripts (hand-rolled)** | No |
 | checkpoint `{epoch, model, optimizer}` | `utils.save_model` | `loader.py` (4 possible key layouts), consumer `load_state_dict` | Pre-Aug-2026 refused at load |
 | `latent_codes/{epoch}.pth` | `utils.save_latent_vectors` | `train_deep_sdf` on resume | No |
 | `LearningRateSchedule[].Target` | config author | `utils.resolve_schedule_targets` | Yes — missing key raises with a migration message |

@@ -6,12 +6,71 @@
 
 **Updated:** 2026-08-28 · **Status:** open
 
-- **Next:** execute **§8.0.M**'s sequence, commits 2–10 — the characterization, the
-  `list_mesh_paths` precedence, the write-once divergence report, the dropped-key log,
-  `print_gpu_memory`'s deletion, the base schedule's refusal, the two helper coercions,
-  the 17 docstrings, and the docs sweep. The statement is written and is commit 1.
-  **Blocked on nothing**; #95 merged (`a5ec489`) and this branch is based directly on
-  `main`, not stacked.
+- **Next:** write and execute **§8.0.N** — Phase 2 close and the lint gate: the §6
+  checkboxes, `flake8-docstrings` in `make lint`, and the `CLAUDE.md` §Architecture
+  rewrite. Its statement is commit 1 of that slice and is not written yet. **Two things
+  §8.0.M leaves on its desk by name:** (a) the four `get_learning_rate` overrides are
+  deliberately bare, their class docstrings carrying the formula and the config keys, so
+  the gate has to rule on D102 rather than inherit a decision; (b) the 25 parameter-form
+  `verbose` gates and the 16 remaining config-key ones, 7 in `train_deep_sdf_multi_head`
+  and 9 in `train/deprecated/`. **Blocked on nothing** once #96 merges; #96 is based
+  directly on `main`, not stacked.
+- **§8.0.M executed (2026-08-28), PR #96, based on `main` at `a5ec489`:** commits 2–10 —
+  the characterization, the `list_mesh_paths` precedence, the write-once divergence report,
+  the dropped-key log, `print_gpu_memory`'s deletion, the base schedule's refusal, the two
+  helper coercions, the 12 docstrings, and this sweep. Suite 1037 → 1066 passed / 1 skipped
+  / 3 xfailed: **all 8 strict xfails commit 2 raised were retired inside the slice**, and
+  the 3 that remain are the regression harness's. #50 is closed by the merge. One § History
+  entry (26), two CHANGELOG Breaking entries, one Fixed-affects-results and four Fixed,
+  `ARCHITECTURE` §7's accepted-and-ignored row and `SCOPE` §5's artifact table.
+  `NSM/utils.py` is **456 → 597 lines**, of which +115 is docstrings.
+- **The issue named the wrong half, and the half it did not name fires on the shipped
+  default.** #50 is `save_model_params`' write-once refusal and its silent JSON drops. Both
+  reproduce. But `dict_save.update(config)` ran *after* the `list_mesh_paths` argument was
+  placed, and `NSM/configs/default_config.json` carries `"list_mesh_paths": null` — so
+  **every run started from the shipped default recorded no subject list at all** in the file
+  `load_model` and both consumer scripts read. Nothing in the suite read the value: the
+  three regression assertions on that file check the LR targets, `mesh_names`, and that the
+  architecture keys are *present*, which `null` satisfies. **A filed issue is a report, not
+  a survey** — it names what someone hit, and the function it names has to be read anyway.
+- **The measurement that changed a fix rather than confirming a symptom.** #50 asks for
+  every dropped key to be logged "loudly". Measured on a real run's config — the shipped
+  defaults plus the three keys the trainer writes back — **exactly one key is ever dropped:
+  `lr_schedules`**, the schedule objects `train_deep_sdf:123` inserts itself, whose source
+  is on disk as `LearningRateSchedule` regardless. Logging at the filter would therefore
+  have put a `WARNING` about a key nobody set into every healthy run, once per checkpoint.
+  The log sits at the *write* instead: once per run, and anything joining `lr_schedules` in
+  it is a value the caller really did set. **"Log it loudly" is a fix for the reported
+  instance; where the instance is benign, the loudness is the defect.**
+- **Write-once was kept, and that is the intent call #50 asks the maintainer for.** It
+  protects the record of the run that produced the weights; overwriting or epoch-stamping
+  changes the file for every resumed run. What changed is the silence. Inverting the ruling
+  costs one commit.
+- **The size budget was missed for the sixth slice running, and the mechanism is the sixth
+  variant of one error.** Budget +87 net in `NSM/`, ceiling +105, actual **+141**. Two
+  parts, both measured after the fact. (1) **A `logger.warning` was priced as a line and is
+  a paragraph.** The three this slice adds are **8, 7 and 7 physical lines** under `black`:
+  a two-sentence message wraps across three, each interpolated argument takes its own, plus
+  the parens. Budgeted at ~2 each, they cost 22. (2) **Docstrings were priced by symbol and
+  written by content.** 115 docstring lines against 61 budgeted, and the overrun is
+  concentrated where the content was worth having: `save_model_params` +23 against 16
+  because the write-once rationale and the precedence rule are two things a reader cannot
+  look up, `get_checkpoints` +13 against 8 because the inert duplicate had to be explained
+  where someone would otherwise "fix" it. §8.0.H priced transitional code at zero, §8.0.I
+  priced refusals by net lines, §8.0.J priced call sites at zero, §8.0.K priced moved code
+  as deleted code, §8.0.L priced a helper as a line item's side effect, and this one
+  **priced an emitted record as a statement**. Same error each time: the part you are
+  thinking about gets a number, the part the language makes you write does not.
+- **The deletion pass took three comments out, not code.** The write-once rationale, the
+  `list_mesh_paths` precedence and the drop-log placement had each been written twice —
+  once in the docstring a caller reads and once beside the code — and the second copy is
+  restatement. Worth −20 lines. **A docstring written in the same slice as the code makes
+  its own comments redundant, and only a pass afterwards sees it.**
+- **Four `get_learning_rate` overrides were left undocumented on purpose**, so "docstrings
+  on all 17" became 12 of 17 plus the base method. Each class docstring already gives the
+  formula and the config keys that build it; a per-method restatement is the self-soothing
+  documentation `CLAUDE.md` names. §8.0.N's `flake8-docstrings` gate has to rule on it, and
+  the Next above says so rather than leaving the gate to discover it.
 - **§8.0.L executed (2026-08-28), PR #95, based on `main` at `7bd29b3`:** commits 2–12 —
   the characterization, the split-loop bound at both sites, the latent-norm accumulation,
   the two refusals, `surface_weighting`, `samples_per_object_per_batch`, the ungating, the
@@ -1390,7 +1449,7 @@ mistake `CLAUDE.md` names. What is fixed here is the *order* and each slice's *s
 | **J** | `reconstruct_mesh` internals | the 61-parameter signature, the interleaved timing plumbing | Seams are already clean: coerce → reference → sample → fit → build → metrics → assemble. |
 | **K** | `reconstruct_latent` internals | #75, the 185-line nested `compute_loss`, the hybrid Adam/LBFGS branch | The last unopened production monolith. #75 (cannot chunk its forward pass) is a defect the decomposition has to make expressible. |
 | **L** | `train_epoch`'s loss pipeline | the ~270-line batch loop | The statement §8.0.D said this needs, deferred deliberately, now due. *Executed, PR #95 — 391 lines, not ~270.* |
-| **M** | `NSM/utils.py` | #50, the module's remaining undocumented surface | §1.2's exhibit: the file that held the founding bug. Phase A documented the LR path and nothing else. |
+| **M** | `NSM/utils.py` | #50, the module's remaining undocumented surface | §1.2's exhibit: the file that held the founding bug. Phase A documented the LR path and nothing else. *Executed, PR #96 — 6 of 23 symbols documented, and #50's unreported half was the one that fired on the shipped default.* |
 | **N** | Phase 2 close + lint gate | the §6 checkboxes, `flake8-docstrings` in `make lint`, `CLAUDE.md` §Architecture rewrite | Must follow G–M — that is where the missing docstrings are — and the lint gate is what stops G–M's accuracy rotting. |
 | **O** | v0.3.0 release | the pending Breaking set, setuptools-scm (§10.1), §7.1's GPU note, **`NSM.configs` ships in no wheel** (SCOPE §5), and **two items §8.0.H deferred here by name**: (a) a **combined pre-v0.3.0 config message** — the release adds three required triplanar keys (`padding`, `conv_norm_type`, `conv_activation`), each refused separately, so an old config is fixed one round-trip at a time; one message naming every missing key at once is the `_lr_migration` pattern applied to the set. (b) **`TriplanarDecoder`/`VAEDecoder`'s signature defaults**, still `conv_norm_type="batch"` against the `"layer"` everything trained — unreachable from a config now that the loader requires the key, but reachable by direct construction, and changing a public-stable signature needs the version boundary. | Maintainer-gated timing. Nothing in G–N waits on it. |
 | **P** | 0b quarantine + #18 | `train/deprecated/` (876 lines), the `sample_difficulty_lx` port | Maintainer-gated on the nsosim survey, unchanged since Phase 0. |
@@ -1403,7 +1462,8 @@ Residual items with no row of their own, to ride with the slice that opens the f
 `SDFSamples.__init__` at 169 lines, the #54/#55/#56 class sweeps, and — added by §8.0.G —
 `NSM/utils.py`'s `print_gpu_memory`, which now logs and whose name says otherwise. It has
 no caller in `NSM/`, in the suite or in `docs/`, so the fix is a rename or a deletion,
-both Breaking: **§8.0.M**.
+both Breaking: **§8.0.M**. *Closed there (PR #96): deleted, not renamed, and the sweep that
+found no caller is kept as a test so a later import cannot bring the name back.*
 
 ### 8.0 `sdf_dataset.py` decomposition — plan statement (2026-08-22)
 

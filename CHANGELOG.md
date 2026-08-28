@@ -30,6 +30,19 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Breaking
 
+- **`utils.print_gpu_memory` is deleted** (plan §8.0.M). §8.0.G converted its four `print`
+  calls to `logger.info` and left the name saying otherwise. Swept across `NSM/`,
+  `testing/`, `examples/` and `docs/`, its only occurrence was its own definition, so a
+  rename would have kept a zero-caller helper alive under a truer name. `clear_gpu_cache`
+  beside it has two callers and is unchanged.
+
+- **`LearningRateSchedule.get_learning_rate` raises `NotImplementedError`** (plan §8.0.M)
+  instead of returning `None`. Only a subclass that never overrides it is affected, and
+  such a subclass could not work: the `None` was assigned into `param_group["lr"]` and
+  surfaced two calls later at `optimizer.step()` as `unsupported operand type(s) for /:
+  'NoneType' and 'float'`, naming neither the schedule, the group, nor the config entry.
+
+
 - **`reconstruct_latent` refuses a keyword it does not recognise, and refuses a value it
   cannot use** (plan §8.0.K). It takes 38 named parameters and a `**kwargs` that read
   exactly one key, `max_batch_size`; seven of seven misspellings of real parameters ran a
@@ -491,6 +504,15 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Fixed — affects results
 
+- **`model_params_config.json` records the subjects that trained the model** (plan §8.0.M).
+  `save_model_params` placed its `list_mesh_paths` argument and then merged the config over
+  it, so a config key of the same name won. The shipped `default_config.json` carries
+  `"list_mesh_paths": null`, which means every run started from it recorded no subject list
+  at all; a config round-tripped from an earlier run's saved file recorded that run's
+  subjects. Provenance only — no NSM code path reads the entry back, so no weights, latents
+  or metrics move. See `docs/KNOWN_ISSUES.md` § History 26.
+
+
 - **The logged `mean_vec_length` / `std_vec_length` are epoch means at every `batch_split`**
   (plan §8.0.L). #59 fixed this on the batch loop; underneath it is a split loop, and both
   statistics were computed inside that one and read after it, so with `batch_split` above 1
@@ -563,6 +585,30 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   Python list. See `docs/KNOWN_ISSUES.md` § History §6.
 
 ### Fixed
+
+- **`save_model_params`' write-once refusal says so, and names what diverges from it**
+  ([#50](https://github.com/gattia/nsm/issues/50), plan §8.0.M). It is called on every
+  checkpoint and returns without writing once the file exists — deliberate, because the
+  file records the configuration that produced the weights — but it returned silently, so
+  a re-configured run in the same `experiment_directory` left a file describing a different
+  model from the one saved beside it. The current config is now compared with what is on
+  disk and every added, removed or changed key is named in one `WARNING`.
+
+- **Config values that cannot be JSON-encoded are named when the record is written**
+  ([#50](https://github.com/gattia/nsm/issues/50), plan §8.0.M). `filter_non_jsonable`
+  dropped them silently. The log sits at the write rather than at the filter, so it fires
+  once per run: in a normal run the set is exactly `lr_schedules`, the schedule objects the
+  trainer inserts into the caller's config, and anything joining it there is a value the
+  caller set that the record will not carry.
+
+- **`clear_gpu_cache` accepts a `torch.device`** (plan §8.0.M); `"cuda" in device` needs a
+  `str`, so the object form raised `TypeError: argument of type 'torch.device' is not
+  iterable`. NSM's own callers pass `config["device"]`, which comes from JSON.
+
+- **`is_jsonable` returns `False` for a circular value** (plan §8.0.M) instead of
+  propagating `ValueError: Circular reference detected` out of the checkpoint write; it
+  caught `TypeError` and `OverflowError` only.
+
 
 - **`batch_split` values `torch.chunk` cannot honour no longer crash the epoch** (plan
   §8.0.L). `torch.chunk(t, k)` returns *at most* `k` pieces — it splits into pieces of

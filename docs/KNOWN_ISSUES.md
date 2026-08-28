@@ -1526,3 +1526,52 @@ series means some batch's final chunk held one row. Nothing else about the run i
 *Pinned by:*
 `test_train_epoch_internals.TestTheLatentNormStatsAreTheEpochMean` (independence from
 `batch_split`, the epoch mean computed from the embedding at latent LR 0, and the `NaN`).
+
+## 26. `model_params_config.json` recorded no subject list, or a previous run's
+
+| | |
+|---|---|
+| **Affected** | The `list_mesh_paths` entry of `model_params_config.json` for any run whose config carried a `list_mesh_paths` key of its own — which the shipped `NSM/configs/default_config.json` does, as `null`. `save_model_params` placed its argument first and then merged the config over it. → Aug 2026 |
+| **Unaffected** | Every other key in the file, and everything else a run produces: weights, latent codes, optimizer state, metrics. A config with no `list_mesh_paths` key recorded the correct list |
+| **Severity** | Silent, and it removes provenance rather than corrupting a result |
+| **Fixed in** | `utils-model-params`, Aug 2026 (plan §8.0.M) |
+
+### What was wrong
+
+```python
+dict_save = {"list_mesh_paths": list_mesh_paths}
+dict_save.update(config)          # a config key of the same name wins
+```
+
+The argument is the training dataset's mesh-path list, taken from
+the dataset's own `list_mesh_paths` attribute at the call site. The config's copy is not: it is either the
+shipped default's `null`, or an earlier run's list, round-tripped back in from that run's
+saved file. Both used to overwrite the argument.
+
+Two reachable cases, both measured:
+
+- **`default_config.json` carries `"list_mesh_paths": null`.** Every run started from it
+  recorded `null` — no subject list at all — in the file `load_model`,
+  `examples/load_trained_model.py` and both consumer scripts read.
+- **A config round-tripped from a previous run's saved file carries that run's subjects.**
+  `NSM/configs/generate_sdf_default_config.py`'s header lists `list_mesh_paths` among the
+  machine paths it had to sanitize out of the `647_nsm_femur_v0.0.1` config, so this is the
+  shape a real saved config has. Re-training then recorded the previous run's subjects
+  against this run's weights.
+
+The argument is applied after the merge now. Where the config's own value disagrees and is
+not `None`, the override is logged, because that is the case where the config really did
+say something else.
+
+### How to tell whether one of your runs is affected
+
+Open the run's `model_params_config.json` and read `list_mesh_paths`. `null` means the list
+was lost. A list means it is either correct or an earlier run's — compare it against the
+dataset the run actually trained on; if the file was produced from a config derived from
+another run's saved file, assume it is that run's. Nothing else in the file is affected, and
+nothing about the weights is: the entry is provenance, not an input to training or to
+reconstruction, and no NSM code path reads it back.
+
+*Pinned by:*
+`test_utils.TestTheRecordNamesItsSubjects` (the shipped default, the round trip, the
+control with no config key, and the fact that no regression test read the value).
