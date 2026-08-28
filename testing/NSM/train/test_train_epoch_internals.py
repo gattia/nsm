@@ -278,48 +278,37 @@ class TestTheLatentNormStatsAreTheEpochMean:
     """
 
     @pytest.mark.parametrize("stat", ["mean_vec_length", "std_vec_length"])
-    @pytest.mark.parametrize("splits", [2, 4, 8])
-    @pytest.mark.xfail(
-        strict=True,
-        reason="§8.0.L: the latent-norm stats are the last split's, so batch_split moves them",
-    )
+    @pytest.mark.parametrize("splits", [2, 4, 6, 8, 16])
     def test_the_stats_do_not_depend_on_batch_split(self, stat, splits):
         """
-        Measured on this fixture: ``mean_vec_length`` walks 0.1445 / 0.2026 / 0.3201 for
-        ``batch_split`` 1 / 2 / 4 and ``std_vec_length`` collapses to 0.0 at 4, while
-        ``loss`` over the same three runs is invariant to 1.5e-08 (asserted above). A
-        memory knob must not move a reported number.
+        Were six strict xfails. Measured before the fix on a 4-subject fixture:
+        ``mean_vec_length`` walked 0.1445 / 0.2026 / 0.3201 for ``batch_split`` 1 / 2 / 4
+        and ``std_vec_length`` collapsed to 0.0, while ``loss`` over the same three runs
+        was invariant to 1.5e-08. A memory knob must not move a reported number.
         """
         assert run_epoch(batch_split=splits)[stat] == pytest.approx(
             run_epoch(batch_split=1)[stat], rel=1e-6
         )
 
     @pytest.mark.parametrize("splits", [6, 16])
-    @pytest.mark.xfail(
-        strict=True,
-        reason="§8.0.L: a split of one row makes torch.std undefined, and the NaN is logged",
-    )
     def test_the_std_is_never_nan(self, splits):
         """
-        The sharpest form of the defect: ``torch.std`` over a single row is NaN, and a
-        split loop that reaches a one-row chunk puts that NaN straight into the epoch's
-        wandb payload. Measured on this fixture, ``batch_split`` 6 and 16 both report
-        ``nan``; 2, 4 and 8 report exactly 0.0, which is the same defect being merely
-        wrong instead of unusable. Computing the statistic over the whole batch -- what
-        the metric has always meant -- removes both.
+        Were two strict xfails, and the sharpest form of the defect: ``torch.std`` over a
+        single row is NaN, and a split loop that reached a one-row chunk put that NaN
+        straight into the epoch's wandb payload. Measured before the fix on this fixture,
+        ``batch_split`` 6 and 16 both reported ``nan``; 2, 4 and 8 reported exactly 0.0,
+        which is the same defect being merely wrong instead of unusable. Computing the
+        statistic over the whole batch -- what the metric has always meant -- removes both.
         """
         assert not math.isnan(run_epoch(batch_split=splits)["std_vec_length"])
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="§8.0.L: at batch_split 4 the reported mean is one subject's norm",
-    )
     def test_the_mean_is_the_mean_over_every_subject(self):
         """
-        The latent learning rate is 0, so the embedding cannot move during the epoch and
-        the expected value is computable from it directly -- § History 12's test does the
-        same at the batch level. One batch of all four subjects, split four ways, gives one
-        subject per split: pre-fix the reported value is the *last* subject's norm.
+        Was a strict xfail. The latent learning rate is 0, so the embedding cannot move
+        during the epoch and the expected value is computable from it directly --
+        § History 12's test does the same at the batch level. One batch of all four
+        subjects, split four ways, gives one subject per split: pre-fix the reported value
+        was the *last* subject's norm.
         """
         model, data_loader, latent_vecs, optimizer, config = epoch_inputs(
             objects_per_batch=N_SUBJECTS, batch_split=N_SUBJECTS, latent_lr=0.0

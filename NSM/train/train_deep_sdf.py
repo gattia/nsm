@@ -490,6 +490,7 @@ def train_epoch(
         batch_l1_losses = [0.0 for _ in range(n_surfaces)]
         batch_code_reg_loss = 0.0
         batch_eikonal_loss = 0.0
+        batch_vec_lengths = []
 
         optimizer.zero_grad()
 
@@ -693,8 +694,7 @@ def train_epoch(
                 chunk_loss = chunk_loss + reg_loss.to(config["device"])
                 batch_code_reg_loss += reg_loss.item()
 
-            mean_vec_length = torch.mean(torch.norm(batch_vecs, dim=1))
-            std_vec_length = torch.std(torch.norm(batch_vecs, dim=1))
+            batch_vec_lengths.append(torch.norm(batch_vecs, dim=1).detach())
 
             chunk_loss.backward()
 
@@ -707,8 +707,15 @@ def train_epoch(
         for l1_idx, l1_loss_ in enumerate(batch_l1_losses):
             step_l1_losses[l1_idx] += l1_loss_  # l1_loss_
 
-        step_mean_vec_length += mean_vec_length.item()
-        step_std_vec_length += std_vec_length.item()
+        # Over the whole batch, not over whichever split ran last. These used to be
+        # computed inside the split loop and read after it, so batch_split -- a memory
+        # knob -- moved the reported number: 0.1445 / 0.2026 / 0.3201 for 1 / 2 / 4 on
+        # one fixture, and NaN wherever a split held a single row, since torch.std of
+        # one value is undefined. KNOWN_ISSUES History 25; History 12 (#59) is the same
+        # defect one loop out.
+        vec_lengths = torch.cat(batch_vec_lengths)
+        step_mean_vec_length += torch.mean(vec_lengths).item()
+        step_std_vec_length += torch.std(vec_lengths).item()
 
         if config["grad_clip"] is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), config["grad_clip"])
