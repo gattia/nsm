@@ -38,6 +38,15 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   helper, `reconstruct.utils.refuse_unknown_kwargs`. `max_batch_size` is unchanged, still
   accepted and still warned about. See `docs/KNOWN_ISSUES.md` § History 20.
 
+  **Migrating a config that now raises:**
+  `NSM.reconstruct._config_migration.migrate_reconstruct_config(config)` returns a
+  corrected copy and a list of what it removed and why. Every key it drops was inert
+  before the refusal as well as after — three that named nothing in NSM at any point
+  (`min_rel_improve`, `grad_tol`, `param_change_tol`), one that `reconstruct_mesh` never
+  forwarded (`log_wandb_step`), and `latent_optimizer_name` when `hybrid_optimizer` is
+  set, which the loop does not read — so migrating cannot move a number. The `TypeError`
+  names the helper when it recognises one of those keys, and stays quiet for a plain typo.
+
   Three string parameters are **case-folded and then refused**, where all three had an
   `if`/`elif` chain with no `else`: `optimizer_name` (`{"adam", "lbfgs"}`), `loss_type`
   (`{"l1", "l1_log", "l2"}`) and `convergence` (`{"num_iterations", "overall_loss",

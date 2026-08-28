@@ -126,7 +126,13 @@ def refuse_unknown_kwargs(kwargs, *, function_name, deprecated=()):
     """
     unknown = sorted(set(kwargs) - set(deprecated))
     if unknown:
+        # Imported here, not at module scope: _config_migration is transitional and its
+        # header says to delete it once no old config is in use. A lazy import is what
+        # makes that deletion a two-line edit rather than a search.
+        from ._config_migration import migration_hint
+
         raise TypeError(
             f"{function_name}() got unexpected keyword arguments: "
             + ", ".join(repr(name) for name in unknown)
+            + migration_hint(unknown)
         )
