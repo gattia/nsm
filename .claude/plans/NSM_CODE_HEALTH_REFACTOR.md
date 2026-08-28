@@ -15,6 +15,29 @@
   itself is 159 lines beside it. §8.0.G's residue is **already absent here**: the file has
   zero `if verbose` gates, so §8.0.K's largest single commit has no counterpart in §8.0.L.
   **Blocked on nothing** once #94 merges; #94 is stacked on #93, so **merge #93 first**.
+- **§8.0.K, review round 2 (2026-08-28): the accepted-and-ignored class has a fourth site
+  in this function, and the § Open entry named the wrong mechanism.** Audited while
+  re-deriving `HYBRID_OPTIMIZER_REPORT.md` against the code. (1) `optimizer_name="lbfgs"`
+  reads **none** of `lbfgs_lr`, `lbfgs_max_iter`, `lbfgs_history_size` — it builds the
+  optimizer from `lr` with `max_iter=10, history_size=100` hardcoded. Requested (1.0, 3, 7),
+  constructed (0.005, 10, 100). The slice found three sites of "the value is consulted
+  somewhere other than where it is named" and stopped at three; this is the fourth, and
+  it is the one that silently changes a step size by 200×. **Not fixed here**: the repair is
+  a signature decision — drop the `lbfgs_` prefix and read them on both paths, or delete the
+  non-hybrid path — so it belongs with §8.0.O. § Open records it. (2) The new subsampled-LBFGS
+  warning has two false negatives: it reads `optimizer_name` at line 573, *before*
+  `_normalized_choice` folds case at line 607, so the spelling round 1 deliberately started
+  accepting is the one that skips the warning; and its guard `n_samples < xyz.shape[0]`
+  misses a surface capped at its `n_samples // n_surfaces` share (390k cloud, one 300k
+  surface, `n_samples=1e6` → draws 340k, no warning). Both one-line fixes; both wait on the
+  same slice. **The lesson: a refusal added late in a slice does not know about the checks
+  written earlier in it.** (3) `line_search_fn` is never set, so § Open's "the line search
+  searches something that moves" named a mechanism that does not run — the redraw corrupts
+  `y = g_{k+1} - g_k`, not a search. Corrected. The measurement was unaffected, which is the
+  point: it was made on the code. (4) `retain_graph=True` in `step_closure` is unnecessary
+  — each closure call builds its own graph — and inflates the peak memory #75 exists to
+  bound. Verified bit-identical without it. Cheapest of the four to fix and the only one
+  that is not a signature change.
 - **§8.0.K, review round 1 (maintainer, 2026-08-28): the LBFGS resampling was strategy,
   not a defect, and the measurement I had not run says so.** The slice hoisted sample
   selection out of the loss on the argument that a line search over a moving objective is
