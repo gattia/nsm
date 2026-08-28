@@ -82,6 +82,44 @@
   the same class and the worst of them: `convergence`'s missing `else` is the *default
   branch*, so `"Recon_Loss"`, `""` and `None` were all accepted and silently meant
   `"num_iterations"` — early stopping off, no signal. § History 23.
+- **§8.0.K, review round 3 (maintainer, 2026-08-28): two approvals and a standing
+  mandate.** (a) `retain_graph=True` in the LBFGS closure is deleted — it was justified by
+  a comment saying LBFGS calls the closure many times, which is true and irrelevant, since
+  each call builds its own graph and none is backwarded twice. Measured 2265 → 1240 MiB
+  peak for one step at 60k points, bit-identical latent; the 1.83× landed on exactly the
+  allocation `n_samples_per_chunk` exists to bound. (b) The refusals stay a raise, on the
+  condition that a config they break can be repaired by a function rather than by trial
+  and error — `_config_migration.migrate_reconstruct_config`, transitional, delete-when in
+  its header, and every key it drops asserted inert so migrating cannot move a number.
+- **The maintainer's standing mandate — "this library is too big and has too many
+  options; start simplifying things that are not used" — needs its premise corrected
+  before it becomes a slice, and the correction is measured.** Across `reconstruct_mesh`,
+  `reconstruct_latent`, `create_mesh`, `create_mesh_adaptive`, `get_mean_errors` and
+  `train_epoch` — **148 parameters, 0 never referenced in their own body.** Restricting to
+  the production surface (NSM itself, the shipped configs, kneepipeline; tests excluded
+  because the suite sets nearly everything by construction), only **5 of 100** are never
+  set: `n_pts_per_axis_mean_mesh`, `decoder_to_scale`, `recon_grid_origin`,
+  `return_timing` (a legitimate opt-in diagnostic) and `n_samples_per_chunk_latent_recon`
+  (added by this slice). **A "delete the unused options" pass would find about two.**
+  The size is real; *unused* is not the reason for it. What §8.0.K actually kept finding
+  is the other shape — **a parameter read on one path and ignored on another**, five
+  sites in one function: `optimizer_name` under `hybrid_optimizer`, `lbfgs_lr` /
+  `lbfgs_max_iter` / `lbfgs_history_size` on the non-hybrid path, and `log_wandb_step`,
+  which `reconstruct_latent` names and `reconstruct_mesh` never forwards. **That is the
+  sweep worth running, and it is a different slice from a deletion pass:** the question
+  per parameter is not "does anyone set it" but "is it read on every path that accepts
+  it". Proposed as **§8.0.R**, after the release, because closing a site is either a
+  refusal (no boundary) or a signature change (§8.0.O's boundary) and the set should be
+  triaged once, together.
+- **Queued from review round 2, not yet done, both small:** (1) the subsampled-LBFGS
+  warning has two false negatives — it reads `optimizer_name` before `_normalized_choice`
+  folds case, so `"LBFGS"` skips it, and its guard compares `n_samples` against the cloud
+  size when the per-surface split is what decides the draw. (2) **The remedy that warning
+  and `KNOWN_ISSUES` § Open both recommend is wrong**: `n_samples=None` does *not* mean
+  the full cloud when surfaces have unequal point counts — measured, a 390-point cloud
+  split 300/90 draws **285**, and 250/250/100 draws 500 of 600. Since `get_rand_pts_recon`
+  is `false`, production's cloud *is* mesh vertices and bone/cartilage counts differ, so
+  the unequal case is the normal one. The guidance has to name a count, not `None`.
 - **§8.0.K executed (2026-08-27), PR #94 open, stacked on #93:** commits 2–15 — the
   characterization, the shared keyword refusal, the value refusals, the `100` sentinel, the
   LR horizon, the ungating, `_select_samples`, the two loss helpers, #75's chunked step, the
