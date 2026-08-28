@@ -2845,6 +2845,213 @@ separately above so that growth in the *refactor* half is still visible against 
 | chunking bounds memory and preserves the gradient | on CPU, the accumulated `latent.grad` matches the unchunked one to `<1e-6` relative for every chunk size that divides and does not divide the sample count; the 4104 → 616 MiB measurement above is recorded in the test's docstring as the evidence for why the option exists, since it needs a GPU to reproduce |
 | the suite still passes | 884 passed / 1 skipped / 3 xfailed on `main` at `7f1da23` is the baseline every commit is compared against |
 
+### 8.0.L `train_epoch`'s loss pipeline — plan statement (2026-08-28)
+
+Every number below was re-run against `main` at `7bd29b3` before it was written. One of
+the State block's came back wrong.
+
+**What the row says and what is there.** `train_epoch` is **391 lines** (382 of body, 260
+executable) on **7 parameters and no `**kwargs`**, inside a 771-line module it is half of;
+`train_deep_sdf` is 159 lines beside it. It is the first slice since §8.0.G with no
+swallowed-keyword hole to close, and its signature is not in §8.0.O's set: `train_epoch` is
+a frozen public *name* (`test_train_import_compat`), but 7 parameters is not a signature
+anyone needs to shrink.
+
+**The State block's "the file has zero `if verbose` gates" is right about the wrong
+spelling.** There are no `if verbose is True:` gates — that form is a *parameter*, and
+§8.0.G's bridge decorates it. There are **8 `if config["verbose"] is True:` gates carrying
+20 `logger.debug` records**, all of them inside `train_epoch`, and they are §8.0.G's
+residue in its config-key form. So §8.0.K's largest single commit does have a counterpart
+here, a third the size.
+
+**What is actually wrong, measured.** Seven defects. Four are one shape — *a value is
+checked, or a loop bounded, somewhere other than where the value is named* — which is the
+shape §8.0.K kept finding; the other three are a metric, a gate and a duplication.
+
+*Defect 1 — `batch_split` is the number of splits asked for, not the number produced, and
+the loop trusts the request.* `torch.chunk(t, k)` returns **at most** `k` pieces; the split
+loop is `range(config["batch_split"])`. Measured on a 16-row batch: `chunk(16, 5)` returns
+**4** chunks and `chunk(16, 7)` returns 5, so `batch_split=5` and `batch_split=7` both raise
+`IndexError: tuple index out of range` from `latent_vecs(indices[split_idx])` at `:498` —
+naming a local tuple, not the config key the caller set. `batch_split` 3 and 6 work on the
+same batch. **The class has a second site in the same module**: `_schedule_free_eval_warmup`
+at `:301` bounds its loop the same way, on a helper whose docstring says it unpacks the
+batch "exactly the way `train_epoch` does" — which is what #42 was about.
+
+*Defect 2 — the logged latent-norm statistics are the last split's.* `mean_vec_length` and
+`std_vec_length` are computed **inside** the split loop and accumulated **outside** it, so
+`step_mean_vec_length += mean_vec_length.item()` adds whichever split ran last. This is
+`KNOWN_ISSUES` § History 12 (#59) at its second site: that fix moved `=` to `+=` on the
+*batch* loop and left the *split* loop underneath it. Measured, same seed and same data,
+only `batch_split` changing: `mean_vec_length` **0.1445 → 0.2026 → 0.3201** for
+`batch_split` 1 → 2 → 4, and `std_vec_length` **0.1031 → 0.1213 → 0.0** — while `loss` over
+the same three runs is invariant to **1.5e-08**. `batch_split` is a memory knob; it must not
+move a reported number, and the loss proves the rest of the function agrees.
+
+*Defect 3 — `multi_object_overlap` is refused 174 lines after it is named.*
+`config.get("multi_object_overlap", False) is True` raises a bare `Exception("Not
+implemented yet")` from inside the innermost loop — measured at `:555`, after
+`optimizer.zero_grad()`, after the forward pass, and after every earlier batch of the epoch
+has already `step()`ped. A caller who sets it loses the epoch's work to a bare `Exception`
+whose message names neither the parameter nor the module.
+
+*Defect 4 — `train_epoch` is the third entry point to the gated eikonal loss and the only
+one that does not raise.* `train_deep_sdf:87` and `latent_fit:606` both raise
+`NotImplementedError(EIKONAL_UNSUPPORTED)`; §8.2 and `CLAUDE.md` both say "both entry
+points", and both are counting the orchestrators rather than the code. Measured:
+`train_epoch(..., config={"eikonal_weight": 0.1, ...})` completes an epoch and returns an
+`eikonal_loss` key. It is reachable two ways — `train_epoch` is in
+`test_train_import_compat`'s frozen name list, and `train_deep_sdf_multi_head` calls it with
+no gate of its own.
+
+*Defect 5 — `surface_weighting`'s length check is a bare `assert`, in the innermost loop.*
+`assert len(config["surface_weighting"]) == n_surfaces` disappears under `python -O`, and it
+and the ~10 lines of weight normalisation it guards are epoch-constant yet re-evaluated
+`n_batches × batch_split` times. With the shipped `default_config.json` (`objects_per_batch`
+64, `n_epochs` 2001) that is per-epoch work recomputed for a value the config fixed before
+the run started.
+
+*Defect 6 — `samples_per_object_per_batch` is a second declaration of the dataset's
+`subsample`, and nothing checks they agree.* The trainer rebuilds the per-object sample
+count from the config (`indices.repeat(1, config["samples_per_object_per_batch"])`) when the
+batch it just received already carries it as `sdf_data["xyz"].shape[1]`. Measured against
+8-sample data: `samples_per_object_per_batch=4` and `=16` both raise `RuntimeError: Sizes of
+tensors must match ... Expected size 8 but got size 16` from `torch.cat` at `:506`, 35 lines
+below the config read and naming neither key. The two declarations live in different objects
+— one is a `MultiSurfaceSDFSamples` constructor argument, the other a config key — so
+nothing but this check can hold them together. Same second site as defect 1
+(`_schedule_free_eval_warmup:296`).
+
+*Defect 7 — §8.0.G's residue, 20 records behind 8 config-key gates.* All 20 are already
+`logger.debug`, so the gate only ever subtracts: the shipped `default_config.json` sets
+`verbose: true`, which leaves the gate permanently open and the *level* doing the filtering
+— and a config with `verbose: false` hides all 20 from a host that configured `DEBUG` and
+asked for them. Four of the 20 are also duplicates or anonymous: `logger.debug("split idx
+%s", split_idx)` at `:536` repeats `:496` exactly, `:544`'s `pred_sdf.shape` repeats
+`:536`'s, and `:542`/`:543` are `logger.debug("%s", ...)` with **no message text at all**,
+logging `len(sdf_gt)` and `len(sdf_gt[surf_idx])` — both loop-invariant, and both already
+logged at `:482`/`:483` with names.
+
+**Target shape (all permanent — this slice adds no transitional module).**
+
+- **The split loop iterates the chunks that exist**, at both sites. Identical wherever
+  `torch.chunk` returns the requested count, which is every configuration that works today;
+  where it returns fewer, the batch is still covered exactly once (`chunk` partitions), so
+  the loss is unchanged rather than merely uncrashed.
+- **The latent-norm statistics are accumulated over splits and divided by the splits that
+  ran**, so `mean_vec_length` is the epoch mean at every `batch_split`. § History 25.
+- **`multi_object_overlap` and `eikonal_weight` are refused at the top of the function**,
+  as `NotImplementedError` naming the parameter. The eikonal *code* stays: §8.2's repair
+  order cites `train_deep_sdf.py:510` by line, and it is the evidence whoever picks that
+  research up needs.
+- **`surface_weighting` is validated once, where it is named**, as a `ValueError` printing
+  both lengths, and its normalised weights are computed once per epoch instead of once per
+  split.
+- **`samples_per_object_per_batch` is checked against the batch it describes**, in the
+  helper both call sites share, with a message naming the config key and the dataset's
+  `subsample`.
+- **The 8 gates go and 4 records go with them.** The remaining 16 keep their level; what
+  changes is that a host configured at `DEBUG` sees them without also setting a config key.
+- **Four keyword-only private helpers.** Two are shared with
+  `_schedule_free_eval_warmup` and exist because the duplication is what #42 was:
+  `_split_batch` (device, reshape, the index repeat and its check, the three chunkings) and
+  `_batch_latents` (embedding lookup plus the variational reparameterisation). Two have one
+  caller each and are the loss pipeline proper: `_surface_l1_loss` (per-surface L1, the two
+  curriculum-SDF blocks, the per-sample normalisation, the surface weighting) and
+  `_code_regularization_loss` (the variational/spherical/identity/KLD branch, the warmup,
+  the cyclic anneal). **Four, not more** — the per-surface `gt_sdf` extraction has one
+  caller and 16 cohesive lines, and the epoch reduction plus log-dict assembly is what the
+  function is *for*. Extracting either would be structure invented to match a plan sentence.
+
+**Deliberately NOT in this slice, each for a stated reason.**
+
+- **Repairing the eikonal loss.** §8.2, deferred to research (`NSM_TRAINING_IDEAS.md`
+  Idea 3). This slice closes the third door and touches nothing behind it.
+- **`enforce_minmax` clamping the prediction as well as the target.** Already
+  `KNOWN_ISSUES` § Open, with its own regression test; changing it changes every training
+  run's numbers and is a decision, not a defect fix.
+- **`grad_clip` clips `model.parameters()` and not the latent embedding.** Measured — the
+  latents are a separate optimizer group and `clip_grad_norm_` never sees them. It is
+  §8.0.R's shape exactly (read on one path, ignored on another), and closing it moves the
+  numbers of every run that sets the key, so it needs the outcome measurement §8.0.K
+  round 1 says a theory-only defect needs. Recorded in the State block.
+- **`code_regularization_warmup=0` raising `ZeroDivisionError`** from `:677`. Measured, but
+  "off" has never been spelled `0` here — the shipped config is `100` — so this is config
+  validation with no reported instance behind it. §8.0.N or §8.0.R.
+- **`log_dict["l1_loss"]` and `mean(log_dict["l1_loss_i"])` disagree under
+  `surface_weighting`.** Measured: `[3, 1]` gives 0.2743 against 0.2967, because the
+  per-surface records are taken before weighting and the total after. That is the useful
+  decomposition — raw per-surface error beside the weighted objective — so what is missing
+  is one line of docstring, which rides in the docs commit.
+- **`train_deep_sdf_multi_head`'s copies** of defects 1, 6 and 7. The module is #51-broken
+  and `SCOPE` §2.1 rules it out of the documented surface; fixing a loop bound in a trainer
+  where only the last decoder trains would be tidying a dead room.
+- **`NSM/train/deprecated/`**, which has both copies again. §8.0.P.
+
+**Size budget, by part** — extractions priced at §8.0.K's finding (signature + docstring +
+call site, **zero on the removal line**), except where a second caller's copy is genuinely
+deleted:
+
+| part | budget |
+|---|---|
+| `_split_batch` — 3 keyword-only params, two call sites | +23 |
+| `_batch_latents` — 3 params, two call sites | +21 |
+| `_surface_l1_loss` — 8 params, one call site | +29 |
+| `_code_regularization_loss` — 6 params, one call site | +24 |
+| removed: `_schedule_free_eval_warmup`'s copy of what the two shared helpers now own | −12 |
+| the split-loop bound, both sites | 0 |
+| the latent-norm accumulation | +4 |
+| `multi_object_overlap` and `eikonal_weight` refused at the top | 0 |
+| `surface_weighting` checked once, weights hoisted | −5 |
+| the `samples_per_object_per_batch` check | +6 |
+| removed: 8 gates and 4 records | −12 |
+| **net in `NSM/`** | **+78** |
+
+Past **+100** is scope creep. Tests are additive and outside the budget. There is no new
+capability in this slice, which is why the budget is 60% of §8.0.K's.
+
+**Sequence** (one commit each; `make lint` clean and the full suite green at every step):
+
+1. this statement;
+2. characterization — the `batch_split` chunk-count matrix, the latent-norm trajectory
+   across `batch_split`, the `multi_object_overlap` and `eikonal_weight` acceptances, the
+   `surface_weighting` assert under `-O`, the `samples_per_object_per_batch` mismatch, the
+   record set at `DEBUG` without `config["verbose"]`, and a handoff pin per seam the
+   extraction will cut. Strict xfails for what is broken;
+3. the split loop iterates the chunks that exist, at both sites;
+4. the latent-norm statistics are the epoch's, not the last split's;
+5. `multi_object_overlap` and `eikonal_weight` refused where they are named;
+6. `surface_weighting` validated once, where it is named;
+7. `samples_per_object_per_batch` checked against the batch it describes;
+8. the 20 records stop being gated on `config["verbose"]`;
+9. the duplicated and anonymous records go;
+10. `_split_batch` and `_batch_latents` extracted, shared with the eval warm-up;
+11. `_surface_l1_loss` and `_code_regularization_loss` extracted, keyword-only —
+    behaviour-preserving;
+12. docs sweep (`KNOWN_ISSUES` § History 25, CHANGELOG, `ARCHITECTURE` and `SCOPE` where
+    they describe this function, and `train_epoch`'s docstring) and this plan's State.
+
+Commits 8 and 9 precede 10 and 11 for §8.0.K's reason: **ungate before you extract**, or the
+helper takes a `verbose` argument and loses it one commit later.
+
+**Verification per claim:**
+
+| Claim | Verification |
+|---|---|
+| `batch_split` is not the split count | `torch.chunk(16, k)` asserted to return 4 chunks for `k=5` and 5 for `k=7`; today `train_epoch` raises `IndexError` for both and completes for `k=3, 6`; after commit 3 all four complete |
+| fixing the bound does not move the loss | the epoch loss asserted equal across `batch_split` 1, 2, 4, 8, 16 to `<1e-7` before and after — measured at 0.29665897 ± 2.2e-08 on `main` for the values that run |
+| the latent-norm stats are the last split's | `mean_vec_length` asserted to change with `batch_split` alone (0.1445 / 0.2026 / 0.3201) while `loss` does not; after commit 4 all three are equal and match the mean computed from the embedding directly, as § History 12's test does at the batch level |
+| the eval warm-up shares both defects | the same `batch_split=5` matrix run through a `schedule_free` checkpoint epoch, which is the path #42's test already covers |
+| `multi_object_overlap` and `eikonal_weight` are accepted | today both complete an epoch (`eikonal_weight`) or raise a bare `Exception` after the backward pass (`multi_object_overlap`); after commit 5, `NotImplementedError` naming the parameter, raised before the first batch is fetched — asserted with a data loader that fails if iterated |
+| the eikonal gate matches the other two | the message is `EIKONAL_UNSUPPORTED`, and `testing/NSM/test_losses.py` gains the third site beside its two, so "both entry points" becomes a count the file states |
+| `surface_weighting`'s check survives `-O` | the suite's own assertion re-run in a subprocess under `python -O`: today the mismatch passes silently and fails later in `torch`, after commit 6 it raises `ValueError` under both |
+| hoisting the weights changes nothing | the epoch loss bit-identical on a fixed seed for `surface_weighting` absent, `[1, 1]` and `[3, 1]` |
+| `samples_per_object_per_batch` can disagree with its batch | today `RuntimeError` from `torch.cat` naming tensor sizes; after commit 7 a `ValueError` naming both the config key and the batch's own count |
+| ungating changes nothing for `config["verbose"] = True` | the record set under `verbose: true` asserted equal before and after; the added case is a host at `DEBUG` with `verbose: false`, empty today |
+| the extraction is a refactor, not a change | the returned `log_dict` bit-identical against the pre-refactor implementation on a fixed seed, across 1- and 2-surface decoders, `batch_split` 1 and 4, variational and not, and each of the four `code_regularization_type_prior` values |
+| the shared helpers keep the warm-up in step | `_schedule_free_eval_warmup` calls both, so a change to either reaches it — pinned by asserting the warm-up's forward count and input shapes against `train_epoch`'s for the same batch |
+| the suite still passes | 940 passed / 1 skipped / 3 xfailed on `main` at `7bd29b3` is the baseline every commit is compared against |
+
 ### 8.1 Make the library plural — added 2026-08-15
 
 > **Deferred 2026-08-26 — this is an upgrade, not the refactor.** All three bullets are
