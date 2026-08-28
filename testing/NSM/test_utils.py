@@ -241,6 +241,7 @@ class TestWriteOnce:
         rather than the report.
         """
         save_model_params(config=running_config, list_mesh_paths=SUBJECTS)
+        caplog.clear()  # the first write reports its own dropped keys; this is the second
 
         diverged = copy.copy(running_config)
         diverged.update({"latent_size": 999, "n_epochs": 7, "objects_per_decoder": 4})
@@ -261,6 +262,7 @@ class TestWriteOnce:
         fires on every healthy run is one people learn to skip past.
         """
         save_model_params(config=running_config, list_mesh_paths=SUBJECTS)
+        caplog.clear()  # the first write reports its own dropped keys; this is the second
 
         with caplog.at_level(logging.WARNING, logger="NSM.utils"):
             save_model_params(config=running_config, list_mesh_paths=SUBJECTS)
@@ -301,15 +303,31 @@ class TestNonSerialisableValues:
 
         assert filter_non_jsonable(nested) == {"keep": 1}
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#50, §8.0.M: the keys leave the record with nothing said about them",
-    )
     def test_the_dropped_keys_are_named_where_the_record_is_written(self, running_config, caplog):
+        """Was a strict xfail: the keys left the record with nothing said about them."""
         with caplog.at_level(logging.WARNING, logger="NSM.utils"):
             save_model_params(config=running_config, list_mesh_paths=SUBJECTS)
 
         assert "lr_schedules" in caplog.text
+
+    def test_the_drop_is_reported_once_per_run_and_not_once_per_checkpoint(
+        self, running_config, caplog
+    ):
+        """
+        Why the log rides with the write. ``_save_checkpoint`` calls this on every
+        checkpoint and the drop set is fixed by the config, so reporting it at the filter
+        would put a warning naming ``lr_schedules`` -- a key the trainer inserted itself --
+        into every healthy run, once per checkpoint.
+        """
+        save_model_params(config=running_config, list_mesh_paths=SUBJECTS)
+        assert "lr_schedules" in caplog.text, "the write should have reported the drop"
+        caplog.clear()
+
+        with caplog.at_level(logging.WARNING, logger="NSM.utils"):
+            for _ in range(3):
+                save_model_params(config=running_config, list_mesh_paths=SUBJECTS)
+
+        assert caplog.records == []
 
     def test_a_dropped_key_is_absent_from_the_record_rather_than_null(self, running_config):
         """

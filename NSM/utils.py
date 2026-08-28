@@ -336,6 +336,7 @@ def save_model_params(config, list_mesh_paths):
     # run's list, round-tripped back in from that run's saved file. Either way the data
     # wins over the record. See plan §8.0.M and docs/KNOWN_ISSUES.md History 26.
     dict_save["list_mesh_paths"] = list_mesh_paths
+    dropped = sorted(key for key, value in dict_save.items() if not is_jsonable(value))
     dict_save = filter_non_jsonable(dict_save)
 
     # First write wins, deliberately: this file records the configuration that produced
@@ -364,6 +365,20 @@ def save_model_params(config, list_mesh_paths):
             "model_params_config.json, whose subject list is not this run's.",
             len(superseded),
             len(list_mesh_paths),
+        )
+
+    # Reported here rather than at the filter, so it fires once when the record is created
+    # instead of on every checkpoint (#50). In a real run the set is exactly
+    # {"lr_schedules"}: the trainer's own derived schedule objects, whose source is on disk
+    # as LearningRateSchedule. Anything else in it is a value the caller set and the record
+    # will not carry.
+    if dropped:
+        logger.warning(
+            "%d config value(s) cannot be JSON-encoded and are omitted from %s: %s. The "
+            "filter is shallow, so a nested value is omitted whole.",
+            len(dropped),
+            os.path.basename(path_save),
+            ", ".join(dropped),
         )
 
     with open(path_save, "w") as f:
