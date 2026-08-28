@@ -407,6 +407,22 @@ def train_epoch(
     ``n_surfaces`` must match the decoder's ``objects_per_decoder`` and the dataset's
     per-subject surface count: ``gt_sdf`` columns are read positionally by surface.
     """
+    # Refused here rather than where they are consulted. train_deep_sdf gates
+    # eikonal_weight at its own entry, but train_epoch is public
+    # (test_train_import_compat) and train_deep_sdf_multi_head calls it with no gate, so
+    # the loss the plan calls gated ran through this function. multi_object_overlap used
+    # to raise a bare Exception from the innermost loop, 174 lines below the read and
+    # after a full forward and backward.
+    if config.get("eikonal_weight", 0) > 0:
+        raise NotImplementedError(EIKONAL_UNSUPPORTED)
+    if config.get("multi_object_overlap", False) is True:
+        raise NotImplementedError(
+            "multi_object_overlap is accepted by the config and not implemented. It would "
+            "penalize two surfaces both predicting a negative SDF at the same point -- one "
+            "object inside another -- without penalizing the gaps between them, and neither "
+            "half is written."
+        )
+
     # n_surfaces = len(models)
     start = time.time()
     # for model in models:
@@ -559,15 +575,6 @@ def train_epoch(
                         sdf_gt[surf_idx][split_idx].squeeze(1).to(config["device"]),
                     )
                 )
-
-            if config.get("multi_object_overlap", False) is True:
-                raise Exception("Not implemented yet")
-                # Should add some weighted penalty to the l1 loss
-                # this is similar to surface_accuracy_e below
-                # The idea being - the signs of the objects should never have 2 objects as (-) becuase it
-                # means one object is inside the other.
-                # However, we dont want there to be any gaps between them - so we need to be intelligent about
-                # how to penalize this so that it doesnt end up with weird artefacts.
 
             # curriculum SDF equation 5
             # progressively fine-tune the regions of surface cared about by the network.

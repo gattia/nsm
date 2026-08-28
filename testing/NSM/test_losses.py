@@ -139,16 +139,13 @@ def test_train_epoch_allows_eikonal_weight_off():
     assert "eikonal_loss" not in _one_epoch(eikonal_weight=0.0)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="§8.0.L: train_epoch is the third entry point and the only one that runs it",
-)
 def test_train_epoch_refuses_eikonal_weight():
     """
-    Measured before the fix: an epoch with ``eikonal_weight=0.1`` completes and returns an
-    ``eikonal_loss`` key. It does not even hit the double-backward crash §8.2 describes --
-    that needs a decoder whose second derivative torch declines, and a linear one has a
-    perfectly good one. A gate is what stops this, not the arithmetic.
+    Was a strict xfail. Measured before the fix: an epoch with ``eikonal_weight=0.1``
+    completed and returned an ``eikonal_loss`` key. It did not even hit the
+    double-backward crash §8.2 describes -- that needs a decoder whose second derivative
+    torch declines, and a linear one has a perfectly good one. A gate is what stops this,
+    not the arithmetic.
     """
     with pytest.raises(NotImplementedError, match="eikonal"):
         _one_epoch(eikonal_weight=0.1)

@@ -331,23 +331,16 @@ class TestMultiObjectOverlapIsRefusedWhereItIsNamed:
     ``step()``ped.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="§8.0.L: refused 174 lines below where it is read, as a bare Exception",
-    )
     def test_it_raises_not_implemented_naming_the_parameter(self):
+        """Was a strict xfail: a bare ``Exception("Not implemented yet")``."""
         with pytest.raises(NotImplementedError, match="multi_object_overlap"):
             run_epoch(multi_object_overlap=True)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="§8.0.L: the refusal is inside the batch loop, so the batch is fetched first",
-    )
     def test_it_raises_before_the_first_batch_is_fetched(self):
         """
-        A data loader that refuses to be iterated: if the refusal is where the parameter is
-        named, nothing asks it for a batch. Today it is asked, and the epoch runs a full
-        forward and backward before failing.
+        Was a strict xfail. A data loader that refuses to be iterated: if the refusal is
+        where the parameter is named, nothing asks it for a batch. Before the fix it was
+        asked, and the epoch ran a full forward and backward before failing.
         """
 
         class _Unfetchable:
