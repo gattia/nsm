@@ -307,6 +307,22 @@ def save_model(config, epoch, decoder, model_subdir="model", optimizer=None):
         )
 
 
+def _diverging_keys(path_existing, dict_new):
+    """
+    The keys on which ``dict_new`` disagrees with the record already at ``path_existing``.
+
+    Added, removed and changed in one sorted list: all three mean the same thing to the
+    reader of a file that is not going to be rewritten.
+    """
+    with open(path_existing) as f:
+        existing = json.load(f)
+
+    shared = set(existing) & set(dict_new)
+    return sorted(
+        (set(existing) ^ set(dict_new)) | {key for key in shared if existing[key] != dict_new[key]}
+    )
+
+
 def save_model_params(config, list_mesh_paths):
 
     if not os.path.exists(config["experiment_directory"]):
@@ -314,15 +330,31 @@ def save_model_params(config, list_mesh_paths):
 
     path_save = os.path.join(config["experiment_directory"], "model_params_config.json")
 
-    if os.path.exists(path_save):
-        return
-
     dict_save = dict(config)
     # After the merge, not before it: `list_mesh_paths` is the dataset that is training,
     # and a config's own copy of the key is either the shipped default's None or a previous
     # run's list, round-tripped back in from that run's saved file. Either way the data
     # wins over the record. See plan §8.0.M and docs/KNOWN_ISSUES.md History 26.
     dict_save["list_mesh_paths"] = list_mesh_paths
+    dict_save = filter_non_jsonable(dict_save)
+
+    # First write wins, deliberately: this file records the configuration that produced
+    # the weights, and a resumed or re-configured run must not replace that record. What
+    # changed in Aug 2026 is that the refusal stops being silent (#50) -- load_model
+    # rebuilds the architecture from here, so a diverging config leaves a file describing
+    # a different model from the one saved beside it.
+    if os.path.exists(path_save):
+        diverging = _diverging_keys(path_save, dict_save)
+        if diverging:
+            logger.warning(
+                "%s already exists and is not being rewritten: it records the "
+                "configuration that produced the weights stored alongside it. %d value(s) "
+                "in the current config disagree with what it holds: %s.",
+                path_save,
+                len(diverging),
+                ", ".join(diverging),
+            )
+        return
 
     superseded = config.get("list_mesh_paths")
     if superseded is not None and superseded != list_mesh_paths:
@@ -333,8 +365,6 @@ def save_model_params(config, list_mesh_paths):
             len(superseded),
             len(list_mesh_paths),
         )
-
-    dict_save = filter_non_jsonable(dict_save)
 
     with open(path_save, "w") as f:
         json.dump(dict_save, f, indent=4)

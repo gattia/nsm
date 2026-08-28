@@ -211,14 +211,10 @@ class TestWriteOnce:
 
         assert saved_record(config)["lr"] == 0.001
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="#50, §8.0.M: the refusal returns without a word, so a re-configured run "
-        "leaves a file describing a different model from the checkpoints beside it",
-    )
     def test_the_refusal_names_what_diverges_from_it(self, tmp_path, caplog):
         """
-        Measured before the fix: ``lr=0.9999`` leaves ``0.001`` on disk and logs nothing.
+        Was a strict xfail. Measured before the fix: ``lr=0.9999`` left ``0.001`` on disk
+        and logged nothing.
 
         The learning rate is the harmless version. ``load_model`` rebuilds the architecture
         from this file, so the key that matters is one like ``latent_size``: the refusal has
@@ -234,14 +230,9 @@ class TestWriteOnce:
         assert any(record.levelno == logging.WARNING for record in caplog.records)
         assert "lr" in caplog.text
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="§8.0.M: nothing compares the config with the file, so nothing can name "
-        "the keys that differ",
-    )
     def test_the_report_names_every_diverging_key_and_no_other(self, running_config, caplog):
         """
-        Three diverging keys out of the shipped config's 123: the report is a set, not a
+        Was a strict xfail. Three diverging keys out of the shipped config's 123: the report is a set, not a
         sample, and it must not sweep in the 120 that agree.
 
         Only multi-token keys are searched for. Sixteen of the 123 are ordinary words --
