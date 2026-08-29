@@ -29,6 +29,8 @@ from NSM.reconstruct.cartilage_func import (
     CART_REGIONS,
     CART_REGIONS_DICT,
     compare_cart_thickness,
+    compare_cart_thickness_femur,
+    compare_cart_thickness_patella,
     compare_cart_thickness_tibia,
     compare_cart_thickness_whole_joint,
 )
@@ -302,6 +304,28 @@ class TestTheDefaultRegionSet:
         result = compare_cart_thickness(orig_meshes, recon_meshes)
         assert len(result) == 20
         assert all(np.isnan(value) for value in result.values())
+
+
+class TestTheJointWrappers:
+    """
+    The three single-joint functions are the same three lines and differ only in the
+    region set they ask for — which is the whole of what they are for, since the bare
+    ``compare_cart_thickness`` defaults to the femur's.
+    """
+
+    @pytest.mark.parametrize("joint", ["femur", "tibia", "patella"])
+    def test_each_scores_its_own_joint(self, joint):
+        wrapper = {
+            "femur": compare_cart_thickness_femur,
+            "tibia": compare_cart_thickness_tibia,
+            "patella": compare_cart_thickness_patella,
+        }[joint]
+        regions = CART_REGIONS_DICT[joint]
+        orig_meshes, recon_meshes = _pair(label=regions[0])
+        result = wrapper(orig_meshes, recon_meshes)
+
+        assert len(result) == 4 * len(regions)
+        assert not np.isnan(result[f"func_cart_thick_{regions[0]}_orig_mean"])
 
 
 class TestTheMeshListLength:

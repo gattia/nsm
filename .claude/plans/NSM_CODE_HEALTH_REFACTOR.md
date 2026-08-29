@@ -10,10 +10,98 @@
   `testing/` has passed `NSM/` in size — **14,770 lines against 14,460**, a ratio of 1.02
   from 0.26 at `v0.1.0` — and the slice index's new **T row** carries the measurements and
   three checkable trim criteria. It runs last because every slice adds to what it trims.
-- **Next:** **§8.0.N′** (`reconstruct/cartilage_func.py`) — statement written, sequence
-  below it. `v0.3.0` **is tagged** on `main` at `751c226` (verified against the remote
-  2026-08-29), so the maintainer action the previous Next named is done and
-  `_verbose_deprecation`'s v0.4.0 removal is now due-able. **Blocked on nothing.**
+- **Next:** **§8.0.N** (Phase 2 close + the `flake8-docstrings` gate), carrying the four
+  #56 knobs, #55 and #25 — see the dispositions table under the slice index. Two things
+  N′ hands it: §7.4's suite-time target is now **crossed** (below), and the module N′
+  opened is the first one whose docstring gate will pass without work. **Blocked on
+  nothing.**
+- **§8.0.N′ executed (2026-08-29), based on `main` at `751c226`:** commits 2–10 — the
+  characterization, the absent-surface NaN, the missing-original NaN, the func-key
+  `setdefault`, the `regions_label` refusal, the mesh-list length check, `CART_REGIONS`
+  and the coercion, the docstrings plus a deletion pass, and this update. Suite 1109 →
+  **1143 passed / 4 skipped / 3 xfailed**: all 13 strict xfails commit 2 raised were
+  retired inside the slice, and the 3 that remain are the regression harness's.
+  `cartilage_func.py` is **19% → 100%** covered and `recon_evaluation.py` 80% → 91%;
+  overall 80% → 82%. One § History entry (27), one § Open entry, two CHANGELOG Breaking
+  and three Fixed, `SCOPE` §2.5 and §2.5b, `ARCHITECTURE` §7's accepted-and-ignored and
+  silent-mutation rows.
+- **A validation hook that had never been executed by anything took the whole training run
+  down, and the function beside it survives the same input.** `create_mesh` leaves a
+  surface's slot `None` when its SDF does not cross zero — its own docstring says so — and
+  `compare_cart_thickness` handed that to `CartilageMesh`, which builds a 0-point mesh
+  that `vtkOBBTree` dies on: **exit 139, `SIGSEGV`**, measured in its own process. Not an
+  exception, so `get_mean_errors`' `except NoZeroLevelSetError` could not catch it and no
+  `try` could. Forty lines away, reached from the same `reconstruct_mesh` call on the same
+  subject, `compute_recon_loss` tests `if mesh is not None` and scores `np.nan`. **Two
+  consumers of one list, one written for the degenerate-decoder case and one not** — which
+  is why the fix is "the same answer as the sibling" rather than a new policy.
+- **A ruling one day old was right about the code it read and wrong about the capability,
+  and only the end-to-end test could tell.** `SCOPE` §2.5b (2026-08-29) ruled `None`
+  surfaces supported at reconstruction, from `latent_fit.py`. The fit is fine — measured,
+  `reconstruct_mesh(path=[bone, None])` returns a latent and both decoded surfaces. One
+  frame up, `compute_recon_loss` guards the *reconstructed* mesh against `None` and reads
+  the *original* unguarded on the next line, so `calc_symmetric_chamfer` or `calc_assd`
+  raises `AttributeError` — and `get_mean_errors`, the only production caller, passes both
+  from `default_config.json`, where both are `true`. **The supported half was unreachable
+  from the production entry point.** §2.5b now carries the correction and the test it
+  should have had. This is the §7.1 argument in miniature: the ruling was inferred from
+  the one file the reviewer opened, and the defect was in the caller.
+- **Writing the characterization found a contract between two modules that neither
+  states.** `get_mean_errors` *parses* these functions' key names —
+  `fnmatch(key, "cart_thick*_orig_mean")`, then `key.split("_")[2]` for the region index,
+  then reaching for `..._recon_mean` and `..._mean_thick_diff` by name to build a
+  correlation and an RMSE. A result dict carrying fewer than the four keys raises two
+  frames up. Found by a fake that returned one key and failing; it is why both the scored
+  path and the NaN path build their keys from `_region_keys` and neither writes the set
+  out. **The naming scheme is an interface, and nothing on either side said so.**
+- **The silent defect was the one the wrappers' names denied.** All three single-joint
+  functions took `orig_meshes[:2]` and none checked what it sliced from: a six-mesh
+  whole-joint list into `compare_cart_thickness_tibia` scored the **femur's** pair against
+  tibial region indices — eight NaNs, exit 0. It cannot return a plausible-but-wrong
+  number, the canonical label sets being disjoint, which is the whole of why § History 27
+  is short. The loud cases named nothing either: `ValueError: not enough values to unpack`
+  for the wrong count, and `KeyError: 'labels'` for the four-surface
+  `["bone", "cart", "med_men", "lat_men"]` layout `CLAUDE.md` documents, from treating the
+  medial meniscus as the tibia's bone.
+- **A parameter honoured at one end of the function and hardcoded at the other.**
+  `regions_label` named the array to transfer; pymskt's `get_cart_thickness_mean` and
+  `_std` then opened `get_scalar("labels")` regardless. Measured in both arrangements —
+  the original carrying only the alternative name, and the original carrying **both** —
+  and both raise `KeyError: 'labels'`, from opposite sides. There is no value but the
+  default that has ever worked. A new shape for `ARCHITECTURE` §7's accepted-and-ignored
+  row: not a rebind, not a `**kwargs` hole, not a config key of the same name, but *the
+  read being in a dependency*. Refused by name; the deletion is §8.0.S with the other
+  seven signature items.
+- **The deletion pass moved evidence rather than removing it.** `_require_meshes` and
+  `_as_mesh` had each recorded their measured failure modes in their own docstrings, and
+  the tests record the same measurements. Rule 3 puts evidence in the test and its
+  docstring, so the helpers keep the rule and point at
+  `test_cartilage_func.TestTheMeshListLength` for the numbers. Worth −4 lines, and the
+  reason it is not more is below.
+- **The size budget was missed for the eighth slice running, and this one is two
+  mispricings of the same kind in one slice.** Budget +109 net in `NSM/`, ceiling +130,
+  actual **+151** (`cartilage_func.py` 146 → 285, `recon_evaluation.py` +16). Both parts
+  measured after the fact. (1) **A helper was priced at its body and written with a
+  docstring.** `_as_mesh` was budgeted +8 for two lines of code and cost **18**; it
+  replaced 24 lines of triplicated coercion, so the row that was going to be −13 came in
+  at −2. `_region_keys` was +11 and cost 18 the same way. (2) **A call site costs its
+  arity.** `_require_meshes` takes five arguments, so `black` gives each its own line: the
+  five call sites were budgeted 11 lines together and cost **30**. §8.0.H priced
+  transitional code at zero, I refusals by net lines, J call sites at zero, K moved code as
+  deleted code, L a helper as a line item's side effect, M an emitted record as a
+  statement, O a declaration that is a list — and N′ **a helper at its body and a call at
+  its meaning**. The generalisation §8.0.O reached still covers it, and this slice sharpens
+  it into two checkable rules: *an extracted helper costs its docstring, not its body, so
+  it pays for itself only against blocks longer than that*; and *a call costs `1 + n_args`
+  lines the moment it wraps, which at four arguments it always does*.
+- **§7.4's suite-time target is now crossed, and nothing said so.** **120.8 s under
+  coverage** against the stated two minutes (110.9 s without). It was 119 s before this
+  slice — the one second of headroom the last review measured — and N′ spent it. The T row
+  predicted exactly this and §8.0.N owns the conversion of the bound into a check; until
+  then the number is in a State block, which is the failure mode the row names. The
+  slice's own contribution is small and was chosen: the segfault's subprocess
+  reproduction cost ~6 s and was deleted at commit 3, and `test_cartilage_func` runs in
+  **7 s** for 30 tests.
 - **§8.0.O executed (2026-08-29), based on `main` at `902634d`:** commits 2–11 — the
   characterization, the combined refusal at both sites, two_stage's `padding`, the
   `conv_norm_type` defaults, `package-data`, setuptools-scm, `__all__` × 5, the
@@ -1538,10 +1626,11 @@ Priority order (by lines × inverse coverage × production-reachability):
       Reproduce with `make test-coverage`.)* The **≥90% on the production API** half is
       **not** met and is the one target with no owner — the shortfall is concentrated in
       `reconstruct/cartilage_func.py`, which is why §8.0.N′ exists.
-- [ ] Suite stays under 2 minutes so nobody skips it *(**measured 2026-08-29: 119 s under
-      coverage.** One second of headroom on a bound nothing checks, which makes this a
-      target that will fail silently on the next slice. §8.0.N converts it to a check or
-      deletes it; a bound nobody measures is not a bound.)*
+- [ ] Suite stays under 2 minutes so nobody skips it *(**crossed on the next slice, as
+      predicted: 120.8 s under coverage after §8.0.N′, 110.9 s without.** It was 119 s
+      before, and the one second of headroom is spent. Nothing reported it — this line
+      did, because someone measured it by hand. §8.0.N converts it to a check or deletes
+      it; a bound nobody measures is not a bound.)*
 - [x] CI runs it on every PR *(`.github/workflows/build-test.yml` — lint job and test job,
       both required. Done since before this plan and unticked until 2026-08-29.)*
 
@@ -1597,7 +1686,7 @@ mistake `CLAUDE.md` names. What is fixed here is the *order* and each slice's *s
 | **L** | `train_epoch`'s loss pipeline | the ~270-line batch loop | The statement §8.0.D said this needs, deferred deliberately, now due. *Executed, PR #95 — 391 lines, not ~270.* |
 | **M** | `NSM/utils.py` | #50, the module's remaining undocumented surface | §1.2's exhibit: the file that held the founding bug. Phase A documented the LR path and nothing else. *Executed, PR #96 — 6 of 23 symbols documented, and #50's unreported half was the one that fired on the shipped default.* |
 | **O** | v0.3.0 release *(executed — see the S row for what it could not carry)* | the pending Breaking set, setuptools-scm (§10.1), §7.1's GPU note, **`NSM.configs` ships in no wheel** (SCOPE §5), **`__all__` per subpackage** — deferred at Phase 0 (§3), owned by nothing since, and §10.1 makes it the stated gate for 1.0.0; it is packaging-shaped, so it belongs beside setuptools-scm and the wheel gap — and **two items §8.0.H deferred here by name**: (a) a **combined pre-v0.3.0 config message** — the release adds three required triplanar keys (`padding`, `conv_norm_type`, `conv_activation`), each refused separately, so an old config is fixed one round-trip at a time; one message naming every missing key at once is the `_lr_migration` pattern applied to the set. (b) **`TriplanarDecoder`/`VAEDecoder`'s signature defaults**, still `conv_norm_type="batch"` against the `"layer"` everything trained — unreachable from a config now that the loader requires the key, but reachable by direct construction, and changing a public-stable signature needs the version boundary. | **Moved ahead of N′ and N on 2026-08-29, and not by preference.** `NSM/_verbose_deprecation.py` promises one release of overlap and says *delete at v0.4.0*; it has shipped in **zero** releases (latest tag `v0.2.0`), so until v0.3.0 exists that removal can never become due and the bridge is permanent by default. The Breaking set is complete as of G–M — 34 entries in CHANGELOG § Unreleased — and N′/N add none, so waiting buys nothing. Cut timing was always the maintainer's call; this is that call. |
-| **N′** | `reconstruct/cartilage_func.py` | the module's 19% coverage and 5 undocumented public functions, the end-to-end `None`-surface reconstruction test #67 leaves owed — the half that works is pinned only at its preprocessing helper (`test_none_surfaces_are_skipped_not_dropped`), so the capability the maintainer actually uses can rot through any future slice in silence | *Added 2026-08-29.* The last production module no slice has opened — SCOPE §2.5 rules it production, `train_deep_sdf.py:47` makes its five functions the whole of `DICT_VALIDATION_FUNCS`, and §7.3's priority list never named it. Characterization first: every slice that has opened a file at this coverage found 5–8 defects. Not folded into N, because a docs slice carrying an untested production module is how N misses its budget. |
+| **N′** | `reconstruct/cartilage_func.py` *(executed)* | the module's 19% coverage and 5 undocumented public functions, the end-to-end `None`-surface reconstruction test #67 leaves owed — the half that works is pinned only at its preprocessing helper (`test_none_surfaces_are_skipped_not_dropped`), so the capability the maintainer actually uses can rot through any future slice in silence | *Added 2026-08-29.* The last production module no slice has opened — SCOPE §2.5 rules it production, `train_deep_sdf.py:47` makes its five functions the whole of `DICT_VALIDATION_FUNCS`, and §7.3's priority list never named it. Characterization first: every slice that has opened a file at this coverage found 5–8 defects. Not folded into N, because a docs slice carrying an untested production module is how N misses its budget. **Executed 2026-08-29** — eight defects, one of them a `SIGSEGV`; coverage 19% → 100%; the owed end-to-end test found `SCOPE` §2.5b's supported half unreachable in production. |
 | **N** | Phase 2 close + lint gate | the §6 checkboxes, `flake8-docstrings` in `make lint`, `CLAUDE.md` §Architecture rewrite, and the four #56 knobs + #55 + #25 (see the dispositions below) | Must follow G–M — that is where the missing docstrings are — and the lint gate is what stops G–M's accuracy rotting. **Re-scoped 2026-08-29, measured:** ~34 docstrings to write (57 bare, less the 16 deliberately-bare overrides, the 6 SCOPE-excluded, one nested decorator) ≈ 350–400 lines, three times §8.0.M's docstring count. **The gate is D1xx-only** — D100/101/102/103 — with `.flake8` recording why the D2xx/D4xx families stay off: at defaults they fire on existing accurate prose (139 D212, 42 D400, 31 D205, 9 D403), which is house style. Deliverable is "the gate passes", not a transcribed percentage. The 4 `get_learning_rate` and 12 `forward`/`backward` overrides that are bare on purpose take a per-site `# noqa: D102` naming the class docstring that carries the formula, **not** a rule exception — a `noqa` says why at the site, a config exception says it nowhere. |
 | **P** | 0b quarantine + #18 | `train/deprecated/` (876 lines), the `sample_difficulty_lx` port | Maintainer-gated on the nsosim survey, unchanged since Phase 0. |
 | **Q** | #3, sigma coordinate space | `BREAKING_CHANGE_PROPOSAL.md` + `SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` | Last, because it is the one remaining *behaviour* change: it needs a §4-style migration guard and a version boundary, so it wants a release on either side of it. |

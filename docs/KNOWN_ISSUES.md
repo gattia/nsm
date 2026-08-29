@@ -43,6 +43,7 @@ queue.
 | A `None` surface cannot build | Medium — advertised feature, unusable | [#67](https://github.com/gattia/nsm/issues/67) |
 | `sample_difficulty_lx` shipped but unimplemented | Medium | [#18](https://github.com/gattia/nsm/issues/18) |
 | `enforce_minmax` clamps predictions | Medium — config semantics | *none — a docs/design call, see below* |
+| The bare `compare_cart_thickness` scores femoral regions whatever the model is | Low — NaN, not a wrong number | *none — documented at the constant, see below* |
 | `Pool` deadlocks after an in-process build | Low — hangs, does not corrupt | [#25](https://github.com/gattia/nsm/issues/25) |
 
 ---
@@ -226,6 +227,29 @@ resurrect are in `.claude/plans/HYBRID_OPTIMIZER_REPORT.md`.
 
 *Pinned by:* `test_reconstruct_latent_internals.TestTheDrawIsPerEvaluation` and
 `TestTheLbfgsParametersAreReadOnBothPaths`.
+
+## `reconstruct/cartilage_func.py`
+
+### The bare `compare_cart_thickness` scores femoral regions whatever the model is
+
+`cart_regions` defaults to `CART_REGIONS`, which is `CART_REGIONS_DICT["femur"]` — the
+five femoral subregions, 11–15. `DICT_VALIDATION_FUNCS` in `train_deep_sdf.py` exposes the bare
+`compare_cart_thickness` under its own name, so a config whose `recon_val_func_name` is
+`"compare_cart_thickness"` for a tibia or patella model takes that default and scores
+**NaN for every region**, with pymskt's `UserWarning` per region as the only signal.
+`get_mean_errors` then averages NaN into the logged metric.
+
+**How to tell whether a run is affected:** if `recon_val_func_name` is
+`"compare_cart_thickness"` and the model is not a femur model, every `cart_thick_*` metric
+in the run is NaN. The three joint-named wrappers pick the right set and are unaffected.
+
+*Not fixed, deliberately (plan §8.0.N′):* refusing a region set the original's labels do
+not contain would be a new design decision about what a validation function may assume,
+and the wrappers already exist for the case. The default is documented at the constant and
+in `compare_cart_thickness`'s docstring, which is where someone choosing a
+`recon_val_func_name` is reading.
+
+---
 
 ## `models/triplanar.py`
 
@@ -1609,3 +1633,43 @@ reconstruction, and no NSM code path reads it back.
 *Pinned by:*
 `test_utils.TestTheRecordNamesItsSubjects` (the shipped default, the round trip, the
 control with no config key, and the fact that no regression test read the value).
+
+## 27. A single-joint cartilage validation function scored the femur's meshes
+
+| | |
+|---|---|
+| **Affected** | Runs whose `recon_val_func_name` named `compare_cart_thickness_tibia`, `_patella` or `_femur` while the model produced **more than two surfaces**. → Aug 2026 |
+| **Unaffected** | Two-surface models, which is what both shipped ShapeMedKnee configs are; `compare_cart_thickness_whole_joint`, which took its own slices; every metric other than `cart_thick_*`; and everything about the weights |
+| **Severity** | Silent, and it produces NaN rather than a wrong number |
+| **Fixed in** | `slice-n-prime-cartilage-func`, Aug 2026 (plan §8.0.N′) |
+
+### What was wrong
+
+All three single-joint functions took `orig_meshes[:2]` and `recon_meshes[:2]` and nothing
+checked what they sliced from. Handed a six-mesh whole-joint list — femur, tibia, patella
+— `compare_cart_thickness_tibia` therefore scored the **femur's** bone and cartilage, and
+looked up region indices 2 and 3 on a femoral label array that has neither.
+
+Measured: eight keys, every value NaN, exit code 0. pymskt's `get_cart_thickness_mean`
+warns per region ("No data for region 2 - returning mean as nan") and returns NaN;
+`get_mean_errors` averages the column and logs it.
+
+The effect is confined to NaN because the canonical label sets are disjoint: femoral
+subregions are 11–15 and the tibial indices are 2 and 3, so the wrong meshes can never
+contain the requested region and the function cannot return a plausible-but-wrong number.
+
+### How to tell whether one of your runs is affected
+
+Read `recon_val_func_name` and `objects_per_decoder` together in
+`model_params_config.json`. A single-joint function with `objects_per_decoder > 2` is the
+affected shape, and its `cart_thick_*` metrics in that run are NaN throughout — including
+the derived `cart_thick_*_corr` and `cart_thick_*_RMSE`. Nothing else in the run is
+touched: this is a validation metric, never a training signal.
+
+The same configuration now raises `ValueError` naming the function, the count it needs and
+the layout it assumes.
+
+*Pinned by:*
+`test_cartilage_func.TestTheMeshListLength` (the whole-joint list into the tibia wrapper,
+the wrong-length pairs, and the four-surface `["bone", "cart", "med_men", "lat_men"]`
+layout into the whole-joint function).

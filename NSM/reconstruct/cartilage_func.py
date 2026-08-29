@@ -41,12 +41,10 @@ def _require_meshes(caller, n_expected, layout, orig_meshes, recon_meshes):
     """
     Refuse a mesh list of the wrong length, at the function that slices it.
 
-    Every wrapper took ``[:2]`` and nothing checked what it sliced from. Six meshes into a
-    single-joint wrapper scored the **femur's** pair against that joint's region indices
-    and returned NaN for every one, exit 0; four meshes -- the ``["bone", "cart",
-    "med_men", "lat_men"]`` layout -- into the whole-joint function treated the medial
-    meniscus as the tibia's bone and gave ``KeyError: 'labels'``. Neither named the count,
-    the argument or the function.
+    Every wrapper took ``[:2]`` and nothing checked what it sliced from, so a list of the
+    wrong length was scored silently or died unnamed depending on which one it was --
+    ``testing/NSM/reconstruct/test_cartilage_func.py::TestTheMeshListLength`` has the
+    measurements.
     """
     for name, meshes in (("orig_meshes", orig_meshes), ("recon_meshes", recon_meshes)):
         if len(meshes) != n_expected:
@@ -165,16 +163,14 @@ def _as_mesh(mesh_class, mesh):
     """
     Coerce to ``mesh_class``, keeping the object when it already is one.
 
-    Two branches, not three. The third used to read ``elif isinstance(mesh,
-    pymskt.mesh.Mesh): mesh_class(mesh.mesh)``, and ``Mesh.mesh`` **returns self** while
-    printing "this property is redundant" -- so it was the fallback call plus a line of
-    stdout, in the branch production takes every time: ``create_mesh`` and ``read_meshes``
-    both produce the plain ``Mesh``, three of them per subject per validation epoch.
+    Two branches, not three: the third read ``elif isinstance(mesh, pymskt.mesh.Mesh):
+    mesh_class(mesh.mesh)``, and ``Mesh.mesh`` **returns self** while printing "this
+    property is redundant" -- the same call, plus stdout, in the branch production takes
+    every time.
 
-    A mesh that already is ``mesh_class`` keeps its identity and is therefore **mutated**
-    by the caller, gaining ``labels``, ``thickness (mm)`` and a ``list_cartilage_meshes``;
-    anything else is copied and the caller's object is untouched. Nothing in NSM passes
-    the former.
+    A mesh that already is ``mesh_class`` keeps its identity and is therefore **mutated**:
+    it gains ``labels``, ``thickness (mm)`` and a ``list_cartilage_meshes``. Anything else
+    is copied. Nothing in NSM passes the former.
     """
     if isinstance(mesh, mesh_class):
         return mesh
