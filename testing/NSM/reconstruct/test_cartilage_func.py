@@ -133,13 +133,10 @@ class TestAMissingOriginalSurface:
     reconstructed mesh and reads the original unguarded one line below.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="§8.0.N′ commit 4: a missing original is scored like a missing reconstruction",
-    )
     @pytest.mark.parametrize("flag", ["calc_symmetric_chamfer", "calc_assd"])
     def test_a_none_original_mesh_is_scored_nan(self, flag):
-        """Today: ``AttributeError: 'NoneType' object has no attribute 'point_coords'``."""
+        """Before the guard: ``AttributeError: 'NoneType' object has no attribute
+        'point_coords'``, one line below the guard on the reconstructed mesh."""
         result = compute_recon_loss(
             meshes=[_plain(1.0), _plain(1.1)],
             orig_meshes=[_plain(1.0), None],

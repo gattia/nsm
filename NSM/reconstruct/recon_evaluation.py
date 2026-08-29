@@ -81,16 +81,30 @@ def compute_recon_loss(
             pts_recon_ = None
             logger.warning("Mesh %s: No reconstructed mesh provided (None)", mesh_idx)
 
-        xyz_orig_ = orig_meshes[mesh_idx].point_coords
-        logger.debug("Mesh %s: %s original points", mesh_idx, len(xyz_orig_))
+        # A subject may be missing a structure outright (SCOPE 2.5b): the latent is fitted
+        # from the surfaces it has and every surface is still decoded, so the
+        # reconstruction exists with nothing to score it against. Same treatment as a
+        # reconstruction that did not decode.
+        if orig_meshes[mesh_idx] is not None:
+            xyz_orig_ = orig_meshes[mesh_idx].point_coords
+            logger.debug("Mesh %s: %s original points", mesh_idx, len(xyz_orig_))
+        else:
+            xyz_orig_ = None
+            logger.warning("Mesh %s: No original mesh provided (None)", mesh_idx)
+
+        missing = ", ".join(
+            name
+            for name, points in (("reconstructed", pts_recon_), ("original", xyz_orig_))
+            if points is None
+        )
 
         if calc_symmetric_chamfer:
             logger.debug("Computing Chamfer distance for mesh %s", mesh_idx)
             # if __chamfer__ is True:
-            if pts_recon_ is None:
+            if missing:
                 chamfer_loss_ = np.nan
                 logger.warning(
-                    "Mesh %s: Chamfer distance set to NaN (no reconstructed mesh)", mesh_idx
+                    "Mesh %s: Chamfer distance set to NaN (no %s mesh)", mesh_idx, missing
                 )
             else:
                 chamfer_loss_ = compute_chamfer(
@@ -103,9 +117,9 @@ def compute_recon_loss(
 
         if calc_assd:
             logger.debug("Computing ASSD for mesh %s", mesh_idx)
-            if pts_recon_ is None:
+            if missing:
                 assd_loss_ = np.nan
-                logger.warning("Mesh %s: ASSD set to NaN (no reconstructed mesh)", mesh_idx)
+                logger.warning("Mesh %s: ASSD set to NaN (no %s mesh)", mesh_idx, missing)
             else:
                 # make sure the points for the meshes are the same types
                 mesh.point_coords = mesh.point_coords.astype(np.float32)

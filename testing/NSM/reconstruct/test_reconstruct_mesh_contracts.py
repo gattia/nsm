@@ -538,13 +538,10 @@ class TestASubjectMissingASurface:
         assert len(result["mesh"]) == 2
         assert all(mesh is not None for mesh in result["mesh"])
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="§8.0.N′ commit 4: a missing original is scored like a missing reconstruction",
-    )
     @pytest.mark.parametrize("flag", ["calc_symmetric_chamfer", "calc_assd"])
     def test_the_metric_the_shipped_config_asks_for_still_runs(self, sphere_path, flag):
-        """Today: ``AttributeError: 'NoneType' object has no attribute 'point_coords'``."""
+        """Before §8.0.N′: ``AttributeError: 'NoneType' object has no attribute
+        'point_coords'``, which is what made this capability unreachable in production."""
         result = self._run(sphere_path, **{flag: True})
         suffix = "chamfer" if flag == "calc_symmetric_chamfer" else "assd"
         assert not np.isnan(result[f"{suffix}_0"])
