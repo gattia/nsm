@@ -6,72 +6,17 @@
 
 **Updated:** 2026-08-29 · **Status:** open
 
-- **Next:** write and execute **§8.0.O** — cut v0.3.0. It moved ahead of N in the
-  2026-08-29 review for a reason that is not preference: `NSM/_verbose_deprecation.py`
-  promises one release of overlap and says *delete at v0.4.0*, and it has shipped in
-  **zero** releases — until v0.3.0 exists that removal can never become due, and the
-  bridge is permanent by default. The breaking set is complete as of G–M (34 entries in
-  CHANGELOG § Unreleased), and N adds none, so nothing is gained by waiting. **Blocked on
-  nothing.**
-- **The 2026-08-29 review — the tail was re-scoped against measurement, not re-planned.**
-  Everything below is the maintainer's ruling on a gap the review measured; the four
-  §8.0 rows that changed are marked in the slice index. Suite at `fda90b9`: **1066 passed
-  / 1 skipped / 3 xfailed, 119 s under coverage, 80% overall** — §7.4's ≥70% is met and
-  its 2-minute bound is 1 s away from failing silently, which is why that target now
-  points at a check instead of a number. **What the review found that measurement alone
-  would not:** §8.0's "residual items ride with the slice that opens the file" **has
-  expired** — datasets/, mesh/, models/, train/ and reconstruct/ have all been swept, so
-  four issues parked on that mechanism (#25, #55, #56, #67) had no remaining carrier and
-  nobody would have noticed at the point the last slice closed. A deferral mechanism that
-  names no date outlives the thing it defers to.
-- **§8.0.N was scoped as one slice and measures as two, and the second half is a trap.**
-  57 public symbols are bare; ~34 need writing once the deliberately-bare overrides (16),
-  the SCOPE-excluded modules (6) and one nested decorator are removed. The trap is the
-  gate: at pydocstyle defaults `flake8-docstrings` fires on **existing, correct**
-  docstrings — measured **139 D212, 42 D400, 31 D205, 9 D403** — which are this repo's
-  house style, not defects. Gating on them would spend the slice reflowing accurate prose,
-  which is the self-soothing documentation `CLAUDE.md` names. **N gates D1xx only.** Its
-  "≥90% coverage" deliverable is replaced by "the gate passes", because a transcribed 90%
-  is stale the day after it is written (§Four rules, 1).
-- **The four `get_learning_rate` overrides get `# noqa: D102`, not a rule exception.**
-  §8.0.M left the D102 call to N. A per-site `noqa` naming the class docstring that
-  carries the formula is cheaper than a config exception and says *why* at the site;
-  a rule exception says it nowhere. Same for the 12 `forward`/`backward` overrides.
-- **`reconstruct/cartilage_func.py` is the last unopened production module, and no slice
-  named it.** SCOPE §2.5 rules it production — it is re-exported from
-  `NSM/reconstruct/__init__.py` and its five functions *are* `DICT_VALIDATION_FUNCS` in
-  `train_deep_sdf.py:47`. It is at **19% coverage, no test file, 5 of 5 public functions
-  undocumented**. §7.3's priority list never named it, exactly as §8.0.I recorded for
-  `mesh/main.py`. It gets its own row rather than folding into N: the last four slices to
-  open a file in that state found 7, 7, 8 and 5 defects, and a docs slice carrying an
-  untested production module is how N misses its budget for the seventh time.
-- **The `chamfer_norm` and `sigma_rand_pts` divergences (#56) resolve to no result
-  change, which is why they are cheap.** Maintainer's rule was "whatever ShapeMedKnee
-  defaults to". Measured: the shipped config has **no `chamfer_norm` key** — only
-  `"chamfer": true`, a flag — and the trainer's call site has `# chamfer_norm` commented
-  out, so training runs on `get_mean_errors`' **2**, which forwards through
-  `reconstruct_mesh` to `compute_recon_loss`'s single NSM caller, explicitly. Its `=1`
-  default is therefore dead on every NSM path. `sigma_rand_pts` resolves to the config's
-  **0.01**; `reconstruct_mesh`'s 0.001 is unreachable for the one real consumer, which
-  passes both keys explicitly (`kneepipeline` `steps/run_nsm.py:202-204`). **Two defaults
-  that disagreed for a year, and neither had ever produced a number** — the divergence was
-  real and the exposure was zero, and only checking the call sites separates those.
-- **#67's two halves have opposite verdicts, and the issue title names only one.**
-  `fdfe902` added None-surface support in two files. The **reconstruct** half works and
-  was deliberately carried through §8.0.K — `latent_fit.py:274` documents that `sdf_gt_`
-  keeps `None`, `:401` skips it in the loss, `:880` slices around it in the chunker. The
-  **dataset** half has never worked. They are different capabilities: fitting a latent
-  from the surfaces you have (works) versus training on subjects that are missing one
-  (does not). Ruled **future feature, not now** — the strict xfail stays, because it
-  already names #67 and it is what will report the day the dataset half starts working.
-  **What the review nearly got wrong:** the first recommendation was to close #67 and drop
-  the xfail. Keeping the issue open makes the xfail correct rather than stale — the
-  disposition and the test convention are one decision, not two.
-- **The half that works is pinned only at its preprocessing helper.** There is no
-  end-to-end `reconstruct_latent` test with a `None` surface; only
-  `test_none_surfaces_are_skipped_not_dropped`, on the helper. The capability the
-  maintainer actually uses could rot through any future slice in silence. That test is
-  owed regardless of how #67 is ruled, and rides with §8.0.N′.
+- **Next:** write and execute **§8.0.O** — cut v0.3.0. **Blocked on nothing.** It moved
+  ahead of N on 2026-08-29; the slice index's O row carries why.
+- **2026-08-29 review of the tail — no code changed.** Four §8.0 rows were re-scoped
+  against measurement and six parked issues were given dispositions. All of it lives in
+  the §8.0 slice index and the dispositions table under it, and in `SCOPE.md` §2.1 and
+  §2.5b — not here, because that is where it stays current. The one finding that belongs
+  in State: **§8.0's "residual items ride with the slice that opens the file" had
+  expired.** `datasets/`, `mesh/`, `models/`, `train/` and `reconstruct/` have all been
+  swept, so #25, #55, #56 and #67 had no carrier left and nothing would have said so at
+  the point the last slice closed. Every deferral now names a slice or an §8.3 row, never
+  a condition.
 - **§8.0.M executed (2026-08-28), PR #96, based on `main` at `a5ec489`:** commits 2–10 —
   the characterization, the `list_mesh_paths` precedence, the write-once divergence report,
   the dropped-key log, `print_gpu_memory`'s deletion, the base schedule's refusal, the two
@@ -954,6 +899,10 @@
     Idea 6 plus docstring clauses — initially misfiled as a KNOWN_ISSUES entry, moved
     on the maintainer's call that it is a design alternative, not a defect
 - **Surprises:**
+  - **A disposition and a test convention are one decision, not two.** The 2026-08-29
+    review first recommended closing #67 and dropping its strict `xfail`. Keeping the
+    issue open is what makes the xfail correct rather than stale — it names #67 and is
+    the thing that will report the day the dataset half starts working.
   - **"Fixed seed" was not available.** NSM called no seeding function anywhere, and the
     near-surface sampler could not be seeded by any caller. Closed via pymskt 0.1.21 plus
     `derive_seed`; see `docs/KNOWN_ISSUES.md` § History.
@@ -1527,9 +1476,9 @@ mistake `CLAUDE.md` names. What is fixed here is the *order* and each slice's *s
 | **K** | `reconstruct_latent` internals | #75, the 185-line nested `compute_loss`, the hybrid Adam/LBFGS branch | The last unopened production monolith. #75 (cannot chunk its forward pass) is a defect the decomposition has to make expressible. |
 | **L** | `train_epoch`'s loss pipeline | the ~270-line batch loop | The statement §8.0.D said this needs, deferred deliberately, now due. *Executed, PR #95 — 391 lines, not ~270.* |
 | **M** | `NSM/utils.py` | #50, the module's remaining undocumented surface | §1.2's exhibit: the file that held the founding bug. Phase A documented the LR path and nothing else. *Executed, PR #96 — 6 of 23 symbols documented, and #50's unreported half was the one that fired on the shipped default.* |
-| **N′** | `reconstruct/cartilage_func.py` | the module's 19% coverage and 5 undocumented public functions, the end-to-end `None`-surface reconstruction test #67 leaves owed | *Added 2026-08-29.* The last production module no slice has opened — SCOPE §2.5 rules it production, `train_deep_sdf.py:47` makes its five functions the whole of `DICT_VALIDATION_FUNCS`, and §7.3's priority list never named it. Characterization first: every slice that has opened a file at this coverage found 5–8 defects. Not folded into N, because a docs slice carrying an untested production module is how N misses its budget. |
-| **N** | Phase 2 close + lint gate | the §6 checkboxes, `flake8-docstrings` in `make lint`, `CLAUDE.md` §Architecture rewrite, and the four #56 knobs + #55 + #25 (see the dispositions below) | Must follow G–M — that is where the missing docstrings are — and the lint gate is what stops G–M's accuracy rotting. **Re-scoped 2026-08-29, measured:** ~34 docstrings to write (57 bare, less the 16 deliberately-bare overrides, the 6 SCOPE-excluded, one nested decorator) ≈ 350–400 lines, three times §8.0.M's docstring count. **The gate is D1xx-only** — D100/101/102/103 — with `.flake8` recording why the D2xx/D4xx families stay off: at defaults they fire on existing accurate prose (139 D212, 42 D400, 31 D205, 9 D403), which is house style. Deliverable is "the gate passes", not a transcribed percentage. |
-| **O** | v0.3.0 release | the pending Breaking set, setuptools-scm (§10.1), §7.1's GPU note, **`NSM.configs` ships in no wheel** (SCOPE §5), **`__all__` per subpackage** — deferred at Phase 0 (§3), owned by nothing since, and §10.1 makes it the stated gate for 1.0.0; it is packaging-shaped, so it belongs beside setuptools-scm and the wheel gap — and **two items §8.0.H deferred here by name**: (a) a **combined pre-v0.3.0 config message** — the release adds three required triplanar keys (`padding`, `conv_norm_type`, `conv_activation`), each refused separately, so an old config is fixed one round-trip at a time; one message naming every missing key at once is the `_lr_migration` pattern applied to the set. (b) **`TriplanarDecoder`/`VAEDecoder`'s signature defaults**, still `conv_norm_type="batch"` against the `"layer"` everything trained — unreachable from a config now that the loader requires the key, but reachable by direct construction, and changing a public-stable signature needs the version boundary. | Maintainer-gated timing. Nothing in G–N waits on it. |
+| **O** | v0.3.0 release | the pending Breaking set, setuptools-scm (§10.1), §7.1's GPU note, **`NSM.configs` ships in no wheel** (SCOPE §5), **`__all__` per subpackage** — deferred at Phase 0 (§3), owned by nothing since, and §10.1 makes it the stated gate for 1.0.0; it is packaging-shaped, so it belongs beside setuptools-scm and the wheel gap — and **two items §8.0.H deferred here by name**: (a) a **combined pre-v0.3.0 config message** — the release adds three required triplanar keys (`padding`, `conv_norm_type`, `conv_activation`), each refused separately, so an old config is fixed one round-trip at a time; one message naming every missing key at once is the `_lr_migration` pattern applied to the set. (b) **`TriplanarDecoder`/`VAEDecoder`'s signature defaults**, still `conv_norm_type="batch"` against the `"layer"` everything trained — unreachable from a config now that the loader requires the key, but reachable by direct construction, and changing a public-stable signature needs the version boundary. | **Moved ahead of N′ and N on 2026-08-29, and not by preference.** `NSM/_verbose_deprecation.py` promises one release of overlap and says *delete at v0.4.0*; it has shipped in **zero** releases (latest tag `v0.2.0`), so until v0.3.0 exists that removal can never become due and the bridge is permanent by default. The Breaking set is complete as of G–M — 34 entries in CHANGELOG § Unreleased — and N′/N add none, so waiting buys nothing. Cut timing was always the maintainer's call; this is that call. |
+| **N′** | `reconstruct/cartilage_func.py` | the module's 19% coverage and 5 undocumented public functions, the end-to-end `None`-surface reconstruction test #67 leaves owed — the half that works is pinned only at its preprocessing helper (`test_none_surfaces_are_skipped_not_dropped`), so the capability the maintainer actually uses can rot through any future slice in silence | *Added 2026-08-29.* The last production module no slice has opened — SCOPE §2.5 rules it production, `train_deep_sdf.py:47` makes its five functions the whole of `DICT_VALIDATION_FUNCS`, and §7.3's priority list never named it. Characterization first: every slice that has opened a file at this coverage found 5–8 defects. Not folded into N, because a docs slice carrying an untested production module is how N misses its budget. |
+| **N** | Phase 2 close + lint gate | the §6 checkboxes, `flake8-docstrings` in `make lint`, `CLAUDE.md` §Architecture rewrite, and the four #56 knobs + #55 + #25 (see the dispositions below) | Must follow G–M — that is where the missing docstrings are — and the lint gate is what stops G–M's accuracy rotting. **Re-scoped 2026-08-29, measured:** ~34 docstrings to write (57 bare, less the 16 deliberately-bare overrides, the 6 SCOPE-excluded, one nested decorator) ≈ 350–400 lines, three times §8.0.M's docstring count. **The gate is D1xx-only** — D100/101/102/103 — with `.flake8` recording why the D2xx/D4xx families stay off: at defaults they fire on existing accurate prose (139 D212, 42 D400, 31 D205, 9 D403), which is house style. Deliverable is "the gate passes", not a transcribed percentage. The 4 `get_learning_rate` and 12 `forward`/`backward` overrides that are bare on purpose take a per-site `# noqa: D102` naming the class docstring that carries the formula, **not** a rule exception — a `noqa` says why at the site, a config exception says it nowhere. |
 | **P** | 0b quarantine + #18 | `train/deprecated/` (876 lines), the `sample_difficulty_lx` port | Maintainer-gated on the nsosim survey, unchanged since Phase 0. |
 | **Q** | #3, sigma coordinate space | `BREAKING_CHANGE_PROPOSAL.md` + `SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` | Last, because it is the one remaining *behaviour* change: it needs a §4-style migration guard and a version boundary, so it wants a release on either side of it. |
 
@@ -1555,7 +1504,7 @@ found no caller is kept as a test so a later import cannot bring the name back.*
 |---|---|---|
 | **#25** — `multiprocessing=True` after an in-process build deadlocks (fork-after-VTK), silently and with no timeout | Document the constraint rather than fix it; a `spawn` context is a behaviour change nobody has asked for | **§8.0.N** — the constraint stated on the `multiprocessing=` parameter, which is a docstring, plus a `KNOWN_ISSUES` § Open entry. Issue stays open pointing there |
 | **#55** — three functions mutate a caller's object and return it (PR #38's unswept siblings) | Fix. Its three sites are in files K, J and I already swept — it was **missed, not deferred**, which is the same expiry in miniature | **§8.0.N**, and **re-run its three reproductions first**: filed 2026-08-22, unverified since, and three slices have rewritten those call sites |
-| **#56** — the same knob defaults differently at each layer | Fix, all four parts. Resolved to no result change (State block above) | **§8.0.N** for `chamfer_norm` → **2** and `sigma_rand_pts` → **0.01** (both the ShapeMedKnee value, both dead on every NSM path) and for making the `roundtrip_distance` / `directed_distance_percentiles` pair keyword-only so an argument swap is a `TypeError`. `conv_norm_type` needs nothing — §8.0.H made `load_model` refuse a config without it, and the surviving `VAEDecoder` signature default is already **§8.0.O(b)** |
+| **#56** — the same knob defaults differently at each layer | Fix, all four parts. **Resolved to no result change, which is why it is cheap.** Measured 2026-08-29: the shipped config carries no `chamfer_norm` key — only `"chamfer": true`, a flag — and `train_deep_sdf.py:354` passes `# chamfer_norm` commented out, so training runs on `get_mean_errors`' **2**, forwarded explicitly to `compute_recon_loss`'s single NSM caller; its `=1` is dead on every NSM path. `sigma_rand_pts` resolves to the config's **0.01**, `reconstruct_mesh`'s 0.001 being unreachable for the one real consumer (`kneepipeline` `steps/run_nsm.py:202-204`), which passes both keys explicitly. Two defaults that disagreed for a year and neither had ever produced a number — only checking the call sites separates that from an exposure | **§8.0.N** for `chamfer_norm` → **2** and `sigma_rand_pts` → **0.01** (both the ShapeMedKnee value, both dead on every NSM path) and for making the `roundtrip_distance` / `directed_distance_percentiles` pair keyword-only so an argument swap is a `TypeError`. `conv_norm_type` needs nothing — §8.0.H made `load_model` refuse a config without it, and the surviving `VAEDecoder` signature default is already **§8.0.O(b)** |
 | **#67** — a `None` surface cannot build through `MultiSurfaceSDFSamples` | **Future feature, not now.** The reconstruct half — fit a latent from the surfaces you have — works and is what gets used; the dataset half is training on subjects missing a surface, which needs data nobody has yet (menisci is the plausible first case) | Issue **stays open** as the queue entry; the strict xfail stays with it, since it already names #67 and is what will report the day the build works. The **ruling** goes in `SCOPE.md` §2, where it is durable. The end-to-end reconstruct test the working half still lacks is **§8.0.N′** |
 | **#51** — `train_deep_sdf_multi_head` repair checklist | **Downgraded.** SCOPE §2.1 ruled it *supported, broken, fix it* and no slice ever scheduled the repair — a promise the plan could not keep. Not in use; not worth the time | `SCOPE.md` §2.1 ruling changed to unsupported-until-needed. **The issue stays open** (maintainer, 2026-08-29) — a won't-do-now is not a won't-fix, and closing it would lose the verified repair checklist from the queue where someone needing multi-head would look. Rides with **§8.0.P**, the quarantine slice |
 | **#35** — `reconstruct_latent_S3(log_wandb=True)` raises `UnboundLocalError` | Leave open, revisit after the refactor closes. SCOPE §2.4 already calls the module deferred research; two-line fix whenever something opens the file | **§8.3** |
