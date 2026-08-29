@@ -18,6 +18,9 @@ and reports on itself in fewer places than it measures.
 5. **Ten of fifteen log records are gated behind the deprecated ``verbose`` flag**, so a
    host that configured logging is not the audience for them.
 
+6. **A subject missing a surface** fits and decodes, but every metric flag on it raises
+   -- `SCOPE` §2.5b's supported half, which had no end-to-end test until plan §8.0.N′.
+
 Plus the end-to-end pin the commit-8 extraction is measured against: the full result dict
 of a fixed-seed run, which must not move when the body is split into stage helpers.
 
@@ -496,3 +499,53 @@ class TestTheWholeResultIsUnchangedByTheSplit:
         for key, value in first.items():
             if isinstance(value, float) and not key.startswith("time_"):
                 assert value == pytest.approx(second[key], rel=0, abs=0), key
+
+
+# ---------------------------------------------------------------------------
+# 6. A subject that is missing a surface (SCOPE §2.5b, issue #67)
+# ---------------------------------------------------------------------------
+
+
+class TestASubjectMissingASurface:
+    """
+    ``SCOPE`` §2.5b, ruled 2026-08-29: *fitting a latent from a subset of surfaces* is
+    supported, *building a dataset from subjects with holes* is not (#67). The supported
+    half had no end-to-end test — it was ruled from ``latent_fit.py``, one frame below
+    the frame these tests exercise — and plan §8.0.N′ owes it one.
+
+    The fit is indeed fine. What the missing test was hiding is one line up:
+    ``compute_recon_loss`` guards the *reconstructed* mesh against ``None`` and reads the
+    *original* unguarded, so the capability is unreachable through ``get_mean_errors``,
+    which passes ``calc_symmetric_chamfer=config["chamfer"]`` and
+    ``calc_assd=config["assd"]`` -- both ``true`` in the shipped config.
+    """
+
+    @staticmethod
+    def _run(sphere_path, **overrides):
+        return recon_main.reconstruct_mesh(
+            path=[sphere_path, None],
+            decoders=SphereDecoder(objects=2),
+            objects_per_decoder=2,
+            **sampled_run_kwargs(**overrides),
+        )
+
+    def test_the_latent_fits_and_both_surfaces_decode(self, sphere_path):
+        """The supported half, asserted rather than inferred: the surface that has no
+        original still comes back decoded, because the decoder produces all of them."""
+        result = self._run(sphere_path, return_latent=True)
+        assert result["orig_mesh"][1] is None
+        assert result["latent"] is not None
+        assert len(result["mesh"]) == 2
+        assert all(mesh is not None for mesh in result["mesh"])
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="§8.0.N′ commit 4: a missing original is scored like a missing reconstruction",
+    )
+    @pytest.mark.parametrize("flag", ["calc_symmetric_chamfer", "calc_assd"])
+    def test_the_metric_the_shipped_config_asks_for_still_runs(self, sphere_path, flag):
+        """Today: ``AttributeError: 'NoneType' object has no attribute 'point_coords'``."""
+        result = self._run(sphere_path, **{flag: True})
+        suffix = "chamfer" if flag == "calc_symmetric_chamfer" else "assd"
+        assert not np.isnan(result[f"{suffix}_0"])
+        assert np.isnan(result[f"{suffix}_1"])
