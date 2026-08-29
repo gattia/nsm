@@ -188,9 +188,9 @@ class TestPublicApiDeclaration:
     ``wandb``, ``vtk`` and a root-logger reconfiguration into every ``import NSM``.
     """
 
-    @pytest.mark.xfail(strict=True, reason="§8.0.O: no subpackage declares __all__")
     @pytest.mark.parametrize("name", SUBPACKAGES)
     def test_each_subpackage_declares_what_is_public(self, name):
+        """Was a strict xfail: ``grep -rn __all__ NSM/`` returned nothing at all."""
         import importlib
 
         module = importlib.import_module(name)
@@ -199,6 +199,19 @@ class TestPublicApiDeclaration:
         for entry in declared:
             assert hasattr(module, entry), f"{name}.__all__ names {entry}, which is unbound"
             assert belongs_to_nsm(getattr(module, entry)), f"{name}.__all__ claims {entry}"
+
+    @pytest.mark.parametrize("name", SUBPACKAGES)
+    def test_a_star_import_binds_exactly_what_is_declared(self, name):
+        """
+        The half of ``__all__`` that changes behaviour. Executed rather than reasoned
+        about: ``exec`` is the only way to run a star-import inside a function.
+        """
+        import importlib
+
+        namespace = {}
+        exec(f"from {name} import *", namespace)  # noqa: S102 - the behaviour under test
+        bound = {n for n in namespace if not n.startswith("__")}
+        assert bound == set(importlib.import_module(name).__all__)
 
     @pytest.mark.parametrize("name", SUBPACKAGES)
     def test_what_a_star_import_binds_today(self, name):
