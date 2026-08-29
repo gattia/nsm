@@ -1,8 +1,26 @@
+"""
+Cartilage-thickness agreement between an original knee and its NSM reconstruction.
+
+These five functions are the whole of ``train_deep_sdf.DICT_VALIDATION_FUNCS``, chosen per
+run by the config key ``recon_val_func_name`` and called once per validation subject by
+``reconstruct_mesh`` as ``func(orig_meshes, recon_meshes)``. ``docs/SCOPE.md`` §2.5 rules
+the module production: it was critical to the ShapeMedKnee paper's validation, and it owns
+the only region-index maps in the repository.
+
+**The two sides are not measured the same way, and that is the contract.** The
+reconstruction's thickness is computed here, by pymskt's ray cast from the bone surface
+into the cartilage. The original's is *read* off the ``thickness (mm)`` array the original
+bone already carries -- nothing here computes it, and the original cartilage mesh these
+functions are handed is never looked at. Computing it here instead would move every
+``orig_mean`` the library has ever reported, so what an original bone arrives carrying is
+what it is scored on. An original without that array raises ``KeyError: 'thickness (mm)'``,
+which names the thing to go and put on the mesh.
+"""
+
 import logging
 
 import numpy as np
 from pymskt.mesh import BoneMesh, CartilageMesh
-from scipy.stats import entropy
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +57,7 @@ def _require_meshes(caller, n_expected, layout, orig_meshes, recon_meshes):
 
 
 def compare_cart_thickness_tibia(orig_meshes, recon_meshes, regions_label="labels"):
+    """``compare_cart_thickness`` over the two tibial plateaus, for a tibia model."""
     _require_meshes(
         "compare_cart_thickness_tibia",
         2,
@@ -55,6 +74,7 @@ def compare_cart_thickness_tibia(orig_meshes, recon_meshes, regions_label="label
 
 
 def compare_cart_thickness_patella(orig_meshes, recon_meshes, regions_label="labels"):
+    """``compare_cart_thickness`` over the patellar cartilage, for a patella model."""
     _require_meshes(
         "compare_cart_thickness_patella",
         2,
@@ -71,6 +91,12 @@ def compare_cart_thickness_patella(orig_meshes, recon_meshes, regions_label="lab
 
 
 def compare_cart_thickness_femur(orig_meshes, recon_meshes, regions_label="labels"):
+    """
+    ``compare_cart_thickness`` over the five femoral subregions, for a femur model.
+
+    The same regions as the bare ``compare_cart_thickness``, which defaults to them --
+    this one says so in its name.
+    """
     _require_meshes(
         "compare_cart_thickness_femur",
         2,
@@ -87,6 +113,15 @@ def compare_cart_thickness_femur(orig_meshes, recon_meshes, regions_label="label
 
 
 def compare_cart_thickness_whole_joint(orig_meshes, recon_meshes, regions_label="labels"):
+    """
+    All three joints of a six-surface knee model, scored as three independent pairs.
+
+    The six meshes are ``(femur bone, femur cartilage, tibia bone, tibia cartilage,
+    patella bone, patella cartilage)``. That order is this function's alone -- it is
+    declared nowhere else in the repository, ``mesh_names`` being the only other place a
+    model's surface order is written down, and the two are not checked against each other.
+    The returned keys cannot collide: the three joints' region indices are disjoint.
+    """
     _require_meshes(
         "compare_cart_thickness_whole_joint",
         6,
@@ -170,6 +205,26 @@ def compare_cart_thickness(
     cart_regions=CART_REGIONS,
     regions_label="labels",
 ):
+    """
+    Score one bone/cartilage pair: mean and standard-deviation thickness per region.
+
+    Returns four keys per region of ``cart_regions`` -- the original's mean, the
+    reconstruction's mean, and the two differences ``original - reconstruction``. See the
+    module docstring for which side is computed and which is read. ``cart_regions``
+    defaults to the **femur's** subregions, so a tibia or patella model reaching this
+    function by name scores NaN for every region; the three joint-named wrappers above
+    exist to pick the right set.
+
+    A surface the decoder did not produce -- ``None`` in either reconstructed slot, or in
+    the original bone's -- scores the whole key set NaN, the same answer
+    ``compute_recon_loss`` gives the same subject.
+
+    ``regions_label`` is refused unless it is ``"labels"``: pymskt's readers hardcode that
+    name, so no other value has ever worked. It is kept only until the v0.4.0 signature
+    change (plan §8.0.S) removes it.
+
+    A ``BoneMesh`` or ``CartilageMesh`` argument is **mutated** -- see ``_as_mesh``.
+    """
     if regions_label != "labels":
         raise ValueError(
             f"regions_label={regions_label!r} cannot work. The transfer honours it, but "
@@ -184,11 +239,9 @@ def compare_cart_thickness(
     orig_bone, orig_cart = orig_meshes
     recon_bone, recon_cart = recon_meshes
 
-    # A surface whose SDF never crosses zero comes back as None (`mesh.main._finish_meshes`),
-    # which is the ordinary state of a decoder early in training -- when validation runs.
-    # Handing that None on builds a 0-point mesh and vtkOBBTree takes the interpreter down
-    # with SIGSEGV, which no `except` upstream can catch. compute_recon_loss scores the
-    # same subject NaN; this does the same.
+    # `mesh.main._finish_meshes` leaves the slot None when a surface's SDF does not cross
+    # zero. Handing that on builds a 0-point mesh and vtkOBBTree takes the interpreter
+    # down with SIGSEGV, which nothing upstream can catch.
     absent = [
         name
         for name, mesh in (
@@ -209,12 +262,8 @@ def compare_cart_thickness(
     recon_cart = _as_mesh(CartilageMesh, recon_cart)
     orig_bone = _as_mesh(BoneMesh, orig_bone)
 
-    # transfer region scalars to recon_bone
-    # should add 'labels' to the reconned bone (these are cartialge regions)
     recon_bone.copy_scalars_from_other_mesh_to_current(orig_bone, orig_scalars_name=regions_label)
 
-    # compute cart thickness for bone
-    # this should add a new caritalge thickness array to bone - test to make sure doesnt cause issues.
     recon_bone.list_cartilage_meshes = recon_cart
     recon_bone.calc_cartilage_thickness()
 
@@ -232,10 +281,5 @@ def compare_cart_thickness(
                 (orig_mean, recon_mean, orig_mean - recon_mean, orig_std - recon_std),
             )
         )
-
-    # # Compute KL divergence between two distributions
-    # thickness_kld = entropy(orig_array, qk=recon_array)
-
-    # dict_results['func_thickness_kld'] = thickness_kld
 
     return dict_results
