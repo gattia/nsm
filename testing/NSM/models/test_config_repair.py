@@ -86,21 +86,16 @@ class TestRepairingAnOldTriplanarConfig:
         config = old_triplanar_config()
         assert [k for k in HISTORICAL if k not in config] == list(HISTORICAL)
 
-    def test_each_refusal_names_exactly_one_key(self):
-        """Today's behaviour, stated so the change to it is visible."""
-        _, named = repair_loop(_get_triplanar_params, old_triplanar_config())
-        assert named == [("padding",), ("conv_activation",), ("conv_norm_type",)]
-
-    @pytest.mark.xfail(
-        strict=True, reason="§8.0.O(a): the refusal names one key per attempt, not all three"
-    )
     def test_one_refusal_repairs_the_whole_config(self):
+        """
+        Was a strict xfail. Three separate ``if``/``raise`` blocks named one key each, so
+        this loop took four attempts and reported
+        ``[("padding",), ("conv_activation",), ("conv_norm_type",)]``.
+        """
         attempts, named = repair_loop(_get_triplanar_params, old_triplanar_config())
         assert attempts == 2, f"repaired in {attempts} attempts, naming {named}"
+        assert named == [("conv_activation", "conv_norm_type", "padding")]
 
-    @pytest.mark.xfail(
-        strict=True, reason="§8.0.O(a): no paste-ready block in the message to parse"
-    )
     def test_the_message_carries_a_json_block_that_repairs_the_config(self):
         """
         The message claims a repair; parsing it and applying it is what stops that claim
@@ -115,6 +110,20 @@ class TestRepairingAnOldTriplanarConfig:
         config.update(json.loads(block.group(0)))
         _get_triplanar_params(config)
 
+    def test_the_message_survives_being_printed(self):
+        """
+        ``KeyError.__str__`` is ``repr(args[0])``, so a plain ``KeyError`` renders a
+        multi-line message with literal ``\n`` escapes and delivers the JSON block above
+        as one unusable line. ``MissingArchitectureKeys`` overrides ``__str__`` for
+        exactly that; it still subclasses ``KeyError``, so no caller has to change.
+        """
+        with pytest.raises(KeyError) as excinfo:
+            _get_triplanar_params(old_triplanar_config())
+        printed = str(excinfo.value)
+        assert "\\n" not in printed
+        assert printed.count("\n") > 4
+        assert json.loads(re.search(r"\{.*\}", printed, re.DOTALL).group(0))
+
 
 class TestRepairingAnOldTwoStageConfig:
     """
@@ -122,14 +131,8 @@ class TestRepairingAnOldTwoStageConfig:
     three keys and raises on the first one missing.
     """
 
-    def test_each_refusal_names_exactly_one_key(self):
-        _, named = repair_loop(_get_two_stage_params, old_two_stage_config())
-        assert named == [("conv_norm_type",), ("conv_activation",)]
-
-    @pytest.mark.xfail(
-        strict=True, reason="§8.0.O(a): the two_stage loop raises on the first missing key"
-    )
     def test_one_refusal_names_both_keys(self):
+        """Was a strict xfail: the loop raised on the first key it found missing."""
         attempts, named = repair_loop(_get_two_stage_params, old_two_stage_config())
         assert attempts == 2, f"repaired in {attempts} attempts, naming {named}"
 
