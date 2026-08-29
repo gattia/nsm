@@ -14,7 +14,7 @@
   characterization, the combined refusal at both sites, two_stage's `padding`, the
   `conv_norm_type` defaults, `package-data`, setuptools-scm, `__all__` × 5, the
   shipped-checkpoint release check, the CHANGELOG cut plus three corrected docs claims, and
-  this update. Suite 1066 → 1106 passed / 4 skipped / 3 xfailed: **all 15 strict xfails
+  this update, plus a deletion pass. Suite 1066 → 1106 passed / 4 skipped / 3 xfailed: **all 15 strict xfails
   commit 2 raised were retired inside the slice**, and the 3 that remain are the regression
   harness's. `CHANGELOG` § Unreleased is now `## v0.3.0` — 37 Breaking among 83 entries
   against 278 commits.
@@ -69,7 +69,8 @@
   path while fixing the reported one, which is `CLAUDE.md`'s "fix the class of defect"
   producing a second instance rather than confirming the first.
 - **The size budget was missed for the seventh slice running, and this one was measurable
-  in advance.** Budget +85 net in `NSM/` + `pyproject.toml`, ceiling +100, actual **+179**.
+  in advance.** Budget +85 net in `NSM/` + `pyproject.toml`, ceiling +100, actual **+176**
+  after the deletion pass took three restated rationales out.
   Almost all of it is one row: `__all__` was budgeted **+42** and cost **+105**. Two
   compounding errors, both avoidable. (1) *Priced by guess after measuring the input.* The
   statement itself records the export surface — 26, 24, 43, 43, 3 public names — and then

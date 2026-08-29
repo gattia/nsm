@@ -125,10 +125,8 @@ class MissingArchitectureKeys(KeyError):
         return self.args[0]
 
 
-#: The triplanar keys that must be stated, what each one decides, and the value that
-#: reproduces a model trained before Aug 2026. All three are architecture, not
-#: hyperparameters: nothing in a checkpoint can contradict them, and the wrong value
-#: either builds a layout no checkpoint fits or samples at the wrong scale.
+#: ``key -> (what it decides, the value a model trained before Aug 2026 ran at)``. Both
+#: halves go into the refusal below, so this table is the message.
 #:
 #: Issues #26 (``padding``) and #45 (``conv_norm_type``); ``conv_activation`` is the
 #: activation the VAE built and never appended, ``docs/ARCHITECTURE.md`` section 7.1.
@@ -159,11 +157,10 @@ def _refuse_missing_architecture_keys(config, keys, model_type):
     Refuse a config missing any of ``keys``, naming **all** of them in one message.
 
     One message rather than one per key, because these used to be separate ``raise``
-    statements and repairing a pre-Aug-2026 config cost one round-trip per key -- two of
-    them for either shipped production model, which omit ``padding`` and
-    ``conv_activation``. The message ends with a JSON object that repairs the config in a
-    single edit; ``testing/NSM/models/test_config_repair.py`` parses that object and
-    applies it, so it cannot drift from what the code requires.
+    statements and repairing a pre-Aug-2026 config cost one round-trip per key. The
+    message ends with a JSON object that repairs the config in a single edit;
+    ``testing/NSM/models/test_config_repair.py`` parses that object and applies it, so it
+    cannot drift from what the code requires.
     """
     missing = [key for key in keys if key not in config]
     if not missing:
