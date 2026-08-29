@@ -14,7 +14,7 @@
   characterization, the combined refusal at both sites, two_stage's `padding`, the
   `conv_norm_type` defaults, `package-data`, setuptools-scm, `__all__` × 5, the
   shipped-checkpoint release check, the CHANGELOG cut plus three corrected docs claims, and
-  this update, plus a deletion pass. Suite 1066 → 1106 passed / 4 skipped / 3 xfailed: **all 15 strict xfails
+  this update, plus a deletion pass and the CI fix below. Suite 1066 → 1107 passed / 4 skipped / 3 xfailed: **all 15 strict xfails
   commit 2 raised were retired inside the slice**, and the 3 that remain are the regression
   harness's. `CHANGELOG` § Unreleased is now `## v0.3.0` — 37 Breaking among 83 entries
   against 278 commits.
@@ -81,6 +81,23 @@
   K at moved code, L at a helper, M at an emitted record — and O **at a declaration that is
   a list**. The generalisation that finally covers all seven: *the budget prices the thing
   you are deciding, and the cost is what the language emits for it.*
+- **The build config required a setuptools nobody had declared, and only one of the two CI
+  platforms could see it.** `build-system.requires` said `"setuptools"` unpinned while
+  `pyproject.toml` uses `[project]`, `[tool.setuptools.packages]` and
+  `[tool.setuptools.package-data]` — all of which landed in **61.0**. Build isolation hid
+  it for years by installing the latest; the new packaging test builds with
+  `--no-build-isolation`, which reads the ambient copy, and **ubuntu's runner has 79.0.1
+  while macOS's has 58.1.0**. Measured against 58.1.0 locally: it does not refuse the file,
+  it builds an `UNKNOWN-0.0.0` wheel containing no `NSM/` at all. **A build requirement
+  that is only ever satisfied by accident is indistinguishable from one that is correct**,
+  until something reads it directly.
+- **The test destroyed the diagnostic it existed to produce.** `build_wheel` used
+  `text=True`, which decodes with the *locale's* preferred encoding — `US-ASCII` on that
+  runner — and pip prints its error banner with a `×`, so the failed build raised
+  `UnicodeDecodeError` from `subprocess` before reaching the assertion that prints the
+  reason. `CLAUDE.md`'s "read files with `encoding="utf-8"` explicitly" rule has a
+  subprocess variant, and `text=True` is it. The wheel's *name* is now asserted too: every
+  content assertion fails on an `UNKNOWN` wheel and none of them says why.
 - **The tag is not in the PR, deliberately.** Cutting it is outward-facing and irreversible
   in a way a commit is not, so it is the maintainer's action. The PR body carries the exact
   command.
