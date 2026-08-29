@@ -119,7 +119,21 @@ the downstream consumer, all branches, and git history before ruling.
 The plan's Phase 1 checkpoint expects "~1,800 lines quarantined." The defensible number is
 **564** — and 12 of those lines must be ported out first.
 
-### 2.1 `train/train_deep_sdf_multi_head.py` (428 lines) — **supported, broken, fix it**
+### 2.1 `train/train_deep_sdf_multi_head.py` (443 lines) — **unsupported until someone needs it**
+
+> **Ruling changed 2026-08-29** from *supported, broken, fix it*. The repair below is
+> still correct and still unscheduled — it was ruled in Aug 2026 and no slice ever
+> carried it, which made the old ruling a promise the plan could not keep. The maintainer
+> is not using multi-head, so the repair is not worth the time. **What changes is the
+> promise, not the code:** the module stays, the `DeprecationWarning` stays, the
+> capability is not deleted, and #51's checklist stays on file as the repair anyone who
+> needs it should start from. What stops is the claim that we intend to do it.
+>
+> Reopening the ruling costs nothing: everything under it is verified and unchanged.
+> The plan's row is `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §8.0.P.
+
+The original ruling and its evidence follow, unedited.
+
 
 Proposed: *deprecate; superseded by `train_deep_sdf` with `objects_per_decoder > 1`.*
 
@@ -138,8 +152,9 @@ the last decoder is trained — but it is a two-identifier repair (`model` → `
 against a `get_optimizer` that already normalizes list input and emits one `model_{idx}`
 group per decoder (`utils.get_optimizer`).
 
-**Ruling: supported. Fix the optimizer, keep the `DeprecationWarning` until it is fixed.**
-The plan's §3 text on this module is wrong and should be corrected.
+**Ruling (superseded 2026-08-29, see the banner above): supported. Fix the optimizer,
+keep the `DeprecationWarning` until it is fixed.** The plan's §3 text on this module is
+wrong and should be corrected.
 
 Two qualifications from the maintainer:
 
@@ -247,6 +262,32 @@ defect above is pinned down (2026-08-23): `reg.add_latent(result_)` was born in 
 in `2811d27` (Jul 2023, pre-rename `GenerativeAnatomy`), so the validator never worked
 through `get_mean_errors` at any point in this repo's history. How the paper's validation
 actually ran is not answerable from this repo.
+
+### 2.5b `None` surfaces — **supported at reconstruction, not at dataset build**
+
+Ruled 2026-08-29. `fdfe902` (May 2025) added `None`-surface support in two files and the
+two halves have opposite outcomes. Knowing which half you are in is the whole of it, and
+the issue title names only the broken one.
+
+**Supported: fitting a latent from a subset of surfaces.** Pass `sdf_gt=[bone, None, None]`
+to `reconstruct_latent` and it fits against the surfaces present and decodes all of them.
+This is deliberate and was carried through the §8.0.K decomposition intact:
+`latent_fit.py` documents that `sdf_gt_` keeps `None` for a surface that has none, skips
+it in the per-surface loss, and slices around it when chunking. This is the half in use.
+
+**Not supported: building a dataset from subjects that are missing a surface.**
+`MultiSurfaceSDFSamples` cannot build one — `get_sample_data_dict` preallocates
+`sum(n_pts_)` rows per combination while the sampler returns points only for the
+non-`None` surfaces, so the first write raises. It has never worked. The downstream
+handling that would consume such data (NaN columns in `remove_overlapping_points`, empty
+index lists in `sdf_pos_neg_idx`) is ready for data the class cannot currently produce.
+
+The two are different capabilities, not two states of one: *fit against what you have*
+versus *train on subjects with holes*. The second is a plausible future need — a cohort
+with unsegmented menisci is the obvious first case — so it is kept as a feature rather
+than deleted: **issue #67**, with the strict `xfail` in
+`test_dataset_cache.TestEmptySignedSamples::test_a_none_surface_subject_must_build`
+naming it. That test is the mechanism that will report the day the build starts working.
 
 ### 2.6 Rulings not yet adjudicated
 

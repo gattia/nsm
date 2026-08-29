@@ -247,8 +247,11 @@ When you touch code a `docs/` file describes, verify it in the same commit or pu
 **`NSM/train/`** - Training pipelines:
 - `train_deep_sdf.py`: Main training loop
 - `train_deep_sdf_multi_head.py`: Multi-head training (N independent decoders, one shared
-  latent) — **broken, do not use**: only the last decoder trains (#51; `docs/SCOPE.md`
-  §2.1 rules it supported-but-unready, kept out of the documented surface)
+  latent) — **broken, do not use**: only the last decoder trains. `docs/SCOPE.md` §2.1
+  ruled it *supported, fix it* in Aug 2026 and **downgraded that to unsupported-until-
+  needed on 2026-08-29**: the repair was never scheduled, so the ruling was a promise the
+  plan could not keep. The module and its warning stay, and #51 keeps the verified repair
+  checklist for whoever needs it — what stopped is the intent to do it
 - `utils.py`: Weight scheduling (linear, exponential, exponential_plateau, constant), KLD loss
 
 **`NSM/reconstruct/`** - Reconstruction and evaluation:

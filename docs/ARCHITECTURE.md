@@ -232,7 +232,7 @@ Modules with no inaccurate docstrings and an unremarkable status are omitted.
 | `mesh/interpolate.py` | 2 | prod |
 | `losses.py` | 2 | research — gated behind `NotImplementedError` |
 | `reconstruct/reconstruct_latent_S3.py` | 2 | deferred research |
-| `train/train_deep_sdf_multi_head.py` | 0 | **supported, broken** |
+| `train/train_deep_sdf_multi_head.py` | 0 | **unsupported until someone needs it** (SCOPE §2.1, ruling changed 2026-08-29) |
 | `train/deprecated/train_deep_sdf_multi_surface_orig.py` | 0 | **dead → quarantine** |
 | `train/deprecated/train_deep_sdf_orig.py` | 0 | **dead after a 12-line port** |
 | `datasets/utils.py` | 0 | prod — leaf helpers, received from `sdf_dataset.py` (§8.0, 2026-08-22) |
