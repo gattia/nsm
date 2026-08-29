@@ -98,6 +98,16 @@
   reason. `CLAUDE.md`'s "read files with `encoding="utf-8"` explicitly" rule has a
   subprocess variant, and `text=True` is it. The wheel's *name* is now asserted too: every
   content assertion fails on an `UNKNOWN` wheel and none of them says why.
+- **The dev-version spelling is a decision, and the default makes a claim (maintainer,
+  2026-08-29).** setuptools-scm's default `guess-next-dev` names a commit between releases
+  after a release that does not exist — five past `v0.3.0` becomes `0.3.1.dev5`, which
+  asserts a 0.3.1 nobody has planned. `no-guess-dev` names it after the release it is
+  actually past: `0.3.0.post1.dev5`. Measured before choosing: both order correctly under
+  PEP 440 (`0.3.0 < 0.3.0.post1.dev5 < 0.3.1 < 0.4.0`) and both are prereleases, so pip
+  skips them without `--pre` either way. Nothing mechanical separates them — **the whole
+  difference is what the string claims**, which is why it was worth a ruling rather than a
+  default. The no-tag case is unchanged (`0.0.1.dev1+unknown.g<sha>`): with no tag there is
+  nothing to be past.
 - **The tag is not in the PR, deliberately.** Cutting it is outward-facing and irreversible
   in a way a commit is not, so it is the maintainer's action. The PR body carries the exact
   command.

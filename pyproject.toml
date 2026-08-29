@@ -101,6 +101,14 @@ skip = ["*-win32", "*i686", "*aarch64", "*ppc64le", "*s390x", "*musllinux*"]
 # literal, which said 0.2.0 for 269 commits and 34 breaking changes -- the same failure
 # that left it at 0.0.1 for years. https://github.com/pypa/setuptools_scm/
 [tool.setuptools_scm]
+# What a commit BETWEEN releases is called. The default, "guess-next-dev", names it after
+# a release that does not exist yet -- five commits past v0.3.0 becomes "0.3.1.dev5",
+# asserting a 0.3.1 nobody has planned. "no-guess-dev" names it after the release it is
+# actually past: "0.3.0.post1.dev5". Measured: both order correctly under PEP 440
+# (0.3.0 < 0.3.0.post1.dev5 < 0.3.1 < 0.4.0) and both are prereleases, so pip skips them
+# without --pre either way. The difference is only what the string claims.
+version_scheme = "no-guess-dev"
+
 # Without this a tree with no git metadata does not build at all -- measured, `pip wheel`
 # stops at "Getting requirements to build wheel". That tree is a real case: a GitHub
 # source zip, a vendored copy, `git archive`. A version that says it does not know is a

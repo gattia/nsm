@@ -475,6 +475,11 @@ Three things a reader upgrading should know before the list:
   — `importlib.metadata` answers about installed distributions, and NSM is reachable
   without being one.
 
+  A commit **between** releases is named for the release it is past, not one that does not
+  exist yet: five commits after `v0.3.0` is `0.3.0.post1.dev5+g<sha>`, never `0.3.1.dev5`.
+  It is a prerelease under PEP 440, so `pip install nsm` will not resolve to one without
+  `--pre`.
+
 - **One message names every architecture key a config is missing** (plan §8.0.O). The three
   required triplanar keys used to be three separate refusals, so a pre-Aug-2026 config was
   repaired one key per attempt — four attempts for a fresh one, two for either shipped
