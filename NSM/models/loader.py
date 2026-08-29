@@ -5,6 +5,7 @@ This module provides functions to load pre-trained NSM models from configuration
 and state files, supporting multiple model architectures.
 """
 
+import json
 import warnings
 from typing import Any, Dict, Optional, Union
 
@@ -110,43 +111,83 @@ def load_model(
     return model
 
 
+class MissingArchitectureKeys(KeyError):
+    """
+    A ``KeyError`` whose message survives being printed.
+
+    ``KeyError.__str__`` is ``repr(args[0])``, so a multi-line message renders with
+    literal ``\n`` escapes and a JSON block in it arrives unusable -- which is the whole
+    point of the message below. Subclassing ``KeyError`` rather than raising something
+    else keeps every ``except KeyError`` that already exists working.
+    """
+
+    def __str__(self):
+        return self.args[0]
+
+
+#: ``key -> (what it decides, the value a model trained before Aug 2026 ran at)``. Both
+#: halves go into the refusal below, so this table is the message.
+#:
+#: Issues #26 (``padding``) and #45 (``conv_norm_type``); ``conv_activation`` is the
+#: activation the VAE built and never appended, ``docs/ARCHITECTURE.md`` section 7.1.
+REQUIRED_ARCHITECTURE_KEYS = {
+    "padding": (
+        "scales query coordinates before they index the feature planes and is not a "
+        "learned parameter, so a checkpoint loads clean at the wrong value and then "
+        "samples at the wrong scale, silently",
+        0.1,
+    ),
+    "conv_activation": (
+        "decides the architecture rather than a hyperparameter: null is the historical "
+        "stack, which has NO pointwise activation because one was built and never "
+        "appended until Aug 2026. Any other value renumbers every later state-dict key",
+        None,
+    ),
+    "conv_norm_type": (
+        'decides the VAE normalization. "layer" is what every ShapeMedKnee model and the '
+        'shipped default_config.json trained with; "batch" was the constructor default '
+        "until v0.3.0 and adds running statistics, so a wrong guess fails at load",
+        "layer",
+    ),
+}
+
+
+def _refuse_missing_architecture_keys(config, keys, model_type):
+    """
+    Refuse a config missing any of ``keys``, naming **all** of them in one message.
+
+    One message rather than one per key, because these used to be separate ``raise``
+    statements and repairing a pre-Aug-2026 config cost one round-trip per key. The
+    message ends with a JSON object that repairs the config in a single edit;
+    ``testing/NSM/models/test_config_repair.py`` parses that object and applies it, so it
+    cannot drift from what the code requires.
+    """
+    missing = [key for key in keys if key not in config]
+    if not missing:
+        return
+
+    plural = "key" if len(missing) == 1 else "keys"
+    explained = "\n".join(f"  {key}: {REQUIRED_ARCHITECTURE_KEYS[key][0]}." for key in missing)
+    historical = json.dumps({key: REQUIRED_ARCHITECTURE_KEYS[key][1] for key in missing}, indent=4)
+    raise MissingArchitectureKeys(
+        f"This {model_type} config does not state {len(missing)} architecture {plural} "
+        f"that cannot be recovered from the checkpoint: {', '.join(missing)}.\n\n"
+        f"{explained}\n\n"
+        "Configs written before Aug 2026 omit these, and every model trained before then "
+        "ran at the values below. Add them to the config in one edit -- or state what you "
+        "actually trained with, if it was not this:\n\n"
+        f"{historical}\n\n"
+        "Background: docs/ARCHITECTURE.md section 7.1, docs/KNOWN_ISSUES.md, "
+        "and issues #26 and #45."
+    )
+
+
 def _get_triplanar_params(config: Dict[str, Any]) -> tuple:
     """Extract TriplanarDecoder parameters from config."""
     required_keys = ["latent_size"]
     _check_required_keys(config, required_keys, "triplanar")
 
-    # Two architecture keys are required rather than defaulted. Both are keys whose
-    # silent default has been the wrong one for a real model, for opposite reasons.
-    if "padding" not in config:
-        raise KeyError(
-            "padding is missing from this triplanar config, and it cannot be recovered "
-            "from the checkpoint: it scales query coordinates before they index the "
-            "feature planes and is not a learned parameter, so loading at the wrong value "
-            'succeeds and silently samples at the wrong scale. Add "padding": <value> to '
-            "the config. Configs written before Aug 2026 omit the key, and every model "
-            "trained before then ran at the constructor default -- for those, "
-            '"padding": 0.1 reproduces the model exactly.'
-        )
-    if "conv_activation" not in config:
-        raise KeyError(
-            "conv_activation is missing from this triplanar config, and it decides the "
-            "architecture, not a hyperparameter: null means the historical stack, which "
-            "has NO pointwise activation because one was built and never appended until "
-            "Aug 2026 (docs/ARCHITECTURE.md section 7.1). Every model trained before then "
-            'is that one, so add "conv_activation": null to load an existing checkpoint. '
-            'Any other value -- "leaky_relu", "relu", "swish" -- builds a different module '
-            "layout that no existing checkpoint fits."
-        )
-    if "conv_norm_type" not in config:
-        raise KeyError(
-            "conv_norm_type is missing from this triplanar config. It decides the VAE's "
-            "normalization, and the four places that used to default it did not agree: "
-            '"batch" in the constructor and here, "layer" in the two_stage branch, in '
-            "two_stage's defaults and in every config ever trained. A mismatch against a "
-            "checkpoint fails in torch with a shape error that does not name the cause. "
-            'Add "conv_norm_type": "layer" -- the value every ShapeMedKnee model and the '
-            'shipped default_config.json use -- or "batch" if that is what you trained.'
-        )
+    _refuse_missing_architecture_keys(config, REQUIRED_ARCHITECTURE_KEYS, "triplanar")
 
     params = {
         "latent_dim": config["latent_size"],
@@ -165,7 +206,8 @@ def _get_triplanar_params(config: Dict[str, Any]) -> tuple:
         "sdf_dropout_prob": config.get("dropout_prob", 0.0),
         "sum_sdf_features": config.get("sum_conv_output_features", True),
         "conv_pred_sdf": config.get("conv_pred_sdf", False),
-        "padding": config.get("padding", 0.1),
+        # Required above, so there is no default to fall back to.
+        "padding": config["padding"],
     }
 
     return TriplanarDecoder, params
@@ -218,19 +260,16 @@ def _get_two_stage_params(config: Dict[str, Any]) -> tuple:
     triplanar_params = {}
     mlp_params = {}
 
-    # Triplanar parameters
+    # Triplanar parameters. Either branch builds the same TriplanarDecoder as the
+    # triplanar model type, so both are held to the same required keys -- including
+    # `padding`, which this branch used to drop even when the config stated it.
     if "triplanar_params" in config:
         triplanar_params = config["triplanar_params"].copy()
+        _refuse_missing_architecture_keys(
+            triplanar_params, REQUIRED_ARCHITECTURE_KEYS, "two_stage triplanar_params"
+        )
     else:
-        # Use default triplanar params with config overrides
-        for key in ("conv_norm_type", "conv_activation"):
-            if key not in config:
-                raise KeyError(
-                    f"{key} is missing from this two_stage config. State it here or inside "
-                    f'"triplanar_params"; both decide what TriplanarDecoder builds and '
-                    f"neither can be recovered from a checkpoint. _get_triplanar_params "
-                    f"documents what each one means."
-                )
+        _refuse_missing_architecture_keys(config, REQUIRED_ARCHITECTURE_KEYS, "two_stage")
         triplanar_params = {
             "conv_hidden_dims": config.get("conv_hidden_dims", [512, 512, 512, 512, 512]),
             "conv_deep_image_size": config.get("conv_deep_image_size", 2),
@@ -243,6 +282,7 @@ def _get_two_stage_params(config: Dict[str, Any]) -> tuple:
             "sdf_weight_norm": config.get("weight_norm", True),
             "sdf_final_activation": config.get("final_activation", "tanh"),
             "sdf_activation": config.get("activation", "relu"),
+            "padding": config["padding"],
         }
 
     # MLP parameters
@@ -408,6 +448,7 @@ def get_model_config_template(model_type: str) -> Dict[str, Any]:
                 "sdf_weight_norm": True,
                 "sdf_final_activation": "tanh",
                 "sdf_activation": "relu",
+                "padding": 0.1,
             },
             "mlp_params": {
                 "dims": [512, 512, 512, 512, 512, 512, 512, 512],

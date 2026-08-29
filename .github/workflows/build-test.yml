@@ -18,11 +18,23 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        # 3.9 only, and that is a decision rather than an oversight (maintainer,
+        # 2026-08-29). It is the floor `requires-python` declares -- every runtime
+        # dependency requires >=3.9 -- and it is also the ceiling we verify: nothing here
+        # exercises 3.10 or later. Worth knowing when revisiting: 3.9 reached end of life
+        # in October 2025, so the only interpreter NSM is tested on is one upstream no
+        # longer supports. Widening the matrix costs CI minutes and will surface real
+        # dependency failures to own; that trade was weighed and deferred, not missed.
         os: [macos-latest, ubuntu-latest]
         python-version: [3.9]
     
     steps:
       - uses: actions/checkout@v2
+        with:
+          # setuptools-scm derives the version from the git tag, and checkout's default
+          # depth-1 clone fetches no tags -- which does not fail the build, it produces
+          # a version that quietly says "distance unknown". Full history is the fix.
+          fetch-depth: 0
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v2
         with:
@@ -48,6 +60,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
+        with:
+          # setuptools-scm derives the version from the git tag, and checkout's default
+          # depth-1 clone fetches no tags -- which does not fail the build, it produces
+          # a version that quietly says "distance unknown". Full history is the fix.
+          fetch-depth: 0
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v2
         with:

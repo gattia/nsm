@@ -9,9 +9,11 @@ documentation do not, unless they change one of those three.
 **Breaking changes lead each release**, because that is the only section a reader upgrading
 across versions has to act on. NSM is pre-1.0, so a breaking change bumps the **minor**.
 
-**When this is updated:** as part of the release, in the same PR that bumps
-`NSM.__version__` and immediately before the tag is cut. A release with no changelog entry
-is a release nobody downstream can evaluate.
+**When this is updated:** as part of the release, in the PR that renames § Unreleased to
+the version being cut, immediately before the tag. Nothing in that PR bumps a version
+number: from v0.3.0 the version *is* the tag, derived by setuptools-scm, so cutting the tag
+is what publishes it. A release with no changelog entry is a release nobody downstream can
+evaluate.
 
 **Related, and deliberately separate:** `docs/KNOWN_ISSUES.md` § History answers *"is a run
 I already have on disk affected?"* — that is about results. This file answers *"does my
@@ -21,14 +23,63 @@ code still work?"* — that is about API. A change can warrant an entry in both.
 package), so pin the tag directly:
 
 ```
-nsm @ git+https://github.com/gattia/nsm@v0.2.0
+nsm @ git+https://github.com/gattia/nsm@v0.3.0
 ```
 
 ---
 
-## Unreleased
+## v0.3.0
+
+The first release since the Phase 4 decomposition began, and the largest break in NSM's
+history: 37 breaking changes among 83 entries, against 278 commits. Almost all of them are
+the same kind of change — a configuration NSM used to accept and quietly reinterpret now
+either works or refuses at the point it is stated.
+
+Three things a reader upgrading should know before the list:
+
+- **A config written before Aug 2026 will be refused, and one message says everything it
+  needs.** The three triplanar architecture keys (`padding`, `conv_activation`,
+  `conv_norm_type`) are required and cannot be recovered from a checkpoint. Both shipped
+  ShapeMedKnee configs omit two of them; `docs/KNOWN_ISSUES.md` § Packaging says what to
+  add.
+- **The version is now the git tag.** `NSM.__version__` reads the installed
+  distribution's metadata instead of a literal that said `0.2.0` for 269 commits.
+- **`docs/KNOWN_ISSUES.md` § History is the other half of this file.** This one answers
+  "does my code still work"; that one answers "is a result I already have on disk wrong".
+  Its 26 entries are what to read before trusting a result produced before Aug 2026.
 
 ### Breaking
+
+- **`TriplanarDecoder` and `VAEDecoder` default their normalization to `"layer"`**
+  (plan §8.0.O), where the signature said `"batch"`. `"layer"` is what every ShapeMedKnee
+  config, `default_config.json` and `two_stage`'s own defaults train with. Since §8.0.H
+  made `load_model` require `conv_norm_type`, the old default was unreachable from a
+  config and reachable only by direct construction — which is what the downstream consumer
+  does, and it passes the key explicitly, so nothing it builds moves. What the old default
+  cost was a model built by hand without stating the key: it trained nonlinear and
+  evaluated affine (`docs/ARCHITECTURE.md` §7.1). A checkpoint mismatch stays loud in
+  either direction, `BatchNorm2d`'s running statistics being a strict superset of
+  `LayerNorm`'s keys.
+
+- **A `two_stage` config must state `padding`, and a `padding` it states now reaches the
+  decoder** (plan §8.0.O, #26). `_get_two_stage_params` built its `triplanar_params`
+  without a `padding` key at all, so `TriplanarDecoder`'s constructor default won:
+  measured, `padding: 0.35` in the config produced a decoder at `0.1`. That is #26's
+  defect — a coordinate scale that is not a learned parameter, so `load_state_dict`
+  cannot contradict it — in the branch §8.0.H did not open, and in its worse form, the key
+  being present and discarded rather than absent. The nested `triplanar_params` form is
+  held to the same three keys, `two_stage.py`'s module-level default states `padding`, and
+  so does the `two_stage` config template. **Nothing existing is affected:** both shipped
+  models are `model_type: "triplanar"`, the shipped `default_config.json` is triplanar with
+  `padding` stated, and no `two_stage` config exists in this repo or in either consumer.
+
+- **Every subpackage declares `__all__`** (plan §8.0.O, `docs/SCOPE.md` §3.3), so
+  `from NSM.models import *` — and the same for `datasets`, `mesh`, `reconstruct`, `train` —
+  binds only NSM's own names. It used to bind everything the package's source had imported:
+  `torch`, `os`, `wandb`, `logging`, `numpy`, `Pool`, `datetime`. Attribute access is
+  unchanged, `NSM.datasets.torch` included; only the star-import surface narrows. This is
+  not yet the stability tiering of `SCOPE.md` §3.2, which is a separate ruling.
+
 
 - **`utils.print_gpu_memory` is deleted** (plan §8.0.M). §8.0.G converted its four `print`
   calls to `logger.info` and left the name saying otherwise. Swept across `NSM/`,
@@ -414,6 +465,29 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
 
 ### Changed
 
+- **The version is the git tag** (plan §8.0.O, §10.1). `pyproject.toml` derived it from
+  `NSM.__version__`, a string literal, and that literal said `0.2.0` for 269 commits and
+  every breaking change in this release — the same mechanism that left it at `0.0.1` for
+  years. setuptools-scm now derives the distribution version from the tag, and
+  `NSM.__version__` reads the installed distribution's metadata. A tree with no git
+  metadata (a GitHub source zip, a vendored copy) builds as `0.0.0+unknown` rather than
+  failing, and a checkout that is not installed at all reports the same rather than raising
+  — `importlib.metadata` answers about installed distributions, and NSM is reachable
+  without being one.
+
+  A commit **between** releases is named for the release it is past, not one that does not
+  exist yet: five commits after `v0.3.0` is `0.3.0.post1.dev5+g<sha>`, never `0.3.1.dev5`.
+  It is a prerelease under PEP 440, so `pip install nsm` will not resolve to one without
+  `--pre`.
+
+- **One message names every architecture key a config is missing** (plan §8.0.O). The three
+  required triplanar keys used to be three separate refusals, so a pre-Aug-2026 config was
+  repaired one key per attempt — four attempts for a fresh one, two for either shipped
+  ShapeMedKnee config. The message now lists every missing key with what each decides, and
+  ends with a JSON object that repairs the config in a single edit. It is raised as a
+  `KeyError` subclass whose `__str__` is the message itself, because `KeyError`'s own
+  renders newlines as `\n` escapes and would have delivered that block unusable.
+
 - **`train_epoch`'s diagnostics answer to the host's logging config, not to
   `config["verbose"]`** (plan §8.0.L). Its 20 `logger.debug` records sat behind eight
   `if config["verbose"] is True:` gates. All 20 were already at `DEBUG`, so the gate only
@@ -585,6 +659,13 @@ nsm @ git+https://github.com/gattia/nsm@v0.2.0
   Python list. See `docs/KNOWN_ISSUES.md` § History §6.
 
 ### Fixed
+
+- **`NSM/configs/default_config.json` ships in built distributions** (plan §8.0.O).
+  `[tool.setuptools.packages] find` packages modules, not data, and there was no
+  `package-data` entry, so no wheel has ever contained the file every doc in this repo
+  calls the shipped default config. It worked only because every install so far has been
+  editable. The generator beside it was shipping already — `find` takes `namespaces = true`
+  by default, so `NSM.configs` is picked up despite having no `__init__.py`.
 
 - **`save_model_params`' write-once refusal says so, and names what diverges from it**
   ([#50](https://github.com/gattia/nsm/issues/50), plan §8.0.M). It is called on every

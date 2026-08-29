@@ -168,22 +168,24 @@ class TestTheRecordNamesItsSubjects:
 
         ``test_training_regression`` checks the LR targets and ``mesh_names``;
         ``test_model_roundtrip`` checks that the architecture keys are present -- which
-        ``null`` satisfies, because the key *is* present. Delete this test when a
-        regression test starts reading ``list_mesh_paths``; until then it records that the
-        coverage which exists is coverage of something else.
+        ``null`` satisfies, because the key *is* present; and ``test_shipped_checkpoints``
+        reads the real ones for their architecture. Delete this test when a regression test
+        starts reading ``list_mesh_paths``; until then it records that the coverage which
+        exists is coverage of something else.
+
+        Asserted as "no module reads the key", not as a fixed list of module names. It was
+        the list, and adding a module that reads the file for an unrelated reason turned it
+        red -- a proxy for the claim rather than the claim.
         """
         regression = REPO_ROOT / "testing" / "NSM" / "regression"
-        readers = [
-            path
+        readers = {
+            path.name: path.read_text(encoding="utf-8")
             for path in regression.glob("test_*.py")
             if "model_params_config.json" in path.read_text(encoding="utf-8")
-        ]
+        }
 
-        assert sorted(p.name for p in readers) == [
-            "test_model_roundtrip.py",
-            "test_training_regression.py",
-        ]
-        assert not any("list_mesh_paths" in p.read_text(encoding="utf-8") for p in readers)
+        assert {"test_model_roundtrip.py", "test_training_regression.py"} <= set(readers)
+        assert [name for name, text in readers.items() if "list_mesh_paths" in text] == []
 
 
 # ---------------------------------------------------------------------------

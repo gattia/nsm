@@ -1,3 +1,4 @@
+import importlib.metadata as _metadata
 import logging
 import os
 
@@ -14,4 +15,14 @@ logging.getLogger("NSM").addHandler(logging.NullHandler())
 # os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 
-__version__ = "0.2.0"
+# The version of the installed distribution, which setuptools-scm derives from the git
+# tag at build time. Not a literal: one sat here saying 0.2.0 while the tree was 269
+# commits and 34 breaking changes past that tag, and one sat at 0.0.1 for years before it.
+#
+# The fallback is not decoration. `importlib.metadata` answers about *installed*
+# distributions, and NSM is reachable without being one -- the downstream consumer inserts
+# its checkout on `sys.path` at runtime. Raising here would break `import NSM` itself.
+try:
+    __version__ = _metadata.version("NSM")
+except _metadata.PackageNotFoundError:  # pragma: no cover - needs an uninstalled checkout
+    __version__ = "0.0.0+unknown"

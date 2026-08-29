@@ -511,14 +511,27 @@ vocabulary (`LR_TARGET_KEY`, `LR_TARGET_MODEL`, `LR_TARGET_LATENT`, `LR_TARGETS`
 and the five cartilage-comparison validators. Full list in the workflow output; it should
 be transcribed into code when §3.3 is resolved.
 
-**internal — everything else,** including all 24 names currently leaked into
-`NSM.reconstruct` by `from .main import *` (among them `os`, `sys`, `torch`, `np`,
-`wandb`, `logging`, `mskt`, and `adjust_learning_rate`).
+**internal — everything else.** The leak this describes was re-measured 2026-08-29, after
+the §8.0.C/E/G splits moved the surface the original count was taken on: `NSM.reconstruct`
+binds **43** public names of which 11 are modules (`wandb`, `torch`, `time`, `logging`…),
+`NSM.datasets` 43 of which **17** are, `NSM.models` 26 of which 11 are, `NSM.mesh` 24 of
+which 9 are. `NSM.train` was already clean. Since v0.3.0 each subpackage declares `__all__`,
+so a star-import binds only NSM's own names — see §3.3. Attribute access is unchanged:
+`NSM.datasets.torch` still resolves, and removing that would mean replacing the star
+re-exports themselves.
 
-### 3.3 Why `__all__` is not being written into `NSM/__init__.py` yet
+### 3.3 Why `__all__` is per subpackage and not in `NSM/__init__.py`
 
-The plan's Phase 0 deliverable says "an `__all__` in `NSM/__init__.py`". As specified this
-cannot be done, and the reason is worth recording rather than working around.
+**Shipped in v0.3.0** (plan §8.0.O): `NSM.datasets`, `NSM.mesh`, `NSM.models`,
+`NSM.reconstruct` and `NSM.train` each declare `__all__`, naming every name they bind that
+is defined in them, submodules included. The rule is mechanical, so nothing is on a list by
+opinion; the stability tiering of §3.2 is a separate ruling and has not been applied to
+them. Pinned by `testing/NSM/test_packaging.py::TestPublicApiDeclaration`, which asserts
+that every declared name resolves, that none of them is foreign, and that
+`from <pkg> import *` binds exactly the declaration.
+
+The plan's Phase 0 deliverable said "an `__all__` in `NSM/__init__.py`". As specified that
+could not be done, and the reason is why it went per-subpackage instead.
 
 `NSM/__init__.py` imports **only** `utils`. After a bare `import NSM`, `NSM.models`,
 `NSM.reconstruct`, `NSM.mesh`, `NSM.datasets` and `NSM.train` do not exist — every
@@ -535,12 +548,16 @@ host process (at `reconstruct/main.py` module scope). Making that unavoidable fo
 types
 `import NSM` is a regression, not a cleanup.
 
-**Recommendation:** put `__all__` in each subpackage `__init__.py`, which is where the
-leakage actually is, and leave the top level lazy (or use PEP 562 `__getattr__` if
-`NSM.models` should resolve from a bare `import NSM`). Either way it is a **code change
-with import-semantics consequences**, so it belongs in a reviewed commit, not in a mapping
-pass. Amend the plan's Phase 0 deliverable to "a written API contract + `__all__` per
-subpackage."
+**What was done:** `__all__` in each subpackage `__init__.py`, which is where the leakage
+actually is, and the top level left lazy. PEP 562 `__getattr__`, so that `NSM.models`
+resolves from a bare `import NSM`, was **not** done — it would reintroduce the eager import
+above the first time anyone touched the attribute, and no consumer has asked for it.
+
+**What `__all__` does not do, stated once so nobody concludes otherwise:** it controls
+`from X import *` and states intent. It does not unbind anything — `NSM.datasets.torch`
+still resolves. Removing those bindings means replacing the star re-exports themselves,
+which is a larger change with a real chance of breaking a fork, and no evidence yet that
+anyone is hurt by them.
 
 ---
 
@@ -581,14 +598,22 @@ quarantined costs nothing; moving it costs a broken downstream. So:
 - **0a (done, this document):** rulings from evidence available here → unblocks Phase 1.
 - **0b (blocked on the survey):** the quarantine move only.
 
-**The release tag still needs settling.** The plan's §10 prerequisite — tag a version, have
-consumers pin it — is not yet met. `pyproject.toml` derives the version from
-`NSM.__version__`, which the code-health branch bumps from `"0.0.1"` to `"0.1.0"`. A
-`v0.1.0` tag exists but points at a commit on that branch rather than on `main`, so it is
-not the pre-refactor rollback point it is sometimes described as. Settle which commit the
-tag names before asking anyone to pin it.
+**The release tag no longer needs settling, and the mechanism it depended on is gone.**
+From v0.3.0 `pyproject.toml` derives the version from the git tag via setuptools-scm, and
+`NSM.__version__` reads the installed distribution's metadata — there is no literal for
+anyone to forget. What remains true and worth knowing: the `v0.1.0` tag points at a commit
+on the code-health branch rather than on `main`, so it is not the pre-refactor rollback
+point it is sometimes described as. `v0.2.0` and `v0.3.0` are both on `main`.
 
-**`NSM.configs` will not ship in a built distribution.** It has no `__init__.py`, so
-`find_packages(include=['NSM','NSM.*'])` excludes it; there is no `package-data` or
-`MANIFEST.in`. A wheel contains neither the config generator nor `default_config.json`. It
-works today only because installs are editable.
+**~~`NSM.configs` will not ship in a built distribution.~~ Half wrong, and fixed at
+v0.3.0.** Measured by building a wheel from a clean `git archive`: it contained
+`NSM/configs/generate_sdf_default_config.py` and **not** `default_config.json`.
+`[tool.setuptools.packages.find]` takes `namespaces = true` by default in `pyproject.toml`,
+so `NSM.configs` is found as a namespace package despite having no `__init__.py` — the
+generator has been shipping all along. What was missing was package *data*, there being no
+`package-data` and no `MANIFEST.in`, so the JSON worked only because installs were
+editable. `pyproject.toml` now declares it, and
+`testing/NSM/test_packaging.py::TestWhatShips` builds a wheel and byte-compares the shipped
+copy. **The claim above was inferred from `find_packages` semantics and never run** — and
+the half that would have mattered, whether the generator survives, is the half that was
+fine.
