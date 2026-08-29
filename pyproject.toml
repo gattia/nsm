@@ -6,7 +6,13 @@
 
 #Specify the requirements needed to build the package.
 [build-system]
-requires = ["setuptools", "setuptools-scm"]
+# setuptools>=61 is not a preference: the [project] table below, [tool.setuptools.packages]
+# and [tool.setuptools.package-data] all landed in 61.0, and an older one reads none of
+# them. Unpinned "setuptools" hid that, because pip's build isolation installs the latest.
+# Measured against 58.1.0 -- the version on a GitHub macOS runner -- with
+# --no-build-isolation: it builds an "UNKNOWN-0.0.0" wheel containing no NSM package at
+# all, and on the runner's stack it fails outright at "Preparing metadata".
+requires = ["setuptools>=61", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 #Specify the requirements needed to build the project itself. 

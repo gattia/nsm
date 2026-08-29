@@ -32,7 +32,8 @@ parameterized>=0.8.1  # For parameterized tests
 # Development utilities
 pre-commit>=2.20.0  # For git hooks
 
-# Packaging. setuptools-scm is a build requirement (pyproject.toml), and is needed at
-# development time too because testing/NSM/test_packaging.py builds a wheel with
-# --no-build-isolation.
+# Packaging. Both are build requirements (pyproject.toml) and are needed at development
+# time too, because testing/NSM/test_packaging.py builds a wheel with --no-build-isolation
+# and that uses the ambient copies rather than a fresh isolated environment.
+setuptools>=61
 setuptools-scm>=7.0.0

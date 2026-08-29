@@ -33,7 +33,7 @@ REPO = Path(__file__).resolve().parents[2]
 def tracked_copy(destination):
     """The tracked files at their working-tree content, without ``.git``."""
     listing = subprocess.run(["git", "ls-files", "-z"], cwd=REPO, capture_output=True, check=True)
-    for name in listing.stdout.decode().split("\0"):
+    for name in listing.stdout.decode("utf-8").split("\0"):
         if not name:
             continue
         source = REPO / name
@@ -46,8 +46,17 @@ def tracked_copy(destination):
 
 
 def build_wheel(directory, out):
-    """``pip wheel`` without build isolation, so no network and no re-resolve."""
-    result = subprocess.run(
+    """
+    ``pip wheel`` without build isolation, so no network and no re-resolve.
+
+    ``encoding="utf-8"`` rather than ``text=True``: the latter decodes with the *locale's*
+    preferred encoding, which is ``US-ASCII`` on a GitHub macOS runner, and pip prints its
+    error banner with a ``\u00d7``. A failed build therefore raised ``UnicodeDecodeError``
+    from ``subprocess`` instead of reaching the assertion that prints why it failed -- the
+    diagnostic destroyed by the thing it existed to diagnose. Same class as the repo-wide
+    "read files with encoding=utf-8 explicitly" rule in ``CLAUDE.md``.
+    """
+    return subprocess.run(
         [
             sys.executable,
             "-m",
@@ -60,9 +69,9 @@ def build_wheel(directory, out):
             str(directory),
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
-    return result
 
 
 @pytest.fixture(scope="module")
@@ -97,6 +106,17 @@ class TestWhatShips:
         assert "NSM/configs/default_config.json" in names
         shipped = zipfile.ZipFile(path).read("NSM/configs/default_config.json")
         assert shipped == (REPO / "NSM" / "configs" / "default_config.json").read_bytes()
+
+    def test_the_wheel_is_named_for_the_package(self, wheel):
+        """
+        The legible failure for "the build backend could not read `pyproject.toml`".
+        setuptools below 61 ignores the `[project]` table instead of refusing it, and
+        produces `UNKNOWN-0.0.0` with none of `NSM/` inside -- measured against 58.1.0,
+        which is what a GitHub macOS runner ships. Every assertion in this class would
+        fail on that wheel, and none of them would say why.
+        """
+        path, _ = wheel
+        assert path.name.split("-")[0] == "nsm", path.name
 
     def test_every_subpackage_ships(self, wheel):
         _, names = wheel
