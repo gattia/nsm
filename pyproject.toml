@@ -21,7 +21,13 @@ build-backend = "setuptools.build_meta"
 name = "NSM"
 description = "Library for creating Neural Shape Models (NSM)"
 readme = "README.md"
-requires-python = ">=3.7"
+# Every runtime dependency requires >=3.9 -- mskt, torch, numpy, scipy, wandb,
+# scikit-image, pymeshfix and the rest, measured from their installed metadata, not read
+# off their docs. ">=3.7" here came from the original project boilerplate (fe403ad) and
+# was never true of NSM: on 3.7 or 3.8 the dependency set does not resolve, and since
+# v0.3.0 NSM/__init__.py uses importlib.metadata, which is 3.8+. 3.9 is also the only
+# version CI tests. Pinned by testing/NSM/test_packaging.py::TestTheSupportedPythons.
+requires-python = ">=3.9"
 keywords = ["python"]
 license = {text = "MIT"}
 authors = [

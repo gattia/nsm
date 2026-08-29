@@ -189,7 +189,7 @@ class TestWhereTheVersionComesFrom:
 
         found = {}
         for dist in distributions():
-            name = (dist.metadata["Name"] or "").lower().replace("-", "_")
+            name = (dist.metadata.get("Name") or "").lower().replace("-", "_")
             if name == "nsm":
                 found[str(getattr(dist, "_path", dist))] = dist.version
         if not found:
@@ -217,6 +217,74 @@ class TestWhereTheVersionComesFrom:
         except PackageNotFoundError:
             pytest.skip("NSM is importable but not installed")
         assert NSM.__version__ == installed
+
+
+class TestTheSupportedPythons:
+    """
+    ``requires-python`` is a promise, and it was inherited rather than made.
+
+    It said ``>=3.7`` from the original project boilerplate (``fe403ad``) until v0.3.0,
+    which was never true of NSM: every runtime dependency requires 3.9, so on 3.7 or 3.8
+    the dependency set does not resolve at all.
+
+    Computed rather than transcribed, because the floor moves under us -- one dependency
+    raising its own floor to 3.10 silently makes our declaration false again, and nothing
+    else in the repo would notice.
+    """
+
+    #: The runtime dependencies, from ``requirements.txt``. Read rather than hardcoded so a
+    #: dependency added there is covered without anyone remembering this test exists.
+    @staticmethod
+    def runtime_requirements():
+        import re
+
+        text = (REPO / "requirements.txt").read_text(encoding="utf-8")
+        names = []
+        for line in text.splitlines():
+            line = line.split("#")[0].strip()
+            if line:
+                names.append(re.split(r"[<>=!~\[]", line)[0].strip())
+        return names
+
+    def test_we_do_not_promise_a_python_no_dependency_supports(self):
+        from importlib.metadata import PackageNotFoundError, distribution
+
+        from packaging.specifiers import SpecifierSet
+        from packaging.version import Version
+
+        declared = re.search(
+            r'^requires-python\s*=\s*"([^"]+)"',
+            (REPO / "pyproject.toml").read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        assert declared, "pyproject.toml declares no requires-python"
+        ours = SpecifierSet(declared.group(1))
+
+        candidates = [f"3.{minor}" for minor in range(7, 15)]
+        admitted = [v for v in candidates if ours.contains(Version(v))]
+        assert admitted, f"requires-python {declared.group(1)!r} admits no known Python"
+        lowest = admitted[0]
+
+        checked, refusing = 0, {}
+        for name in self.runtime_requirements():
+            try:
+                # .get(), not [] -- a distribution whose metadata omits the field raises
+                # KeyError on indexing, and which distributions are discoverable depends
+                # on what earlier tests put on sys.path. Passed alone, failed in suite.
+                spec = distribution(name).metadata.get("Requires-Python")
+            except PackageNotFoundError:
+                continue
+            if not spec:
+                continue
+            checked += 1
+            if not SpecifierSet(spec).contains(Version(lowest)):
+                refusing[name] = spec
+
+        assert checked >= 5, f"only {checked} dependencies had metadata to check"
+        assert not refusing, (
+            f"pyproject.toml promises Python {lowest}, which these dependencies refuse: "
+            f"{refusing}. Raise requires-python to match them."
+        )
 
 
 SUBPACKAGES = ["NSM.datasets", "NSM.mesh", "NSM.models", "NSM.reconstruct", "NSM.train"]
