@@ -107,6 +107,15 @@ def compare_cart_thickness(
     cart_regions=CART_REGIONS,
     regions_label="labels",
 ):
+    if regions_label != "labels":
+        raise ValueError(
+            f"regions_label={regions_label!r} cannot work. The transfer honours it, but "
+            "pymskt's BoneMesh.get_cart_thickness_mean and .get_cart_thickness_std both "
+            'read get_scalar("labels") with the name hardcoded, so the region array must '
+            'be called "labels" on the original mesh and on the reconstruction. Rename '
+            "the array on the original mesh instead."
+        )
+
     orig_bone, orig_cart = orig_meshes
     recon_bone, recon_cart = recon_meshes
 

@@ -230,13 +230,10 @@ class TestRegionsLabel:
         assert set(result) == REGION_11_KEYS
         assert not any(np.isnan(value) for value in result.values())
 
-    @pytest.mark.xfail(
-        strict=True, reason="§8.0.N′ commit 6: regions_label refuses what pymskt cannot read"
-    )
     @pytest.mark.parametrize("also_label_it_labels", [False, True])
     def test_a_non_default_name_is_refused_by_name(self, also_label_it_labels):
         """
-        Both arrangements raise ``KeyError: 'labels'`` today, from opposite sides. With
+        Both arrangements raised ``KeyError: 'labels'`` before, from opposite sides. With
         the original carrying only the alternative name it is the original's read that
         fails; with the original carrying **both**, the read of the original succeeds and
         the copy lands on the reconstruction under the caller's name, so it is the
