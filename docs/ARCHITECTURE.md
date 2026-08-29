@@ -369,7 +369,7 @@ the shipped models,** and the correction matters:
 | `conv_norm_type` | Additivity error, eval mode | Affine? |
 |---|---|---|
 | `"layer"` — **both shipped models (647, 551)** | 3.74e+00 (value scale 8.44e+00) | **No** |
-| `"batch"` — **the `VAEDecoder` constructor default** | 2.89e-07 | **Yes** |
+| `"batch"` — the `VAEDecoder` constructor default until v0.3.0 | 2.89e-07 | **Yes** |
 | `conv_norm=False` | 2.92e-07 | **Yes** |
 
 LayerNorm divides by a standard deviation computed from its own input, so it is nonlinear
@@ -422,11 +422,12 @@ built from the shipped default fell through to `batch`.
 
 *Closed in §8.0.H:* `load_model` **requires** `conv_norm_type` on both branches that build a
 `TriplanarDecoder`, so no config can reach a default by omission, and the templates say
-`layer`. The signature defaults are untouched — changing `TriplanarDecoder`'s is a breaking
-change to a public-stable class and belongs to the release slice. Note what this does *not*
-fix, because torch already does: a mismatch against a checkpoint is loud, since `BatchNorm2d`
-and `LayerNorm` differ in key set *and* shape. What the silent default cost was a **fresh**
-run started from the template, inheriting a configuration nobody had trained.
+`layer`. *Closed in §8.0.O (v0.3.0):* the last two defaults — `TriplanarDecoder`'s and
+`VAEDecoder`'s signatures — say `layer` as well, which took a release because it changes a
+public-stable signature. All four places now agree. Note what neither fixes, because torch
+already does: a mismatch against a checkpoint is loud, since `BatchNorm2d` and `LayerNorm`
+differ in key set *and* shape. What the silent default cost was a **fresh** run started from
+the template or built by hand, inheriting a configuration nobody had trained.
 
 In every configuration the depth buys much less than it reads as — but **not nothing, and
 the distinction matters.** Composing affine maps gives an affine map, so under `"batch"`

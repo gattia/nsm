@@ -37,7 +37,7 @@ queue.
 | Defect | Severity | Issue |
 |---|---|---|
 | Sigma coordinate space depends on `scale_jointly` | **High** — ~100× over/under-sampling | [#3](https://github.com/gattia/nsm/issues/3) |
-| `padding` absent from checkpoints | **High** — silent wrong-scale sampling | [#26](https://github.com/gattia/nsm/issues/26) |
+| Shipped model configs omit two required architecture keys | Medium — refused at load, not silent | [#26](https://github.com/gattia/nsm/issues/26), [#45](https://github.com/gattia/nsm/issues/45) |
 | Parameters accepted and never read | Medium — **read the traps first** | [#20](https://github.com/gattia/nsm/issues/20) |
 | `xyz_in_all` accepted and never read | Medium — silent no-op | [#20](https://github.com/gattia/nsm/issues/20) |
 | A `None` surface cannot build | Medium — advertised feature, unusable | [#67](https://github.com/gattia/nsm/issues/67) |
@@ -147,6 +147,39 @@ message prints the paste-ready annotation for that run's optimizer. Take it from
 rather than hand-writing `Target`, since Adam and `schedule_free_*` migrate to opposite
 values.
 
+### Shipped model configs omit two keys `load_model` requires, so it refuses them
+
+Both production model configs — `647_nsm_femur_v0.0.1` and `551_nsm_femur_bone_v0.0.1` —
+carry no `padding` and no `conv_activation`. Since Aug 2026 (#26, #45) `load_model`
+requires both for a triplanar config, because neither can be recovered from the checkpoint:
+`padding` scales query coordinates before they index the feature planes and is not a
+learned parameter, and `conv_activation` decides the module layout. So `load_model` on a
+shipped checkpoint raises rather than loading.
+
+**This is the refusal working, not a regression.** What it costs is one edit. From v0.3.0
+the message names both keys at once and ends with a JSON block that repairs the config:
+
+```json
+{
+    "padding": 0.1,
+    "conv_activation": null
+}
+```
+
+Both are the values every model trained before Aug 2026 ran at, and both shipped configs
+already state `conv_norm_type: "layer"`, so nothing else is needed.
+
+**Inference through the downstream consumer is unaffected**, which is why nobody has hit
+it: `kneepipeline`'s `steps/run_nsm.py` builds `TriplanarDecoder(**params)` by hand from
+fifteen config keys and never calls `load_model`. What does not work unrepaired is
+`examples/load_trained_model.py`, which is the documented way to load a trained model.
+
+*Pinned by:* `testing/NSM/regression/test_shipped_checkpoints.py`, which is skipped unless
+`NSM_SHIPPED_MODELS` points at the model directories — the two checkpoints are 275 MB and
+260 MB and do not belong in CI. Run against both, it asserts the message names every
+missing key, that the repaired config loads strictly, and that `load_model`'s model is
+bitwise-identical to the consumer's own construction.
+
 ### `F401` is project-ignored, so unused imports do not appear in `make lint`
 
 `.flake8`'s `extend-ignore` has carried `F401` since before the Aug 2026 lint work. `make
@@ -246,7 +279,8 @@ outside ±0.1 before the first step. The shipped `default_config.json` uses `cla
 both ShapeMedKnee configs use `1.0`.
 
 **Why the shipped models are largely immune.** The triplanar output is `tanh`-bounded to
-(−1, 1) (measured in the `padding` entry above), so at the production `clamp_dist: 1.0`
+(−1, 1) (measured in § History 16, the `padding` entry), so at the production
+`clamp_dist: 1.0`
 the prediction-side clamp **never binds** — the tanh acts as a soft clamp whose gradients
 shrink smoothly instead of cutting to zero, and the target-side clamp still provides the
 intended don't-care-beyond-the-band behaviour. The trap is training from the shipped
