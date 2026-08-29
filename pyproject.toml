@@ -92,16 +92,6 @@ exclude = '''
 )
 '''
 
-# Information needed for cibuildwheel
-[tool.cibuildwheel]
-# build options: https://cibuildwheel.readthedocs.io/en/stable/options/#build-selection
-build = ["cp37-*", "cp38-*", "cp39-*"]
-skip = ["*-win32", "*i686", "*aarch64", "*ppc64le", "*s390x", "*musllinux*"]
-
-# testing info: https://cibuildwheel.readthedocs.io/en/stable/options/#testing
-# test-command = "pytest {project}"
-# test-requires = ["pytest"]
-
 # The version is the git tag, and nothing else. It used to be
 # `[tool.setuptools.dynamic] version = {attr = "NSM.__version__"}` reading a string
 # literal, which said 0.2.0 for 269 commits and 34 breaking changes -- the same failure
