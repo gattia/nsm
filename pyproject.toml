@@ -42,7 +42,18 @@ version = {attr = "NSM.__version__"}
 
 # setuptools specific items
 [tool.setuptools.packages]
+# `namespaces` defaults to true here, which is why NSM.configs is found at all -- it has
+# no __init__.py. That gets the generator into the wheel; the JSON it generates needs the
+# package-data entry below, and did not have one until v0.3.0.
 find = {include = ['NSM', 'NSM.*']}
+
+# default_config.json is what every doc in this repo calls "the shipped default config",
+# and no built distribution contained it: `find` packages modules, not data. It worked
+# only because every install so far has been editable. Stated explicitly rather than left
+# to include-package-data, which sources its file list from the SCM and would therefore
+# drop the file again in a tree with no git metadata.
+[tool.setuptools.package-data]
+"NSM.configs" = ["*.json"]
 
 
 # information about "tools" 

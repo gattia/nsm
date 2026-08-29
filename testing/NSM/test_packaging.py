@@ -84,16 +84,19 @@ class TestWhatShips:
         _, names = wheel
         assert "NSM/configs/generate_sdf_default_config.py" in names
 
-    @pytest.mark.xfail(
-        strict=True, reason="§8.0.O: no package-data, so the JSON is left out of the wheel"
-    )
     def test_the_default_config_ships(self, wheel):
         """
-        The file every doc in the repo calls "the shipped ``default_config.json``". It
-        works today only because every install is editable.
+        Was a strict xfail. The file every doc in the repo calls "the shipped
+        ``default_config.json``" was in no built distribution: ``find`` packages modules,
+        not data. It worked only because every install so far has been editable.
+
+        Byte-compared, not just listed -- a data file that ships stale is the version of
+        this defect nobody would notice.
         """
-        _, names = wheel
+        path, names = wheel
         assert "NSM/configs/default_config.json" in names
+        shipped = zipfile.ZipFile(path).read("NSM/configs/default_config.json")
+        assert shipped == (REPO / "NSM" / "configs" / "default_config.json").read_bytes()
 
     def test_every_subpackage_ships(self, wheel):
         _, names = wheel
