@@ -10,10 +10,10 @@
   `testing/` has passed `NSM/` in size — **14,770 lines against 14,460**, a ratio of 1.02
   from 0.26 at `v0.1.0` — and the slice index's new **T row** carries the measurements and
   three checkable trim criteria. It runs last because every slice adds to what it trims.
-- **Next:** **tag `v0.3.0` on `main` once the §8.0.O PR merges** — one maintainer action,
-  `git tag -a v0.3.0 && git push origin v0.3.0`, and nothing in the PR does it because a
-  tag is outward-facing. Everything else the release needed is in the branch. Then
-  **§8.0.N′** (`reconstruct/cartilage_func.py`). **Blocked on nothing.**
+- **Next:** **§8.0.N′** (`reconstruct/cartilage_func.py`) — statement written, sequence
+  below it. `v0.3.0` **is tagged** on `main` at `751c226` (verified against the remote
+  2026-08-29), so the maintainer action the previous Next named is done and
+  `_verbose_deprecation`'s v0.4.0 removal is now due-able. **Blocked on nothing.**
 - **§8.0.O executed (2026-08-29), based on `main` at `902634d`:** commits 2–11 — the
   characterization, the combined refusal at both sites, two_stage's `padding`, the
   `conv_norm_type` defaults, `package-data`, setuptools-scm, `__all__` × 5, the
@@ -3765,6 +3765,254 @@ helper above is costed by writing its message out, not by counting its statement
 | the suite still passes | **1066 passed / 1 skipped / 3 xfailed** on `main` at `902634d` is the baseline every commit is compared against |
 
 
+
+### 8.0.N′ `reconstruct/cartilage_func.py` — the validation hook nothing has ever run — plan statement (2026-08-29)
+
+Every number below was re-run against `main` at `751c226` before it was written. The row
+predicted "5–8 defects, every slice that has opened a file at this coverage found that
+many"; there are eight, and the first one **kills the interpreter with `SIGSEGV`** on an
+input the function beside it is written to survive.
+
+**What the row says and what is there.** `NSM/reconstruct/cartilage_func.py` is **146
+lines**: two module constants and five public functions, all five in
+`NSM/reconstruct/__init__.__all__` and all five the whole of `train_deep_sdf.py:47`'s
+`DICT_VALIDATION_FUNCS`. It carries **no module docstring and no function docstring**.
+Coverage is **19% — 54 statements, 44 uncovered**, and the uncovered set is every line of
+all five functions: the suite imports the module and has never called it. `SCOPE` §2.5
+rules it production and records the maintainer's confirmation that it was critical to the
+ShapeMedKnee paper's validation. §7.3's priority list, drawn by lines × inverse coverage,
+never named it because it is short.
+
+**What is actually wrong, measured.** Eight defects. Two of them — 1 and 2 — are one
+shape: *a surface that is absent is a value the sibling code path handles and this path
+does not*, and they are the substance of the slice. The other six are a parameter that
+cannot take a non-default value, an argument that is never read, a default region set
+that names a different joint, unchecked arity, and a coercion branch that prints.
+
+*Defect 1 — a reconstructed cartilage surface of `None` segfaults the process.*
+`_finish_meshes` documents that a surface whose SDF does not cross zero leaves its slot
+`None`, and `create_mesh_adaptive` returns `[None] * objects` outright when the coarse
+grid finds no bounds — the normal state of a decoder early in training, which is when
+validation runs. `compare_cart_thickness` passes that `None` to `CartilageMesh(None)`,
+which constructs a **0-point mesh**, and `calc_cartilage_thickness` hands it to
+`vtkOBBTree`. Measured, in its own process: `ERR| vtkOBBTree: Can't build OBB tree - no
+data available!`, then **exit code 139 — `SIGSEGV`**. Not an exception: `get_mean_errors`'
+`except NoZeroLevelSetError` cannot catch it, no `try` can, and the training run dies with
+it. The same `None` in the bone slot raises `AttributeError: 'NoneType' object has no
+attribute 'GetNumberOfPoints'` from inside pymskt, and a `None` original bone raises
+`KeyError: 'labels'` — three inputs, three different unnamed failures, one of them fatal
+to the interpreter.
+
+**The decisive part is the sibling.** `compute_recon_loss`, forty lines away in
+`recon_evaluation.py` and reached from the same `reconstruct_mesh` call on the same
+subject, tests `if mesh is not None` and scores `np.nan` with a warning naming the surface.
+One of the two paths that consume the reconstructed mesh list was written for the
+degenerate-decoder case and the other was not.
+
+*Defect 2 — an original surface of `None` breaks the half `SCOPE` §2.5b ruled supported,
+through the flag the shipped config sets.* §2.5b was ruled **2026-08-29**, from
+`latent_fit.py`: "fitting a latent from a subset of surfaces … This is the half in use."
+The fit is fine; the evaluation around it is not. Measured end-to-end through
+`reconstruct_mesh(path=[bone, None], objects_per_decoder=2)`:
+
+| call | result |
+|---|---|
+| `return_latent=True`, no metrics | works — latent fitted, **both** surfaces decoded |
+| `calc_symmetric_chamfer=True` | `AttributeError: 'NoneType' object has no attribute 'point_coords'` |
+| `calc_assd=True` | the same |
+| `None` in the **first** slot, chamfer | the same |
+
+`compute_recon_loss` guards the *reconstructed* mesh at line 78 and reads the *original*
+unguarded at line 84. `get_mean_errors` is the only production caller and passes
+`calc_symmetric_chamfer=config["chamfer"]` and `calc_assd=config["assd"]`;
+`NSM/configs/default_config.json` carries **both as `true`**. So the supported capability
+is unreachable from the production entry point, and the ruling that says it is in use was
+written from the code one frame below the frame that breaks. That is what the row means by
+"the capability the maintainer actually uses can rot through any future slice in silence" —
+it had already rotted when the row was written, and writing the owed test is what said so.
+
+*Defect 3 — the func-key list is initialised on subject 0 and appended for every subject.*
+`recon_evaluation.py:292-298` does `if idx == 0: loss[key[5:]] = []` and then appends. A
+degenerate subject 0 contributes no `func_` keys at all — its `result_` is built by hand in
+the `except` branch — so nothing is initialised, and subject 1's keys raise `KeyError:
+'cart_thick_11_orig_mean'`. Reproduced against that loop verbatim. **It fires on the order
+of the validation set**: degenerate-first raises, healthy-first is fine.
+
+*Defect 4 — `regions_label` cannot take any value but its default.* The transfer honours
+it (`copy_scalars_from_other_mesh_to_current(orig_scalars_name=regions_label)`) and the
+read ignores it: pymskt's `get_cart_thickness_mean`/`_std` open `self.get_scalar("labels")`
+with the name hardcoded. Measured both ways — with the original carrying only the
+alternative name, `KeyError: 'labels'` from the original side; with the original carrying
+**both** names, `KeyError: 'labels'` from the reconstruction side, because the copy lands
+under the caller's name and the read still wants `"labels"`. There is no value other than
+`"labels"` that works. No caller in the repository passes it: `get_mean_errors` invokes
+these functions as `func(orig_meshes, recon_meshes)`, two positional arguments.
+
+*Defect 5 — `orig_cart` is unpacked and never read.* Measured: putting the string
+`"not a mesh at all"` or `None` in that slot changes no returned value. The original
+thickness is not computed here — it is read off whatever `"thickness (mm)"` array the
+original bone arrived carrying, while the reconstruction's is computed by pymskt's ray
+cast at this call. When the original has no such array the failure is a bare
+`KeyError: 'thickness (mm)'`. `CLAUDE.md`'s rule and issue #20's evidence both say the fix
+for an unread argument is to delete it, **not** to honour it, and here honouring it —
+computing the original's thickness at this call — would move every `orig_mean` this
+function has ever reported. It is not honoured; it is named.
+
+*Defect 6 — `compare_cart_thickness`'s default region set is the femur's, under a name
+that does not say so.* `CART_REGIONS` is `(11, 12, 13, 14, 15)` with the tibial and patellar
+indices sitting above it commented out, and is **byte-identical to
+`CART_REGIONS_DICT["femur"]`** (asserted `True`). `DICT_VALIDATION_FUNCS` exposes the bare
+`compare_cart_thickness` by name, so a config that names it for a tibia or patella model
+scores **20 NaN values** — measured — with pymskt's `UserWarning` and a `print` as the only
+signal, and `get_mean_errors` averages them into the logged metric.
+
+*Defect 7 — the mesh list's length is never checked, and every wrapper slices `[:2]`.*
+`compare_cart_thickness_tibia`, `_patella` and `_femur` are the same three lines and
+differ only in `cart_regions`; all three take `orig_meshes[:2]`. Measured on a six-mesh
+whole-joint list, `compare_cart_thickness_tibia` silently scores the **femur's** pair
+against the tibial region indices: eight NaNs, exit 0. The failures on the other counts
+name nothing either — one mesh gives `ValueError: not enough values to unpack (expected 2,
+got 1)`, three gives `too many values to unpack`, and
+`compare_cart_thickness_whole_joint` on the four-surface `["bone", "cart", "med_men",
+"lat_men"]` layout `CLAUDE.md` documents gives `KeyError: 'labels'`, from treating a
+cartilage mesh as the tibia's bone.
+
+*Defect 8 — the middle coercion branch is a no-op that prints.* Each of the three coercion
+blocks reads `elif isinstance(m, pymskt.mesh.Mesh): m = BoneMesh(m.mesh)`. **`Mesh.mesh`
+returns `self`** and `print`s "WARNING: Mesh is now synonymous with pyvista.PolyData and
+thus this property is redundant" — pymskt's source, read to confirm it rather than
+inferred. `create_mesh` returns a plain `mskt.mesh.Mesh` and `read_meshes` builds the
+originals as `Mesh(path)`, so **production takes this branch every time**: three `print`
+lines on stdout per subject per validation epoch, which is exactly what §8.0.G's slice
+existed to remove from this library. `BoneMesh(m.mesh)` and `BoneMesh(m)` are the same
+call.
+
+**Target shape (all permanent — this slice adds no transitional module).**
+
+- **An absent surface is scored `np.nan`, never constructed.** `compare_cart_thickness`
+  returns the full key set with every value `np.nan`, and one `WARNING` naming which
+  surface was missing, when the reconstructed bone, the reconstructed cartilage or the
+  original bone is `None`. The key set is the same one the working path returns, because
+  both build it from one `_region_keys` helper — a NaN path that assembles its own key
+  names is a second place for the contract to live. `CHANGELOG` *Fixed*; no `KNOWN_ISSUES`
+  § History entry, because the previous behaviour was a crash and `CLAUDE.md` says a bug
+  that always crashed leaves no results to interpret.
+- **`compute_recon_loss` treats a missing original like a missing reconstruction.** Four
+  lines, mirroring the guard already above it, and it is what makes `SCOPE` §2.5b's
+  supported half reachable with the metric flags the shipped config sets. In scope because
+  the N′ row's own deliverable is "the end-to-end `None`-surface reconstruction test #67
+  leaves owed", and that test is red without it — writing the test and leaving it xfailed
+  would be leaving the row undone.
+- **The func-key list is initialised where it is appended.** `loss.setdefault(key[5:],
+  []).append(val)` — one line, and the `idx == 0` special case that made the validation
+  epoch depend on subject order goes with it.
+- **`regions_label` refuses what pymskt cannot read**, with a message naming the hardcoded
+  `"labels"` and the two readers that hardcode it. Deleting the parameter is the fix
+  `CLAUDE.md` prescribes and it is a public signature change, so it goes to the **S row at
+  v0.4.0** by name, with the other seven. Refusing is not that change: every non-default
+  value raises today, and this only decides which exception and whether it says why.
+- **The mesh list's length is checked where it is sliced.** The three single-joint
+  wrappers and `compare_cart_thickness` require exactly two meshes per side;
+  `compare_cart_thickness_whole_joint` requires exactly six and states the order it
+  assumes (femur bone, femur cartilage, tibia, tibia, patella, patella) — which is
+  declared nowhere else in the repository, `mesh_names` being the only other place surface
+  order is written down. `CHANGELOG` *Breaking*: a six-mesh list into
+  `compare_cart_thickness_tibia` returns NaNs today and raises after.
+- **`CART_REGIONS = CART_REGIONS_DICT["femur"]`**, and the commented-out tibial and
+  patellar indices above it go — they are the dict's other two entries. Behaviourally
+  inert, asserted identical before the change.
+- **The coercion is one helper and two branches.** `_as_mesh(BoneMesh, m)` at all three
+  sites; the `.mesh` branch is deleted as the no-op it is. The conditional mutation stays
+  and is documented instead: a `BoneMesh` argument is mutated in place (it gains `labels`,
+  `thickness (mm)` and a `list_cartilage_meshes`) while a plain `Mesh` argument is copied.
+  Measured both ways. Making it uniform changes behaviour for a caller shape nobody in the
+  repository uses, which is the scope creep the last seven slices' budget misses were made
+  of.
+- **Docstrings on the module and all five functions**, carrying the three things a reader
+  cannot look up: the original's thickness is read and not computed, `regions_label` cannot
+  vary, and the whole-joint order.
+
+**Deliberately NOT in this slice, each for a stated reason.**
+
+- **Deleting `regions_label` and `orig_cart`.** Both are the `CLAUDE.md` remedy and both
+  are public signature changes. **§8.0.S**, by name, where the other seven are.
+- **Making the mutation uniform.** Above: no in-repo caller passes a `BoneMesh`, so it is
+  a behaviour change with no reported instance.
+- **`orig_std` and `recon_std` being computed and only their difference recorded**, while
+  the means record all three. Adding two keys changes the metric set every historical
+  wandb run is keyed on, for symmetry.
+- **The 0-point `CartilageMesh(None)` construction inside pymskt.** The segfault is
+  pymskt's to fix; NSM's job is not to hand it an empty mesh. Not reported upstream here —
+  `CLAUDE.md`'s tracker rule is that nothing is filed without the maintainer approving the
+  text, so it is named in the State block instead.
+- **`train/deprecated/train_deep_sdf_multi_surface_orig.py`'s copy of
+  `DICT_VALIDATION_FUNCS`.** §8.0.P.
+
+**Size budget, by part** — priced by what the language emits, per the generalisation seven
+slices have now paid for. Every `raise` and every `logger.warning` below is priced at its
+**physical** line count under `black` (a two-sentence message wraps to three lines, each
+interpolated argument takes one, plus the parens), not at one line per statement.
+
+| part | budget |
+|---|---|
+| module docstring | +12 |
+| `_region_keys` helper — signature, docstring, the four names | +11 |
+| the absent-surface guard + its `WARNING` + the NaN dict | +18 |
+| `_require_meshes` helper — signature, docstring, the `raise` | +14 |
+| its four call sites + the whole-joint six-mesh check | +11 |
+| `regions_label` refusal | +9 |
+| `_as_mesh` helper (+8), three coercion blocks 24 lines → 3 | −13 |
+| `compare_cart_thickness` docstring — the read-not-computed rule, `regions_label`, the mutation | +28 |
+| four wrapper docstrings | +22 |
+| `CART_REGIONS` as the dict's entry; the commented-out indices deleted | −6 |
+| `entropy` import and the commented-out KLD block deleted | −6 |
+| **net in `cartilage_func.py`** | **+100** |
+| `compute_recon_loss`: the missing-original guard + its `WARNING` | +10 |
+| `get_mean_errors`: `setdefault` | −1 |
+| **net in `NSM/`** | **+109** |
+
+Past **+130** is scope creep. Two thirds of it is documentation and refusals for a file
+that has neither; the slice adds three private helpers and no capability. Tests are
+additive and outside the budget.
+
+**Sequence** (one commit each; `make lint` clean and the full suite green at every step):
+
+1. this statement;
+2. characterization — the eight defects above, including the end-to-end `None`-surface
+   reconstruction #67 leaves owed. Strict xfails for the seven that change. **The segfault
+   is pinned in-process by the contract that replaces it, with the measured exit code in
+   the test's docstring**, not by a subprocess: a subprocess reproduction costs ~6 s of
+   import against a suite measured at 119 s under a 120 s target (§7.4), and rule 3 puts a
+   measurement that cannot be asserted in the docstring of the test it constrains;
+3. an absent surface is scored NaN instead of crashing the interpreter;
+4. a missing original surface is scored NaN, like a missing reconstruction;
+5. the func-key list is initialised where it is appended;
+6. `regions_label` refuses what pymskt cannot read;
+7. the mesh list's length is checked where it is sliced;
+8. `CART_REGIONS` is the femur entry, and the coercion loses its no-op branch;
+9. docstrings for the module and its five functions, then the deletion pass;
+10. docs sweep (`CHANGELOG` § Unreleased, `SCOPE` §2.5 and §2.5b, `ARCHITECTURE` §7's
+    accepted-and-ignored and silent-mutation rows, `KNOWN_ISSUES` § Open's `None`-surface
+    row) and this plan's State.
+
+**Verification per claim:**
+
+| Claim | Verification |
+|---|---|
+| a `None` reconstructed cartilage surface segfaults | run in its own process, exit status asserted **139** — recorded in the characterization's docstring, since a test that segfaults takes the suite with it; after commit 3 the in-process call is asserted to return the full key set as NaN |
+| the sibling path survives the same input | `compute_recon_loss` with `meshes=[mesh, None]` asserted to return `chamfer_1 = nan` and to log the surface index, today and after |
+| the `None` original breaks every metric flag | `reconstruct_mesh(path=[sphere, None], objects_per_decoder=2)` asserted to raise `AttributeError` under `calc_symmetric_chamfer` and under `calc_assd`, and to return a fitted latent and two decoded meshes with both flags off; after commit 4 all four run and the missing surface's chamfer and assd are `nan` |
+| the shipped config sets both flags | `default_config.json` asserted to carry `"chamfer": true` and `"assd": true`, so the failing path is the default one and not an option |
+| a degenerate subject 0 loses the func keys | the `recon_evaluation` loop driven with a degenerate result then a healthy one: `KeyError` asserted today, both orders asserted equal after commit 5 |
+| `regions_label` cannot vary | asserted `KeyError: 'labels'` today in **both** arrangements — the alternative name only, and both names present — and `ValueError` naming `regions_label` after commit 6; the default value asserted to still work |
+| `orig_cart` is never read | the same call with a mesh, with `None` and with a string in that slot asserted to return identical dicts, today and after |
+| the default region set is the femur's | `CART_REGIONS == CART_REGIONS_DICT["femur"]` asserted, and `compare_cart_thickness` on a tibial pair asserted to return 20 NaNs — the pin that says the constant is a femur default and not a neutral one |
+| a whole-joint list into a single-joint wrapper is silent | `compare_cart_thickness_tibia` on six meshes asserted to return all-NaN with exit 0 today, and to raise naming the count after commit 7 |
+| the four-surface layout dies unnamed | `compare_cart_thickness_whole_joint` on `["bone", "cart", "med_men", "lat_men"]` asserted `KeyError: 'labels'` today, and a message naming 6 and 4 after |
+| the `.mesh` branch is a no-op | `Mesh(...).mesh is that same object` asserted, and the full result dict of a production-shaped call (plain `mskt.mesh.Mesh` on both sides) asserted equal before and after commit 8 |
+| the coercion mutates one input shape and copies the other | the caller's point-data key set asserted to gain `labels` and `thickness (mm)` for a `BoneMesh` argument and to be unchanged for a `Mesh` argument — the documented contract, pinned so the docstring cannot drift |
+| every docstring describes the body | `test_docstring_signatures` covers the mechanical half |
+| the suite still passes | **1109 passed / 4 skipped / 3 xfailed** on `main` at `751c226` is the baseline every commit is compared against |
 ### 8.1 Make the library plural — added 2026-08-15
 
 > **Deferred 2026-08-26 — this is an upgrade, not the refactor.** All three bullets are
