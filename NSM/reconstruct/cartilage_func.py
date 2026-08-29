@@ -1,6 +1,11 @@
+import logging
+
+import numpy as np
 import pymskt
 from pymskt.mesh import BoneMesh, CartilageMesh
 from scipy.stats import entropy
+
+logger = logging.getLogger(__name__)
 
 CART_REGIONS = (
     # 2, # med tib
@@ -78,6 +83,24 @@ def compare_cart_thickness_whole_joint(orig_meshes, recon_meshes, regions_label=
     return dict_results
 
 
+def _region_keys(cart_region):
+    """
+    The four keys recorded for one cartilage region, in one place.
+
+    ``get_mean_errors`` parses these names: it matches ``cart_thick*_orig_mean`` and then
+    reaches for ``..._recon_mean`` and ``..._mean_thick_diff`` by name, to build a
+    correlation and an RMSE. A result dict missing any of the four raises there, two
+    frames from here, so the scored path and the NaN path build their keys from this
+    function rather than each writing the set out.
+    """
+    return (
+        f"func_cart_thick_{cart_region}_orig_mean",
+        f"func_cart_thick_{cart_region}_recon_mean",
+        f"func_cart_thick_{cart_region}_mean_thick_diff",
+        f"func_cart_thick_{cart_region}_std_thick_diff",
+    )
+
+
 def compare_cart_thickness(
     orig_meshes,
     recon_meshes,
@@ -86,6 +109,28 @@ def compare_cart_thickness(
 ):
     orig_bone, orig_cart = orig_meshes
     recon_bone, recon_cart = recon_meshes
+
+    # A surface whose SDF never crosses zero comes back as None (`mesh.main._finish_meshes`),
+    # which is the ordinary state of a decoder early in training -- when validation runs.
+    # Handing that None on builds a 0-point mesh and vtkOBBTree takes the interpreter down
+    # with SIGSEGV, which no `except` upstream can catch. compute_recon_loss scores the
+    # same subject NaN; this does the same.
+    absent = [
+        name
+        for name, mesh in (
+            ("the original bone", orig_bone),
+            ("the reconstructed bone", recon_bone),
+            ("the reconstructed cartilage", recon_cart),
+        )
+        if mesh is None
+    ]
+    if absent:
+        logger.warning(
+            "Scoring every cartilage region NaN: %s absent from this subject.",
+            ", ".join(absent),
+        )
+        return {key: np.nan for region in cart_regions for key in _region_keys(region)}
+
     # Check Types & Create Bone/CartilageMesh objects as appropriate
     # RECON_BONE
     if isinstance(recon_bone, pymskt.mesh.BoneMesh):
@@ -123,20 +168,17 @@ def compare_cart_thickness(
     dict_results = {}
 
     for cart_region in cart_regions:
-        # MEAN difference
         orig_mean = orig_bone.get_cart_thickness_mean(cart_region)
         recon_mean = recon_bone.get_cart_thickness_mean(cart_region)
-        mean_diff = orig_mean - recon_mean
-
-        # STD difference
         orig_std = orig_bone.get_cart_thickness_std(cart_region)
         recon_std = recon_bone.get_cart_thickness_std(cart_region)
-        std_diff = orig_std - recon_std
 
-        dict_results[f"func_cart_thick_{cart_region}_orig_mean"] = orig_mean
-        dict_results[f"func_cart_thick_{cart_region}_recon_mean"] = recon_mean
-        dict_results[f"func_cart_thick_{cart_region}_mean_thick_diff"] = mean_diff
-        dict_results[f"func_cart_thick_{cart_region}_std_thick_diff"] = std_diff
+        dict_results.update(
+            zip(
+                _region_keys(cart_region),
+                (orig_mean, recon_mean, orig_mean - recon_mean, orig_std - recon_std),
+            )
+        )
 
     # # Compute KL divergence between two distributions
     # thickness_kld = entropy(orig_array, qk=recon_array)

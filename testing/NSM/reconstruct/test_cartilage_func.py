@@ -18,9 +18,6 @@ artifact; only its constancy is used, and no assertion here depends on the numbe
 
 import json
 import os
-import subprocess
-import sys
-import textwrap
 
 import numpy as np
 import pytest
@@ -85,64 +82,25 @@ class TestAnAbsentReconstructedSurface:
     programming error.
     """
 
-    def test_a_none_reconstructed_cartilage_does_not_complete(self, tmp_path):
+    @pytest.mark.parametrize("missing_index", [0, 1])
+    def test_a_none_reconstructed_surface_is_scored_nan(self, missing_index):
         """
-        Run in a child process because it does not raise: ``CartilageMesh(None)`` builds a
-        **0-point** mesh, ``vtkOBBTree`` reports "Can't build OBB tree - no data
-        available!", and the interpreter dies. Measured on this checkout: **exit 139,
-        `SIGSEGV`**. No ``except`` can catch that, including ``get_mean_errors``'
-        ``except NoZeroLevelSetError``, so the training run dies with it.
-
-        Asserted as "does not complete" rather than "returns 139": the exact signal is
-        VTK's to choose, and the contract being characterized is that the call has no
-        successful outcome. Retired by §8.0.N′ commit 3, which scores it NaN instead.
-        """
-        script = textwrap.dedent(
-            """
-            import numpy as np, pyvista as pv
-            from pymskt.mesh import Mesh
-            from NSM.reconstruct.cartilage_func import compare_cart_thickness
-
-            sphere = pv.Sphere(radius=1.0, theta_resolution=8, phi_resolution=8).triangulate()
-            bone = Mesh(sphere)
-            n = bone.GetNumberOfPoints()
-            bone.point_data["labels"] = np.full(n, 11, dtype=np.int64)
-            bone.point_data["thickness (mm)"] = np.full(n, 1.5)
-            compare_cart_thickness([bone, None], [Mesh(sphere), None], cart_regions=(11,))
-            print("COMPLETED")
-            """
-        )
-        path = tmp_path / "none_cartilage.py"
-        path.write_text(script, encoding="utf-8")
-        finished = subprocess.run(
-            [sys.executable, str(path)],
-            capture_output=True,
-            text=True,
-            cwd=os.getcwd(),
-            timeout=300,
-        )
-        assert finished.returncode != 0
-        assert "COMPLETED" not in finished.stdout
-
-    @pytest.mark.xfail(
-        strict=True, reason="§8.0.N′ commit 3: an absent surface is scored NaN, not built"
-    )
-    def test_a_none_reconstructed_bone_is_scored_nan(self):
-        """
-        The bone slot, which raises rather than crashing: ``AttributeError: 'NoneType'
-        object has no attribute 'GetNumberOfPoints'``, from inside pymskt. The cartilage
-        slot cannot be exercised in-process until commit 3 — it is the segfault above —
-        so this is deliberately not parametrized over the two slots yet.
+        Index 0 is the bone, index 1 the cartilage, and before the guard they failed
+        differently: the bone raised ``AttributeError: 'NoneType' object has no attribute
+        'GetNumberOfPoints'`` from inside pymskt, and **the cartilage killed the
+        interpreter**. ``CartilageMesh(None)`` builds a 0-point mesh, ``vtkOBBTree``
+        reports "Can't build OBB tree - no data available!", and the process dies —
+        measured in its own child process on this checkout, **exit 139, `SIGSEGV`**.
+        That is why the characterization for this one ran in a subprocess and why it is
+        gone: no ``except`` catches a segfault, so there is nothing to assert in-process
+        except the contract that replaces it.
         """
         orig_meshes, recon_meshes = _pair()
-        recon_meshes[0] = None
+        recon_meshes[missing_index] = None
         result = compare_cart_thickness(orig_meshes, recon_meshes, cart_regions=(11,))
         assert set(result) == REGION_11_KEYS
         assert all(np.isnan(value) for value in result.values())
 
-    @pytest.mark.xfail(
-        strict=True, reason="§8.0.N′ commit 3: an absent surface is scored NaN, not built"
-    )
     def test_a_none_original_bone_is_scored_nan(self):
         """Today: ``KeyError: 'labels'``, raised while copying scalars off ``None``."""
         orig_meshes, recon_meshes = _pair()
