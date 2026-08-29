@@ -368,6 +368,35 @@ class TestTheCoercion:
         mesh = _plain(1.0)
         assert mesh.mesh is mesh
 
+    def test_the_scored_values_are_what_the_geometry_gives(self):
+        """
+        The pin that made deleting the ``.mesh`` branch provably inert. A
+        production-shaped call — a plain ``mskt.mesh.Mesh`` on both sides, which is what
+        ``create_mesh`` and ``read_meshes`` produce — was run before and after the
+        deletion and the two result dicts differed in nothing but the three lines of
+        stdout the branch printed. These are those numbers, kept so a later change to the
+        coercion cannot move them quietly.
+
+        Both regions read the same reconstructed thickness because the reconstruction is
+        a sphere: the ray passes clean through and measures the diameter, 2 × 1.1.
+        """
+        orig_bone = Mesh(_sphere(1.0))
+        n_points = orig_bone.GetNumberOfPoints()
+        labels = np.full(n_points, 11, dtype=np.int64)
+        labels[n_points // 2 :] = 12
+        orig_bone.point_data["labels"] = labels
+        orig_bone.point_data["thickness (mm)"] = np.linspace(1.0, 2.0, n_points)
+
+        result = compare_cart_thickness(
+            [orig_bone, _plain(1.1)], [_plain(1.0), _plain(1.1)], cart_regions=(11, 12)
+        )
+        assert result["func_cart_thick_11_orig_mean"] == pytest.approx(1.2448979591836733)
+        assert result["func_cart_thick_11_recon_mean"] == pytest.approx(2.1999999960322536)
+        assert result["func_cart_thick_11_mean_thick_diff"] == pytest.approx(-0.9551020368485803)
+        assert result["func_cart_thick_11_std_thick_diff"] == pytest.approx(0.1471653092003338)
+        assert result["func_cart_thick_12_orig_mean"] == pytest.approx(1.7551020408163265)
+        assert result["func_cart_thick_12_recon_mean"] == pytest.approx(2.1999999902320386)
+
     def test_a_bonemesh_argument_and_a_plain_mesh_argument_score_the_same(self):
         orig_meshes, recon_meshes = _pair()
         from_plain = compare_cart_thickness(orig_meshes, recon_meshes, cart_regions=(11,))

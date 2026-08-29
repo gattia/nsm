@@ -1,28 +1,22 @@
 import logging
 
 import numpy as np
-import pymskt
 from pymskt.mesh import BoneMesh, CartilageMesh
 from scipy.stats import entropy
 
 logger = logging.getLogger(__name__)
 
-CART_REGIONS = (
-    # 2, # med tib
-    # 3, # lat tib
-    # 4, # pat
-    11,  # troch
-    12,  # med wb fem
-    13,  # lat wb fem
-    14,  # med post fem
-    15,  # lat post fem
-)
-
 CART_REGIONS_DICT = {
-    "tibia": (2, 3),
+    "tibia": (2, 3),  # medial tibial, lateral tibial
     "patella": (4,),
+    # trochlea, medial and lateral weight-bearing, medial and lateral posterior
     "femur": (11, 12, 13, 14, 15),
 }
+
+#: What ``compare_cart_thickness`` scores when the caller names no regions -- the femur's
+#: subregions, not a joint-neutral set. A config naming the bare ``compare_cart_thickness``
+#: in ``recon_val_func_name`` for a tibia or patella model gets NaN for every region.
+CART_REGIONS = CART_REGIONS_DICT["femur"]
 
 
 def _require_meshes(caller, n_expected, layout, orig_meshes, recon_meshes):
@@ -132,6 +126,26 @@ def compare_cart_thickness_whole_joint(orig_meshes, recon_meshes, regions_label=
     return dict_results
 
 
+def _as_mesh(mesh_class, mesh):
+    """
+    Coerce to ``mesh_class``, keeping the object when it already is one.
+
+    Two branches, not three. The third used to read ``elif isinstance(mesh,
+    pymskt.mesh.Mesh): mesh_class(mesh.mesh)``, and ``Mesh.mesh`` **returns self** while
+    printing "this property is redundant" -- so it was the fallback call plus a line of
+    stdout, in the branch production takes every time: ``create_mesh`` and ``read_meshes``
+    both produce the plain ``Mesh``, three of them per subject per validation epoch.
+
+    A mesh that already is ``mesh_class`` keeps its identity and is therefore **mutated**
+    by the caller, gaining ``labels``, ``thickness (mm)`` and a ``list_cartilage_meshes``;
+    anything else is copied and the caller's object is untouched. Nothing in NSM passes
+    the former.
+    """
+    if isinstance(mesh, mesh_class):
+        return mesh
+    return mesh_class(mesh)
+
+
 def _region_keys(cart_region):
     """
     The four keys recorded for one cartilage region, in one place.
@@ -191,30 +205,9 @@ def compare_cart_thickness(
         )
         return {key: np.nan for region in cart_regions for key in _region_keys(region)}
 
-    # Check Types & Create Bone/CartilageMesh objects as appropriate
-    # RECON_BONE
-    if isinstance(recon_bone, pymskt.mesh.BoneMesh):
-        pass
-    elif isinstance(recon_bone, pymskt.mesh.Mesh):
-        recon_bone = BoneMesh(recon_bone.mesh)
-    else:
-        recon_bone = BoneMesh(recon_bone)
-
-    # RECON_CART
-    if isinstance(recon_cart, pymskt.mesh.CartilageMesh):
-        pass
-    elif isinstance(recon_cart, pymskt.mesh.Mesh):
-        recon_cart = CartilageMesh(recon_cart.mesh)
-    else:
-        recon_cart = CartilageMesh(recon_cart)
-
-    # ORIG_BONE
-    if isinstance(orig_bone, pymskt.mesh.BoneMesh):
-        pass
-    elif isinstance(orig_bone, pymskt.mesh.Mesh):
-        orig_bone = BoneMesh(orig_bone.mesh)
-    else:
-        orig_bone = BoneMesh(orig_bone)
+    recon_bone = _as_mesh(BoneMesh, recon_bone)
+    recon_cart = _as_mesh(CartilageMesh, recon_cart)
+    orig_bone = _as_mesh(BoneMesh, orig_bone)
 
     # transfer region scalars to recon_bone
     # should add 'labels' to the reconned bone (these are cartialge regions)
