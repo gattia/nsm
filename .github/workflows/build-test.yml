@@ -23,6 +23,11 @@ jobs:
     
     steps:
       - uses: actions/checkout@v2
+        with:
+          # setuptools-scm derives the version from the git tag, and checkout's default
+          # depth-1 clone fetches no tags -- which does not fail the build, it produces
+          # a version that quietly says "distance unknown". Full history is the fix.
+          fetch-depth: 0
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v2
         with:
@@ -48,6 +53,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
+        with:
+          # setuptools-scm derives the version from the git tag, and checkout's default
+          # depth-1 clone fetches no tags -- which does not fail the build, it produces
+          # a version that quietly says "distance unknown". Full history is the fix.
+          fetch-depth: 0
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v2
         with:

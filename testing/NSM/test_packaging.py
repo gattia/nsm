@@ -120,13 +120,14 @@ class TestWhereTheVersionComesFrom:
         path, _ = wheel
         assert path.exists()
 
-    @pytest.mark.xfail(strict=True, reason="§8.0.O: the version is the literal in NSM/__init__.py")
     def test_the_version_is_derived_and_not_written_down(self, wheel):
         """
-        With no ``.git`` present, a derived version can only be the declared fallback. A
-        version written into a file would come through unchanged instead, which is the
-        whole failure mode: ``NSM.__version__`` has said ``0.2.0`` for 269 commits and 34
-        breaking changes.
+        Was a strict xfail: the wheel came out as ``0.2.0``, the literal.
+
+        With no ``.git`` present a derived version can only be the declared fallback,
+        where a version written into a file comes through unchanged instead. That is the
+        whole failure mode -- ``NSM.__version__`` said ``0.2.0`` for 269 commits and 34
+        breaking changes, and ``0.0.1`` for years before that.
         """
         fallback = re.search(
             r'^fallback_version\s*=\s*"([^"]+)"',
@@ -137,8 +138,8 @@ class TestWhereTheVersionComesFrom:
         path, _ = wheel
         assert path.name.split("-")[1] == fallback.group(1)
 
-    @pytest.mark.xfail(strict=True, reason="§8.0.O: NSM/__init__.py hardcodes __version__")
     def test_no_source_file_hardcodes_the_version(self):
+        """Was a strict xfail: ``__version__ = "0.2.0"`` sat at the bottom of the file."""
         source = (REPO / "NSM" / "__init__.py").read_text(encoding="utf-8")
         assert not re.search(r'^__version__\s*=\s*["\']', source, re.MULTILINE)
 

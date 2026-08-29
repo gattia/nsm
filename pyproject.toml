@@ -35,11 +35,6 @@ dynamic = ["version"]
 Homepage = "https://github.com/gattia/NSM/"
 Documentation = "https://anthonygattiphd.com/NSM/" 
 
-# Dynamic metadata - E.g., version here. 
-# https://setuptools.pypa.io/en/latest/userguide/pyproject_config.html#dynamic-metadata
-[tool.setuptools.dynamic]
-version = {attr = "NSM.__version__"} 
-
 # setuptools specific items
 [tool.setuptools.packages]
 # `namespaces` defaults to true here, which is why NSM.configs is found at all -- it has
@@ -95,8 +90,16 @@ skip = ["*-win32", "*i686", "*aarch64", "*ppc64le", "*s390x", "*musllinux*"]
 # test-command = "pytest {project}"
 # test-requires = ["pytest"]
 
-# https://github.com/pypa/setuptools_scm/
-# [tool.setuptools_scm]
+# The version is the git tag, and nothing else. It used to be
+# `[tool.setuptools.dynamic] version = {attr = "NSM.__version__"}` reading a string
+# literal, which said 0.2.0 for 269 commits and 34 breaking changes -- the same failure
+# that left it at 0.0.1 for years. https://github.com/pypa/setuptools_scm/
+[tool.setuptools_scm]
+# Without this a tree with no git metadata does not build at all -- measured, `pip wheel`
+# stops at "Getting requirements to build wheel". That tree is a real case: a GitHub
+# source zip, a vendored copy, `git archive`. A version that says it does not know is a
+# better answer than a build failure, and better than a stale number that looks real.
+fallback_version = "0.0.0+unknown"
 
 [tool.coverage]
 run.omit = ["testing/*", "*/*_test.py"]
