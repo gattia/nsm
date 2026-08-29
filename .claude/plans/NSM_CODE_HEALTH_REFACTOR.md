@@ -108,6 +108,17 @@
   difference is what the string claims**, which is why it was worth a ruling rather than a
   default. The no-tag case is unchanged (`0.0.1.dev1+unknown.g<sha>`): with no tag there is
   nothing to be past.
+- **The derived version has one remaining way to be silently stale, and it was live on the
+  dev machine.** `importlib.metadata` scans `sys.path`, and an editable install puts the
+  source tree on it — so a leftover `NSM.egg-info/PKG-INFO` in the repo root is found
+  *before* site-packages' `dist-info` and wins. Measured on this checkout: the egg-info
+  said `0.2.0`, the installed distribution said `0.0.1`, and `NSM.__version__` reported the
+  egg-info. Not even `pip install -e . --force-reinstall --no-cache-dir` clears it — pip
+  rewrites site-packages and never touches the source tree. **The first version of the test
+  for this could not fail**, because it compared `version("NSM")` against the egg-info and
+  `version()` reads the egg-info: a claim checked against itself. Caught by planting a
+  mismatched `PKG-INFO` and watching it stay green. The assertion is now on the *set* of
+  discoverable distributions, verified red on the real state and green after `make clean`.
 - **The tag is not in the PR, deliberately.** Cutting it is outward-facing and irreversible
   in a way a commit is not, so it is the maintainer's action. The PR body carries the exact
   command.

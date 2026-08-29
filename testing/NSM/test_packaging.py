@@ -163,6 +163,45 @@ class TestWhereTheVersionComesFrom:
         source = (REPO / "NSM" / "__init__.py").read_text(encoding="utf-8")
         assert not re.search(r'^__version__\s*=\s*["\']', source, re.MULTILINE)
 
+    def test_only_one_nsm_distribution_is_discoverable(self):
+        """
+        The one way the derived version can still be wrong, and it is invisible.
+
+        ``importlib.metadata`` scans ``sys.path``, and an editable install puts the source
+        tree on it -- so a leftover ``NSM.egg-info/PKG-INFO`` in the repo root is found
+        *before* the ``dist-info`` in site-packages and wins. Measured: with a stale one
+        present, ``version("NSM")`` reported ``0.3.1.dev2`` while site-packages held
+        ``0.3.1.dev3``; deleting it gave ``dev3`` immediately, and not even
+        ``pip install -e . --force-reinstall --no-cache-dir`` cleared it, because pip
+        rewrites site-packages and never touches the source tree. ``make clean`` does.
+
+        That matters more here than it would elsewhere: the point of deriving the version
+        from the tag is that it cannot silently go stale, and this is the remaining way it
+        can.
+
+        **Asserted on the set of discoverable distributions, not by comparing
+        ``version("NSM")`` against the egg-info** -- the first draft did that and could not
+        fail, because ``version()`` reads the shadow too and was being compared with
+        itself. Verified by planting a mismatched ``PKG-INFO``: the first version stayed
+        green, this one goes red.
+        """
+        from importlib.metadata import distributions
+
+        found = {}
+        for dist in distributions():
+            name = (dist.metadata["Name"] or "").lower().replace("-", "_")
+            if name == "nsm":
+                found[str(getattr(dist, "_path", dist))] = dist.version
+        if not found:
+            pytest.skip("NSM is importable but not installed")
+
+        assert len(set(found.values())) == 1, (
+            f"more than one NSM distribution is on sys.path and they disagree: {found}. "
+            f"importlib.metadata takes the first, so NSM.__version__ reports whichever "
+            f"comes earlier -- usually a stale *.egg-info in the repo root. Run "
+            f"`make clean`."
+        )
+
     def test_the_reported_version_matches_the_installed_distribution(self):
         """
         True before and after, and the point of the change is that it stays true without
