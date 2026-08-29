@@ -25,34 +25,83 @@ CART_REGIONS_DICT = {
 }
 
 
+def _require_meshes(caller, n_expected, layout, orig_meshes, recon_meshes):
+    """
+    Refuse a mesh list of the wrong length, at the function that slices it.
+
+    Every wrapper took ``[:2]`` and nothing checked what it sliced from. Six meshes into a
+    single-joint wrapper scored the **femur's** pair against that joint's region indices
+    and returned NaN for every one, exit 0; four meshes -- the ``["bone", "cart",
+    "med_men", "lat_men"]`` layout -- into the whole-joint function treated the medial
+    meniscus as the tibia's bone and gave ``KeyError: 'labels'``. Neither named the count,
+    the argument or the function.
+    """
+    for name, meshes in (("orig_meshes", orig_meshes), ("recon_meshes", recon_meshes)):
+        if len(meshes) != n_expected:
+            raise ValueError(
+                f"{caller} needs exactly {n_expected} meshes in {name}, in the order "
+                f"({layout}); got {len(meshes)}."
+            )
+
+
 def compare_cart_thickness_tibia(orig_meshes, recon_meshes, regions_label="labels"):
+    _require_meshes(
+        "compare_cart_thickness_tibia",
+        2,
+        "tibia bone, tibia cartilage",
+        orig_meshes,
+        recon_meshes,
+    )
     return compare_cart_thickness(
-        orig_meshes[:2],
-        recon_meshes[:2],
+        orig_meshes,
+        recon_meshes,
         cart_regions=CART_REGIONS_DICT["tibia"],
         regions_label=regions_label,
     )
 
 
 def compare_cart_thickness_patella(orig_meshes, recon_meshes, regions_label="labels"):
+    _require_meshes(
+        "compare_cart_thickness_patella",
+        2,
+        "patella bone, patella cartilage",
+        orig_meshes,
+        recon_meshes,
+    )
     return compare_cart_thickness(
-        orig_meshes[:2],
-        recon_meshes[:2],
+        orig_meshes,
+        recon_meshes,
         cart_regions=CART_REGIONS_DICT["patella"],
         regions_label=regions_label,
     )
 
 
 def compare_cart_thickness_femur(orig_meshes, recon_meshes, regions_label="labels"):
+    _require_meshes(
+        "compare_cart_thickness_femur",
+        2,
+        "femur bone, femur cartilage",
+        orig_meshes,
+        recon_meshes,
+    )
     return compare_cart_thickness(
-        orig_meshes[:2],
-        recon_meshes[:2],
+        orig_meshes,
+        recon_meshes,
         cart_regions=CART_REGIONS_DICT["femur"],
         regions_label=regions_label,
     )
 
 
 def compare_cart_thickness_whole_joint(orig_meshes, recon_meshes, regions_label="labels"):
+    _require_meshes(
+        "compare_cart_thickness_whole_joint",
+        6,
+        "femur bone, femur cartilage, tibia bone, tibia cartilage, "
+        "patella bone, patella cartilage",
+        orig_meshes,
+        recon_meshes,
+    )
+
     dict_results = {}
 
     fem_results = compare_cart_thickness(
@@ -115,6 +164,8 @@ def compare_cart_thickness(
             'be called "labels" on the original mesh and on the reconstruction. Rename '
             "the array on the original mesh instead."
         )
+
+    _require_meshes("compare_cart_thickness", 2, "bone, cartilage", orig_meshes, recon_meshes)
 
     orig_bone, orig_cart = orig_meshes
     recon_bone, recon_cart = recon_meshes

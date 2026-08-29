@@ -318,38 +318,30 @@ class TestTheMeshListLength:
             recon_meshes += [_plain(1.0), _plain(1.1)]
         return orig_meshes, recon_meshes
 
-    @pytest.mark.xfail(
-        strict=True, reason="§8.0.N′ commit 7: the length is checked where it is sliced"
-    )
     def test_a_whole_joint_list_into_the_tibia_wrapper_is_refused(self):
         """
-        Today it returns eight NaNs and exits 0: ``[:2]`` takes the **femur's** pair and
-        scores it against the tibial region indices. The silent case, and the reason the
-        check is worth its lines.
+        Before the check it returned eight NaNs and exited 0: ``[:2]`` took the
+        **femur's** pair and scored it against the tibial region indices. The silent
+        case, and the reason the check is worth its lines.
         """
         orig_meshes, recon_meshes = self._whole_joint_lists(3)
         with pytest.raises(ValueError, match="6"):
             compare_cart_thickness_tibia(orig_meshes, recon_meshes)
 
-    @pytest.mark.xfail(
-        strict=True, reason="§8.0.N′ commit 7: the length is checked where it is sliced"
-    )
     @pytest.mark.parametrize("n_meshes", [1, 3])
     def test_a_pair_of_the_wrong_length_is_refused_by_name(self, n_meshes):
-        """Today: ``ValueError: not enough values to unpack``, or ``too many``."""
+        """Before the check: ``ValueError: not enough values to unpack``, or ``too many``,
+        naming neither the function nor the count it wanted."""
         meshes = [_original_bone()] + [_plain(1.1)] * (n_meshes - 1)
         with pytest.raises(ValueError, match="compare_cart_thickness"):
             compare_cart_thickness(meshes, list(meshes), cart_regions=(11,))
 
-    @pytest.mark.xfail(
-        strict=True, reason="§8.0.N′ commit 7: the length is checked where it is sliced"
-    )
     def test_the_four_surface_layout_is_refused_by_name(self):
         """
         ``["bone", "cart", "med_men", "lat_men"]`` is the four-surface femur layout
-        ``CLAUDE.md`` documents. Into the whole-joint function it gives
-        ``KeyError: 'labels'`` today, from treating the medial meniscus as the tibia's
-        bone — a message that names neither the count nor the function.
+        ``CLAUDE.md`` documents. Into the whole-joint function it gave
+        ``KeyError: 'labels'``, from treating the medial meniscus as the tibia's bone — a
+        message that named neither the count nor the function.
         """
         orig_meshes = [_original_bone(11), _plain(1.1), _plain(1.1), _plain(1.1)]
         recon_meshes = [_plain(1.0), _plain(1.1), _plain(1.1), _plain(1.1)]
