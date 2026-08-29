@@ -209,11 +209,9 @@ class TestFuncKeysAcrossSubjects:
         result = self._mean_errors(monkeypatch, degenerate_first=False)
         assert result["cart_thick_11_orig_mean"] == pytest.approx(1.5)
 
-    @pytest.mark.xfail(
-        strict=True, reason="§8.0.N′ commit 5: the key list is initialised where it is appended"
-    )
     def test_a_degenerate_first_subject_collects_them_too(self, monkeypatch):
-        """Today: ``KeyError: 'cart_thick_11_orig_mean'``, from the second subject."""
+        """Before the fix: ``KeyError: 'cart_thick_11_orig_mean'``, from the second
+        subject — the one that had results."""
         result = self._mean_errors(monkeypatch, degenerate_first=True)
         assert result["cart_thick_11_orig_mean"] == pytest.approx(1.5)
 

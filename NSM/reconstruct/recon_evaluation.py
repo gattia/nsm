@@ -304,12 +304,14 @@ def get_mean_errors(
                 loss[f"assd_{mesh_idx}"].append(result_[f"assd_{mesh_idx}"])
 
         # if a function was given - append its results.
+        # setdefault, not `if idx == 0`: a degenerate subject 0 contributes no func_ keys
+        # at all -- the except branch above builds its result dict by hand -- so keying
+        # the list's creation on the first subject made the epoch depend on the order of
+        # the validation set, and raised KeyError on the second subject when it lost.
         if recon_func is not None:
             for key, val in result_.items():
                 if "func_" == key[:5]:
-                    if idx == 0:
-                        loss[key[5:]] = []
-                    loss[key[5:]].append(val)
+                    loss.setdefault(key[5:], []).append(val)
 
         if log_wandb is True:
             wandb.finish()
