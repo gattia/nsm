@@ -10,6 +10,9 @@ building it are entries in `docs/KNOWN_ISSUES.md`, each naming the test that pin
 pytest testing/NSM/regression/ -q      # ~1 min; some tests skip without a GPU
 pytest testing/NSM/regression/ -q -rx  # ... and list the strict xfails and their issues
 make test                              # runs it along with everything else
+
+# Release-time only: the real shipped checkpoints, 275 MB and 260 MB, never in CI.
+NSM_SHIPPED_MODELS=/path/to/NSM_MODELS pytest testing/NSM/regression/test_shipped_checkpoints.py
 ```
 
 CI needs no change: `.github/workflows/build-test.yml` already runs `make test`, which is
