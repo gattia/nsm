@@ -212,14 +212,14 @@ class TestTwoStagePadding:
 
 class TestNormTypeConstructorDefault:
     """
-    §8.0.O(b): the constructor still defaults ``conv_norm_type`` to ``"batch"`` while
-    every config that has ever trained says ``"layer"``.
+    §8.0.O(b): the constructor defaults ``conv_norm_type`` to ``"layer"`` from v0.3.0,
+    which is what every config that has ever trained says.
 
-    Unreachable through ``load_model`` since §8.0.H made the key required -- and reachable
-    by direct construction, which is exactly what the downstream consumer does
-    (``kneepipeline/steps/run_nsm.py`` builds ``TriplanarDecoder(**params)`` by hand).
-    That consumer passes ``conv_norm_type`` explicitly, so the change costs it nothing;
-    what the default silently cost was a fresh model built without one.
+    It was ``"batch"``, unreachable through ``load_model`` since §8.0.H made the key
+    required -- and reachable by direct construction, which is exactly what the downstream
+    consumer does (``kneepipeline/steps/run_nsm.py`` builds ``TriplanarDecoder(**params)``
+    by hand). That consumer passes ``conv_norm_type`` explicitly, so the change costs it
+    nothing; what the old default silently cost was a fresh model built without one.
 
     Changing a public-stable class's signature is a Breaking change, which is why this
     waited for the release rather than riding with §8.0.H.
@@ -234,14 +234,14 @@ class TestNormTypeConstructorDefault:
         with pytest.raises(KeyError, match="conv_norm_type"):
             _get_triplanar_params(dict(old_triplanar_config(), padding=0.1, conv_activation=None))
 
-    @pytest.mark.xfail(strict=True, reason='§8.0.O(b): the constructor still defaults to "batch"')
     def test_direct_construction_gets_the_trained_normalization(self):
+        """Was a strict xfail: the signature said ``"batch"``, so this built BatchNorm2d."""
         from NSM.models.triplanar import TriplanarDecoder
 
         assert self.norm_types(TriplanarDecoder(latent_dim=8, **TINY)) == ["LayerNorm"]
 
-    @pytest.mark.xfail(strict=True, reason='§8.0.O(b): VAEDecoder still defaults to "batch"')
     def test_the_vae_default_matches(self):
+        """Was a strict xfail. Both constructors moved; one without the other is the trap."""
         from NSM.models.triplanar import VAEDecoder
 
         assert self.norm_types(VAEDecoder(latent_dim=8, out_features=24, hidden_dims=[8, 8])) == [

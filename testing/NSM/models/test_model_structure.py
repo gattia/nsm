@@ -156,15 +156,22 @@ class TestTheOptInConvActivation:
         with torch.no_grad():
             assert vae(torch.randn(2, LATENT)).shape[1] == vae.out_features
 
-    def test_it_goes_after_the_norm(self):
+    @pytest.mark.parametrize("norm_type,norm", [("layer", "LayerNorm"), ("batch", "BatchNorm2d")])
+    def test_it_goes_after_the_norm(self, norm_type, norm):
         """
         Placement is ``conv -> norm -> activation`` and is provisional -- which of the two
         orderings is right is part of what the retrain settles
         (``NSM_TRAINING_IDEAS.md`` Idea 13). Pinned so that changing it is a decision
         someone makes, not a diff someone lands.
+
+        Both norm types, stated rather than defaulted: this asserted the placement through
+        whatever the signature default happened to be, so moving that default from
+        ``"batch"`` to ``"layer"`` in v0.3.0 turned it red for a reason that had nothing to
+        do with placement.
         """
-        order = [type(m).__name__ for m in build_vae(conv_activation="leaky_relu").decoder[:3]]
-        assert order == ["ConvTranspose2d", "BatchNorm2d", "LeakyReLU"], order
+        vae = build_vae(conv_activation="leaky_relu", norm_type=norm_type)
+        order = [type(m).__name__ for m in vae.decoder[:3]]
+        assert order == ["ConvTranspose2d", norm, "LeakyReLU"], order
 
     def test_an_unknown_activation_is_refused_by_name(self):
         """
