@@ -3434,6 +3434,215 @@ is: this slice adds one private helper and no capability. Tests are additive and
 | every docstring describes the body | `test_docstring_signatures` covers the mechanical half; the two traps (`Final` → `warmed_up`, `LogAnneal`'s `n_epochs`) are asserted by building each schedule from a config entry and checking the value that arrives |
 | the suite still passes | **1037 passed / 1 skipped / 3 xfailed** on `main` at `a5ec489` is the baseline every commit is compared against |
 
+### 8.0.O v0.3.0 release — plan statement (2026-08-29)
+
+Every number below was re-run against `main` at `902634d` before it was written. Three of
+the row's five items turned out to say something different from what was measured, and one
+of them — the wheel gap — is half false in `SCOPE.md` today.
+
+**What the row says and what is there.** The tag is `v0.2.0`, cut 2026-08-19. `main` is
+**269 commits** past it and `CHANGELOG.md` § Unreleased holds **77 entries, 34 of them
+Breaking**. `NSM/__init__.py` carries `__version__ = "0.2.0"` as a string literal, so the
+one consumer that exists — `kneepipeline`, which imports a checked-out working tree from
+`DEPENDENCIES/nsm` — is told it is running v0.2.0 while running 34 breaking changes past
+it. That is §10.1's "a hand-edited literal is exactly why the version sat at `0.0.1` for
+years", live, at ten days old rather than four years.
+
+**The item that made this slice jump the queue.** `NSM/_verbose_deprecation.py` promises
+one release of overlap and says *delete at v0.4.0*. It is in **neither** tag —
+`git ls-tree v0.1.0` and `v0.2.0` both find no such file — so until v0.3.0 exists its
+removal can never come due and the bridge is permanent by default.
+
+#### What is actually wrong, measured
+
+Six items. The first two are one shape — *a refusal that is right, delivered one key per
+attempt* — and they are what §8.0.H deferred here by name.
+
+*Defect 1 — repairing a pre-Aug-2026 triplanar config takes three round-trips, and it is
+the two shipped production models that need it.* `_get_triplanar_params` tests `padding`,
+`conv_activation` and `conv_norm_type` in three separate `if`/`raise` blocks, so each run
+names one. Measured on a synthetic old config: three raises, three edits, four attempts.
+Measured on the real thing — `647_nsm_femur_v0.0.1/model_params_config.json` and
+`551_nsm_femur_bone_v0.0.1/model_params_config.json`, both 131 keys — **both are missing
+`padding` and `conv_activation`** (both carry `conv_norm_type: "layer"`), so
+`load_model` on a shipped checkpoint takes two refusals before it loads. Run end to end
+against `551`'s real 275 MB `1150.pth`: refused on `padding`, refused on `conv_activation`,
+then loaded. `kneepipeline` is not affected — `steps/run_nsm.py:93-112` hand-rolls
+`TriplanarDecoder(**params)` and passes neither key — but `examples/load_trained_model.py`
+is exactly this path, and it is the documented way to load a trained model.
+
+*Defect 2 — the same one-at-a-time shape at the second site.* `_get_two_stage_params`
+loops `("conv_norm_type", "conv_activation")` and raises inside the loop. Same defect, same
+file, 100 lines apart; fixing only the reported instance is the mistake `CLAUDE.md`
+§ "Fix the class of defect" names, and here the class has exactly two members.
+
+*Defect 3 — the two_stage path silently drops a `padding` the config states.* Not a
+default that disagrees — a value that is **discarded**. Measured:
+`_get_two_stage_params({..., "padding": 0.35})` returns `triplanar_params` with no
+`padding` key at all, and the `TriplanarDecoder` built from it reports `padding = 0.1`.
+`default_triplanar_params` in `two_stage.py` and the `two_stage` config template omit the
+key too. This is #26's exact defect — a non-learned scale that `load_state_dict` cannot
+contradict — surviving in the sibling branch §8.0.H did not open, and it is worse than
+what #26 described, because there the key was absent and here it is present and ignored.
+Nothing existing is affected: both shipped models are `model_type: "triplanar"`, the
+shipped `default_config.json` is triplanar with `padding: 0.1` stated, and no two_stage
+config exists in this repo or either consumer.
+
+*Defect 4 — `NSM.__version__` and the distribution version are two hand-maintained
+literals that already disagree with reality.* `pyproject.toml` derives the distribution
+version from `NSM.__version__` via `[tool.setuptools.dynamic]`, and `setuptools-scm` sits
+in `build-requires` with `[tool.setuptools_scm]` commented out — the state §10.1 recorded
+in Aug 2026 and nothing has moved since.
+
+*Defect 5 — the wheel gap is real and `SCOPE.md` §5 states it wrong.* §5 says "A wheel
+contains neither the config generator nor `default_config.json`." Built from a clean
+`git archive` of `main`: the wheel contains **`NSM/configs/generate_sdf_default_config.py`**
+and **not** `default_config.json`. `[tool.setuptools.packages.find]` in `pyproject.toml`
+takes `namespaces = true` by default, so `NSM.configs` is picked up as a namespace package
+despite having no `__init__.py`; what is missing is package *data*, there being no
+`package-data` and no `MANIFEST.in`. Verified by importing the generator out of the
+unpacked wheel: it imports, its 121-key `config` dict is intact, and
+`os.path.exists(DEFAULT_CONFIG_PATH)` is `False`. **The claim that reached `docs/` was
+inferred from `find_packages` semantics and was half wrong** — the half that would have
+mattered, whether the generator survives, is the half that was fine.
+
+*Defect 6 — `__all__` exists nowhere.* `grep -rn __all__ NSM/` returns **0 lines**, as
+`SCOPE.md` §3.2 says. Measured today, after the §8.0.C/E/G splits moved the surface that
+section counted: `NSM.models` exposes 26 public names of which 11 are modules
+(`torch`, `nn`, `F`, `np`, `logging`, `warnings`); `NSM.mesh` 24 of which 9 are modules;
+`NSM.reconstruct` **43** of which 11 are modules (`wandb`, `torch`, `time`) plus
+`contextmanager` and `fnmatch`; `NSM.datasets` 43 of which **17** are modules, plus
+`Mesh`, `Pool`, `datetime`, `numpy_to_vtk`, `vtk_to_numpy`. `NSM.train` is already clean
+(3 names, all NSM submodules). SCOPE §3.2's "24 names currently leaked into
+`NSM.reconstruct`" is stale in the unhelpful direction.
+
+#### Two things that must not be done naively, both measured
+
+**setuptools-scm alone breaks installing from a source tree with no git metadata.** §10.1
+says "uncommenting it makes the tag the single source of truth", which is true and is not
+the whole change. Measured: with `[tool.setuptools_scm]` uncommented and the
+`[tool.setuptools.dynamic]` block removed, `pip wheel` on a `git archive` export — a GitHub
+source zip, a vendored copy, anything without `.git` — **fails outright** at "Getting
+requirements to build wheel". `fallback_version = "0.0.0+unknown"` fixes it (measured: the
+same tree then builds `nsm-0.0.0+unknown`). Separately, `actions/checkout@v2` clones at
+depth 1 with no tags, and a shallow clone with no tags builds
+`0.0.1.dev1+unknown.g902634d5` — it does not fail, it lies quietly. CI needs
+`fetch-depth: 0`.
+
+**Deriving `NSM.__version__` from installed metadata has a not-installed case, and the one
+real consumer is the one that could hit it.** `importlib.metadata.version("NSM")` raises
+`PackageNotFoundError` for a package reached by `sys.path` alone. `kneepipeline` currently
+has NSM installed editable, so it resolves (`0.2.0` today) — but `steps/run_nsm.py:324`
+inserts a path at runtime, so the un-installed case is one deployment away. The fallback is
+not optional.
+
+#### Target shape
+
+- **One refusal names every key it needs**, at both `_get_triplanar_params` and
+  `_get_two_stage_params`, from one shared helper: the missing keys collected, each
+  explained in one line, and one paste-ready JSON block that repairs the config in a single
+  edit. `_lr_migration`'s pattern, minus the module — this is **permanent**, not
+  transitional: the keys are required forever and configs written before Aug 2026 exist
+  forever, so a delete-when condition here would be born unmeetable, which is precisely what
+  `KNOWN_ISSUES` § Packaging already records against `_lr_migration` itself.
+- **The two_stage path requires and forwards `padding`**, exactly as the triplanar path
+  does, and the `two_stage` template and `default_triplanar_params` state it. Refuse, do not
+  honour-in-silence: `CLAUDE.md`'s rule for an accepted-and-ignored argument is deletion,
+  and the reason it does not apply is that the sibling path requires this same key — the
+  defect is the divergence, not the parameter.
+- **`TriplanarDecoder` and `VAEDecoder` default `conv_norm_type` / `norm_type` to
+  `"layer"`.** Unreachable from a config since §8.0.H, reachable by direct construction —
+  which is what the consumer does. Measured: `kneepipeline` passes `conv_norm_type`
+  explicitly from the model config, so the change moves nothing for it; a mismatch against a
+  checkpoint stays loud (`"batch"` adds `running_mean`/`running_var`/`num_batches_tracked`
+  per norm layer, so `load_state_dict(strict=True)` reports missing or unexpected keys
+  either way). What the old default silently cost was a **fresh** model built by hand.
+- **The version comes from the tag.** `[tool.setuptools_scm]` with `fallback_version`,
+  `[tool.setuptools.dynamic]` removed, `NSM.__version__` read from installed metadata with
+  the not-installed fallback, and `fetch-depth: 0` in CI.
+- **`default_config.json` ships**, via `package-data`. The generator already does.
+- **`__all__` in each subpackage `__init__.py`**, per `SCOPE.md` §3.3's ruling — the top
+  level stays lazy, because eager subpackage import would pull `wandb`, `vtk` and a
+  root-logger reconfiguration into every `import NSM`. What this does and does not do is
+  worth stating once in the commit: it controls `from NSM.x import *` and states intent; it
+  does **not** unbind `NSM.datasets.torch`, and pretending otherwise is how the next reader
+  concludes the leak is fixed.
+- **A release-time check on a real shipped checkpoint**, which is the one part of §7.1 that
+  is genuinely release-time and the last unticked half of its GPU/CPU-gap box. Skipped
+  unless `NSM_SHIPPED_MODELS` points at the model directories, so it never enters CI (the
+  two checkpoints are 275 MB and 260 MB).
+- **`CHANGELOG` § Unreleased becomes `## v0.3.0`**, and the docs that describe the release
+  mechanics stop describing a version bump that no longer happens in a PR.
+
+#### What is deliberately not in this slice
+
+- **`requires-python = ">=3.7"` and the `[tool.cibuildwheel]` block.** Both are stale on
+  inspection — CI tests 3.9 only, `.github/workflows/` has no cibuildwheel job, and the
+  metadata `__version__` fix needs 3.8+. But "stale on inspection" is not a measurement, and
+  the floor cannot be computed without interpreters this machine does not have. Raised in
+  the PR body for the maintainer to rule on; not changed unilaterally.
+- **The `padding` row in `KNOWN_ISSUES` § Open's summary table**, which points at #26 and
+  has no body entry any more (§16 in History replaced it) while
+  `train/train_deep_sdf.py`'s entry still says "measured in the `padding` entry above".
+  Defect 3 is the live instance of it and this slice fixes that, so the row is corrected
+  here rather than left for §8.0.N — but the wider table audit is N's.
+
+**Size budget.**
+
+| part | budget |
+|---|---|
+| the combined missing-key refusal: helper + per-key text + the JSON block | +55 |
+| the three `if`/`raise` blocks and the two_stage loop it replaces | −34 |
+| two_stage requires and forwards `padding` (template + `default_triplanar_params` + pass-through) | +6 |
+| `conv_norm_type` / `norm_type` defaults, and rewriting the comment that explained the old one | −4 |
+| `NSM/__init__.py`: metadata `__version__` + the not-installed fallback, with the reason | +12 |
+| `pyproject.toml`: `setuptools_scm` + `fallback_version` + `package-data`, less the `dynamic` block | +8 |
+| `__all__` × 4 subpackages, with the one-time note on what it does not do | +42 |
+| **net in `NSM/` + `pyproject.toml`** | **+85** |
+
+Past **+100** is scope creep. Five of the seven rows are message or declaration text, which
+is the line item six consecutive slices have under-priced — §8.0.M's post-mortem measured a
+`logger.warning` at 7–8 physical lines under `black` against ~2 budgeted, so the refusal
+helper above is costed by writing its message out, not by counting its statements. Tests,
+`CHANGELOG` and `docs/` are additive and outside the budget.
+
+**Sequence** (one commit each; `make lint` clean and the full suite green at every step):
+
+1. this statement;
+2. characterization — the three-round-trip repair and the shipped configs that need it, the
+   two_stage loop's one-at-a-time raise, the dropped `padding: 0.35`, the `"batch"` default
+   reached by direct construction, the missing `default_config.json` in a built wheel, the
+   absent `__all__`, and `__version__` against `git describe`. Strict xfails for each that
+   changes;
+3. one refusal names every missing key, at both sites;
+4. the two_stage path requires and forwards `padding`;
+5. `conv_norm_type` defaults to `"layer"` in both constructors;
+6. `default_config.json` ships in the wheel;
+7. the version comes from the git tag;
+8. `__all__` per subpackage;
+9. the shipped-checkpoint release check;
+10. `CHANGELOG` cut to v0.3.0, `SCOPE` §5 and §3.2 corrected, `KNOWN_ISSUES` § Packaging and
+    § Open's `padding` row, `ARCHITECTURE` where it describes the norm default;
+11. this plan's State.
+
+**Verification per claim:**
+
+| Claim | Verification |
+|---|---|
+| an old triplanar config takes three round-trips | a config with none of the three keys, repaired only with what each raise names: attempt count asserted **4** today and **2** after commit 3 |
+| the shipped production configs are among them | both `model_params_config.json` files asserted to lack `padding` and `conv_activation` and to carry `conv_norm_type: "layer"`; the loop run against `551`'s real checkpoint asserted to load on the third attempt today, the second after commit 3 (release check, skipped without `NSM_SHIPPED_MODELS`) |
+| the two_stage site has the same shape | a two_stage config missing both keys: today the message names one, after commit 3 it names both |
+| the combined message repairs in one edit | the JSON block in the message parsed with `json.loads`, merged into the failing config, and the load asserted to succeed — so the message cannot drift from what it claims to fix |
+| two_stage drops a stated `padding` | `_get_two_stage_params({..., "padding": 0.35})`: `"padding" not in triplanar_params` and the built decoder's `.padding == 0.1` asserted today; after commit 4 the config value arrives, and a two_stage config omitting it raises |
+| the `"batch"` default is reachable only by direct construction | `TriplanarDecoder(latent_dim=…)` asserted to build `BatchNorm2d` today and `LayerNorm` after commit 5; `load_model` asserted to raise on a config omitting the key, before and after |
+| changing it moves nothing for the consumer | `kneepipeline/steps/run_nsm.py`'s parameter dict rebuilt in the test from a config carrying `conv_norm_type`, and the model asserted bitwise-equal in output before and after the default change |
+| the wheel is missing `default_config.json` and not the generator | a wheel built from `git archive HEAD` in `tmp_path`: `NSM/configs/generate_sdf_default_config.py` asserted present and `NSM/configs/default_config.json` asserted absent today, both present after commit 6. Built from `git archive`, never from the working tree — the stale `build/lib/` in this checkout still contains `NSM/dependencies`, deleted in PR #64, and a working-tree build silently packages it |
+| a source tree with no git metadata still builds | the same `git archive` export with `.git` absent: `pip wheel` asserted to fail before `fallback_version` and to produce `0.0.0+unknown` after |
+| `__version__` tracks the tag | asserted equal to the installed distribution's metadata version, and the not-installed path asserted to give the fallback rather than raising `PackageNotFoundError` |
+| `__all__` names only NSM's own | for each of the five subpackages: every name in `__all__` resolves and is either defined in `NSM` or is an `NSM.*` submodule — both halves, because `NSM.train` exports three submodules and nothing else, so "no modules" would be wrong for it and "`__module__` starts with NSM" would be wrong for every module object. Paired with a plain test measuring what a star-import binds **after** the change, since `__all__` does not unbind `NSM.datasets.torch` |
+| the suite still passes | **1066 passed / 1 skipped / 3 xfailed** on `main` at `902634d` is the baseline every commit is compared against |
+
+
 ### 8.1 Make the library plural — added 2026-08-15
 
 > **Deferred 2026-08-26 — this is an upgrade, not the refactor.** All three bullets are
