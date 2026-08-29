@@ -137,21 +137,22 @@ class TestRepairingAnOldTwoStageConfig:
         assert attempts == 2, f"repaired in {attempts} attempts, naming {named}"
 
 
-class TestTwoStageDropsAStatedPadding:
+class TestTwoStagePadding:
     """
     #26's defect in the branch §8.0.H did not open, and in its worse form.
 
     #26 was "a ``padding`` the config did not state was silently defaulted". Here the
-    config *does* state it and the value never arrives: ``_get_two_stage_params`` builds
-    its ``triplanar_params`` without a ``padding`` key at all, so ``TriplanarDecoder``'s
-    constructor default wins. ``padding`` scales query coordinates before they index the
-    feature planes and is not a learned parameter, so ``load_state_dict(strict=True)``
-    cannot contradict it -- the model loads clean and samples at the wrong scale.
+    config *did* state it and the value never arrived: ``_get_two_stage_params`` built its
+    ``triplanar_params`` without a ``padding`` key at all, so ``TriplanarDecoder``'s
+    constructor default won. Measured before the fix: ``padding: 0.35`` in, ``0.1`` built.
+    ``padding`` scales query coordinates before they index the feature planes and is not a
+    learned parameter, so ``load_state_dict(strict=True)`` cannot contradict it -- the
+    model loads clean and samples at the wrong scale.
 
-    Nothing existing is affected: both shipped models are ``model_type: "triplanar"``,
-    the shipped ``default_config.json`` is triplanar with ``padding: 0.1`` stated, and no
-    two_stage config exists in this repo or in either consumer. That is what makes
-    refusing it at the release boundary cheap.
+    Nothing existing was affected, which is what made refusing it at the release boundary
+    cheap: both shipped models are ``model_type: "triplanar"``, the shipped
+    ``default_config.json`` is triplanar with ``padding: 0.1`` stated, and no two_stage
+    config exists in this repo or in either consumer.
     """
 
     @staticmethod
@@ -161,30 +162,52 @@ class TestTwoStageDropsAStatedPadding:
         )
 
     def test_the_triplanar_branch_forwards_a_stated_padding(self):
-        """The sibling path, for contrast: this is what two_stage should do."""
+        """The sibling path, for contrast: this is what two_stage now also does."""
         config = dict(old_triplanar_config(), **HISTORICAL)
         config["padding"] = 0.35
         _, params = _get_triplanar_params(config)
         assert params["padding"] == 0.35
 
-    @pytest.mark.xfail(strict=True, reason="§8.0.O: two_stage drops a stated padding (#26)")
     def test_a_stated_padding_reaches_the_decoder(self):
+        """Was a strict xfail: the key was absent from ``triplanar_params`` entirely."""
         cls, params = _get_two_stage_params(self.config(padding=0.35))
-        assert params["triplanar_params"].get("padding") == 0.35
+        assert params["triplanar_params"]["padding"] == 0.35
         assert cls(**params).triplanar.padding == 0.35
 
-    def test_today_it_silently_becomes_the_constructor_default(self):
-        """The behaviour as it stands, so the xfail above cannot be the only record."""
-        cls, params = _get_two_stage_params(self.config(padding=0.35))
-        assert "padding" not in params["triplanar_params"]
-        assert cls(**params).triplanar.padding == 0.1
-
-    @pytest.mark.xfail(
-        strict=True, reason="§8.0.O: two_stage does not require padding as triplanar does"
-    )
     def test_a_two_stage_config_without_padding_is_refused(self):
+        """Was a strict xfail: it built at 0.1 and said nothing."""
         with pytest.raises(KeyError, match="padding"):
             _get_two_stage_params(self.config())
+
+    def test_the_nested_form_is_held_to_the_same_keys(self):
+        """
+        ``triplanar_params`` stated as a nested dict was passed through entirely
+        unchecked -- none of the three keys was required there, although it builds the
+        same decoder. The refusal names all three at once, as everywhere else.
+        """
+        nested = dict(TINY, conv_norm_type="layer", conv_activation=None)
+        with pytest.raises(KeyError, match="padding"):
+            _get_two_stage_params(dict(old_two_stage_config(), triplanar_params=nested))
+
+        nested["padding"] = 0.35
+        cls, params = _get_two_stage_params(dict(old_two_stage_config(), triplanar_params=nested))
+        assert cls(**params).triplanar.padding == 0.35
+
+    def test_the_module_level_default_states_it(self):
+        """
+        ``TwoStageDecoder()`` with no arguments builds from ``default_triplanar_params``,
+        which reaches ``TriplanarDecoder`` directly and never passes through the loader's
+        refusal. Stating the key there is what keeps the two routes agreeing.
+        """
+        from NSM.models.two_stage import default_triplanar_params
+
+        assert default_triplanar_params["padding"] == 0.1
+
+    def test_the_template_states_it(self):
+        """``get_model_config_template`` is what the README tells a reader to start from."""
+        from NSM.models.loader import get_model_config_template
+
+        assert get_model_config_template("two_stage")["triplanar_params"]["padding"] == 0.1
 
 
 class TestNormTypeConstructorDefault:

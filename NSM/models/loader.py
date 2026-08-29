@@ -263,17 +263,16 @@ def _get_two_stage_params(config: Dict[str, Any]) -> tuple:
     triplanar_params = {}
     mlp_params = {}
 
-    # Triplanar parameters
+    # Triplanar parameters. Either branch builds the same TriplanarDecoder as the
+    # triplanar model type, so both are held to the same required keys -- including
+    # `padding`, which this branch used to drop even when the config stated it.
     if "triplanar_params" in config:
         triplanar_params = config["triplanar_params"].copy()
-    else:
-        # Use default triplanar params with config overrides
-        # Stated at the top level or inside "triplanar_params"; this branch is the
-        # former. Same refusal as the triplanar path, from the same table, because it
-        # builds the same decoder from the same keys.
         _refuse_missing_architecture_keys(
-            config, ("conv_norm_type", "conv_activation"), "two_stage"
+            triplanar_params, REQUIRED_ARCHITECTURE_KEYS, "two_stage triplanar_params"
         )
+    else:
+        _refuse_missing_architecture_keys(config, REQUIRED_ARCHITECTURE_KEYS, "two_stage")
         triplanar_params = {
             "conv_hidden_dims": config.get("conv_hidden_dims", [512, 512, 512, 512, 512]),
             "conv_deep_image_size": config.get("conv_deep_image_size", 2),
@@ -286,6 +285,7 @@ def _get_two_stage_params(config: Dict[str, Any]) -> tuple:
             "sdf_weight_norm": config.get("weight_norm", True),
             "sdf_final_activation": config.get("final_activation", "tanh"),
             "sdf_activation": config.get("activation", "relu"),
+            "padding": config["padding"],
         }
 
     # MLP parameters
@@ -451,6 +451,7 @@ def get_model_config_template(model_type: str) -> Dict[str, Any]:
                 "sdf_weight_norm": True,
                 "sdf_final_activation": "tanh",
                 "sdf_activation": "relu",
+                "padding": 0.1,
             },
             "mlp_params": {
                 "dims": [512, 512, 512, 512, 512, 512, 512, 512],

@@ -18,6 +18,9 @@ default_triplanar_params = {
     "sdf_weight_norm": True,
     "sdf_final_activation": "tanh",
     "sdf_activation": "relu",
+    # Stated, not left to TriplanarDecoder's signature: `padding` is not a learned
+    # parameter, so a wrong value here loads clean and samples at the wrong scale (#26).
+    "padding": 0.1,
 }
 
 default_mlp_params = {
