@@ -393,13 +393,10 @@ class SDFSamples(torch.utils.data.Dataset):
                 # sched_getaffinity is not available on all platforms (eg., mac/windows)
                 logger.debug("CPU affinity not available on this platform")
         if self.multiprocessing is True:
-            list_inputs = [(loc_mesh, self.verbose) for loc_mesh in self.list_mesh_paths]
             with Pool(processes=self.n_processes) as pool:
-                self.data = pool.starmap(self.load_mesh_step, list_inputs)
+                self.data = pool.map(self.load_mesh_step, self.list_mesh_paths)
         else:
-            self.data = [
-                self.load_mesh_step(loc_mesh, self.verbose) for loc_mesh in self.list_mesh_paths
-            ]
+            self.data = [self.load_mesh_step(loc_mesh) for loc_mesh in self.list_mesh_paths]
 
         # remove mesh paths that failed to load
         self.list_mesh_paths = [
@@ -438,7 +435,7 @@ class SDFSamples(torch.utils.data.Dataset):
         """Subclass hook, called after setup but before any subject loads."""
         pass
 
-    def load_mesh_step(self, loc_mesh, verbose):
+    def load_mesh_step(self, loc_mesh):
         """
         Per-subject worker: build or load one subject via ``get_sample_data_dict``.
 
@@ -446,8 +443,7 @@ class SDFSamples(torch.utils.data.Dataset):
         failed subject, which ``__init__`` then drops from ``list_mesh_paths`` and
         ``data``.
         """
-        if verbose is True:
-            logger.debug("Loading mesh: %s", loc_mesh)
+        logger.debug("Loading mesh: %s", loc_mesh)
 
         if self.debug_memory is True:
             self.print_memory_summary()
@@ -467,9 +463,8 @@ class SDFSamples(torch.utils.data.Dataset):
             logger.warning("Skipping mesh: %s", loc_mesh)
             logger.warning("Error in loading")
 
-        if verbose is True:
-            logger.debug("Data type: %s", type(data))
-            logger.debug("Finished loading mesh: %s", loc_mesh)
+        logger.debug("Data type: %s", type(data))
+        logger.debug("Finished loading mesh: %s", loc_mesh)
 
         gc.collect()
 
@@ -639,8 +634,7 @@ class SDFSamples(torch.utils.data.Dataset):
 
         # --- Hit path: try to serve the subject from its cached .npz. -------------
         if (len(cached_file) > 0) and (self.load_cache is True):
-            if self.verbose is True:
-                logger.info("Loading cached file")
+            logger.info("Loading cached file")
             for cache_path in cached_file:
                 # A corrupt file (a crash mid-write) is deleted rather than crashed
                 # on; with no candidate left, the subject rebuilds below. Two guards
@@ -691,8 +685,7 @@ class SDFSamples(torch.utils.data.Dataset):
         # datasets keep it) or the file's path (disk-backed datasets reload the
         # .npz on every __getitem__). ----------------------------------------------
         if self.store_data_in_memory is False:
-            if self.verbose is True:
-                logger.debug("updating data to be cache path")
+            logger.debug("updating data to be cache path")
             # change the data to be the path to the saved cache file
             data = cache_path
 
@@ -749,9 +742,8 @@ class SDFSamples(torch.utils.data.Dataset):
         else:
             reference_mesh = self.reference_mesh
 
-        if self.verbose is True:
-            logger.debug("type of reference mesh: %s", type(reference_mesh))
-            logger.debug("ref mesh path: %s", self.reference_mesh_path)
+        logger.debug("type of reference mesh: %s", type(reference_mesh))
+        logger.debug("ref mesh path: %s", self.reference_mesh_path)
 
         # Keyed on the mesh contents, not on the subject's index and not on the cache
         # hash: an index would resample every subject when the list is reordered, and
@@ -906,8 +898,7 @@ class SDFSamples(torch.utils.data.Dataset):
                 mesh.Mesh object
         """
 
-        if self.verbose is True:
-            logger.debug("Loading reference mesh:  %s", self.reference_mesh)
+        logger.debug("Loading reference mesh:  %s", self.reference_mesh)
 
         if issubclass(type(self.reference_mesh), Mesh):
             pass
@@ -938,8 +929,7 @@ class SDFSamples(torch.utils.data.Dataset):
                 type(self.reference_mesh),
             )
 
-        if self.verbose is True:
-            logger.debug("type of reference mesh: %s", type(self.reference_mesh))
+        logger.debug("type of reference mesh: %s", type(self.reference_mesh))
 
         if self.multiprocessing is True:
             # update reference mesh path to be a has on the current time - so as to not end up with
@@ -1125,14 +1115,12 @@ class SDFSamples(torch.utils.data.Dataset):
                 else:
                     raise ValueError("neg_idx must be a list or tensor")
                 toc_rand_sample = time.time()
-                if self.verbose is True:
-                    logger.debug("rand sample time: %ss", toc_rand_sample - tic_rand_sample)
+                logger.debug("rand sample time: %ss", toc_rand_sample - tic_rand_sample)
 
                 tic_cat = time.time()
                 idx_ = torch.cat((idx_pos, idx_neg), dim=0)
                 toc_cat = time.time()
-                if self.verbose is True:
-                    logger.debug("concat time: %ss", toc_cat - tic_cat)
+                logger.debug("concat time: %ss", toc_cat - tic_cat)
 
                 if len(idx_) < self.subsample:
                     # if we don't have enough points, then just take random points
@@ -1141,18 +1129,16 @@ class SDFSamples(torch.utils.data.Dataset):
                     _idx_ = perm[: self.subsample - len(idx_)]
                     idx_ = torch.cat([idx_, _idx_], dim=0)
                     toc_rand = time.time()
-                    if self.verbose is True:
-                        logger.debug("rand additional sub sample time: %ss", toc_rand - tic_rand)
+                    logger.debug("rand additional sub sample time: %ss", toc_rand - tic_rand)
 
             else:
                 perm = torch.randperm(data_["xyz"].size(0))
                 idx_ = perm[: self.subsample]
 
-            if self.verbose is True:
-                logger.debug(
-                    "idx_ size: %s idx_ min: %s idx_ max: %s", idx_.size(), idx_.min(), idx_.max()
-                )
-                logger.debug("equal neg pos %s", self.equal_pos_neg)
+            logger.debug(
+                "idx_ size: %s idx_ min: %s idx_ max: %s", idx_.size(), idx_.min(), idx_.max()
+            )
+            logger.debug("equal neg pos %s", self.equal_pos_neg)
 
             # unpack the data
             xyz = data_["xyz"][idx_, :]
@@ -1164,8 +1150,7 @@ class SDFSamples(torch.utils.data.Dataset):
                 xyz = (xyz - self.center) / self.max_radius
                 sdf = sdf / self.max_radius
                 toc_norm = time.time()
-                if self.verbose is True:
-                    logger.debug("norm time: %ss", toc_norm - tic_norm)
+                logger.debug("norm time: %ss", toc_norm - tic_norm)
 
             data_ = {
                 "xyz": xyz,
@@ -1492,9 +1477,8 @@ class MultiSurfaceSDFSamples(SDFSamples):
         else:
             reference_mesh = self.reference_mesh
 
-        if self.verbose is True:
-            logger.debug("type of reference mesh: %s", type(reference_mesh))
-            logger.debug("ref mesh path: %s", self.reference_mesh_path)
+        logger.debug("type of reference mesh: %s", type(reference_mesh))
+        logger.debug("ref mesh path: %s", self.reference_mesh_path)
 
         content_key = mesh_content_key(loc_meshes) if self.random_seed is not None else None
 
@@ -1583,8 +1567,7 @@ class MultiSurfaceSDFSamples(SDFSamples):
         self.samples_per_sign_ = []
         for subsample_ in samples_per_mesh:
             samples_per_sign = int(subsample_ / 2)
-            if self.verbose is True:
-                logger.debug("%s", samples_per_sign)
+            logger.debug("%s", samples_per_sign)
             self.samples_per_sign_.append(samples_per_sign)
 
     def remove_overlapping_points(self, data):
@@ -1632,13 +1615,12 @@ class MultiSurfaceSDFSamples(SDFSamples):
         data["gt_sdf"] = data["gt_sdf"][keep_mask, :]
         data["xyz"] = data["xyz"][keep_mask, :]
 
-        if self.verbose is True:
-            logger.debug("inside_count shape %s", inside_count.shape)
-            logger.debug("inside_count %s", inside_count)
-            logger.debug("outside all surfaces %s", out_all)
-            logger.debug("inside exactly one %s", in_one)
-            logger.debug("inside two or more %s", in_in)
-            logger.info("Removed %s overlapping points", in_in)
+        logger.debug("inside_count shape %s", inside_count.shape)
+        logger.debug("inside_count %s", inside_count)
+        logger.debug("outside all surfaces %s", out_all)
+        logger.debug("inside exactly one %s", in_one)
+        logger.debug("inside two or more %s", in_in)
+        logger.info("Removed %s overlapping points", in_in)
 
         return data, in_in
 
@@ -1719,8 +1701,7 @@ class MultiSurfaceSDFSamples(SDFSamples):
         pos_idx = []
         neg_idx = []
         surf_idx = []
-        if self.verbose is True:
-            logger.debug("data %s %s", data["xyz"].shape, data["gt_sdf"].shape)
+        logger.debug("data %s %s", data["xyz"].shape, data["gt_sdf"].shape)
 
         for mesh_idx in range(self.n_meshes):
 
@@ -1789,8 +1770,7 @@ class MultiSurfaceSDFSamples(SDFSamples):
 
             # self.mb_per_sec.append(size / time_)
 
-            if self.verbose is True:
-                logger.debug("size: %smb, time: %ss, mb/s: %smb/s", size, time_, size / time_)
+            logger.debug("size: %smb, time: %ss, mb/s: %smb/s", size, time_, size / time_)
 
             if self.equal_pos_neg is True:
                 list_keys_unpack = ["pos_idx", "neg_idx"]
@@ -1799,8 +1779,7 @@ class MultiSurfaceSDFSamples(SDFSamples):
             tic_unpack = time.time()
             data_ = unpack_numpy_data(data_, list_additional_keys=list_keys_unpack)
             toc_unpack = time.time()
-            if self.verbose is True:
-                logger.debug("unpack time: %ss", toc_unpack - tic_unpack)
+            logger.debug("unpack time: %ss", toc_unpack - tic_unpack)
 
         elif self.store_data_in_memory is True:
             # if storing in memory, then just get the data
@@ -1819,10 +1798,9 @@ class MultiSurfaceSDFSamples(SDFSamples):
                     tic_mesh = time.time()
                     # get number of positive and negative points for this mesh
                     # samples_per_sign = int(subsample_/2)
-                    if self.verbose is True:
-                        logger.debug("samples_per_sign %s", samples_per_sign)
-                        logger.debug("mesh idx %s", mesh_idx)
-                        logger.debug("data_ pos %s", data_["pos_idx"])
+                    logger.debug("samples_per_sign %s", samples_per_sign)
+                    logger.debug("mesh idx %s", mesh_idx)
+                    logger.debug("data_ pos %s", data_["pos_idx"])
 
                     if samples_per_sign == 0:
                         continue
@@ -1834,15 +1812,13 @@ class MultiSurfaceSDFSamples(SDFSamples):
                     # combine positive and negative indices
                     idx_ += [idx_pos, idx_neg]
                     toc_mesh = time.time()
-                    if self.verbose is True:
-                        logger.debug("mesh %s time: %ss", mesh_idx, toc_mesh - tic_mesh)
+                    logger.debug("mesh %s time: %ss", mesh_idx, toc_mesh - tic_mesh)
 
                 tic_cat = time.time()
                 # combine indices for all meshes
                 idx_ = torch.cat(idx_, dim=0)
                 toc_cat = time.time()
-                if self.verbose is True:
-                    logger.debug("cat time: %ss", toc_cat - tic_cat)
+                logger.debug("cat time: %ss", toc_cat - tic_cat)
 
                 if len(idx_) < self.subsample:
                     # if we don't have enough points, then just take random points
@@ -1851,18 +1827,16 @@ class MultiSurfaceSDFSamples(SDFSamples):
                     _idx_ = perm[: self.subsample - len(idx_)]
                     idx_ = torch.cat([idx_, _idx_], dim=0)
                     toc_rand = time.time()
-                    if self.verbose is True:
-                        logger.debug("rand additional sub sample time: %ss", toc_rand - tic_rand)
+                    logger.debug("rand additional sub sample time: %ss", toc_rand - tic_rand)
 
             else:
                 perm = torch.randperm(data_["xyz"].size(0))
                 idx_ = perm[: self.subsample]
 
-            if self.verbose is True:
-                logger.debug(
-                    "idx_ size: %s idx_ min: %s idx_ max: %s", idx_.size(), idx_.min(), idx_.max()
-                )
-                logger.debug("equal neg pos %s", self.equal_pos_neg)
+            logger.debug(
+                "idx_ size: %s idx_ min: %s idx_ max: %s", idx_.size(), idx_.min(), idx_.max()
+            )
+            logger.debug("equal neg pos %s", self.equal_pos_neg)
 
             xyz = data_["xyz"][idx_, :]
             sdf = data_["gt_sdf"][idx_, :]
@@ -1872,8 +1846,7 @@ class MultiSurfaceSDFSamples(SDFSamples):
                 xyz = (xyz - self.center) / self.max_radius
                 sdf = sdf / self.max_radius
                 toc_scaling = time.time()
-                if self.verbose is True:
-                    logger.debug("scaling time: %ss", toc_scaling - tic_scaling)
+                logger.debug("scaling time: %ss", toc_scaling - tic_scaling)
 
             data_ = {
                 "xyz": xyz,

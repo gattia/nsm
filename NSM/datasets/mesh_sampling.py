@@ -631,22 +631,19 @@ def read_meshes_get_sampled_pts(
             for pts_idx, new_pts_ in enumerate(new_pts):
                 if new_pts_ is None:
                     continue
-                if verbose is True:
-                    logger.debug(
-                        "mesh_idx, new_mesh point_coords shape %s %s",
-                        mesh_idx,
-                        new_mesh.point_coords.shape,
-                    )
+                logger.debug(
+                    "mesh_idx, new_mesh point_coords shape %s %s",
+                    mesh_idx,
+                    new_mesh.point_coords.shape,
+                )
                 if pts_idx == mesh_idx:
-                    if verbose is True:
-                        logger.debug("adding zeros new_pts_ shape (zero) %s", new_pts_.shape)
+                    logger.debug("adding zeros new_pts_ shape (zero) %s", new_pts_.shape)
                     # same mesh, set SDFs to 0
                     sdfs_.append(np.zeros(new_pts_.shape[0]))
                 else:
                     # different mesh, calculate SDFs
                     _sdfs_ = new_mesh.get_sdf_pts(pts=new_pts_, method="pcu")
-                    if verbose is True:
-                        logger.debug("caculating SDFs for new_pts_  %s", _sdfs_.shape)
+                    logger.debug("caculating SDFs for new_pts_  %s", _sdfs_.shape)
                     sdfs_.append(_sdfs_)
 
             sdfs.append(np.concatenate(sdfs_, axis=0))

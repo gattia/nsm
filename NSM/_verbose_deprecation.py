@@ -94,11 +94,6 @@ def honour_verbose(func):
     Warns when the caller supplied the flag, and routes NSM's log records to stderr
     while it is truthy -- including when it is truthy by default, which is the only way
     ``mesh/interpolate.update_positions`` keeps the output it has always produced.
-
-    Not applied to the two functions whose ``verbose`` is a *required* parameter
-    (``SDFSamples.load_mesh_step``, ``_process_meshes_for_wandb``): a required parameter
-    means every call site is inside NSM, under a public entry point that is bridged
-    already.
     """
     parameters = inspect.signature(func).parameters
     if "verbose" not in parameters:

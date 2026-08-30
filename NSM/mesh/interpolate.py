@@ -461,8 +461,7 @@ def interpolate_common(
         # tangent-Laplacian smoothing (points-path only) is not exposed here
         # because the VTK smoothing already redistributes the mesh.
         for idx, step in enumerate(np.linspace(1 / n_steps, 1, n_steps)):
-            if verbose:
-                logger.debug("%s/%s", idx + 1, n_steps)
+            logger.debug("%s/%s", idx + 1, n_steps)
             new_latent = _to_model_tensor(
                 (
                     slerp_latent(latent1, latent2, step)
@@ -519,8 +518,7 @@ def interpolate_common(
         pin_mask = torch.as_tensor(pin_np, device=device)
 
     for idx, t in enumerate(np.linspace(1 / n_steps, 1, n_steps)):
-        if verbose:
-            logger.debug("%s/%s", idx + 1, n_steps)
+        logger.debug("%s/%s", idx + 1, n_steps)
         z_end = _latent_at(latent1, latent2, float(t), spherical)
         points = _advance(
             model,

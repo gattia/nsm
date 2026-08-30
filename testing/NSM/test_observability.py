@@ -193,7 +193,6 @@ class TestTheConversionHolds:
         "NSM/train/train_deep_sdf_multi_head.py",
     )
 
-    @pytest.mark.xfail(strict=True, reason="§8.0.G's residue — cleared in this slice's commit 10")
     def test_no_log_record_is_gated_behind_verbose(self):
         """
         The last of §8.0.G's residue. A ``logger.debug`` inside ``if verbose:`` is gated
@@ -203,11 +202,17 @@ class TestTheConversionHolds:
         running the exact call the deprecation notice named (§8.0.J).
 
         Measured on ``main`` at ``09c3834``: **86** ``verbose``-conditioned ``if``
-        statements, **83** of them nothing but ``logger.*`` calls with no ``else``. The
-        other three are real control flow and stay — ``sdf_dataset.py:376``,
-        ``mesh/main.py:818``, ``models/triplanar.py:478``. Classified by AST rather than
-        by grep, because "measuring the parameter form and reporting it as no gates" is
-        the error §8.0.L's review caught.
+        statements, **83** of them nothing but ``logger.*`` calls with no ``else``. §8.0.N
+        removed the 58 of those on the documented surface; the other 25 are in the three
+        modules exempted above, and the 3 that are real control flow stay everywhere.
+        Classified by AST rather than by grep, because "measuring the parameter form and
+        reporting it as no gates" is the error §8.0.L's review caught.
+
+        Removing a gate can leave the ``verbose`` parameter itself unread, which is the
+        accepted-and-ignored trap in miniature. Two were left that way here —
+        ``SDFSamples.load_mesh_step`` and ``_process_meshes_for_wandb``, the two whose
+        ``verbose`` was *required* and therefore never bridged — and both parameters were
+        deleted rather than kept.
         """
         offenders = []
         for path, tree in _library_modules():

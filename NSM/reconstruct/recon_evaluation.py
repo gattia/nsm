@@ -290,8 +290,7 @@ def get_mean_errors(
                     result_[f"chamfer_{mesh_idx}"] = np.nan
                 if calc_assd:
                     result_[f"assd_{mesh_idx}"] = np.nan
-        if verbose is True:
-            logger.debug("result_ %s", result_)
+        logger.debug("result_ %s", result_)
 
         if predict_val_variables is not None and "latent" in result_:
             reg.add_latent(result_["latent"].detach().cpu().numpy().ravel())
@@ -319,8 +318,7 @@ def get_mean_errors(
         if log_wandb is True:
             wandb.finish()
 
-    if verbose is True:
-        logger.debug("loss %s", loss)
+    logger.debug("loss %s", loss)
     loss_ = {}
 
     if predict_val_variables is not None:

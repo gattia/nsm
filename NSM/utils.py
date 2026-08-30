@@ -271,9 +271,8 @@ def adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False):
         state came from a checkpoint saved before Aug 2026 (the train loop rejects those
         at load time, so this is a backstop).
     """
-    if verbose is True:
-        logger.debug("optimizer param groups:  %s", optimizer.param_groups)
-        logger.debug("lr_schedules:  %s", lr_schedules)
+    logger.debug("optimizer param groups:  %s", optimizer.param_groups)
+    logger.debug("lr_schedules:  %s", lr_schedules)
 
     for param_group in optimizer.param_groups:
         target = param_group.get(PARAM_GROUP_TARGET_KEY)

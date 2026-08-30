@@ -547,6 +547,11 @@ DEBUG_TEMPLATES = {
     "sdf_gt shape %s",
     "l1 losses: %s",
     "l1 loss: %s",
+    # From NSM.utils.adjust_learning_rate, which train_epoch's caller reaches. Gated on
+    # its own `verbose` PARAMETER until §8.0.N -- the form §8.0.L measured separately and
+    # deferred, and the last of it.
+    "optimizer param groups:  %s",
+    "lr_schedules:  %s",
 }
 
 
@@ -558,6 +563,10 @@ class TestTheDebugRecordsAreNotGatedOnAConfigKey:
     ``verbose: false`` hid all 20 from a host that configured ``DEBUG`` and asked for
     them. ``config["verbose"]`` is still read -- ``_run_validation`` forwards it -- so
     ungating these did not turn the key into an accepted-and-ignored one.
+
+    §8.0.L ungated the *config-key* form and measured 25 more in the *parameter* form,
+    which it left alone. §8.0.N cleared those; two of them are in this path, from
+    ``NSM.utils.adjust_learning_rate``, and they are in the set below.
     """
 
     def test_the_record_set_under_verbose_true_is_what_it_is(self):
