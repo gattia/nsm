@@ -34,17 +34,36 @@ Each entry says what is wrong and how to tell whether it affects you. **How to f
 the issue** — that is the split: this file is what survives in the repo, the issue is the
 queue.
 
+**Every row links to its entry, and a test asserts the two are the same set**
+(`testing/NSM/test_docs_references.py`). They were not, until plan §8.0.N: nine rows
+against twelve entries, with three rows naming no entry and six entries appearing in no
+row. An index maintained by hand goes stale the same way a transcribed number does, and
+this file's whole promise — "which of my runs are affected, answerable in 2031" — is worth
+more than that.
+
 | Defect | Severity | Issue |
 |---|---|---|
-| Sigma coordinate space depends on `scale_jointly` | **High** — ~100× over/under-sampling | [#3](https://github.com/gattia/nsm/issues/3) |
-| Shipped model configs omit two required architecture keys | Medium — refused at load, not silent | [#26](https://github.com/gattia/nsm/issues/26), [#45](https://github.com/gattia/nsm/issues/45) |
-| Parameters accepted and never read | Medium — **read the traps first** | [#20](https://github.com/gattia/nsm/issues/20) |
-| `xyz_in_all` accepted and never read | Medium — silent no-op | [#20](https://github.com/gattia/nsm/issues/20) |
-| A `None` surface cannot build | Medium — advertised feature, unusable | [#67](https://github.com/gattia/nsm/issues/67) |
-| `sample_difficulty_lx` shipped but unimplemented | Medium | [#18](https://github.com/gattia/nsm/issues/18) |
-| `enforce_minmax` clamps predictions | Medium — config semantics | *none — a docs/design call, see below* |
-| The bare `compare_cart_thickness` scores femoral regions whatever the model is | Low — NaN, not a wrong number | *none — documented at the constant, see below* |
-| `Pool` deadlocks after an in-process build | Low — hangs, does not corrupt | [#25](https://github.com/gattia/nsm/issues/25) |
+| [Sigma coordinate space depends on `scale_jointly`](#sigma-sampling-coordinate-space-depends-on-scale_jointly) | **High** — ~100× over/under-sampling | [#3](https://github.com/gattia/nsm/issues/3) |
+| [A `None` surface cannot build](#a-none-surface-cannot-build) | Medium — advertised feature, unusable | [#67](https://github.com/gattia/nsm/issues/67) |
+| [`center_pts` and `norm_pts` do not select which normalization happens](#center_pts-and-norm_pts-do-not-select-which-normalization-happens) | Medium — silent, and the shipped config asks for the half it does not get | [#20](https://github.com/gattia/nsm/issues/20) |
+| [Shipped model configs predate the `Target` requirement](#shipped-model-configs-predate-the-target-requirement-and-cannot-be-trained-from) | Medium — refused at train, inference unaffected | *none — the migration message is the fix, see below* |
+| [Shipped model configs omit two required architecture keys](#shipped-model-configs-omit-two-keys-load_model-requires-so-it-refuses-them) | Medium — refused at load, not silent | [#26](https://github.com/gattia/nsm/issues/26), [#45](https://github.com/gattia/nsm/issues/45) |
+| [`sample_difficulty_lx` is shipped and read by nothing supported](#sample_difficulty_lx-is-shipped-and-read-by-nothing-supported) | Medium — four config keys that do nothing | [#18](https://github.com/gattia/nsm/issues/18) |
+| [Hybrid / LBFGS reconstruction is unvalidated](#hybrid--lbfgs-reconstruction-is-unvalidated-on-current-nsm) | Medium — runs, unmeasured; production uses Adam | *none — see below* |
+| [`F401` is project-ignored, so unused imports never appear](#f401-is-project-ignored-so-unused-imports-do-not-appear-in-make-lint) | Low — tooling, not behaviour | *none — a judgement call, see below* |
+| [Latent gradients are summed over query points](#latent-gradients-are-summed-over-query-points-so-the-reg-balance-depends-on-n) | Medium — the reg balance moves with N | *none — a convention change, see below* |
+| [`enforce_minmax` clamps predictions](#enforce_minmax-clamps-the-prediction-not-just-the-target) | Medium — config semantics | *none — a docs/design call, see below* |
+| [`grad_clip` clips the model only, never the latent codes](#grad_clip-clips-the-model-only-never-the-latent-codes) | Medium — a global-sounding knob that is not | *none — an experiment first, see below* |
+| [The bare `compare_cart_thickness` scores femoral regions whatever the model is](#the-bare-compare_cart_thickness-scores-femoral-regions-whatever-the-model-is) | Low — NaN, not a wrong number | *none — documented at the constant, see below* |
+| [`Pool` deadlocks after an in-process build](#pool-deadlocks-after-an-in-process-build) | Low — hangs, does not corrupt | [#25](https://github.com/gattia/nsm/issues/25) |
+
+**Two rows left this table on 2026-08-30** rather than gaining an entry: "Parameters
+accepted and never read" and "`xyz_in_all` accepted and never read", both citing
+[#20](https://github.com/gattia/nsm/issues/20). #20 is **closed** — §8.0.H swept `models/` — and `xyz_in_all` is no longer a
+silent no-op: `Decoder(xyz_in_all=True)` raises `TypeError` naming it, measured. A falsy
+value is still ignored, deliberately and in writing, because that is what every NSM-owned
+config ships and it asked for nothing. The defect *class* has not gone anywhere and is
+tracked where a class belongs, in `ARCHITECTURE.md` §7.
 
 ---
 
@@ -186,6 +205,31 @@ fifteen config keys and never calls `load_model`. What does not work unrepaired 
 260 MB and do not belong in CI. Run against both, it asserts the message names every
 missing key, that the repaired config loads strictly, and that `load_model`'s model is
 bitwise-identical to the consumer's own construction.
+
+### `sample_difficulty_lx` is shipped and read by nothing supported
+
+`NSM/configs/default_config.json` carries four keys — `sample_difficulty_lx`,
+`sample_difficulty_lx_schedule`, `sample_difficulty_lx_cooldown`,
+`sample_difficulty_lx_epsilon` — and the only code that reads them is
+`train/train_deep_sdf_multi_head.py`, which `SCOPE.md` §2.1 rules unsupported and which
+[#51](https://github.com/gattia/nsm/issues/51) says trains only its last decoder, and
+`train/deprecated/train_deep_sdf_orig.py`, which §2.2 quarantines.
+
+`train_deep_sdf` — the trainer `SCOPE` supports — reads `sample_difficulty_weight` and
+stops. So setting any of the four in a config for a supported run changes nothing and
+reports nothing: the inverse-Lx loss weighting they configure is in a file that is not the
+trainer.
+
+**How to tell whether it affects you:** it does not affect a *result* — nothing silently
+changed, the feature simply never ran. It affects you if you set one of these keys and
+believed it did something. Grep your config for `sample_difficulty_lx`; if it is there and
+non-null, the run you got is the run you would have got without it.
+
+*Fix:* [#18](https://github.com/gattia/nsm/issues/18) — port the ~12-line inverse-Lx branch out of the quarantined trainer,
+under the two conditions `SCOPE.md` §2.2 sets (impossible to enable by accident, documented
+at the config key). Scheduled at plan §8.0.P. *Pinned by:*
+`test_default_config_sync.test_the_sample_difficulty_lx_keys_are_read_by_nothing_supported`,
+which goes red the day the port lands.
 
 ### `F401` is project-ignored, so unused imports do not appear in `make lint`
 

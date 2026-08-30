@@ -191,7 +191,6 @@ def _entry_anchors():
     ]
 
 
-@pytest.mark.xfail(strict=True, reason="the index is linked up in this slice's commit 14")
 def test_the_open_summary_table_and_its_entries_are_the_same_set():
     """
     § Open opens with a summary table and continues with one ``###`` entry per defect,
