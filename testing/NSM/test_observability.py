@@ -204,7 +204,11 @@ class TestTheConversionHolds:
         Measured on ``main`` at ``09c3834``: **86** ``verbose``-conditioned ``if``
         statements, **83** of them nothing but ``logger.*`` calls with no ``else``. §8.0.N
         removed the 58 of those on the documented surface; the other 25 are in the three
-        modules exempted above, and the 3 that are real control flow stay everywhere.
+        modules exempted above. The 3 survivors stay everywhere, and they are **argument
+        guards, not control flow**: each evaluates something solely to log it — a
+        ``sched_getaffinity`` probe, an extent computed for the record, two CUDA memory
+        queries inside ``forward`` — and log arguments are eager, so ungating them would
+        run those unconditionally. Each says so at its site.
         Classified by AST rather than by grep, because "measuring the parameter form and
         reporting it as no gates" is the error §8.0.L's review caught.
 

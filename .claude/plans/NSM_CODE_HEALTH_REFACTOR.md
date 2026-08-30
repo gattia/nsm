@@ -4292,13 +4292,16 @@ config-schema correction rather than a Breaking change.
 **The `verbose` residue is 86 gates, and 83 of them are pure logging.** Classified by AST
 rather than by grep, since "measuring the parameter form and reporting it as no gates" is
 the error §8.0.L's review caught: 83 whose body is nothing but `logger.*` calls with no
-`else`, and 3 that are real control flow (`sdf_dataset.py:376`, `mesh/main.py:818`,
-`models/triplanar.py:478`) plus `_verbose_deprecation.py:104`, which is the bridge's own
-signature check. Of the 83, **58 are in files on the documented surface** and are ungated
-here; the remaining 25 are in `reconstruct_latent_S3.py` (9), `train_deep_sdf_multi_head.py`
-(7) and `train/deprecated/` (9) — the same three modules the docstring gate exempts, by
-the same three `SCOPE` rulings. That is the last of them: after this slice the residue is
-zero on everything `SCOPE` calls production.
+`else`, and 3 the review reclassified: **argument guards, not control flow**
+(`sdf_dataset.py:376`, `mesh/main.py:818`, `models/triplanar.py:478`) — none affects a
+return value or state; each evaluates something solely to log it (a `sched_getaffinity`
+probe, an extent, two CUDA memory queries inside `forward`), and log arguments are eager
+— plus `_verbose_deprecation.py:104`, which is the bridge's own signature check. Of the
+83, **58 are in files on the documented surface** and are ungated here; the remaining 25
+are in `reconstruct_latent_S3.py` (9), `train_deep_sdf_multi_head.py` (7) and
+`train/deprecated/` (9) — the same three modules the docstring gate exempts, by the same
+three `SCOPE` rulings. After this slice the residue on everything `SCOPE` calls
+production is those three argument guards, each stating at its site why it stays.
 
 **`KNOWN_ISSUES` § Open's index has drifted both ways.** The audit the O slice deferred
 here. The summary table has 9 rows and the body has 12 `###` entries, and neither is a

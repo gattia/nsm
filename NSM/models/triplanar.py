@@ -507,6 +507,9 @@ class TriplanarDecoder(nn.Module):
                     "Cannot specify both x and (latent, xyz). Use one interface or the other."
                 )
 
+            # This gate survives the §8.0.N ungating deliberately: log arguments
+            # evaluate eagerly, and the two CUDA memory queries below are device
+            # probes inside forward().
             if verbose:
                 logger.debug("Triplanar.forward()")
                 logger.debug("Epoch: %s", epoch)

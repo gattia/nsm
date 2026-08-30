@@ -410,6 +410,8 @@ class SDFSamples(torch.utils.data.Dataset):
 
         self.data = []
         # Wrap this loading loop in a multiprocessing pool
+        # This gate survives the §8.0.N ungating deliberately: log arguments evaluate
+        # eagerly, and sched_getaffinity is a probe run solely to be logged.
         if self.verbose is True:
             try:
                 logger.debug("CPU affinity:%s", os.sched_getaffinity(0))

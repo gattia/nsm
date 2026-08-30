@@ -795,6 +795,8 @@ def create_mesh_adaptive(
 
     bounds_min, bounds_max = bounds_result
 
+    # This gate survives the §8.0.N ungating deliberately: `extent` is computed solely
+    # to be logged, and log arguments evaluate eagerly.
     if verbose:
         logger.debug("Coarse spacing: %.6f, tau: %.6f", coarse_spacing, tau_voxels * coarse_spacing)
         logger.debug("Coarse bounds: min=%s, max=%s", bounds_min, bounds_max)
