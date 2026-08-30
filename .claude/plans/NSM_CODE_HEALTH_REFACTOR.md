@@ -21,12 +21,17 @@
   two knob defaults, the keyword-only pair, #25's docstring, the eight config keys, the 58
   `verbose` gates, 41 docstrings, the `flake8-docstrings` gate, the sweep's own hole,
   §7.4's conversion, the `KNOWN_ISSUES` index, and this update. Suite 1144 →
-  **1172 passed / 4 skipped / 3 xfailed**: all 14 strict xfails commit 2 raised were
-  retired inside the slice, and the 3 that remain are the regression harness's.
+  **1174 passed / 4 skipped / 3 xfailed** (this line said 1172 until review — copied from
+  commit 15's count, before the last commit's two doc-citation cases): all 14 strict
+  xfails commit 2 raised were retired inside the slice, and the 3 that remain are the
+  regression harness's. The passed count is also environment-shaped — CI skips what its
+  runners cannot import (ubuntu 1166/12 skipped, macOS 1150/27) — so the stable figure is
+  the collected total, 1181.
   **Zero D100–D103 in `NSM/` outside the three `SCOPE`-excluded modules**, gated by
   `make lint` in CI. Net **+367** in `NSM/` against a +400 budget, nine tenths of it
-  docstrings. Two § History entries (28, 29), five CHANGELOG entries across Breaking,
-  Changed and Fixed, all four Phase 2 checkboxes and §6.1's hunt ticked.
+  docstrings. Two § History entries (28, 29), eight CHANGELOG entries — 2 Breaking,
+  3 Changed, 3 Fixed ("five" until review; the commit said eight) — all four Phase 2
+  checkboxes and §6.1's hunt ticked.
 - **A sweep that accepts an unsupported module as a reader reports the absence of exactly
   what it is looking for.** §6.1 asked for config keys that silently do nothing. The first
   sweep found eight and called the rest clean; checking `KNOWN_ISSUES`' #18 row against it
