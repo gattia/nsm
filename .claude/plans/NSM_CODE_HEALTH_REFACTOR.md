@@ -10,12 +10,12 @@
   `testing/` has passed `NSM/` in size — **14,770 lines against 14,460**, a ratio of 1.02
   from 0.26 at `v0.1.0` — and the slice index's new **T row** carries the measurements and
   three checkable trim criteria. It runs last because every slice adds to what it trims.
-- **Next:** **§8.0.P** (0b quarantine + #18) or **§8.0.R** (the parameter surface), both
-  now unblocked — Phase 2 is closed and the docstring gate is in CI, so nothing else is
-  waiting on N. P is maintainer-gated on the nsosim survey and has been since Phase 0; R
-  needs no gate. §8.0.N also handed P a concrete first task it did not have: the four
-  `sample_difficulty_lx` config keys are dead on every supported path, which is #18 seen
-  from the config's side. **Blocked on nothing except P's survey.**
+- **Next:** **§7.5a**, the reconstruction/BScore A/B on the kneepipeline box, then
+  **§7.5b**, a real training run on the maintainer's server — both defined in §7.5 (added
+  2026-08-30) and scheduled ahead of every remaining slice, because production crossed
+  v0.3.0 unpinned the moment #100 merged. After both pass: **§8.0.R** and **§8.0.P** in
+  either order (P's gate fell — see below), then **S**, then **T**. Q left the plan (see
+  below). **Blocked on nothing.**
 - **0b's survey is answered, and measured rather than transcribed (2026-08-30).** The
   maintainer states nsosim is inference-only; a sweep of a fresh `gattia/nsosim` clone
   confirms it — five symbols across three subpackages (`create_mesh`,
@@ -1757,6 +1757,62 @@ Priority order (by lines × inverse coverage × production-reachability):
 - [x] CI runs it on every PR *(`.github/workflows/build-test.yml` — lint job and test job,
       both required. Done since before this plan and unticked until 2026-08-29.)*
 
+### 7.5 Post-v0.3.0 validation runs — scheduled 2026-08-30 (maintainer), ahead of everything left
+
+Two runs, and they precede P/R/S/T. Why now: `kneepipeline` consumes this repo as a
+checked-out working tree, never a pin (§10.1), so merging #100 moved production across
+v0.3.0's 37 Breaking entries with no end-to-end run in between; and no real training run
+has ever been executed on the refactored trainer — the §7.1 harness is 2 analytic meshes
+and 8 CPU epochs by design. Both runs validate work already landed, with pass criteria
+stated before running. Results land per the four rules: a matched run ticks its box here
+plus a State line; a divergence is an issue (reproduced by definition); a number worth
+keeping becomes an assertion in the §7.1 harness or `test_shipped_checkpoints.py`, never
+a transcribed figure.
+
+- [ ] **7.5a — reconstruction/BScore A/B, kneepipeline box (local).** No archived job
+  carrying a `bscore_results.json` was found on this box (depth-bounded sweep,
+  2026-08-30), so the baseline is produced, not retrieved: prepare one working_dir
+  through `steps.segment` → `label_remap` → `subregions` → `generate_meshes` on an
+  integration image (`kneepipeline/data/`), copy it, then run `steps.run_nsm`
+  (`nsm_type: "both"`) + `steps.compute_bscore` in each copy — once with
+  `DEPENDENCIES/nsm` checked out at the baseline ref (maintainer's call; `v0.2.0` is the
+  last cut before the Breaking set), once at current `main` — and diff
+  `NSM_recon_params.json` and `bscore_results.json`. If production values for a real
+  archived job are retrievable from the website box, diff those too, same criteria.
+  - **Pass:** bone-only BScore matches to numerical noise — no known nondeterminism on
+    that path (kneepipeline `CLAUDE.md` Known Issues 4–5); bone+cart within ~0.004, the
+    documented `fix_mesh`/VTK-float32 noise. **A shift of ~0.08 on either is the
+    seed-ordering signature (Known Issue 3): a finding, not noise.**
+  - **No config refusal is expected, and hitting one is a finding:** `steps/run_nsm.py`
+    hand-builds `TriplanarDecoder(**params)` and never calls `load_model`, the only place
+    the required-key refusals live (`test_shipped_checkpoints.py`'s third assertion is
+    what pins those two construction paths together).
+  - Same box, same session: `python -m pytest testing/NSM/regression/test_gpu.py` (CUDA),
+    and with `NSM_SHIPPED_MODELS=/mnt/data/programming/kneepipeline/NSM_MODELS` set,
+    `python -m pytest testing/NSM/regression/test_shipped_checkpoints.py` (that
+    directory holds the 647, 551 and 231 model folders; all three discover).
+- [ ] **7.5b — a real training run, maintainer's server (fresh clone).** A small-but-real
+  `train_deep_sdf` run from a pre-refactor training script/config of the maintainer's
+  choosing — the ShapeMedKnee recipe is the reference case — real meshes, real cache
+  build. Read first: this section, `CLAUDE.md` § Learning Rate Schedules,
+  `docs/KNOWN_ISSUES.md` §1, and `NSM_TRAINING_IDEAS.md` Idea 13 (for what comes after,
+  not for this run).
+  - **Expected migrations, all by design, none a finding:** LR schedule entries missing
+    `Target` raise with a paste-ready annotation — take the message's suggestion
+    verbatim; the two optimizer families migrate to *opposite* annotations, so never
+    transcribe one run's fix onto another. A pre-Aug-2026 checkpoint resume is refused
+    outright (§4). A multi-surface config without `mesh_names` warns (#52 — prefer
+    declaring them on the dataset). A config routed through `load_model` needs the three
+    triplanar keys, named in one combined message.
+  - **Pass:** the run completes; per-group LR follows its `Target`'s schedule over the
+    first epochs, both groups logged (the point of Phase A); loss decreases; checkpoint
+    save → `load_model` → strict state-dict round-trip; `reconstruct_mesh` on one
+    training subject returns finite metrics.
+  - **The stopping rule:** 7.5b is the baseline, and it ends this plan's interest. The
+    maintainer's next question — a real pointwise `conv_activation`, does it help — is
+    `NSM_TRAINING_IDEAS.md` **Idea 13**, already written, §8.3-fenced out of this plan:
+    run it from 7.5b's config *after* 7.5b passes, as its own work.
+
 ---
 
 ## 8. Phase 4 — Decompose the monoliths
@@ -1794,10 +1850,12 @@ below exists so a decomposition bullet cannot be satisfied by relocation again.
 
 ### 8.0 Slice index — scheduled 2026-08-26
 
-§8.0.A–L are executed and keep their statements below. M–Q are scheduled. **Each gets its
-own §8.0-style statement as commit 1 of its own slice**, with every claim re-run against
-`main` first — writing eleven statements up front is the "size docs to your uncertainty"
-mistake `CLAUDE.md` names. What is fixed here is the *order* and each slice's *scope*.
+§8.0.A–O, N′ and N are executed and keep their statements below. P, R, S and T remain —
+after §7.5's two validation runs — and Q re-homed to the sigma plans on 2026-08-30.
+**Each remaining slice gets its own §8.0-style statement as commit 1 of its own slice**,
+with every claim re-run against `main` first — writing the statements up front is the
+"size docs to your uncertainty" mistake `CLAUDE.md` names. What is fixed here is the
+*order* and each slice's *scope*.
 
 | | Slice | Carries | Why it is where it is |
 |---|---|---|---|
@@ -1810,7 +1868,7 @@ mistake `CLAUDE.md` names. What is fixed here is the *order* and each slice's *s
 | **M** | `NSM/utils.py` | #50, the module's remaining undocumented surface | §1.2's exhibit: the file that held the founding bug. Phase A documented the LR path and nothing else. *Executed, PR #96 — 6 of 23 symbols documented, and #50's unreported half was the one that fired on the shipped default.* |
 | **O** | v0.3.0 release *(executed — see the S row for what it could not carry)* | the pending Breaking set, setuptools-scm (§10.1), §7.1's GPU note, **`NSM.configs` ships in no wheel** (SCOPE §5), **`__all__` per subpackage** — deferred at Phase 0 (§3), owned by nothing since, and §10.1 makes it the stated gate for 1.0.0; it is packaging-shaped, so it belongs beside setuptools-scm and the wheel gap — and **two items §8.0.H deferred here by name**: (a) a **combined pre-v0.3.0 config message** — the release adds three required triplanar keys (`padding`, `conv_norm_type`, `conv_activation`), each refused separately, so an old config is fixed one round-trip at a time; one message naming every missing key at once is the `_lr_migration` pattern applied to the set. (b) **`TriplanarDecoder`/`VAEDecoder`'s signature defaults**, still `conv_norm_type="batch"` against the `"layer"` everything trained — unreachable from a config now that the loader requires the key, but reachable by direct construction, and changing a public-stable signature needs the version boundary. | **Moved ahead of N′ and N on 2026-08-29, and not by preference.** `NSM/_verbose_deprecation.py` promises one release of overlap and says *delete at v0.4.0*; it has shipped in **zero** releases (latest tag `v0.2.0`), so until v0.3.0 exists that removal can never become due and the bridge is permanent by default. The Breaking set is complete as of G–M — 34 entries in CHANGELOG § Unreleased — and N′/N add none, so waiting buys nothing. Cut timing was always the maintainer's call; this is that call. |
 | **N′** | `reconstruct/cartilage_func.py` *(executed)* | the module's 19% coverage and 5 undocumented public functions, the end-to-end `None`-surface reconstruction test #67 leaves owed — the half that works is pinned only at its preprocessing helper (`test_none_surfaces_are_skipped_not_dropped`), so the capability the maintainer actually uses can rot through any future slice in silence | *Added 2026-08-29.* The last production module no slice has opened — SCOPE §2.5 rules it production, `train_deep_sdf.py:47` makes its five functions the whole of `DICT_VALIDATION_FUNCS`, and §7.3's priority list never named it. Characterization first: every slice that has opened a file at this coverage found 5–8 defects. Not folded into N, because a docs slice carrying an untested production module is how N misses its budget. **Executed 2026-08-29** — eight defects, one of them a `SIGSEGV`; coverage 19% → 100%; the owed end-to-end test found `SCOPE` §2.5b's supported half unreachable in production. |
-| **N** | Phase 2 close + lint gate *(executed — PR pending)* | the §6 checkboxes, `flake8-docstrings` in `make lint`, `CLAUDE.md` §Architecture rewrite, and the four #56 knobs + #55 + #25 (see the dispositions below) | Must follow G–M — that is where the missing docstrings are — and the lint gate is what stops G–M's accuracy rotting. **Re-scoped 2026-08-29, measured:** ~34 docstrings to write (57 bare, less the 16 deliberately-bare overrides, the 6 SCOPE-excluded, one nested decorator) ≈ 350–400 lines, three times §8.0.M's docstring count. **The gate is D1xx-only** — D100/101/102/103 — with `.flake8` recording why the D2xx/D4xx families stay off: at defaults they fire on existing accurate prose (139 D212, 42 D400, 31 D205, 9 D403), which is house style. Deliverable is "the gate passes", not a transcribed percentage. The 4 `get_learning_rate` and 12 `forward`/`backward` overrides that are bare on purpose take a per-site `# noqa: D102` naming the class docstring that carries the formula, **not** a rule exception — a `noqa` says why at the site, a config exception says it nowhere. |
+| **N** | Phase 2 close + lint gate *(executed, PR #100)* | the §6 checkboxes, `flake8-docstrings` in `make lint`, `CLAUDE.md` §Architecture rewrite, and the four #56 knobs + #55 + #25 (see the dispositions below) | Must follow G–M — that is where the missing docstrings are — and the lint gate is what stops G–M's accuracy rotting. **Re-scoped 2026-08-29, measured:** ~34 docstrings to write (57 bare, less the 16 deliberately-bare overrides, the 6 SCOPE-excluded, one nested decorator) ≈ 350–400 lines, three times §8.0.M's docstring count. **The gate is D1xx-only** — D100/101/102/103 — with `.flake8` recording why the D2xx/D4xx families stay off: at defaults they fire on existing accurate prose (139 D212, 42 D400, 31 D205, 9 D403), which is house style. Deliverable is "the gate passes", not a transcribed percentage. The 4 `get_learning_rate` and 12 `forward`/`backward` overrides that are bare on purpose take a per-site `# noqa: D102` naming the class docstring that carries the formula, **not** a rule exception — a `noqa` says why at the site, a config exception says it nowhere. |
 | **P** | 0b quarantine + #18 | `train/deprecated/` (876 lines), the `sample_difficulty_lx` port; #51 rides here (dispositions below) | **Ungated 2026-08-30**: the survey is answered and measured — nsosim is inference-only, five symbols and none of them in `train/` (`SCOPE` §5 has the sweep). What remains open is #18's own ruling, port-or-delete for the ~12 `sample_difficulty_lx` lines (§2.2's two conditions if ported), made at slice time; §8.0.N's finding is the first task either way — the four config keys of that name are dead on every supported path. |
 | **Q** | ~~#3, sigma coordinate space~~ **re-homed 2026-08-30 (maintainer)** | `BREAKING_CHANGE_PROPOSAL.md` + `SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md`, whose State blocks now own it | Moved out of the plan: a behaviour change with its own migration guard and release needs is an initiative, not a refactor slice — the refactor's close no longer waits on it, nor it on the refactor. Its sequencing constraint survives the move: it wants a release on either side, and v0.4.0 (the S row) is the near one. |
 | **R** | The parameter surface: read on one path, ignored on another | **Added 2026-08-30 by §8.0.N's sweep, and it is an omission being repaired rather than new work** — §8.0.K proposed this row in its own body on 2026-08-27 and no one put it in the table, so three later deferrals named a slice that could never be scheduled. It carries: (a) §8.0.K's five sites in `reconstruct_latent` — `optimizer_name` under `hybrid_optimizer`, `lbfgs_lr` / `lbfgs_max_iter` / `lbfgs_history_size` on the non-hybrid path (requested `(1.0, 3, 7)`, constructed `(0.005, 10, 100)` — a 200× step size), and `log_wandb_step`, which `reconstruct_latent` names and `reconstruct_mesh` never forwards; (b) `grad_clip`, re-measured by §8.0.L and still deferred — `clip_grad_norm_` sees the decoder's tensors and never the latent embedding; (c) the config validation with no reported instance behind it: `code_regularization_warmup=0`, `WarmupLearningRateSchedule(length=0)` and `StepLearningRateSchedule(interval=0)` all raise `ZeroDivisionError`, and a config without `additional_checkpoints` raises `KeyError` from `get_checkpoints` | **After a release**, which is §8.0.K's stated reason and still holds: closing one of these sites is either a refusal (no boundary needed) or a signature change (a boundary), and the set should be triaged **once, together**, so the boundary is paid for once. The question per parameter is not "does anyone set it" — §8.0.K measured that a deletion pass would find about two — but "is it read on every path that accepts it" |
