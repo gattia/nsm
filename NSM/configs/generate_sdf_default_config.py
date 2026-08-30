@@ -1,3 +1,14 @@
+"""Generates ``NSM/configs/default_config.json``; run it after editing ``config``.
+
+``python -m NSM.configs.generate_sdf_default_config``. The JSON is what ships and
+what tests read; this file is the source of truth for it, and
+``test_default_config_sync`` fails if the two drift -- which they had, twice,
+before that test existed.
+
+The write is deliberately **not** at import time. It used to be, targeting ``./``,
+so importing this module littered whatever directory you were in.
+"""
+
 import json
 import os
 

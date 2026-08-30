@@ -43,6 +43,12 @@ def assert_finite(tensor, name):
 
 
 def add_cell_idx(mesh):
+    """Attach a ``cell_idx`` cell array numbering the faces, if it is not there.
+
+    The mesh path subdivides and smooths between latent steps, which renumbers cells;
+    stamping the original indices first is what lets a caller trace a face on the
+    result back to the face it came from. Idempotent, and it mutates ``mesh``.
+    """
     if "cell_idx" not in mesh.scalar_names:
         n_cells = mesh.mesh.GetNumberOfCells()
         cells = np.arange(n_cells)

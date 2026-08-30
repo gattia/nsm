@@ -1,3 +1,15 @@
+"""Regress subject factors on fitted latents, as a validation signal during training.
+
+``SCOPE.md`` §2.5 rules this **research**: it is reached from ``get_mean_errors``
+when ``predict_val_variables`` is set, and it is the only latent-to-factor
+validator in the repo.
+
+It never worked through that caller until Aug 2026 -- ``get_mean_errors`` passed the
+whole result dict to :meth:`Regress.add_latent` instead of the fitted latent, in
+that form since Jul 2023 (#48). How the ShapeMedKnee paper's validation actually
+ran is not answerable from this repository.
+"""
+
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression

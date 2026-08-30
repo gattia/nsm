@@ -27,6 +27,18 @@ logger = logging.getLogger(__name__)
 
 
 class VAEDecoder(nn.Module):
+    """Generates the three feature planes a :class:`TriplanarDecoder` samples.
+
+    A latent vector in, a ``3 * out_features``-channel image out, via a transposed-conv
+    stack that doubles the spatial size per block from ``deep_image_size``. "VAE" is
+    historical: nothing here is variational, and there is no encoder.
+
+    Every parameter below is fixed by the checkpoint rather than chosen at load time,
+    because ``nn.Sequential`` names its children by position -- see ``__init__`` for
+    ``conv_activation``, whose ``None`` is the architecture every shipped model was
+    trained with.
+    """
+
     def __init__(
         self,
         latent_dim,
@@ -161,7 +173,7 @@ class VAEDecoder(nn.Module):
         for key in [name for name in state_dict if name.startswith(prefix + "layers.")]:
             del state_dict[key]
 
-    def forward(self, x):
+    def forward(self, x):  # noqa: D102 - see the class docstring
         # reshape x into a 2D tensor
 
         if self.start_with_mlp is True:
@@ -186,14 +198,25 @@ class VAEDecoder(nn.Module):
 
 
 class UniqueConsecutive(torch.autograd.Function):
+    """``torch.unique_consecutive`` with a gradient that scatters back by multiplicity.
+
+    Used to collapse a per-query-point latent down to one row per distinct latent
+    before the decode, and to send each row's gradient back to every point it stood
+    for. ``backward`` expands by ``bincount`` of the inverse indices, which is exactly
+    a **sum** over those points -- the reason latent gradients scale with the number
+    of query points (``KNOWN_ISSUES`` § Open, triplanar).
+
+    :class:`FastUnique` is the single-latent shortcut with the same gradient.
+    """
+
     @staticmethod
-    def forward(ctx, input, dim=0, return_inverse=True):
+    def forward(ctx, input, dim=0, return_inverse=True):  # noqa: D102 - class docstring
         unique, indices = torch.unique_consecutive(input, dim=dim, return_inverse=return_inverse)
         ctx.save_for_backward(indices)
         return unique, indices
 
     @staticmethod
-    def backward(ctx, grad_output, grad_indices=None):
+    def backward(ctx, grad_output, grad_indices=None):  # noqa: D102 - class docstring
         (indices,) = ctx.saved_tensors
         # Count the occurrences of each unique row
         counts = torch.bincount(indices)
@@ -215,12 +238,12 @@ class FastUnique(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, latent_input, num_points):
+    def forward(ctx, latent_input, num_points):  # noqa: D102 - class docstring
         ctx.num_points = num_points
         return latent_input.unsqueeze(0)  # (1, D)
 
     @staticmethod
-    def backward(ctx, grad_output):
+    def backward(ctx, grad_output):  # noqa: D102 - class docstring
         # Expand gradient to match original input size (like unique_consecutive does)
         # grad_output: (1, D) -> expanded_grad: (num_points, D)
         expanded_grad = grad_output.repeat(ctx.num_points, 1)
@@ -406,6 +429,15 @@ class TriplanarDecoder(nn.Module):
         return sampled_feats.T
 
     def normalize_coordinates(self, query, plane):
+        """Project ``query`` onto ``plane`` and rescale into ``grid_sample``'s [-1, 1].
+
+        The divisor is ``1 + self.padding``, so a model trained with padding samples a
+        proportionally smaller region of its own feature planes; coordinates past the
+        edge are clamped rather than wrapped. ``self.padding`` is the only source --
+        a ``padding`` argument was accepted and ignored here until Aug 2026 (#20), and
+        honouring it would have handed the sole caller the 0.1 default in place of the
+        model's trained value.
+        """
         # No `padding` argument: it was accepted and ignored here until Aug 2026 (#20),
         # and honouring it would have handed the sole caller the 0.1 default in place of
         # a model's trained value. self.padding is the only source.

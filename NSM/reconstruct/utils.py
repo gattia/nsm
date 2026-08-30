@@ -1,3 +1,14 @@
+"""Point-cloud distance metrics and the small helpers reconstruction shares.
+
+Chamfer and ASSD over raw point arrays, the sampling that feeds them, the
+learning-rate step used *inside* a latent fit, and ``refuse_unknown_kwargs``.
+
+Note the two ``adjust_learning_rate`` functions in NSM are unrelated: this one
+decays a single rate over the iterations of one reconstruction; ``NSM.utils``'s
+assigns per-group rates from the config's ``LearningRateSchedule`` during
+training. Same name, different mechanism, no shared code.
+"""
+
 import numpy as np
 from scipy.spatial import cKDTree as KDTree
 
@@ -113,8 +124,15 @@ def compute_chamfer(
     return np.mean(d1**power) + np.mean(d2**power)
 
 
-# Update LR
 def adjust_learning_rate(initial_lr, optimizer, iteration, decreased_by, adjust_lr_every):
+    """Step-decay every param group of a latent-fit optimizer to one shared rate.
+
+    ``initial_lr / decreased_by ** (iteration // adjust_lr_every)``, assigned to
+    **every** group. That is correct here and would be a bug in training: a
+    reconstruction optimizes one latent and nothing else, so there is only one kind
+    of group. The same-named function in ``NSM.utils`` is the training one and
+    dispatches per group ``target`` for exactly that reason.
+    """
     lr = initial_lr * ((1 / decreased_by) ** (iteration // adjust_lr_every))
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr

@@ -1,3 +1,22 @@
+"""Learning-rate schedules, optimizer construction, and checkpoint I/O.
+
+The file §1.2 of the code-health plan calls its exhibit: it held the positional
+mapping that applied the model schedule to the latents and the latent schedule to
+the model on every Adam/AdamW run from May 2023 to Aug 2026
+(``docs/KNOWN_ISSUES.md`` §1).
+
+What replaced it is one vocabulary spanning config and optimizer, and it is the
+thing to know before touching anything here: a schedule entry declares
+``Target`` (``"model"`` or ``"latent"``), a param group carries ``target``, and
+``adjust_learning_rate`` is a dict lookup between them. **There is no positional
+indexing anywhere in the LR path**, and entry order is ignored. Param groups also
+carry ``name`` (``latent``, ``model_0``, ...), which is a human label only --
+nothing dispatches on it, and several groups may share one target.
+
+``NSM/_lr_migration.py`` is the transitional half of that change and says when to
+delete it.
+"""
+
 import json
 import logging
 import math
@@ -59,7 +78,7 @@ class ConstantLearningRateSchedule(LearningRateSchedule):
     def __init__(self, value):
         self.value = value
 
-    def get_learning_rate(self, epoch):
+    def get_learning_rate(self, epoch):  # noqa: D102 - see the class docstring
         return self.value
 
 
@@ -76,7 +95,7 @@ class StepLearningRateSchedule(LearningRateSchedule):
         self.interval = interval
         self.factor = factor
 
-    def get_learning_rate(self, epoch):
+    def get_learning_rate(self, epoch):  # noqa: D102 - see the class docstring
 
         return self.initial * (self.factor ** (epoch // self.interval))
 
@@ -95,7 +114,7 @@ class WarmupLearningRateSchedule(LearningRateSchedule):
         self.warmed_up = warmed_up
         self.length = length
 
-    def get_learning_rate(self, epoch):
+    def get_learning_rate(self, epoch):  # noqa: D102 - see the class docstring
         if epoch > self.length:
             return self.warmed_up
         return self.initial + (self.warmed_up - self.initial) * epoch / self.length
@@ -115,7 +134,7 @@ class LogAnnealLearningRateSchedule(LearningRateSchedule):
         self.final = final
         self.n_epochs = n_epochs
 
-    def get_learning_rate(self, epoch):
+    def get_learning_rate(self, epoch):  # noqa: D102 - see the class docstring
         return self.initial * math.exp(math.log(self.final / self.initial) * epoch / self.n_epochs)
 
 

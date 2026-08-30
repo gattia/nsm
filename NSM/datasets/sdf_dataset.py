@@ -1,3 +1,27 @@
+"""Turn meshes into the SDF samples a decoder trains on, and cache the result.
+
+Two dataset classes, one for a single surface per subject and one for several:
+:class:`SDFSamples` and :class:`MultiSurfaceSDFSamples`. Both do the same four
+things per subject -- read the meshes, put them in a common frame, draw points and
+compute signed distances, cache -- and the leaf helpers for each live in
+``NSM/datasets/utils.py`` and ``NSM/datasets/mesh_sampling.py``.
+
+Three things here are traps rather than details:
+
+* **NSM never builds one of these from a config.** ``train_deep_sdf`` takes an
+  already-built dataset, so ``default_config.json``'s dataset keys are a
+  specification the caller translates into constructor arguments.
+* **The cache key does not cover every parameter that changes the samples**
+  (#19), so a run pointed at a stale cache silently reuses the old points.
+* **``multiprocessing=True`` after an in-process build deadlocks** (#25) -- see
+  that parameter's entry in :class:`SDFSamples`.
+
+Coordinate conventions -- what ``center_pts``, ``norm_pts`` and ``scale_jointly``
+each do, and which of them ``sigma_near``/``sigma_far`` are expressed in -- are in
+``docs/ARCHITECTURE.md`` and ``docs/KNOWN_ISSUES.md`` §3; they are not
+interchangeable and #3 is open against the sigma half.
+"""
+
 import gc
 import hashlib
 import json

@@ -1,3 +1,20 @@
+"""Fit a latent to an unseen shape, and decode it back to meshes.
+
+:func:`reconstruct_mesh` is the public entry point: meshes in, a fitted latent and
+the decoded surfaces out, plus whichever metrics its flags ask for. The pieces it
+is built from live beside it -- ``latent_fit`` (the optimization),
+``recon_evaluation`` (metrics and the batch driver ``get_mean_errors``),
+``cartilage_func`` (the training-time validation hooks), ``wandb_logging``.
+
+This module re-imports every name from those, so ``NSM.reconstruct.main`` and
+``NSM.reconstruct`` both still serve them; that re-import block is public API and
+``test_reconstruct_import_compat`` pins it.
+
+**The return type depends on the flags** -- a dict when any of them is set, a bare
+list of meshes otherwise. Every first-party caller takes the dict branch. See
+:func:`reconstruct_mesh`.
+"""
+
 import logging
 import time
 from contextlib import contextmanager

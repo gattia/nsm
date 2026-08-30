@@ -1,3 +1,19 @@
+"""The training loop: one decoder (or several outputs), one latent per subject.
+
+:func:`train_deep_sdf` is the orchestrator -- setup, then an epoch loop, periodic
+validation and checkpointing -- and :func:`train_epoch` is where a batch is turned
+into a loss. Everything is driven by a ``config`` dict; ``NSM/configs/`` ships a
+default and ``NSM.models.loader`` builds the model from the same dict.
+
+The dataset is **passed in, not built here**, so a config's dataset keys are the
+caller's to honour.
+
+Two config contracts are enforced rather than assumed, both because getting them
+wrong was silent for years: every ``LearningRateSchedule`` entry must declare
+``Target`` (``NSM/utils.py``, ``KNOWN_ISSUES`` §1), and ``mesh_names`` must agree
+with the dataset's own surface order when both are given (#52).
+"""
+
 import itertools
 import logging
 import os
