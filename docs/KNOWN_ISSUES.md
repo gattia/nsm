@@ -1726,3 +1726,84 @@ the layout it assumes.
 `test_cartilage_func.TestTheMeshListLength` (the whole-joint list into the tibia wrapper,
 the wrong-length pairs, and the four-surface `["bone", "cart", "med_men", "lat_men"]`
 layout into the whole-joint function).
+
+
+## 28. ASSD downcast the caller's meshes to float32 before measuring them
+
+| | |
+|---|---|
+| **Affected** | `compute_recon_loss(..., calc_assd=True)` — and therefore `get_mean_errors` and `reconstruct_mesh` with `calc_assd`, which is what both shipped configs set — called with meshes whose `point_coords` are **float64**. → Aug 2026 |
+| **Unaffected** | Everything NSM produces or reads itself: VTK stores points at single precision, so `create_mesh`'s output and a mesh pymskt reads from disk are already float32 and the cast was a no-op. Bit-identical on both shipped ShapeMedKnee configs and on `kneepipeline`. The chamfer path never cast at all |
+| **Severity** | Silent, small, and in the direction of *less* precision |
+| **Fixed in** | `slice-n-phase2-close`, Aug 2026 (plan §8.0.N, [#55](https://github.com/gattia/nsm/issues/55)) |
+
+### What was wrong
+
+Before measuring ASSD, `recon_evaluation.compute_recon_loss` did this:
+
+```python
+# make sure the points for the meshes are the same types
+mesh.point_coords = mesh.point_coords.astype(np.float32)
+orig_meshes[mesh_idx].point_coords = orig_meshes[mesh_idx].point_coords.astype(np.float32)
+```
+
+Two things are wrong with it and only one of them is about precision.
+
+**The stated reason does not hold.** `get_assd_mesh` calls pymskt's `pcu_sdf`, which casts
+the query points *and* the mesh vertices to `float64` itself
+(`get_faces_vertices(..., points_dtype=np.float64)`, `_as_c_contig(pts, np.float64)`). The
+caller's dtype never reached the computation. Measured on a sphere pair, float32/float64,
+float64/float32 and float64/float64 all return the identical value — so the cast could
+never supply agreement, only remove precision on the way in.
+
+**It mutated the caller's objects.** Not copies: `mesh` is the caller's reconstruction and
+`orig_meshes[mesh_idx]` is the caller's ground-truth mesh, and both came back downcast.
+Conditional on the flag, too — a caller that scored chamfer only, then added ASSD later,
+lost precision on meshes it still held and had no way to notice.
+
+### How to tell whether one of your runs is affected
+
+Your ASSD numbers are affected only if the meshes you passed were float64. If they came
+from `create_mesh`, from `reconstruct_mesh`, or from reading a `.vtk` through pymskt, they
+were float32 and nothing changed. If you built them yourself at double precision — from a
+numpy array, or a mesh library that keeps doubles — the ASSD you recorded came from a
+float32 round-trip of your points.
+
+**The size of it:** measured on a sphere pair perturbed below float32 resolution, the ASSD
+moves by **7.2e-09**. That is far below any tolerance NSM reports against, so this is a
+correctness note rather than a call to re-run anything.
+
+*Pinned by:* `test_caller_object_mutation.TestSite2TheAssdDowncast`, which asserts the
+caller's dtypes survive the call, that the chamfer path still does not touch them, and that
+the reported ASSD is unchanged for the float32 meshes production actually passes.
+
+## 29. `reconstruct_mesh`'s random-point sampling widened from sigma 0.001 to 0.01
+
+| | |
+|---|---|
+| **Affected** | `reconstruct_mesh(get_rand_pts=True)` **without** an explicit `sigma_rand_pts`. Aug 2026 → |
+| **Unaffected** | `get_rand_pts=False`, which is what both shipped ShapeMedKnee configs set, so the sampling does not happen at all; any caller that passes `sigma_rand_pts` explicitly, which `kneepipeline`'s `steps/run_nsm.py` does; `get_mean_errors`, whose default was already 0.01 |
+| **Severity** | Silent — a 10× wider Gaussian around the surface, so a different sample set |
+| **Changed in** | `slice-n-phase2-close`, Aug 2026 (plan §8.0.N, [#56](https://github.com/gattia/nsm/issues/56)) |
+
+### What was wrong
+
+`sigma_rand_pts` is the width of the Gaussian the off-surface points are drawn from. It
+passed through three layers under one name with two values: `reconstruct_mesh` defaulted to
+**0.001**, `get_mean_errors` to **0.01**, and the shipped config's `sigma_rand_pts_recon` is
+**0.01**. So the same knob meant two different things depending on which layer you entered
+at, and neither end said so.
+
+Resolved to 0.01 — the value the ShapeMedKnee configuration uses and the one every path
+that reads a config already took. This is a **default** change, not an algorithm change:
+a caller who passed the value explicitly is unaffected, in either direction.
+
+### How to tell whether one of your runs is affected
+
+Two conditions, both required: you called `reconstruct_mesh` (not `get_mean_errors`) with
+`get_rand_pts=True`, and you did not pass `sigma_rand_pts`. If either is false, nothing
+moved. If both are true, your off-surface points were drawn at a tenth of the width they
+will be drawn at now; pass `sigma_rand_pts=0.001` to reproduce the old draw.
+
+*Pinned by:* `test_reconstruct_mesh_contracts.TestTheKnobsThatDifferByLayer`, which reads
+the defaults off the signatures rather than restating them.

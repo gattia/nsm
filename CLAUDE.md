@@ -231,38 +231,72 @@ When you touch code a `docs/` file describes, verify it in the same commit or pu
 
 ### Core Modules
 
-**`NSM/models/`** - Neural representation architectures:
-- `deep_sdf.py`: Standard DeepSDF implicit representation using MLPs
-- `triplanar.py`: Three-plane feature grid decomposition decoder
-- `modulated_periodic_activations.py`: SIREN-style networks with modulated activations
-- `two_stage.py`: Hybrid triplanar + MLP approach
-- `loader.py`: Unified model loading interface with config templates (supports: triplanar, deepsdf, two_stage, implicit)
+> No line counts below, deliberately. This section carried two — `sdf_dataset.py`
+> "(~2200 lines)" and `reconstruct/main.py` "(~1400 lines)" — and by Aug 2026 both were
+> wrong (1880 and 580), moved by the very decompositions this document describes. A
+> hand-transcribed number is stale the day after it is written and nothing says so; run
+> `wc -l` if you need one. Every module docstring in `NSM/` is accurate as of the §8.0.N
+> pass and is the better starting point for any file below.
 
-**`NSM/datasets/sdf_dataset.py`** (~2200 lines) - Core dataset class:
-- Generates signed distance function samples from 3D meshes
-- Supports multi-surface rigid registration (aligning multiple anatomical structures)
-- Handles mesh preprocessing, scaling, centering, ICP registration
-- Caches processed data in H5 or numpy formats
+**`NSM/models/`** — decoder architectures. `loader.load_model` is the way in: it reads a
+`model_params_config.json` and builds one of four, selected by `model_type`. Config keys
+and constructor parameters are **two vocabularies** and the loader is the translation
+(`layer_latent_in` → `latent_in`, `layer_dimensions` → `dims`), so a key that looks unused
+may simply be spelled differently one frame down.
+- `deep_sdf.py`: `Decoder` — `[latent, xyz]` through an MLP. `latent_in` re-injects the
+  input mid-stack, `layer_split` gives each object its own tail, `progressive_add_depth`
+  phases later blocks in **by epoch**, which makes `forward` depend on the epoch it is
+  given. Also the `Sine` / `SIREN_W0` pairing that must move together.
+- `triplanar.py`: `TriplanarDecoder` — a `VAEDecoder` generates three feature planes and
+  the SDF head samples them. This is what ShapeMedKnee ships. `conv_activation=None` is
+  the historical architecture and the only one existing checkpoints fit.
+- `modulated_periodic_activations.py`: SIREN blocks and `ImplicitDecoder`. `modulation`
+  is an architecture choice, not a runtime switch — it changes the MLP's input width.
+- `two_stage.py`: triplanar + MLP summed, with the latent split **by position**.
 
-**`NSM/train/`** - Training pipelines:
-- `train_deep_sdf.py`: Main training loop
+**`NSM/datasets/`** — meshes to SDF samples, and the cache.
+- `sdf_dataset.py`: `SDFSamples` and `MultiSurfaceSDFSamples`. **NSM never builds one of
+  these from a config** — `train_deep_sdf` takes an already-built dataset — so
+  `default_config.json`'s dataset keys are a specification the caller translates.
+- `mesh_sampling.py`, `utils.py`: the readers and the leaf helpers, split out by §8.0.A/B.
+
+**`NSM/train/`** — training pipelines:
+- `train_deep_sdf.py`: `train_deep_sdf` (orchestrator) and `train_epoch` (the batch loop).
 - `train_deep_sdf_multi_head.py`: Multi-head training (N independent decoders, one shared
   latent) — **broken, do not use**: only the last decoder trains. `docs/SCOPE.md` §2.1
   ruled it *supported, fix it* in Aug 2026 and **downgraded that to unsupported-until-
   needed on 2026-08-29**: the repair was never scheduled, so the ruling was a promise the
   plan could not keep. The module and its warning stay, and #51 keeps the verified repair
   checklist for whoever needs it — what stopped is the intent to do it
-- `utils.py`: Weight scheduling (linear, exponential, exponential_plateau, constant), KLD loss
+- `utils.py`: Weight scheduling (linear, exponential, exponential_plateau, constant), KLD
+  loss, and the profiler the trainer opens.
+- `deprecated/`: quarantined (`SCOPE.md` §2.2). It holds the only live
+  `sample_difficulty_lx` branch, which is why the four config keys of that name do nothing
+  on any supported path (#18, `KNOWN_ISSUES.md` § Open).
 
-**`NSM/reconstruct/`** - Reconstruction and evaluation:
-- `main.py` (~1400 lines): Core reconstruction pipeline - latent code optimization, surface reconstruction, mean shape computation
-- `recon_evaluation.py`: Evaluation metrics with logging
-- `cartilage_func.py`: Cartilage-specific analysis
+**`NSM/reconstruct/`** — fit a latent to an unseen shape, then score it.
+- `main.py`: `reconstruct_mesh`, the public entry point. **Its return type depends on its
+  flags** — a dict if any metric or `return_latent` is set, a bare mesh list otherwise. It
+  re-imports every name from the modules below, and that re-import block is public API.
+- `latent_fit.py`: `reconstruct_latent` and the type checks around it.
+- `recon_evaluation.py`: `compute_recon_loss` (per-subject metrics) and `get_mean_errors`
+  (the batch driver, and the only production caller of the validation hooks).
+- `cartilage_func.py`: `DICT_VALIDATION_FUNCS` — the training-time cartilage-thickness
+  validators. Fixed-layout by design (`SCOPE.md` §2.5).
+- `wandb_logging.py`, `utils.py`, `_config_migration.py`, `predictive_validation_class.py`,
+  `reconstruct_latent_S3.py` (deferred research, `SCOPE.md` §2.4).
 
-**`NSM/mesh/`** - Mesh processing:
-- `main.py`: Marching cubes with adaptive refinement, deterministic coarse grid bounds
-- `refine_mesh.py`: Mesh refinement techniques
-- `interpolate.py`: Mesh interpolation utilities
+**`NSM/mesh/`** — mesh processing:
+- `main.py`: Marching cubes with adaptive refinement, deterministic coarse grid bounds.
+- `refine_mesh.py`: Mesh refinement techniques.
+- `interpolate.py`: latent interpolation as point correspondence. `interpolate_mesh`
+  mutates the mesh you give it; `interpolate_points` does not.
+- `correspondence_metrics.py`, `triangle_metrics.py`: correspondence quality. Every metric
+  is wrapped in a blanket `except Exception` that writes `{"error": ...}` into the results
+  dict — so a *programming* error (a `TypeError` from a positional call to the keyword-only
+  round-trip pair) is indistinguishable there from a data error. Raised as an argument for
+  narrowing it, with that evidence, at plan §8.0.N; not acted on, because it is a design
+  call.
 
 **`NSM/losses.py`** - Eikonal loss for enforcing ||∇SDF|| = 1 constraint.
 **Gated: `eikonal_weight > 0` raises `NotImplementedError`** at all three entry points

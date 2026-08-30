@@ -10,12 +10,65 @@
   `testing/` has passed `NSM/` in size — **14,770 lines against 14,460**, a ratio of 1.02
   from 0.26 at `v0.1.0` — and the slice index's new **T row** carries the measurements and
   three checkable trim criteria. It runs last because every slice adds to what it trims.
-- **Next:** **§8.0.N is in flight** — statement written 2026-08-30, sequence of 15 commits
-  below it. Its scope was re-derived by sweeping `8.0.N` across the plan rather than from
-  this line, and the sweep returned **six items the old Next did not name**: §7.4's
-  suite-time bound, the last `verbose`-gated log records, the 25 parameter-form gates, the
-  `KNOWN_ISSUES` § Open table audit, the `correspondence_metrics` blanket-`except`
-  argument, and §6.1's hunt for config keys that do nothing. **Blocked on nothing.**
+- **Next:** **§8.0.P** (0b quarantine + #18) or **§8.0.R** (the parameter surface), both
+  now unblocked — Phase 2 is closed and the docstring gate is in CI, so nothing else is
+  waiting on N. P is maintainer-gated on the nsosim survey and has been since Phase 0; R
+  needs no gate. §8.0.N also handed P a concrete first task it did not have: the four
+  `sample_difficulty_lx` config keys are dead on every supported path, which is #18 seen
+  from the config's side. **Blocked on nothing except P's survey.**
+- **§8.0.N executed (2026-08-30), based on `main` at `09c3834`:** commits 2–16 — the
+  characterization, the ASSD downcast, the `sdf_gt` list, the interpolation contract, the
+  two knob defaults, the keyword-only pair, #25's docstring, the eight config keys, the 58
+  `verbose` gates, 41 docstrings, the `flake8-docstrings` gate, the sweep's own hole,
+  §7.4's conversion, the `KNOWN_ISSUES` index, and this update. Suite 1144 →
+  **1172 passed / 4 skipped / 3 xfailed**: all 14 strict xfails commit 2 raised were
+  retired inside the slice, and the 3 that remain are the regression harness's.
+  **Zero D100–D103 in `NSM/` outside the three `SCOPE`-excluded modules**, gated by
+  `make lint` in CI. Net **+367** in `NSM/` against a +400 budget, nine tenths of it
+  docstrings. Two § History entries (28, 29), five CHANGELOG entries across Breaking,
+  Changed and Fixed, all four Phase 2 checkboxes and §6.1's hunt ticked.
+- **A sweep that accepts an unsupported module as a reader reports the absence of exactly
+  what it is looking for.** §6.1 asked for config keys that silently do nothing. The first
+  sweep found eight and called the rest clean; checking `KNOWN_ISSUES`' #18 row against it
+  found four more it had passed — `sample_difficulty_lx` and its three companions, read
+  only by `train_deep_sdf_multi_head` (#51-broken) and the quarantined trainer. The bug was
+  in the *predicate*, not the data: "read by NSM" has to mean read by something a user can
+  run, which is the same three `SCOPE` exemptions the docstring gate and the `verbose`
+  sweep already use. **Three sweeps in this slice, one definition of the documented
+  surface — and the one that did not use it was the one that came out wrong.**
+- **Two of the three #55 sites needed different remedies, and the third's was already
+  written in the wrong place.** The issue says "each site copies, or documents the mutation
+  and stops returning the object; docstrings say which", and it is right to leave the
+  choice open. `compute_recon_loss`'s downcast was **deleted** rather than copied: its
+  stated reason — "make sure the points for the meshes are the same types" — is false,
+  pymskt's `pcu_sdf` casts both sides to `float64` itself, so the cast could only lose
+  precision. That is `CLAUDE.md`'s "never inherit a rationale along with the code" paying
+  for itself: the obvious fix was a copy, and the right fix was two fewer lines.
+  `interpolate_mesh`'s mutation was **already documented** — at `interpolate_common`, the
+  private engine, and at neither public entry point. Writing the pin then corrected this
+  slice's own characterization: `interpolate_points` does **not** mutate, so the pair is
+  opposite rather than alike.
+- **The disposition named the wrong sibling, and only running it said so.** #56's fourth
+  part went to "the `roundtrip_distance` / `directed_distance_percentiles` pair". Measured:
+  `roundtrip_distance` is symmetric, so a swap is elementwise identical;
+  `forward_backward_disagreement` — which takes **the same two arrays in the opposite
+  order**, forty lines away — sign-flips `field` while every summary statistic stays put;
+  `directed_distance_percentiles` is asymmetric and documented as directional, so a swap
+  there changes the number rather than hiding. The keyword-only change went to the first
+  two. The issue's own title said "adjacent metrics take their arguments in opposite
+  order" and the disposition had read past it.
+- **A `logger` ungating manufactures the accepted-and-ignored class it was cleaning up
+  after.** Removing 58 `if verbose:` wrappers left two `verbose` parameters with no reader
+  — and they were precisely the two `_verbose_deprecation` exempts from the bridge
+  *because* their `verbose` is required. Both deleted with their last reader, and the
+  paragraph explaining the exemption went with them. The order matters: the
+  accepted-and-ignored sweep has to run **after** a cleanup like this, not before.
+- **§7.4's bound is not a gate and should not be.** A wall-clock assertion inside the suite
+  it measures is self-referential, and on a shared runner it goes red for reasons unrelated
+  to the code. What was wrong was that the number was hand-measured and lived in this
+  block. `make test` now passes `--durations=15`, so CI publishes it. The durations are the
+  half that is actionable: five subprocess tests account for **36 s** of the suite, led by
+  `test_dataset_cache`'s #25 workaround at 10.7 s. That is the **T** row's opening list.
 - **§8.0.R existed as a proposal for three days and in no table, which is how three
   deferrals came to name a slice that could not be scheduled.** §8.0.K proposed it in its
   own body on 2026-08-27 — the "read on one path, ignored on another" triage, five sites in
@@ -1481,25 +1534,30 @@ Treat the 1,800 as a prediction that was tested and failed, not a target to hit.
 
 Only over modules that survived Phase 1.
 
-- [ ] Docstrings on every surviving public function/class: purpose, args, returns, raises,
+- [x] Docstrings on every surviving public function/class: purpose, args, returns, raises,
       **and any silent convention** (index orderings, coordinate spaces, units).
       `[0]=model, [1]=latent` is precisely the kind of thing that must be written down.
-      *(Partial, through the per-module passes: PR #37 — docstrings contradicting their
-      signatures; PR #66 — the 62 prose corrections plus the `train/`/`utils` conventions;
-      PR #70 — the `sdf_dataset.py` semantic pass. Modules no pass has reached remain.)*
-- [ ] Verify each existing docstring against the implementation — 48% coverage says
-      nothing about whether those 48% are *true*. *(Same per-module status: the passes
-      above verified what they touched, nothing else.)*
-- [ ] Enforce mechanically so it cannot rot: add `flake8-docstrings` (or `pydocstyle`) to
-      `make lint`, failing on missing docstrings in public API. *(Re-checked 2026-08-24:
-      `make lint` runs flake8 with no docstring plugin — fully open, and the accuracy paid
-      for above can rot silently until this lands.)*
-- [ ] Rewrite `CLAUDE.md` §Architecture from the Phase 1 map; drop the stale
+      *(Per-module passes — PR #37, #66, #70 — then **§8.0.N** for what G–M left: 41
+      docstrings written, 16 deliberately-bare overrides given a per-site `noqa`, and 11
+      sites left to the three `SCOPE`-excluded modules. The next checkbox is what keeps it
+      true.)*
+- [x] Verify each existing docstring against the implementation — 48% coverage says
+      nothing about whether those 48% are *true*. *(Done per module as each was opened;
+      `test_docstring_signatures` covers the mechanical half — a documented parameter that
+      is not in the signature — continuously, and `test_docs_references` does the same for
+      cross-file citations in `docs/`.)*
+- [x] Enforce mechanically so it cannot rot: add `flake8-docstrings` (or `pydocstyle`) to
+      `make lint`, failing on missing docstrings in public API. *(**§8.0.N.** D100–D103
+      over `NSM/`; every other D family is off with its reason in `.flake8` rather than
+      assumed, and the two `per-file-ignores` are different in kind — `testing/` documents
+      itself in class docstrings, and the three modules are outside the documented surface
+      by `SCOPE` ruling. Verified to bite by adding a bare public function. CI gates it.)*
+- [x] Rewrite `CLAUDE.md` §Architecture from the Phase 1 map; drop the stale
       "EIKONAL LOSS HAS NOT BEEN TESTED" shout-comment into a tracked issue instead.
-      *(**Half done, and this text said otherwise until 2026-08-29.** The shout is gone
-      from `CLAUDE.md` and from `NSM/` — §8.2's gate replaced its substance, and §8.0.L
-      corrected the surviving line from two entry points to three. What remains is the
-      §Architecture rewrite itself: **§8.0.N**.)*
+      *(The shout went with §8.2's gate. The rewrite is **§8.0.N**: the section named 3 of
+      `reconstruct/`'s 9 modules, 3 of `mesh/`'s 5 and 1 of `datasets/`' 3, and carried two
+      line counts that were both already wrong. It now names every module and **no** line
+      counts — rule 1 — and leads with the trap per package rather than a description.)*
 
 ### 6.1 Warnings, not just docstrings
 
@@ -1530,15 +1588,20 @@ of these is small and independent of the decomposition work:
       off-state has never been exercised; a feature whose disabled path is untested turns
       itself on eventually. Document it at the config key, not only in code.
       *(= #18; rides with the 0b quarantine.)*
-- [ ] **Find the config keys that silently do nothing** because their implementing branch is
+- [x] **Find the config keys that silently do nothing** because their implementing branch is
       commented out. These read as working features and produce no error — the inverse of
-      the hazard above, and harder to notice. *(One instance found and deleted by 8.0.C's
-      sweep — `compute_recon_loss(n_samples_assd)`, its implementing call commented out.
-      A second surfaced on 2026-08-29 without being looked for: `train_deep_sdf.py:354`
-      passes `# chamfer_norm` commented out, so the power is unreachable from any config
-      and the trainer silently takes `get_mean_errors`' default — which is what settled
-      #56. **Owner: §8.0.N**, which is the last slice that opens every file; the hunt had
-      none until then, and §8.0's expired-carrier note above is why that matters.)*
+      the hazard above, and harder to notice. *(**Hunted at §8.0.N**, and it found the
+      stronger form: of `default_config.json`'s 121 keys, **eight had no branch at all**.
+      Six of those named a real `MultiSurfaceSDFSamples` parameter under a different
+      spelling — NSM never builds a dataset from a config, so that half of the file is a
+      specification the user translates by hand, and it disagreed with itself — and two
+      named nothing on any `model_type` path. Renamed and deleted respectively. The
+      predicted commented-out form is also real and closed: `n_samples_assd` (§8.0.C) and
+      `# chamfer_norm` (which settled #56). What replaces the hunt is a two-clause test —
+      a key is legitimate if NSM reads it **or** if it names a dataset-constructor
+      parameter — so the next orphan goes red instead of being hunted for. Its first
+      version counted an unsupported trainer as a reader and hid four keys; see the State
+      block.)*
 
 **Deliverable:** docstring coverage ≥90% on surviving public API, lint-enforced.
 
@@ -1714,7 +1777,7 @@ mistake `CLAUDE.md` names. What is fixed here is the *order* and each slice's *s
 | **M** | `NSM/utils.py` | #50, the module's remaining undocumented surface | §1.2's exhibit: the file that held the founding bug. Phase A documented the LR path and nothing else. *Executed, PR #96 — 6 of 23 symbols documented, and #50's unreported half was the one that fired on the shipped default.* |
 | **O** | v0.3.0 release *(executed — see the S row for what it could not carry)* | the pending Breaking set, setuptools-scm (§10.1), §7.1's GPU note, **`NSM.configs` ships in no wheel** (SCOPE §5), **`__all__` per subpackage** — deferred at Phase 0 (§3), owned by nothing since, and §10.1 makes it the stated gate for 1.0.0; it is packaging-shaped, so it belongs beside setuptools-scm and the wheel gap — and **two items §8.0.H deferred here by name**: (a) a **combined pre-v0.3.0 config message** — the release adds three required triplanar keys (`padding`, `conv_norm_type`, `conv_activation`), each refused separately, so an old config is fixed one round-trip at a time; one message naming every missing key at once is the `_lr_migration` pattern applied to the set. (b) **`TriplanarDecoder`/`VAEDecoder`'s signature defaults**, still `conv_norm_type="batch"` against the `"layer"` everything trained — unreachable from a config now that the loader requires the key, but reachable by direct construction, and changing a public-stable signature needs the version boundary. | **Moved ahead of N′ and N on 2026-08-29, and not by preference.** `NSM/_verbose_deprecation.py` promises one release of overlap and says *delete at v0.4.0*; it has shipped in **zero** releases (latest tag `v0.2.0`), so until v0.3.0 exists that removal can never become due and the bridge is permanent by default. The Breaking set is complete as of G–M — 34 entries in CHANGELOG § Unreleased — and N′/N add none, so waiting buys nothing. Cut timing was always the maintainer's call; this is that call. |
 | **N′** | `reconstruct/cartilage_func.py` *(executed)* | the module's 19% coverage and 5 undocumented public functions, the end-to-end `None`-surface reconstruction test #67 leaves owed — the half that works is pinned only at its preprocessing helper (`test_none_surfaces_are_skipped_not_dropped`), so the capability the maintainer actually uses can rot through any future slice in silence | *Added 2026-08-29.* The last production module no slice has opened — SCOPE §2.5 rules it production, `train_deep_sdf.py:47` makes its five functions the whole of `DICT_VALIDATION_FUNCS`, and §7.3's priority list never named it. Characterization first: every slice that has opened a file at this coverage found 5–8 defects. Not folded into N, because a docs slice carrying an untested production module is how N misses its budget. **Executed 2026-08-29** — eight defects, one of them a `SIGSEGV`; coverage 19% → 100%; the owed end-to-end test found `SCOPE` §2.5b's supported half unreachable in production. |
-| **N** | Phase 2 close + lint gate | the §6 checkboxes, `flake8-docstrings` in `make lint`, `CLAUDE.md` §Architecture rewrite, and the four #56 knobs + #55 + #25 (see the dispositions below) | Must follow G–M — that is where the missing docstrings are — and the lint gate is what stops G–M's accuracy rotting. **Re-scoped 2026-08-29, measured:** ~34 docstrings to write (57 bare, less the 16 deliberately-bare overrides, the 6 SCOPE-excluded, one nested decorator) ≈ 350–400 lines, three times §8.0.M's docstring count. **The gate is D1xx-only** — D100/101/102/103 — with `.flake8` recording why the D2xx/D4xx families stay off: at defaults they fire on existing accurate prose (139 D212, 42 D400, 31 D205, 9 D403), which is house style. Deliverable is "the gate passes", not a transcribed percentage. The 4 `get_learning_rate` and 12 `forward`/`backward` overrides that are bare on purpose take a per-site `# noqa: D102` naming the class docstring that carries the formula, **not** a rule exception — a `noqa` says why at the site, a config exception says it nowhere. |
+| **N** | Phase 2 close + lint gate *(executed — PR pending)* | the §6 checkboxes, `flake8-docstrings` in `make lint`, `CLAUDE.md` §Architecture rewrite, and the four #56 knobs + #55 + #25 (see the dispositions below) | Must follow G–M — that is where the missing docstrings are — and the lint gate is what stops G–M's accuracy rotting. **Re-scoped 2026-08-29, measured:** ~34 docstrings to write (57 bare, less the 16 deliberately-bare overrides, the 6 SCOPE-excluded, one nested decorator) ≈ 350–400 lines, three times §8.0.M's docstring count. **The gate is D1xx-only** — D100/101/102/103 — with `.flake8` recording why the D2xx/D4xx families stay off: at defaults they fire on existing accurate prose (139 D212, 42 D400, 31 D205, 9 D403), which is house style. Deliverable is "the gate passes", not a transcribed percentage. The 4 `get_learning_rate` and 12 `forward`/`backward` overrides that are bare on purpose take a per-site `# noqa: D102` naming the class docstring that carries the formula, **not** a rule exception — a `noqa` says why at the site, a config exception says it nowhere. |
 | **P** | 0b quarantine + #18 | `train/deprecated/` (876 lines), the `sample_difficulty_lx` port | Maintainer-gated on the nsosim survey, unchanged since Phase 0. |
 | **Q** | #3, sigma coordinate space | `BREAKING_CHANGE_PROPOSAL.md` + `SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` | Last, because it is the one remaining *behaviour* change: it needs a §4-style migration guard and a version boundary, so it wants a release on either side of it. |
 | **R** | The parameter surface: read on one path, ignored on another | **Added 2026-08-30 by §8.0.N's sweep, and it is an omission being repaired rather than new work** — §8.0.K proposed this row in its own body on 2026-08-27 and no one put it in the table, so three later deferrals named a slice that could never be scheduled. It carries: (a) §8.0.K's five sites in `reconstruct_latent` — `optimizer_name` under `hybrid_optimizer`, `lbfgs_lr` / `lbfgs_max_iter` / `lbfgs_history_size` on the non-hybrid path (requested `(1.0, 3, 7)`, constructed `(0.005, 10, 100)` — a 200× step size), and `log_wandb_step`, which `reconstruct_latent` names and `reconstruct_mesh` never forwards; (b) `grad_clip`, re-measured by §8.0.L and still deferred — `clip_grad_norm_` sees the decoder's tensors and never the latent embedding; (c) the config validation with no reported instance behind it: `code_regularization_warmup=0`, `WarmupLearningRateSchedule(length=0)` and `StepLearningRateSchedule(interval=0)` all raise `ZeroDivisionError`, and a config without `additional_checkpoints` raises `KeyError` from `get_checkpoints` | **After a release**, which is §8.0.K's stated reason and still holds: closing one of these sites is either a refusal (no boundary needed) or a signature change (a boundary), and the set should be triaged **once, together**, so the boundary is paid for once. The question per parameter is not "does anyone set it" — §8.0.K measured that a deletion pass would find about two — but "is it read on every path that accepts it" |
