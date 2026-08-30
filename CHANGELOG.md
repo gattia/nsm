@@ -103,7 +103,13 @@ nsm @ git+https://github.com/gattia/nsm@v0.3.0
   Fifty-eight `logger.*` calls across eight modules sat inside `if verbose:`, so they were
   gated twice — once by the level the host configured and once by a parameter the host does
   not know exists. A host that configured `DEBUG` and asked for NSM's output now gets it.
-  Nothing new is emitted; what changes is that it arrives.
+  Nothing new is emitted; what changes is that it arrives — **and not only at `DEBUG`**:
+  9 of the 58 are `WARNING` and 2 are `INFO`, so a host at default levels sees new output
+  too. The loud case is `mesh/main._finish_meshes`, which logs four warnings per surface
+  whose SDF does not cross zero — the ordinary state of a decoder early in training, which
+  is when validation runs. Those warnings were always *deserved* at their level (a missing
+  surface is a finding, not a trace); what was wrong before is that a host had no way to
+  receive them without a flag it could not see.
 
 ### Fixed
 

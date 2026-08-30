@@ -63,6 +63,12 @@
   *because* their `verbose` is required. Both deleted with their last reader, and the
   paragraph explaining the exemption went with them. The order matters: the
   accepted-and-ignored sweep has to run **after** a cleanup like this, not before.
+  Review also noted the ungating's blast radius is not `DEBUG`-only — 9 of the 58 records
+  are `WARNING`, and `_finish_meshes` emits four of them per absent surface, per subject,
+  per validation epoch, at default host levels. Whether those four collapse into one
+  record is a **maintainer call, undecided**: they are individually deserved (min/max/mean
+  of an SDF that missed zero), and collapsing them is a behaviour tweak nobody has asked
+  for yet. Left as-is; the CHANGELOG entry now names the population.
 - **§7.4's bound is not a gate and should not be.** A wall-clock assertion inside the suite
   it measures is self-referential, and on a shared runner it goes red for reasons unrelated
   to the code. What was wrong was that the number was hand-measured and lived in this
