@@ -96,7 +96,13 @@ def compute_chamfer(
     - pts1 (numpy.ndarray): The first point cloud.
     - pts2 (numpy.ndarray): The second point cloud.
     - num_samples (int, optional): The number of points to randomly sample from each point cloud. If None, all points are used.
-    - power (float, optional): The power to raise the distances to before taking the mean. Default is 1.
+    - power (float, optional): The power to raise the distances to before taking the
+      mean. Default is 1, the textbook Chamfer definition, and it is deliberately
+      NOT NSM's 2: this is a generic distance helper and the choice of exponent is a
+      caller's policy. The one NSM caller (``compute_recon_loss``) always passes
+      ``power=chamfer_norm`` explicitly, so this default is unreachable from any NSM
+      path. Same knob, two names -- see #56, which asked that the divergence be one
+      value or documented at both ends.
 
     Returns:
     - chamfer (float): The Chamfer distance between the two point clouds.

@@ -33,7 +33,7 @@ def compute_recon_loss(
     # orig_pts,
     orig_meshes,
     n_samples_chamfer=None,
-    chamfer_norm=1,
+    chamfer_norm=2,
     calc_symmetric_chamfer=False,
     calc_assd=False,
 ):
@@ -45,7 +45,9 @@ def compute_recon_loss(
         orig_meshes (list): A list of ground truth meshes. (Replaced ``orig_pts``, which is
             commented out of the signature.)
         n_samples_chamfer (int, optional): The number of samples to use for the chamfer distance calculation. Defaults to None.
-        chamfer_norm (int, optional): The power to which the chamfer distance is raised. Defaults to 1.
+        chamfer_norm (int, optional): The power to which the chamfer distance is raised.
+            Defaults to 2, which is what every layer above uses and what every NSM run has
+            always taken -- this default was 1 for a year and no caller ever reached it (#56).
         calc_symmetric_chamfer (bool, optional): Whether to calculate the symmetric chamfer distance. Defaults to False.
         calc_assd (bool, optional): Whether to calculate the average symmetric surface distance. Defaults to False.
 

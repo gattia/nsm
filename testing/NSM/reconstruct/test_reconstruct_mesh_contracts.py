@@ -43,6 +43,7 @@ import NSM
 import NSM.reconstruct.main as recon_main
 from NSM.mesh import create_mesh_adaptive
 from NSM.reconstruct.recon_evaluation import compute_recon_loss, get_mean_errors
+from NSM.reconstruct.utils import compute_chamfer
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -557,9 +558,9 @@ class TestTheKnobsThatDifferByLayer:
     """
     #56, parts 1 and 2 — one knob name, a different default at each layer it passes.
 
-    Read off the signatures rather than restated, so the assertion tracks the code:
-    ``chamfer_norm`` is a **power**, so 1 and 2 report chamfer in different units, and
-    ``sigma_rand_pts`` differs 10×.
+    Read off the signatures rather than restated, so the assertion tracks the code.
+    ``chamfer_norm`` is a **power**, so 1 and 2 reported chamfer in different units, and
+    ``sigma_rand_pts`` differed 10×.
 
     **Resolving them changes no result, and that is measurable rather than argued.**
     The two facts that make it true are pinned next to the shipped config, in
@@ -572,7 +573,6 @@ class TestTheKnobsThatDifferByLayer:
     def _default(self, func, name):
         return inspect.signature(func).parameters[name].default
 
-    @pytest.mark.xfail(strict=True, reason="#56 part 1 — resolved in this slice's commit 6")
     def test_chamfer_norm_has_one_default(self):
         defaults = {
             "reconstruct_mesh": self._default(recon_main.reconstruct_mesh, "chamfer_norm"),
@@ -581,13 +581,36 @@ class TestTheKnobsThatDifferByLayer:
         }
         assert set(defaults.values()) == {2}, defaults
 
-    @pytest.mark.xfail(strict=True, reason="#56 part 2 — resolved in this slice's commit 6")
     def test_sigma_rand_pts_has_one_default(self):
         defaults = {
             "reconstruct_mesh": self._default(recon_main.reconstruct_mesh, "sigma_rand_pts"),
             "get_mean_errors": self._default(get_mean_errors, "sigma_rand_pts"),
         }
         assert set(defaults.values()) == {0.01}, defaults
+
+    def test_the_exponent_is_a_power_not_a_rescaling(self):
+        """
+        Which is why the divergence mattered rather than being cosmetic: at ``norm=1``
+        and ``norm=2`` the two layers reported numbers in different units, and no constant
+        converts between them. Computed here rather than transcribed — #56 quoted a pair
+        of values from geometry this repo does not have.
+        """
+        rng = np.random.default_rng(0)
+        a, b = rng.normal(size=(64, 3)), rng.normal(size=(64, 3)) + 0.3
+        at_1 = compute_chamfer(a, b, power=1)
+        at_2 = compute_chamfer(a, b, power=2)
+        assert at_1 != pytest.approx(at_2)
+        assert at_2 != pytest.approx(at_1**2)
+
+    def test_the_generic_helper_keeps_the_textbook_default(self):
+        """
+        ``compute_chamfer(power=1)`` is the same knob under a different name, and it stays
+        at 1 on purpose: it is a generic distance function, its exponent is the caller's
+        policy, and its only NSM caller passes ``power=chamfer_norm`` explicitly — so this
+        default is unreachable from every NSM path. #56 allows "documented as deliberate
+        at both ends", and this is the end that documents it.
+        """
+        assert self._default(compute_chamfer, "power") == 1
 
     def test_the_value_chosen_is_the_one_the_shipped_config_already_uses(self):
         """

@@ -332,7 +332,7 @@ def reconstruct_mesh(
     latent_optimizer_name="adam",
     get_rand_pts=False,
     n_pts_random=100000,
-    sigma_rand_pts=0.001,
+    sigma_rand_pts=0.01,
     seed=None,
     n_samples_chamfer=None,
     n_samples_latent_recon=10000,
@@ -367,6 +367,14 @@ def reconstruct_mesh(
     `seed` seeds the point sampling when `get_rand_pts` is True; None leaves it unseeded.
     `n_pts_random` is the draw size per surface on that path (honoured since the #16
     fix — before it the samplers' 200,000-point default ran regardless; § History 9).
+    `sigma_rand_pts` is the Gaussian width of that draw around the surface, in the same
+    units as the normalized coordinates; it and `chamfer_norm` are the two knobs #56
+    found defaulting differently at each layer, and both now default to the value the
+    ShapeMedKnee config sets (0.01 and 2).
+
+    `chamfer_norm` is a POWER, not a flag: chamfer is `mean(d**norm) + mean(d**norm)`, so
+    1 and 2 are different units and neither is a rescaling of the other. It is forwarded
+    unchanged to `get_mean_errors` and `compute_recon_loss`.
 
     NOTES:
     Assumes that length of path = sum(objects_per_decoder)
