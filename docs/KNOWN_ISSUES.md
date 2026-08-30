@@ -122,9 +122,15 @@ The trigger is narrower than "a second dataset", and the distinction matters bec
 So a script that builds a train split in-process and then a val split on the default path
 deadlocks, with no message, on the second one. Long-standing rather than new.
 
-*Fix:* [#25](https://github.com/gattia/nsm/issues/25). *Worked around in:*
-`test_dataset_cache.TestSeedDerivation`, which builds its two datasets in separate
-subprocesses.
+**Ruled not-fixed, 2026-08-30 (maintainer, plan §8.0.N).** A `spawn` context would change
+behaviour nobody has asked for, and the constraint is cheaper than that: build both splits
+the same way, or build each in its own process. The constraint is now stated on the
+`multiprocessing=` parameter itself (`SDFSamples.__init__`'s docstring), which is where a
+user meets it — this entry is what they find afterwards. [#25](https://github.com/gattia/nsm/issues/25)
+stays open as the queue entry.
+
+*Worked around in:* `test_dataset_cache.TestSeedDerivation`, which builds its two datasets
+in separate subprocesses.
 
 ## Packaging and configuration
 

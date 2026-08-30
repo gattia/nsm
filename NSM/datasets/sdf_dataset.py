@@ -203,6 +203,19 @@ class SDFSamples(torch.utils.data.Dataset):
         multiprocessing (bool, optional): Build/load subjects in a Pool(n_processes).
             Also makes a reference_mesh spill to disk so workers can share it
             (see load_reference_mesh). Defaults to True.
+
+            **A True build deadlocks if an earlier build in the same process ran with
+            False** (#25). Fork-after-VTK: the Pool inherits a VTK/OpenMP state the
+            in-process build left behind, and the workers sit idle forever -- no message,
+            no traceback, no timeout. The trigger is narrower than "a second dataset", and
+            the narrowness is the useful part: True -> True is fine (measured 2.6 s then
+            0.4 s), False -> True never returns (5.7 s then nothing). Since True is this
+            default, the shape that hangs is an ordinary one -- build the train split
+            in-process, then the val split. Build both the same way, or build each in its
+            own process. Not fixed: a `spawn` context would change behaviour nobody has
+            asked for, and this constraint is cheaper than that. Worked around in
+            ``test_dataset_cache.TestSeedDerivation::test_multiprocessing_does_not_change_the_data``,
+            which builds its two datasets in separate subprocesses for this reason.
         n_processes (int, optional): Pool size when multiprocessing. Defaults to 2.
         store_data_in_memory (bool, optional): Keep every subject's sample dict in
             memory (True), or keep only its cache path and reload the .npz on every
