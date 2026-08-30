@@ -241,14 +241,30 @@ negative result, so the method has not had a fair test.
 **Ruling: deferred research, scheduled for repair.** Keep the `reconstruct_latent_S3`
 re-export from `reconstruct/__init__.py` — removing it is a public-surface break.
 
-### 2.5 `reconstruct/cartilage_func.py` (149) and `predictive_validation_class.py` (97)
+### 2.5 `reconstruct/cartilage_func.py` (283) and `predictive_validation_class.py` (97)
 
 Proposed: *research-only, no production caller.* Wrong on the caller half for both.
 
 - `cartilage_func.py` is imported by the **live** trainer and wired into its
   `DICT_VALIDATION_FUNCS`, dispatched by config key
   `recon_val_func_name`. It also owns the only region-index maps in the repo
-  (`CART_REGIONS`, `CART_REGIONS_DICT`). **Production.**
+  (`CART_REGIONS`, `CART_REGIONS_DICT`). **Production.** Opened by plan §8.0.N′ in
+  Aug 2026 — it was at 19% coverage with no docstring on any of its five public
+  functions, and the eight defects that found are in `CHANGELOG.md` and § History 27
+  below. `CART_REGIONS` is the **femur's** subregions, which is what the bare
+  `compare_cart_thickness` scores when a config names it for any other joint.
+- **The validators are fixed-layout by design** (maintainer ruling, 2026-08-30). They
+  were built to monitor biomarkers while training the ShapeMedKnee femur bone+cartilage
+  model, which is why each names its joint and requires exactly two meshes (six for
+  `_whole_joint`). A model with another surface layout — e.g. the four-surface
+  `["bone", "cart", "med_men", "lat_men"]` femur model the `mesh_names` docs use as
+  their example — has **no** validation function until a case needs one, and gets a new
+  named `DICT_VALIDATION_FUNCS` entry then. Before §8.0.N′'s length check,
+  `compare_cart_thickness_femur` took the first two meshes of any list: right numbers on
+  a femur-first layout by position, the femur's pair against the tibial indices on a
+  whole-joint list (§ History 27). The refusal keeps the second from being silent; this
+  ruling is why the first goes with it rather than being special-cased back in. Pinned
+  by `test_cartilage_func.TestTheMeshListLength`.
 - `predictive_validation_class.py` is called from `reconstruct/main.py`. It is the only
   latent-to-factor regression validator. **Research.** Its seam defect —
   `reconstruct.get_mean_errors` passed the whole result dict to `Regress.add_latent`
@@ -274,6 +290,17 @@ to `reconstruct_latent` and it fits against the surfaces present and decodes all
 This is deliberate and was carried through the §8.0.K decomposition intact:
 `latent_fit.py` documents that `sdf_gt_` keeps `None` for a surface that has none, skips
 it in the per-surface loss, and slices around it when chunking. This is the half in use.
+
+> **Corrected 2026-08-29, one day after this ruling, by running it end to end.** The
+> paragraph above was written from `latent_fit.py` and is right about the fit. It was
+> wrong about the capability: one frame up, `compute_recon_loss` read the *original* mesh
+> unguarded, so `reconstruct_mesh(path=[bone, None])` raised `AttributeError` under
+> `calc_symmetric_chamfer` or `calc_assd` — both `true` in the shipped config, and both
+> passed by `get_mean_errors`, the only production caller. The supported half was
+> unreachable from the production entry point until plan §8.0.N′ fixed it. It is now
+> pinned end to end by
+> `test_reconstruct_mesh_contracts.TestASubjectMissingASurface`, which is the test this
+> ruling should have had.
 
 **Not supported: building a dataset from subjects that are missing a surface.**
 `MultiSurfaceSDFSamples` cannot build one — `get_sample_data_dict` preallocates

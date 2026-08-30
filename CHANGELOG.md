@@ -28,6 +28,58 @@ nsm @ git+https://github.com/gattia/nsm@v0.3.0
 
 ---
 
+## Unreleased
+
+### Breaking
+
+- **The cartilage validation functions check their mesh list's length** (plan §8.0.N′).
+  `compare_cart_thickness_tibia`, `_patella` and `_femur` each took `orig_meshes[:2]` and
+  nothing checked what they sliced from: measured, a six-mesh whole-joint list into
+  `compare_cart_thickness_tibia` scored the **femur's** pair against the tibial region
+  indices and returned NaN for every one, exit 0. The three now require exactly two meshes
+  and `compare_cart_thickness_whole_joint` exactly six, with the layout each assumes in
+  the message. A two-surface run — both shipped ShapeMedKnee configs — is unaffected, and
+  a whole-joint list into the wrong single-joint wrapper was already producing NaN
+  (`docs/KNOWN_ISSUES.md` § History 27). One previously *working* shape is removed with
+  them: `compare_cart_thickness_femur` on a femur-first list of more than two surfaces
+  sliced the correct pair and scored it. Ruled fixed-layout by design (maintainer,
+  2026-08-30): these validators were built to monitor the ShapeMedKnee femur
+  bone+cartilage training runs, and a model with another surface layout gets its own
+  named `DICT_VALIDATION_FUNCS` entry when a case needs one — `docs/SCOPE.md` §2.5.
+
+- **`regions_label` is refused unless it is `"labels"`** (plan §8.0.N′). It was honoured at
+  the scalar transfer and ignored at the read — pymskt's `get_cart_thickness_mean` and
+  `_std` both open `get_scalar("labels")` with the name hardcoded — so every other value
+  already raised `KeyError: 'labels'`, from the original's side or the reconstruction's
+  depending on which arrays the original carried. This only decides which exception and
+  whether it says why. Deleting the parameter is scheduled for v0.4.0 (plan §8.0.S).
+
+### Fixed
+
+- **A surface the decoder did not produce no longer kills the process** (plan §8.0.N′).
+  `create_mesh` leaves a surface's slot `None` when its SDF does not cross zero — the
+  ordinary state of a decoder early in training, which is when validation runs — and
+  `compare_cart_thickness` passed that `None` to `CartilageMesh`, which builds a 0-point
+  mesh that `vtkOBBTree` dies on: measured, **exit 139, `SIGSEGV`**, uncatchable, taking
+  the training run with it. It is now scored `np.nan` across the whole key set, which is
+  what `compute_recon_loss` has always done with the same input.
+
+- **A subject missing a structure can be scored** (plan §8.0.N′, `docs/SCOPE.md` §2.5b).
+  `compute_recon_loss` guarded the reconstructed mesh against `None` and read the original
+  unguarded on the next line, so `calc_symmetric_chamfer` or `calc_assd` raised
+  `AttributeError: 'NoneType' object has no attribute 'point_coords'`. Both are `true` in
+  the shipped `default_config.json`, so the capability §2.5b rules supported was
+  unreachable through `get_mean_errors`, the only production caller. The missing surface
+  now scores `nan` and the others score normally.
+
+- **A degenerate first validation subject no longer loses the validation function's
+  metrics** (plan §8.0.N′). `get_mean_errors` created each `func_` key's list only on
+  subject 0, which contributes none when its reconstruction has no zero level set, so the
+  next subject with results raised `KeyError`. It fired on the order of the validation
+  set.
+
+---
+
 ## v0.3.0
 
 The first release since the Phase 4 decomposition began, and the largest break in NSM's
