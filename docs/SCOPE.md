@@ -241,7 +241,7 @@ negative result, so the method has not had a fair test.
 **Ruling: deferred research, scheduled for repair.** Keep the `reconstruct_latent_S3`
 re-export from `reconstruct/__init__.py` — removing it is a public-surface break.
 
-### 2.5 `reconstruct/cartilage_func.py` (285) and `predictive_validation_class.py` (97)
+### 2.5 `reconstruct/cartilage_func.py` (283) and `predictive_validation_class.py` (97)
 
 Proposed: *research-only, no production caller.* Wrong on the caller half for both.
 
@@ -253,6 +253,18 @@ Proposed: *research-only, no production caller.* Wrong on the caller half for bo
   functions, and the eight defects that found are in `CHANGELOG.md` and § History 27
   below. `CART_REGIONS` is the **femur's** subregions, which is what the bare
   `compare_cart_thickness` scores when a config names it for any other joint.
+- **The validators are fixed-layout by design** (maintainer ruling, 2026-08-30). They
+  were built to monitor biomarkers while training the ShapeMedKnee femur bone+cartilage
+  model, which is why each names its joint and requires exactly two meshes (six for
+  `_whole_joint`). A model with another surface layout — e.g. the four-surface
+  `["bone", "cart", "med_men", "lat_men"]` femur model the `mesh_names` docs use as
+  their example — has **no** validation function until a case needs one, and gets a new
+  named `DICT_VALIDATION_FUNCS` entry then. Before §8.0.N′'s length check,
+  `compare_cart_thickness_femur` took the first two meshes of any list: right numbers on
+  a femur-first layout by position, the femur's pair against the tibial indices on a
+  whole-joint list (§ History 27). The refusal keeps the second from being silent; this
+  ruling is why the first goes with it rather than being special-cased back in. Pinned
+  by `test_cartilage_func.TestTheMeshListLength`.
 - `predictive_validation_class.py` is called from `reconstruct/main.py`. It is the only
   latent-to-factor regression validator. **Research.** Its seam defect —
   `reconstruct.get_mean_errors` passed the whole result dict to `Regress.add_latent`

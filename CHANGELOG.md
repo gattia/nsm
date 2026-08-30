@@ -38,8 +38,14 @@ nsm @ git+https://github.com/gattia/nsm@v0.3.0
   `compare_cart_thickness_tibia` scored the **femur's** pair against the tibial region
   indices and returned NaN for every one, exit 0. The three now require exactly two meshes
   and `compare_cart_thickness_whole_joint` exactly six, with the layout each assumes in
-  the message. A run whose config named the right function for its model is unaffected;
-  one that did not was already producing NaN. See `docs/KNOWN_ISSUES.md` § History 27.
+  the message. A two-surface run — both shipped ShapeMedKnee configs — is unaffected, and
+  a whole-joint list into the wrong single-joint wrapper was already producing NaN
+  (`docs/KNOWN_ISSUES.md` § History 27). One previously *working* shape is removed with
+  them: `compare_cart_thickness_femur` on a femur-first list of more than two surfaces
+  sliced the correct pair and scored it. Ruled fixed-layout by design (maintainer,
+  2026-08-30): these validators were built to monitor the ShapeMedKnee femur
+  bone+cartilage training runs, and a model with another surface layout gets its own
+  named `DICT_VALIDATION_FUNCS` entry when a case needs one — `docs/SCOPE.md` §2.5.
 
 - **`regions_label` is refused unless it is `"labels"`** (plan §8.0.N′). It was honoured at
   the scalar transfer and ignored at the read — pymskt's `get_cart_thickness_mean` and

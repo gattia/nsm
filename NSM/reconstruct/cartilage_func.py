@@ -50,7 +50,9 @@ def _require_meshes(caller, n_expected, layout, orig_meshes, recon_meshes):
         if len(meshes) != n_expected:
             raise ValueError(
                 f"{caller} needs exactly {n_expected} meshes in {name}, in the order "
-                f"({layout}); got {len(meshes)}."
+                f"({layout}); got {len(meshes)}. These validators are fixed-layout by "
+                "design -- a model with another surface layout needs its own entry in "
+                "DICT_VALIDATION_FUNCS (docs/SCOPE.md section 2.5 has the ruling)."
             )
 
 

@@ -1638,8 +1638,8 @@ control with no config key, and the fact that no regression test read the value)
 
 | | |
 |---|---|
-| **Affected** | Runs whose `recon_val_func_name` named `compare_cart_thickness_tibia`, `_patella` or `_femur` while the model produced **more than two surfaces**. → Aug 2026 |
-| **Unaffected** | Two-surface models, which is what both shipped ShapeMedKnee configs are; `compare_cart_thickness_whole_joint`, which took its own slices; every metric other than `cart_thick_*`; and everything about the weights |
+| **Affected** | Runs whose `recon_val_func_name` named `compare_cart_thickness_tibia`, `_patella` or `_femur` while the model produced **more than two surfaces** whose first pair was **not that joint's** bone and cartilage. → Aug 2026 |
+| **Unaffected** | Two-surface models, which is what both shipped ShapeMedKnee configs are; `compare_cart_thickness_femur` on a femur-**first** multi-surface list, which sliced the correct pair and scored it — right numbers by position rather than by contract, a shape the fix removes anyway (ruled fixed-layout by design, `SCOPE.md` §2.5, CHANGELOG § Unreleased *Breaking*); `compare_cart_thickness_whole_joint`, which took its own slices; every metric other than `cart_thick_*`; and everything about the weights |
 | **Severity** | Silent, and it produces NaN rather than a wrong number |
 | **Fixed in** | `slice-n-prime-cartilage-func`, Aug 2026 (plan §8.0.N′) |
 
@@ -1662,7 +1662,9 @@ contain the requested region and the function cannot return a plausible-but-wron
 
 Read `recon_val_func_name` and `objects_per_decoder` together in
 `model_params_config.json`. A single-joint function with `objects_per_decoder > 2` is the
-affected shape, and its `cart_thick_*` metrics in that run are NaN throughout — including
+affected shape — unless the list's first pair is that joint's own bone and cartilage, the
+femur-first case above, whose numbers are correct — and its `cart_thick_*` metrics in
+that run are NaN throughout — including
 the derived `cart_thick_*_corr` and `cart_thick_*_RMSE`. Nothing else in the run is
 touched: this is a validation metric, never a training signal.
 

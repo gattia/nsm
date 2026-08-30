@@ -25,6 +25,19 @@
   overall 80% → 82%. One § History entry (27), one § Open entry, two CHANGELOG Breaking
   and three Fixed, `SCOPE` §2.5 and §2.5b, `ARCHITECTURE` §7's accepted-and-ignored and
   silent-mutation rows.
+- **Review of N′ (2026-08-30) found the one arity×wrapper combination the
+  characterization skipped, and the maintainer ruled on it.** Defect 7 measured 1, 3 and
+  6 meshes into the tibia wrapper and 4 into the whole-joint function — never 4 into the
+  **femur** wrapper, the one shape where the old `[:2]` was right: measured against
+  `main`, `compare_cart_thickness_femur` on the femur-first four-surface layout sliced
+  the correct pair and scored it, so it is the one previously-*working* configuration
+  the length check removes, and the CHANGELOG claim "one that did not was already
+  producing NaN" was false for it. **Ruling: fixed-layout by design** — the validators
+  exist to monitor ShapeMedKnee femur bone+cartilage training, and a multi-surface
+  layout gets its own named `DICT_VALIDATION_FUNCS` entry when a case needs one (none
+  exists today). Landed as one follow-up commit: CHANGELOG and § History 27 corrected,
+  the ruling in `SCOPE` §2.5, the refusal message naming the remedy, the pin in
+  `TestTheMeshListLength`.
 - **A validation hook that had never been executed by anything took the whole training run
   down, and the function beside it survives the same input.** `create_mesh` leaves a
   surface's slot `None` when its SDF does not cross zero — its own docstring says so — and
@@ -80,7 +93,9 @@
   reason it is not more is below.
 - **The size budget was missed for the eighth slice running, and this one is two
   mispricings of the same kind in one slice.** Budget +109 net in `NSM/`, ceiling +130,
-  actual **+151** (`cartilage_func.py` 146 → 285, `recon_evaluation.py` +16). Both parts
+  actual **+151** (`cartilage_func.py` 146 → 281, `recon_evaluation.py` +16 — the 285
+  first written here was commit 9's count, invalidated by commit 10's own −4 docstring
+  trim in the same commit that wrote it). Both parts
   measured after the fact. (1) **A helper was priced at its body and written with a
   docstring.** `_as_mesh` was budgeted +8 for two lines of code and cost **18**; it
   replaced 24 lines of triplicated coercion, so the row that was going to be −13 came in

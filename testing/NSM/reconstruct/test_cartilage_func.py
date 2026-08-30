@@ -372,6 +372,22 @@ class TestTheMeshListLength:
         with pytest.raises(ValueError, match="6"):
             compare_cart_thickness_whole_joint(orig_meshes, recon_meshes)
 
+    def test_the_four_surface_layout_into_the_femur_wrapper_is_refused(self):
+        """
+        The one shape the length check removes that was scoring *correctly*: on the
+        pre-check code, ``compare_cart_thickness_femur`` on the femur-first four-surface
+        layout sliced the right pair -- measured against ``main`` on this fixture, real
+        numbers, ``orig_mean`` 1.5. Kept refused by ruling (maintainer, 2026-08-30):
+        these validators were built to monitor the ShapeMedKnee femur bone+cartilage
+        training runs and are fixed-layout by design; a multi-surface layout gets its
+        own named ``DICT_VALIDATION_FUNCS`` entry when a case needs one. The ruling is
+        ``docs/SCOPE.md`` section 2.5; this test is its pin.
+        """
+        orig_meshes = [_original_bone(11), _plain(1.1), _plain(0.3), _plain(0.3)]
+        recon_meshes = [_plain(1.0), _plain(1.1), _plain(0.3), _plain(0.3)]
+        with pytest.raises(ValueError, match="got 4"):
+            compare_cart_thickness_femur(orig_meshes, recon_meshes)
+
     def test_six_meshes_score_all_three_joints(self):
         orig_meshes, recon_meshes = self._whole_joint_lists(3)
         result = compare_cart_thickness_whole_joint(orig_meshes, recon_meshes)
