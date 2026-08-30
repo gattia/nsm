@@ -54,3 +54,77 @@ def test_importing_the_generator_writes_nothing(tmp_path, monkeypatch):
     importlib.reload(module)
 
     assert list(tmp_path.iterdir()) == []
+
+
+# ---------------------------------------------------------------------------
+# Keys that do nothing — plan §6.1's last checkbox
+# ---------------------------------------------------------------------------
+
+#: Every module of the installed package except the config generator itself (which holds
+#: the key names by definition) and ``train/deprecated/``, which ``SCOPE`` §2.2 quarantines
+#: -- a key read only by quarantined code is dead for a user of the library.
+NSM_ROOT = os.path.dirname(NSM.__file__)
+
+
+def _live_sources():
+    for root, _dirs, files in os.walk(NSM_ROOT):
+        if "deprecated" in root or "__pycache__" in root:
+            continue
+        for name in files:
+            if not name.endswith(".py") or name == "generate_sdf_default_config.py":
+                continue
+            with open(os.path.join(root, name), encoding="utf-8") as handle:
+                yield handle.read()
+
+
+LIVE_SOURCES = list(_live_sources())
+
+
+def _key_appears_anywhere(key):
+    return any(key in source for source in LIVE_SOURCES)
+
+
+def _train_deep_sdf_source():
+    with open(os.path.join(NSM_ROOT, "train", "train_deep_sdf.py"), encoding="utf-8") as handle:
+        return handle.read()
+
+
+@pytest.mark.xfail(strict=True, reason="§6.1 — the eight are deleted in this slice's commit 9")
+def test_every_shipped_key_is_read_by_something(shipped_config):
+    """
+    §6.1 looked for "config keys that silently do nothing because their implementing
+    branch is commented out". The sweep finds the stronger form: **no branch at all**.
+
+    Eight of the 121 shipped keys have no occurrence anywhere in a live ``NSM/`` module
+    outside this config and its generator — ``dataset_uniform_pts_buffer``,
+    ``decoder_type``, ``n_pts_per_object``, ``normalize_pts``,
+    ``percent_further_from_surface``, ``percent_near_surface``, ``random_function``,
+    ``sdf_skip_connection``. Checked three further ways when they were found: none names a
+    parameter of ``SDFSamples``, ``MultiSurfaceSDFSamples``, ``load_model`` or
+    ``Decoder``; none is read by ``train/deprecated/``; and none is read by the
+    ``kneepipeline`` consumer. They read as features a user would set — ``normalize_pts``,
+    ``percent_near_surface`` — and setting them does nothing and says nothing.
+
+    This is a **substring** search on purpose. It is the loose direction: a key that
+    appears in a comment counts as read here, so anything this reports is dead beyond
+    argument. Tightening it to real reads would need a resolver for ``config[name]``
+    where ``name`` is a variable, and would report keys that are genuinely wired.
+    """
+    unread = sorted(key for key in shipped_config if not _key_appears_anywhere(key))
+    assert unread == [], f"shipped config keys nothing reads: {unread}"
+
+
+def test_the_trainer_passes_chamfer_norm_commented_out():
+    """
+    #56's evidence that resolving ``chamfer_norm`` moves no number: the only place a
+    config could reach it is commented out, so every training run has always taken
+    ``get_mean_errors``' default.
+    """
+    source = _train_deep_sdf_source()
+    assert "# chamfer_norm" in source
+    assert "chamfer_norm=" not in source
+
+
+def test_no_shipped_config_carries_a_chamfer_norm_key(shipped_config):
+    """The other half: there is no key for the commented-out argument to have read."""
+    assert "chamfer_norm" not in shipped_config

@@ -392,6 +392,61 @@ class TestRoundtripDistance:
             assert key in result
 
 
+class TestTheReversedPairHidesASwap:
+    """
+    #56, part 4 — "adjacent metrics take their arguments in opposite order".
+
+    ``roundtrip_distance(original_points, roundtrip_points)`` and
+    ``forward_backward_disagreement(roundtrip_points, original_points)`` take **the same
+    two arrays in opposite order**, forty lines apart in one module, and neither swap is
+    visible in the numbers a caller reads:
+
+    * ``roundtrip_distance`` is ``norm(rt - orig)`` — symmetric, so a swap is a no-op;
+    * ``forward_backward_disagreement`` sign-flips ``field`` and leaves
+      ``magnitude_percentiles`` untouched, so a swap is invisible in the summary and
+      shows only in the raw displacement field.
+
+    The plan's dispositions table sent ``roundtrip_distance`` / ``directed_distance_
+    percentiles`` to keyword-only. That is the wrong sibling, and the third test says
+    why: ``directed_distance_percentiles`` is asymmetric, documented as directional, and
+    takes a point array against a *mesh-or-array* — a swap there changes the number
+    rather than hiding.
+    """
+
+    def _pair(self):
+        rng = np.random.default_rng(0)
+        a = rng.normal(size=(50, 3))
+        return a, a + rng.normal(scale=0.1, size=(50, 3))
+
+    def test_roundtrip_distance_is_symmetric_so_a_swap_is_invisible(self):
+        a, b = self._pair()
+        np.testing.assert_array_equal(
+            roundtrip_distance(a, b)["per_vertex"], roundtrip_distance(b, a)["per_vertex"]
+        )
+
+    def test_the_disagreement_field_flips_sign_while_its_summary_does_not(self):
+        a, b = self._pair()
+        forward, backward = forward_backward_disagreement(a, b), forward_backward_disagreement(b, a)
+        np.testing.assert_allclose(forward["field"], -backward["field"])
+        assert forward["magnitude_percentiles"]["mean"] == backward["magnitude_percentiles"]["mean"]
+
+    def test_the_directed_metric_is_asymmetric_so_a_swap_shows(self):
+        """Which is why it is not in the pair the keyword-only change covers."""
+        a, b = self._pair()
+        assert directed_distance_percentiles(a, b)["mean"] != pytest.approx(
+            directed_distance_percentiles(b, a)["mean"]
+        )
+
+    @pytest.mark.xfail(strict=True, reason="#56 part 4 — keyword-only in this slice's commit 7")
+    @pytest.mark.parametrize(
+        "func", [roundtrip_distance, forward_backward_disagreement], ids=["roundtrip", "disagree"]
+    )
+    def test_a_positional_call_is_refused(self, func):
+        a, b = self._pair()
+        with pytest.raises(TypeError):
+            func(a, b)
+
+
 # ---------------------------------------------------------------------------
 # forward_backward_disagreement
 # ---------------------------------------------------------------------------
