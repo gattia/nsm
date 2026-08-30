@@ -2,14 +2,20 @@
 
 ## State
 
-**Updated:** 2026-08-17 · **Status:** blocked
+**Updated:** 2026-08-30 · **Status:** blocked
 
 > Moved here from `planning/` on 2026-08-17. The *how* for
 > `BREAKING_CHANGE_PROPOSAL.md`'s *what and why* — read that one first.
 
-- **Next:** fold into `NSM_CODE_HEALTH_REFACTOR.md` §8 rather than running standalone.
-- **Blocked on:** the same things as `BREAKING_CHANGE_PROPOSAL.md`.
-- **Done:** nothing. No code has changed.
+- **Next:** re-verify every line number and excerpt below against current `main` — the ⚠️
+  banner below understates the drift: `sdf_dataset.py` has since been *decomposed*
+  (refactor §8.0.A/B), not just edited — then execute with a §4-style migration guard
+  (`NSM_CODE_HEALTH_REFACTOR.md` §4 is the template).
+- **Blocked on:** v0.4.0 existing (`NSM_CODE_HEALTH_REFACTOR.md` §8.0.S), so the change
+  lands with a release boundary on either side of it.
+- **Done:** nothing. No code has changed. **Ownership: this pair of plans *is* the
+  initiative since 2026-08-30** — the maintainer moved §8.0.Q out of the refactor, which
+  no longer waits on it; the earlier "fold into §8" Next is dead.
 - **Surprises:** none recorded.
 
 > ⚠️ **Unverified since 2026-02-01.** The line numbers and code excerpts below were

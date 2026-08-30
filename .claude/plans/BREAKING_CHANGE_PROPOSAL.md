@@ -2,17 +2,19 @@
 
 ## State
 
-**Updated:** 2026-08-17 · **Status:** blocked
+**Updated:** 2026-08-30 · **Status:** blocked
 
 > Moved here from `planning/` on 2026-08-17. It is a plan, so it lives with the plans.
 > It pairs with `SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` — this file is the *what and
-> why*, that one is the *how*. Both are scheduled into `NSM_CODE_HEALTH_REFACTOR.md` §8
-> and should be executed as part of it, not separately.
+> why*, that one is the *how*. **Since 2026-08-30 this pair is its own initiative**: the
+> maintainer moved `NSM_CODE_HEALTH_REFACTOR.md` §8.0.Q out of the refactor, so these
+> two files own #3 rather than feeding a §8 row.
 
-- **Next:** fold into `NSM_CODE_HEALTH_REFACTOR.md` §8 rather than running standalone.
-  Until that fold happens, treat these two files as the detail behind that §8 bullet.
-- **Blocked on:** `NSM_CODE_HEALTH_REFACTOR.md` §7.1 green (done) and Phase 4 starting.
-  It changes public behaviour, so it needs a §4-style migration guard.
+- **Next:** the implementation plan's Next — re-verify its stale excerpts against current
+  `main`, then execute with a §4-style migration guard
+  (`NSM_CODE_HEALTH_REFACTOR.md` §4 is the template).
+- **Blocked on:** v0.4.0 existing (`NSM_CODE_HEALTH_REFACTOR.md` §8.0.S) — it changes
+  public behaviour, so it wants a release boundary on either side of it.
 - **Done:** the problem is characterised and recorded as a user-visible defect in
   `docs/KNOWN_ISSUES.md` § Open. No code has changed.
 - **Surprises:** none recorded. This plan stalled mid-Phase-1 rather than failing.

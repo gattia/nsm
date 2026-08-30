@@ -622,10 +622,17 @@ subject.)
 
 ## 5. Open items
 
-**`nsosim` could not be surveyed.** It is not present on this machine. The plan makes fork
-and `nsosim` usage an *input* to the dead-code call, which means Phase 0 cannot be closed
-solo. Two of the rulings above (`refine_mesh`, `interpolate`) are the ones a mesh-oriented
-consumer is most likely to reach into.
+**~~`nsosim` could not be surveyed.~~ Surveyed 2026-08-30, from a fresh clone of
+`gattia/nsosim`.** Its entire NSM surface is five symbols in three subpackages:
+`NSM.mesh.create_mesh`, `NSM.mesh.interpolate.interpolate_points` (plus
+`interpolate_mesh` in one notebook), `NSM.models.Decoder` / `TriplanarDecoder`, and
+`NSM.reconstruct.reconstruct_mesh`. Zero references to `NSM.train`, `train_deep_sdf` or
+`sample_difficulty` anywhere — package, notebooks, scripts, tests — and its
+`requirements-lock.txt` pins an editable `nsm@b7cfd49`. Inference-only, which the
+maintainer stated and the sweep confirms. This paragraph's original guess — that a
+mesh-oriented consumer most likely reaches into `refine_mesh` and `interpolate` — was
+half right: `interpolate` yes, at both entry points; `refine_mesh` no. **The
+quarantine move this gated is `NSM_CODE_HEALTH_REFACTOR.md` §8.0.P, now ungated.**
 
 **Recommendation — split the gate.** Nothing above requires the survey except the physical
 move of `train/deprecated/`. Mapping, documenting and testing a module that might later be
