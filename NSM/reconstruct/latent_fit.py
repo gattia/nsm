@@ -27,10 +27,24 @@ logger = logging.getLogger(__name__)
 
 @honour_verbose
 def reconstruct_latent_sdf_gt_type_check(sdf_gt, verbose=False):
+    """Normalise ``sdf_gt`` to a list of per-surface tensors, one entry per surface.
+
+    A single tensor or array is wrapped; a list or tuple is copied into a new list
+    (the copy is #55's fix, and is also what makes the accepted ``tuple`` usable at
+    all -- the preprocess below assigns by index). A ``str`` is refused by name,
+    because reconstructing *from a path* is ``reconstruct_mesh``'s job and reaching
+    for it here is the likely mistake.
+
+    ``None`` entries are left in place: a subject may be missing a surface, and the
+    fit runs on the ones it has (``SCOPE.md`` §2.5b).
+    """
     if type(sdf_gt) in (torch.Tensor, np.ndarray):
         sdf_gt = [sdf_gt]
     elif type(sdf_gt) in (list, tuple):
-        pass
+        # A new list, not the caller's (#55). Also what makes the accepted ``tuple`` work:
+        # the preprocess below assigns by index, so a tuple raised ``TypeError`` at every
+        # call before this — accepted by the type check and unusable.
+        sdf_gt = list(sdf_gt)
     elif type(sdf_gt) in (str,):
         raise Exception(
             "Must provided xyz/sdf from mesh - resconstruct latent will not load mesh"
@@ -52,6 +66,13 @@ def reconstruct_latent_sdf_gt_type_check(sdf_gt, verbose=False):
 
 @honour_verbose
 def reconstruct_latent_pts_surface_type_check(pts_surface, verbose=False, device="cuda"):
+    """Return ``pts_surface`` as a tensor on ``device``.
+
+    Unlike the ``sdf_gt`` check above, this one raises ``ValueError`` rather than a
+    bare ``Exception``, and it rejects ``None`` -- so ``reconstruct_latent``'s
+    ``pts_surface=None`` default declares optional a parameter that has never been
+    (a signature correction deferred to the next release boundary).
+    """
     if isinstance(pts_surface, (list, tuple)):
         pts_surface = torch.tensor(pts_surface).to(device)
     elif isinstance(pts_surface, np.ndarray):
@@ -67,6 +88,11 @@ def reconstruct_latent_pts_surface_type_check(pts_surface, verbose=False, device
 
 
 def reconstruct_latent_decoders_type_check(decoders):
+    """Normalise one decoder or a sequence of them to a list, refusing non-modules.
+
+    A list is checked element by element, so a bad entry is named at the top of the
+    fit rather than as an ``AttributeError`` several hundred iterations in.
+    """
     if isinstance(decoders, torch.nn.Module):
         decoders = [
             decoders,
@@ -81,6 +107,13 @@ def reconstruct_latent_decoders_type_check(decoders):
 
 
 def reconstruct_latent_get_lr_update_freq(n_lr_updates, num_iterations):
+    """Iterations between learning-rate drops, given how many drops were asked for.
+
+    ``0`` and ``None`` both mean *never*, expressed as an interval one longer than
+    the run rather than as a flag the caller has to test. The result is floored at 1
+    so more requested drops than iterations degrades to every iteration instead of
+    dividing by zero.
+    """
     # Setup n LR updates
     if (n_lr_updates == 0) or (n_lr_updates is None):
         adjust_lr_every = num_iterations + 1
@@ -92,16 +125,28 @@ def reconstruct_latent_get_lr_update_freq(n_lr_updates, num_iterations):
 
 @honour_verbose
 def reconstruct_latent_preprocess_sdf_gt(sdf_gt, clamp_dist, device="cuda", verbose=False):
+    """Clamp each surface's SDF samples to ±``clamp_dist`` and move them to ``device``.
+
+    Clamping is what makes the fit match training: the decoder was trained against
+    clamped targets, so scoring it against unclamped ones penalises it for distances
+    it was never asked to represent. ``clamp_dist=None`` skips it.
+
+    Returns a **new** list; the caller's is untouched (#55). ``None`` entries are
+    carried through as ``None`` rather than dropped, so surface indices still line
+    up with the decoder's outputs.
+    """
     # Set a clamp (maximum) distance to "model"
+    processed = []
     for sdf_idx, sdf in enumerate(sdf_gt):
         if sdf is None:
             logger.warning("sdf_gt[%s] is None, skipping surface %s", sdf_idx, sdf_idx)
+            processed.append(None)
             continue
         if clamp_dist is not None:
             sdf = torch.clamp(sdf, -clamp_dist, clamp_dist)
         # Move to GPU
-        sdf_gt[sdf_idx] = sdf.to(device)
-    return sdf_gt
+        processed.append(sdf.to(device))
+    return processed
 
 
 def project_latent(latent, latent_norm):

@@ -25,7 +25,7 @@ except ImportError:
     wandb = None
 
 
-def _process_meshes_for_wandb(meshes, mesh_prefix, max_points_3d, log_faces, verbose):
+def _process_meshes_for_wandb(meshes, mesh_prefix, max_points_3d, log_faces):
     """
     Helper function to process a list of meshes for wandb logging.
 
@@ -34,7 +34,6 @@ def _process_meshes_for_wandb(meshes, mesh_prefix, max_points_3d, log_faces, ver
         mesh_prefix (str): Prefix for wandb keys (e.g., "recon_mesh", "orig_mesh")
         max_points_3d (int): Maximum number of points to log (subsampled if exceeded)
         log_faces (bool): Whether to include mesh faces in 3D visualization if available
-        verbose (bool): Whether to print processing details
 
     Returns:
         dict: Dictionary with wandb-ready mesh data
@@ -47,14 +46,13 @@ def _process_meshes_for_wandb(meshes, mesh_prefix, max_points_3d, log_faces, ver
 
             # Subsample if too many points
             if len(points) > max_points_3d:
-                if verbose:
-                    logger.debug(
-                        "Subsampling %s_%s from %s to %s points",
-                        mesh_prefix,
-                        i,
-                        len(points),
-                        max_points_3d,
-                    )
+                logger.debug(
+                    "Subsampling %s_%s from %s to %s points",
+                    mesh_prefix,
+                    i,
+                    len(points),
+                    max_points_3d,
+                )
                 indices = np.random.choice(len(points), max_points_3d, replace=False)
                 points = points[indices]
 
@@ -65,13 +63,12 @@ def _process_meshes_for_wandb(meshes, mesh_prefix, max_points_3d, log_faces, ver
                         {"type": "lidar/beta", "points": points, "faces": mesh.faces}
                     )
                 except Exception as e:
-                    if verbose:
-                        logger.warning(
-                            "Failed to log faces for %s_%s, logging points only: %s",
-                            mesh_prefix,
-                            i,
-                            e,
-                        )
+                    logger.warning(
+                        "Failed to log faces for %s_%s, logging points only: %s",
+                        mesh_prefix,
+                        i,
+                        e,
+                    )
                     mesh_data[f"{mesh_prefix}_{i}"] = wandb.Object3D(points)
             else:
                 mesh_data[f"{mesh_prefix}_{i}"] = wandb.Object3D(points)
@@ -100,8 +97,7 @@ def prepare_results_for_wandb(result, max_points_3d=10000, log_faces=True, verbo
     """
     if wandb is None:
         raise ImportError("prepare_results_for_wandb requires wandb, which is not installed")
-    if verbose:
-        logger.debug("Preparing results for wandb logging...")
+    logger.debug("Preparing results for wandb logging...")
 
     # Create a copy to avoid modifying the original
     result_wandb = copy.copy(result)
@@ -109,14 +105,14 @@ def prepare_results_for_wandb(result, max_points_3d=10000, log_faces=True, verbo
     # Process reconstructed meshes
     if "mesh" in result_wandb and result_wandb["mesh"] is not None:
         recon_mesh_data = _process_meshes_for_wandb(
-            result_wandb["mesh"], "recon_mesh", max_points_3d, log_faces, verbose
+            result_wandb["mesh"], "recon_mesh", max_points_3d, log_faces
         )
         result_wandb.update(recon_mesh_data)
 
     # Process original meshes
     if "orig_mesh" in result_wandb and result_wandb["orig_mesh"] is not None:
         orig_mesh_data = _process_meshes_for_wandb(
-            result_wandb["orig_mesh"], "orig_mesh", max_points_3d, log_faces, verbose
+            result_wandb["orig_mesh"], "orig_mesh", max_points_3d, log_faces
         )
         result_wandb.update(orig_mesh_data)
 
@@ -136,22 +132,19 @@ def prepare_results_for_wandb(result, max_points_3d=10000, log_faces=True, verbo
                 result_wandb[key] = value.tolist()
                 continue
             else:
-                if verbose:
-                    logger.debug("Removing large numpy array '%s' with size %s", key, value.size)
+                logger.debug("Removing large numpy array '%s' with size %s", key, value.size)
                 keys_to_delete.append(key)
         elif isinstance(value, torch.Tensor):
             if value.numel() <= 10:  # Only log small tensors
                 result_wandb[key] = value.detach().cpu().numpy().tolist()
                 continue
             else:
-                if verbose:
-                    logger.debug("Removing large tensor '%s' with %s elements", key, value.numel())
+                logger.debug("Removing large tensor '%s' with %s elements", key, value.numel())
                 keys_to_delete.append(key)
         elif hasattr(value, "__class__") and "wandb" in str(type(value)):
             continue  # Keep wandb objects (like Object3D)
         else:
-            if verbose:
-                logger.warning("Removing non-serializable object '%s' of type %s", key, type(value))
+            logger.warning("Removing non-serializable object '%s' of type %s", key, type(value))
             keys_to_delete.append(key)
 
     # Delete non-serializable items
@@ -164,7 +157,6 @@ def prepare_results_for_wandb(result, max_points_3d=10000, log_faces=True, verbo
     if "orig_mesh" in result_wandb:
         del result_wandb["orig_mesh"]
 
-    if verbose:
-        logger.debug("Prepared %s items for wandb logging", len(result_wandb))
+    logger.debug("Prepared %s items for wandb logging", len(result_wandb))
 
     return result_wandb

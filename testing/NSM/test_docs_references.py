@@ -151,3 +151,64 @@ def test_a_cited_symbol_exists(doc, token):
         assert rest in INDEX[head], f"{doc} cites `{token}`, but {head}.py has no {rest}"
     else:  # Class.method, module not named
         assert token in ALL_QUALS, f"{doc} cites `{token}`, which is defined nowhere in NSM/"
+
+
+# ---------------------------------------------------------------------------
+# KNOWN_ISSUES.md § Open — the summary table against the entries it summarizes
+# ---------------------------------------------------------------------------
+
+KNOWN_ISSUES = REPO / "docs" / "KNOWN_ISSUES.md"
+
+
+def _open_section():
+    """The text between ``# Open`` and ``# History``."""
+    text = KNOWN_ISSUES.read_text(encoding="utf-8")
+    start = text.index("\n# Open\n")
+    return text[start : text.index("\n# History\n")]
+
+
+def _github_anchor(heading):
+    """GitHub's slug: lowercase, drop everything but word chars, spaces and hyphens."""
+    slug = re.sub(r"[^\w\- ]", "", heading.lower())
+    return "#" + slug.strip().replace(" ", "-")
+
+
+def _table_anchors():
+    """The ``#anchor`` each summary row's Defect cell links to."""
+    for line in _open_section().splitlines():
+        if not line.startswith("|") or line.startswith("|---") or "| Severity |" in line:
+            continue
+        cell = line.split("|")[1].strip()
+        for anchor in re.findall(r"\]\((#[^)]+)\)", cell):
+            yield anchor
+
+
+def _entry_anchors():
+    return [
+        _github_anchor(line[4:].strip())
+        for line in _open_section().splitlines()
+        if line.startswith("### ")
+    ]
+
+
+def test_the_open_summary_table_and_its_entries_are_the_same_set():
+    """
+    § Open opens with a summary table and continues with one ``###`` entry per defect,
+    and until plan §8.0.N nothing tied the two together. Measured on ``main`` at
+    ``09c3834``: 9 rows, 12 entries, **and neither a subset of the other** — 3 rows had no
+    entry (``Parameters accepted and never read``, ``xyz_in_all``, ``sample_difficulty_lx``)
+    and 6 entries had no row (``center_pts``/``norm_pts``, the configs predating
+    ``Target``, ``F401``, hybrid/LBFGS, triplanar's summed latent gradients, ``grad_clip``).
+    An earlier drift in the same table was found by hand during §8.0.O — the ``padding``
+    row pointing at an entry § History had replaced.
+
+    A hand-maintained index of a file whose whole promise is "answerable years later" is
+    the same defect class as a hand-transcribed number, and gets the same remedy: the
+    rows link to their entries, and this goes red when one gains a partner the other
+    lacks.
+    """
+    table, entries = sorted(_table_anchors()), sorted(_entry_anchors())
+    assert table == entries, (
+        f"rows with no entry: {sorted(set(table) - set(entries))}; "
+        f"entries with no row: {sorted(set(entries) - set(table))}"
+    )

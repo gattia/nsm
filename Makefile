@@ -32,8 +32,14 @@ install-dev:
 	pip install -e .
 
 # Testing targets
+# --durations is not a preference. Plan section 7.4 sets "the suite stays under 2 minutes
+# so nobody skips it", and for a year that bound was measured by hand and reported in a
+# plan's State block -- so when it was crossed, nothing said so. CI runs this target on
+# every PR, so the total (pytest's own summary line) and the slowest tests are published
+# on every run instead of transcribed somewhere that goes stale. See CLAUDE.md, Four
+# rules, 1.
 test:
-	pytest testing/ -v
+	pytest testing/ -v --durations=15
 
 test-loader:
 	pytest testing/NSM/models/test_loader.py -v

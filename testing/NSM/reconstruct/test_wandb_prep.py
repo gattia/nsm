@@ -81,10 +81,10 @@ class TestMeshProcessing:
         assert "mesh" not in result and "orig_mesh" not in result
 
     def test_none_meshes_produce_no_entries(self):
-        mesh_data = _process_meshes_for_wandb([None], "recon_mesh", 10_000, True, False)
+        mesh_data = _process_meshes_for_wandb([None], "recon_mesh", 10_000, True)
         assert mesh_data == {}
 
     def test_n_points_reports_the_full_count_even_when_subsampled(self):
         """The 3D object is subsampled to ``max_points_3d``; the count key is not."""
-        mesh_data = _process_meshes_for_wandb([FakeMesh(10)], "recon_mesh", 4, True, False)
+        mesh_data = _process_meshes_for_wandb([FakeMesh(10)], "recon_mesh", 4, True)
         assert mesh_data["recon_mesh_0_n_points"] == 10

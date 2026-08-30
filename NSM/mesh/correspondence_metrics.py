@@ -513,12 +513,19 @@ def foldover_count(
 
 
 def roundtrip_distance(
-    original_points: np.ndarray, roundtrip_points: np.ndarray
+    *, original_points: np.ndarray, roundtrip_points: np.ndarray
 ) -> Dict[str, object]:
     """Per-vertex distance after a forward-then-backward warp (A → B → A).
 
     Measures how close the round-trip lands to the starting position.  A
     perfect bijective correspondence would give zero displacement everywhere.
+
+    **Keyword-only, and its sibling is too** (#56). This function and
+    :func:`forward_backward_disagreement` take the same two arrays in the
+    *opposite* order, and neither swap is visible in what a caller reads: this
+    one is ``norm(rt - orig)``, symmetric, so swapping is a no-op; that one
+    sign-flips ``field`` and leaves ``magnitude_percentiles`` identical. Passing
+    them positionally is now a ``TypeError`` instead.
 
     Args:
         original_points: (N, 3) array of starting vertex positions (source A).
@@ -539,9 +546,14 @@ def roundtrip_distance(
 
 
 def forward_backward_disagreement(
-    roundtrip_points: np.ndarray, original_points: np.ndarray
+    *, roundtrip_points: np.ndarray, original_points: np.ndarray
 ) -> Dict[str, object]:
     """Displacement field between round-trip positions and originals.
+
+    **Keyword-only** (#56), and note the parameter order is the reverse of
+    :func:`roundtrip_distance`'s. Nothing here depends on that order any more,
+    which is the point: a swap used to flip the sign of ``field`` while leaving
+    every summary statistic identical.
 
     Returns both the raw (N, 3) displacement field and the magnitude
     statistics.  High values indicate regions where the forward and backward
@@ -694,12 +706,14 @@ def score_correspondence(
     else:
         original_pts = _mesh_points(source_mesh)
         try:
-            results["roundtrip_distance"] = roundtrip_distance(original_pts, roundtrip_points)
+            results["roundtrip_distance"] = roundtrip_distance(
+                original_points=original_pts, roundtrip_points=roundtrip_points
+            )
         except Exception as exc:  # pragma: no cover
             results["roundtrip_distance"] = {"error": str(exc)}
         try:
             results["forward_backward_disagreement"] = forward_backward_disagreement(
-                roundtrip_points, original_pts
+                roundtrip_points=roundtrip_points, original_points=original_pts
             )
         except Exception as exc:  # pragma: no cover
             results["forward_backward_disagreement"] = {"error": str(exc)}

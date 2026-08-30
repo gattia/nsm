@@ -1,3 +1,18 @@
+"""DeepSDF: an MLP that maps ``[latent, xyz]`` to one signed distance per object.
+
+The original architecture NSM was built on, and still the ``model_type: deepsdf``
+path and the second half of ``two_stage``. :class:`Decoder` carries the whole of it;
+``loader.load_model`` translates config keys into its parameters (the two vocabularies
+differ -- ``layer_latent_in`` is ``latent_in``, ``layer_dimensions`` is ``dims``).
+
+Two things here are load-bearing and not obvious. ``SIREN_W0`` is the frequency scale
+``activation='sin'`` initialises against, and it must match the ``Sine`` that
+:func:`get_activation` returns -- there were two ``Sine`` classes computing the same
+thing until Aug 2026 (``docs/ARCHITECTURE.md`` section 6). ``PROGRESSIVE_PARAMS``
+schedules Curriculum-DeepSDF's depth phase-in by *epoch*, so a forward pass under
+``progressive_add_depth`` is not a pure function of its input.
+"""
+
 import logging
 import warnings
 
@@ -34,6 +49,27 @@ PROGRESSIVE_PARAMS = {
 
 
 class Decoder(nn.Module):
+    """MLP decoder: ``[latent, xyz] -> sdf`` per object, optionally with skips.
+
+    The layer stack is ``dims`` widened by ``latent_size + 3`` at the input. Three
+    knobs change its *shape* rather than its size, and each is a different mechanism:
+
+    * ``latent_in`` repeats the input vector into the named layers. Under
+      ``concat_latent_input=False`` the layer is *narrowed* so the concatenation
+      restores its declared width; under ``True`` it is widened instead. Same key,
+      opposite arithmetic -- see :meth:`get_layer_dims`.
+    * ``layer_split`` gives each object its own tail from that layer on, so
+      ``n_objects > 1`` is either one shared trunk with an ``n_objects``-wide output
+      or ``n_objects`` separate tails. ``False`` is coerced to ``None`` on purpose:
+      ``False == 0`` made "off" indistinguishable from a split at layer 0 (#46).
+    * ``progressive_add_depth`` phases later blocks in over training, which makes
+      ``forward`` depend on ``epoch``; it raises if the epoch is not supplied.
+
+    ``**kwargs`` exists only to refuse or warn on parameters that were accepted and
+    never read (``xyz_in_all``, ``latent_noise_sigma``, ``norm_layers``,
+    ``latent_dropout``); it is not an extension point.
+    """
+
     def __init__(
         self,
         latent_size,
@@ -168,6 +204,9 @@ class Decoder(nn.Module):
         self.epoch = None
 
     def lin_layer_(self, in_dim, out_dim, layer, weight_norm):
+        """One ``nn.Linear``, initialised for ``self._activation_`` and optionally
+        weight-normed. ``layer == 0`` selects SIREN's first-layer bound, which differs
+        from the rest by a factor of ``sqrt(6 / n) / SIREN_W0``."""
         lin_layer = nn.Linear(in_dim, out_dim)
         # initialize the weights - particularly for the sine activation
         init_weights(module=lin_layer, activation=self._activation_, first_layer=layer == 0)
@@ -177,6 +216,14 @@ class Decoder(nn.Module):
         return lin_layer
 
     def get_layer_dims(self, layer):
+        """Input and output width of ``layer``, given how the latent is re-injected.
+
+        ``concat_latent_input`` decides which side of the layer ``latent_in`` pays for.
+        ``False``: the *output* of the preceding layer is narrowed by ``dims[0]`` so the
+        concatenation brings it back to the declared width. ``True``: the *input* is
+        widened by ``dims[0]`` and the declared widths stand. Anything else (the
+        ``None`` a config can carry) takes neither branch and returns the plain dims.
+        """
         if self.concat_latent_input is False:
             in_dim = self.dims[layer]
             if layer + 1 in self.latent_in:
@@ -196,6 +243,13 @@ class Decoder(nn.Module):
         return in_dim, out_dim
 
     def forward_branch_(self, x, input_, layer, layer_idx):
+        """One block: optional latent concat, the layer, then activation and dropout.
+
+        Activation and dropout are applied to hidden layers only -- the final layer's
+        nonlinearity is ``final_activation``, applied once in :meth:`forward`. Under
+        ``progressive_add_depth`` a block that has not started yet returns ``x``
+        unchanged, so a phased-in block must be hidden-to-hidden: the skip is an
+        identity and cannot change width (#46)."""
         if layer_idx in self.latent_in:
             xi = torch.cat([x, input_], 1)
         else:
@@ -227,7 +281,7 @@ class Decoder(nn.Module):
         return x
 
     # input: N x (L+3)
-    def forward(self, input_, epoch=None):
+    def forward(self, input_, epoch=None):  # noqa: D102 - see the class docstring
         # Assign the epoch in case needed (for progressive depth)
         if epoch is not None:
             self.epoch = epoch
@@ -272,6 +326,13 @@ class Decoder(nn.Module):
         return x
 
     def progressive_layer(self, xi, layer, layer_idx):
+        """Blend ``xi`` with ``layer(xi)`` over the block's warmup (Curriculum-DeepSDF).
+
+        Weight is ``((epoch - start) / warmup) ** 2`` on the new block and ``1 - that``
+        on the identity, so the block arrives at zero influence and reaches full weight
+        at ``start + warmup``. One start condition, not three: ``epoch == start`` used
+        to fall through to full weight (``KNOWN_ISSUES`` § History 14).
+        """
         # use this as a way to store the progress of the network so far.
         # this way if we try to use the partly tuned model for inference, it will be able to
         # use the weights that have been tuned so far.
@@ -319,6 +380,13 @@ def init_weights(module, activation, first_layer=False):
 
 
 def get_activation(activation):
+    """The ``nn.Module`` for an activation name, or ``None`` for ``"linear"``.
+
+    ``None`` is a real answer, not a failure: ``linear`` is supported in the *final*
+    position, where ``forward`` guards for it. Asking for it as a hidden-layer
+    activation is refused in ``Decoder.__init__`` rather than here, because here it
+    is indistinguishable from the legitimate case.
+    """
     if activation == "relu":
         return nn.ReLU()
     elif activation == "leaky_relu":

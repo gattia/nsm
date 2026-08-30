@@ -54,3 +54,151 @@ def test_importing_the_generator_writes_nothing(tmp_path, monkeypatch):
     importlib.reload(module)
 
     assert list(tmp_path.iterdir()) == []
+
+
+# ---------------------------------------------------------------------------
+# Keys that do nothing — plan §6.1's last checkbox
+# ---------------------------------------------------------------------------
+
+NSM_ROOT = os.path.dirname(NSM.__file__)
+
+#: Modules that do not count as a reader, and the ruling that says so. The config
+#: generator holds every key name by definition. The other three are what ``docs/SCOPE.md``
+#: puts outside the documented surface: §2.2 (quarantined), §2.1 (unsupported until someone
+#: needs it, and broken -- #51), §2.4 (deferred research). A key read only by one of those
+#: does nothing on any path a user of the library can take, which is what §6.1 is asking
+#: about. Same three exemptions as the docstring gate in ``.flake8`` and the ``verbose``
+#: sweep in ``test_observability``, for the same reason.
+NOT_A_READER = (
+    "generate_sdf_default_config.py",
+    "train_deep_sdf_multi_head.py",
+    "reconstruct_latent_S3.py",
+)
+
+
+def _live_sources():
+    for root, _dirs, files in os.walk(NSM_ROOT):
+        if "deprecated" in root or "__pycache__" in root:
+            continue
+        for name in files:
+            if not name.endswith(".py") or name in NOT_A_READER:
+                continue
+            with open(os.path.join(root, name), encoding="utf-8") as handle:
+                yield handle.read()
+
+
+LIVE_SOURCES = list(_live_sources())
+
+
+def _key_appears_anywhere(key):
+    return any(key in source for source in LIVE_SOURCES)
+
+
+def _train_deep_sdf_source():
+    with open(os.path.join(NSM_ROOT, "train", "train_deep_sdf.py"), encoding="utf-8") as handle:
+        return handle.read()
+
+
+def test_every_shipped_key_is_read_or_names_a_dataset_parameter(shipped_config):
+    """
+    §6.1's last checkbox: find the config keys that silently do nothing.
+
+    It looked for keys "whose implementing branch is commented out". The sweep found the
+    stronger form — **no branch at all**: eight of the 121 shipped keys had no occurrence
+    anywhere in a live ``NSM/`` module outside this config and its generator.
+
+    Investigating them changed what the defect *is*. NSM never builds a dataset from a
+    config — ``train_deep_sdf(config, model, sdf_dataset)`` takes one already built — so
+    the dataset half of this file is a specification the user translates into
+    ``MultiSurfaceSDFSamples`` arguments by hand, and **six of the eight named a real
+    parameter under a different spelling**: ``n_pts_per_object``/``n_pts``,
+    ``percent_near_surface``/``p_near_surface``,
+    ``percent_further_from_surface``/``p_further_from_surface``,
+    ``random_function``/``rand_function``, ``normalize_pts``/``norm_pts``,
+    ``dataset_uniform_pts_buffer``/``uniform_pts_buffer``. Eighteen other keys already
+    used the constructor's spelling, so the file was inconsistent with itself and unusable
+    as ``**kwargs``. Those six are renamed; ``decoder_type`` and ``sdf_skip_connection``
+    named nothing on either ``model_type`` path and are deleted.
+
+    Hence the two-clause rule, which is what makes this checkable rather than a one-off:
+    a shipped key is legitimate if NSM reads it **or** if it names a dataset-constructor
+    parameter the user is expected to pass. A new key that does neither goes red here.
+
+    **"Reads it" excludes the three modules ``SCOPE`` puts outside the documented
+    surface** -- see ``NOT_A_READER``. The first version of this test did not, and counted
+    ``train_deep_sdf_multi_head`` as a reader, which hid the four ``SAMPLE_DIFFICULTY_LX``
+    keys below: they are read by the broken multi-head trainer and by the quarantined one,
+    and by nothing a user can run. A sweep that accepts an unsupported module as a reader
+    reports the absence of exactly the keys §6.1 is looking for.
+
+    The substring search is the loose direction on purpose — a key mentioned only in a
+    comment counts as read — so anything this reports is dead beyond argument. Tightening
+    it would need a resolver for ``config[name]`` where ``name`` is a variable.
+    """
+    import inspect
+
+    from NSM.datasets.sdf_dataset import MultiSurfaceSDFSamples
+
+    constructor = set(inspect.signature(MultiSurfaceSDFSamples.__init__).parameters)
+    orphans = sorted(
+        key
+        for key in shipped_config
+        if not _key_appears_anywhere(key)
+        and key not in constructor
+        and key not in SAMPLE_DIFFICULTY_LX
+    )
+    assert orphans == [], f"shipped config keys nothing reads and no constructor names: {orphans}"
+
+
+#: The one exception, and it is named rather than absorbed. These four ship, and the only
+#: code that reads them is ``train_deep_sdf_multi_head`` (#51-broken, ``SCOPE`` §2.1) and
+#: ``train/deprecated/train_deep_sdf_orig`` (§2.2) -- so on every supported path they do
+#: nothing, which is ``KNOWN_ISSUES`` § Open's "``sample_difficulty_lx`` shipped but
+#: unimplemented". They are **not** deleted, because #18 is the plan to make them live:
+#: port the inverse-Lx branch out of the quarantined trainer at §8.0.P. If #18 ever closes
+#: as won't-do, this tuple goes and the keys go with it.
+SAMPLE_DIFFICULTY_LX = frozenset(
+    {
+        "sample_difficulty_lx",
+        "sample_difficulty_lx_schedule",
+        "sample_difficulty_lx_cooldown",
+        "sample_difficulty_lx_epsilon",
+    }
+)
+
+
+def test_the_sample_difficulty_lx_keys_are_read_by_nothing_supported(shipped_config):
+    """
+    #18, pinned so the exemption above cannot quietly become permanent.
+
+    All four ship. ``train_deep_sdf`` -- the trainer ``SCOPE`` supports -- reads
+    ``sample_difficulty_weight`` and stops there; the ``elif`` that would read these is in
+    ``train_deep_sdf_multi_head`` and in ``train/deprecated/train_deep_sdf_orig``. Setting
+    them in a config for a supported run changes nothing and says nothing, which is the
+    §6.1 hazard in its original "the implementing branch is elsewhere" form.
+
+    This goes red the day the port lands, which is the point: at that moment the keys
+    become live and belong in the main assertion above rather than in an exemption.
+    """
+    assert SAMPLE_DIFFICULTY_LX <= set(shipped_config)
+    supported = os.path.join(NSM_ROOT, "train", "train_deep_sdf.py")
+    with open(supported, encoding="utf-8") as handle:
+        source = handle.read()
+    assert "sample_difficulty_weight" in source
+    assert not any(key in source for key in SAMPLE_DIFFICULTY_LX)
+
+
+def test_the_trainer_passes_chamfer_norm_commented_out():
+    """
+    #56's evidence that resolving ``chamfer_norm`` moves no number: the only place a
+    config could reach it is commented out, so every training run has always taken
+    ``get_mean_errors``' default.
+    """
+    source = _train_deep_sdf_source()
+    assert "# chamfer_norm" in source
+    assert "chamfer_norm=" not in source
+
+
+def test_no_shipped_config_carries_a_chamfer_norm_key(shipped_config):
+    """The other half: there is no key for the commented-out argument to have read."""
+    assert "chamfer_norm" not in shipped_config

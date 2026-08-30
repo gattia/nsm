@@ -443,10 +443,9 @@ def get_target_cells(
     cells_to_divide_binary = np.max((edge_ratio_binary, areas_binary, max_length_binary), axis=0)
     cells_to_divide = np.where(cells_to_divide_binary)[0]
 
-    if verbose is True:
-        logger.debug("%s %s", sum(edge_ratio_binary), edge_ratio_binary.shape)
-        logger.debug("%s %s", sum(areas_binary), areas_binary.shape)
-        logger.debug("%s", cells_to_divide.shape)
+    logger.debug("%s %s", sum(edge_ratio_binary), edge_ratio_binary.shape)
+    logger.debug("%s %s", sum(areas_binary), areas_binary.shape)
+    logger.debug("%s", cells_to_divide.shape)
 
     return cells_to_divide
 

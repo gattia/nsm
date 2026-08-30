@@ -1,3 +1,10 @@
+"""Curriculum weighting, the KLD term, and the profiler the trainer opens.
+
+The weight schedules here are read by ``train_epoch`` per epoch, not per batch.
+:func:`calc_weight` is the shared ramp, and its two consumers apply it in opposite
+directions -- see its docstring, which is the only place that is written down.
+"""
+
 import numpy as np
 import torch
 from torch.profiler import profile, tensorboard_trace_handler
@@ -128,10 +135,19 @@ class NoOpProfiler:
         pass
 
     def step(self):
+        """Accept the trainer's per-batch call and do nothing."""
         pass
 
 
 def get_profiler(config):
+    """A ``torch.profiler`` context if ``config["profiler"]``, else a no-op stand-in.
+
+    Both satisfy the same three-method protocol (``__enter__``, ``__exit__``,
+    ``step``), so the trainer's loop is written once. The schedule is fixed --
+    2 warmup then 6 active steps, traces to ``./log`` relative to the working
+    directory -- and profiling is a diagnostic, not something a run leaves on:
+    ``record_shapes``, ``profile_memory`` and ``with_stack`` are all expensive.
+    """
     if config["profiler"]:
         return torch.profiler.profile(
             schedule=torch.profiler.schedule(wait=0, warmup=2, active=6),

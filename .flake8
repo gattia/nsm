@@ -14,8 +14,46 @@
 #           can; every E501 that survives a Black pass is prose Black will not touch
 #           (docstring bodies, comments, inline comments). Flagging those adds no
 #           signal, so length is enforced by `black --check`, not here.
+#   D104, D105, D107 -- docstring PLACEMENT, and out of the gate for one reason each.
+#           D107 (__init__) is 15 sites, and every one of those classes carries a class
+#           docstring that already documents the constructor's parameters -- a second copy
+#           under __init__ is the self-soothing documentation CLAUDE.md names. D105 (magic
+#           methods) is __repr__, __len__ and __getitem__, which the class docstring covers
+#           and which need no prose of their own. D104 (packages) would document six
+#           __init__.py shells whose content is re-exports and an __all__ whose rationale is
+#           already written beside it, and docs/SCOPE.md section 3 is where the package
+#           surface is described.
+#   D2, D3, D4 -- docstring FORMATTING. flake8-docstrings joined `make lint` in
+#           Aug 2026 (plan section 8.0.N) to close Phase 2, and the gate is D1xx only:
+#           "is there a docstring", not "is it punctuated a particular way". At
+#           pydocstyle's defaults the formatting families fire in the hundreds across
+#           NSM/ and testing/, on prose that is accurate and is this project's house
+#           style -- summary lines that run to a second sentence, no blank line after
+#           the opening quotes, imperative-mood complaints about descriptive summaries.
+#           Turning them on would mean rewriting correct documentation to satisfy a
+#           convention nobody chose. Re-measure with `flake8 --select=D2,D3,D4 NSM/`
+#           rather than trusting a count written here, which is why none is.
 max-line-length = 100
-extend-ignore = E203, W503, E402, E721, F401, E501
+extend-ignore = E203, W503, E402, E721, F401, E501, D104, D105, D107, D2, D3, D4
+per-file-ignores =
+# The D1xx gate covers the API a user of the library calls. Two kinds of file are out,
+# and they are out for different reasons -- neither is "a docstring would be nice here".
+#
+# testing/ -- a suite documents itself in module and class docstrings, which it does
+#   thoroughly. Requiring one on every `def test_...` as well would add several hundred
+#   restatements of a name that is already a sentence.
+#
+# The three modules below are ruled out of the documented surface by docs/SCOPE.md, and
+#   the ruling is the reason: section 2.4 (reconstruct_latent_S3 -- deferred research),
+#   section 2.1 (train_deep_sdf_multi_head -- unsupported until someone needs it, and
+#   broken: issue #51), section 2.2 (train/deprecated/ -- quarantined, ported or deleted
+#   at plan section 8.0.P). Documenting them would say they are supported. A per-site
+#   noqa is the right instrument when a specific symbol is deliberately bare and the
+#   reason is local; a file that is not part of the API is a property of the file.
+    testing/*: D100,D101,D102,D103
+    NSM/reconstruct/reconstruct_latent_S3.py: D100,D103
+    NSM/train/train_deep_sdf_multi_head.py: D100,D103
+    NSM/train/deprecated/*: D100,D103
 exclude =
     .git,
     __pycache__,

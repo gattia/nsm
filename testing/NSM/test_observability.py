@@ -185,6 +185,57 @@ class TestTheConversionHolds:
                     offenders.append(f"{path}:{node.lineno}")
         assert offenders == []
 
+    #: ``SCOPE`` rules these three out of the documented surface, so their gates go with
+    #: the modules rather than with this sweep: §2.4 (deferred research), §2.1
+    #: (unsupported until someone needs it), §2.2 (quarantined). §8.0.P and §8.0.R own them.
+    UNDOCUMENTED_SURFACE = (
+        "NSM/reconstruct/reconstruct_latent_S3.py",
+        "NSM/train/train_deep_sdf_multi_head.py",
+    )
+
+    def test_no_log_record_is_gated_behind_verbose(self):
+        """
+        The last of §8.0.G's residue. A ``logger.debug`` inside ``if verbose:`` is gated
+        twice — once by the level the host configured and once by a parameter the host
+        does not know exists — so a host that turned on debug logging still sees nothing.
+        That is what made the ten records in ``reconstruct_mesh`` invisible to a consumer
+        running the exact call the deprecation notice named (§8.0.J).
+
+        Measured on ``main`` at ``09c3834``: **86** ``verbose``-conditioned ``if``
+        statements, **83** of them nothing but ``logger.*`` calls with no ``else``. §8.0.N
+        removed the 58 of those on the documented surface; the other 25 are in the three
+        modules exempted above. The 3 survivors stay everywhere, and they are **argument
+        guards, not control flow**: each evaluates something solely to log it — a
+        ``sched_getaffinity`` probe, an extent computed for the record, two CUDA memory
+        queries inside ``forward`` — and log arguments are eager, so ungating them would
+        run those unconditionally. Each says so at its site.
+        Classified by AST rather than by grep, because "measuring the parameter form and
+        reporting it as no gates" is the error §8.0.L's review caught.
+
+        Removing a gate can leave the ``verbose`` parameter itself unread, which is the
+        accepted-and-ignored trap in miniature. Two were left that way here —
+        ``SDFSamples.load_mesh_step`` and ``_process_meshes_for_wandb``, the two whose
+        ``verbose`` was *required* and therefore never bridged — and both parameters were
+        deleted rather than kept.
+        """
+        offenders = []
+        for path, tree in _library_modules():
+            if path in self.UNDOCUMENTED_SURFACE or path == "NSM/_verbose_deprecation.py":
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.If) or "verbose" not in ast.unparse(node.test):
+                    continue
+                if node.orelse or not node.body:
+                    continue
+                if all(
+                    isinstance(statement, ast.Expr)
+                    and isinstance(statement.value, ast.Call)
+                    and ast.unparse(statement.value.func).startswith("logger.")
+                    for statement in node.body
+                ):
+                    offenders.append(f"{path}:{node.lineno}")
+        assert offenders == []
+
     def test_every_module_that_speaks_has_its_own_logger(self):
         """
         One ``getLogger(__name__)`` per speaking module, so the ``NSM.*`` hierarchy is

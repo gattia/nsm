@@ -32,6 +32,22 @@ nsm @ git+https://github.com/gattia/nsm@v0.3.0
 
 ### Breaking
 
+- **`roundtrip_distance` and `forward_backward_disagreement` are keyword-only**
+  ([#56](https://github.com/gattia/nsm/issues/56), plan §8.0.N). The two take *the same two arrays in opposite order*, forty
+  lines apart in `mesh/correspondence_metrics.py`, and neither swap was visible in what a
+  caller reads: `roundtrip_distance` is `norm(rt - orig)`, symmetric, so swapping it is a
+  no-op; `forward_backward_disagreement` sign-flips `field` and leaves
+  `magnitude_percentiles` identical. A positional call is now a `TypeError`. The values
+  are unchanged. `directed_distance_percentiles` is **not** included and keeps its
+  positional signature — it is asymmetric and documented as directional, so a swap there
+  changes the number rather than hiding.
+
+- **`SDFSamples.load_mesh_step` no longer takes `verbose`** (plan §8.0.N). Its last reader
+  was a `logger.debug` gated on the flag; ungating that left the parameter accepted and
+  never read, which is the trap this project deletes rather than keeps. The internal
+  `_process_meshes_for_wandb` lost the same parameter for the same reason. Both are called
+  only from inside NSM, under public entry points that still accept and honour `verbose`.
+
 - **The cartilage validation functions check their mesh list's length** (plan §8.0.N′).
   `compare_cart_thickness_tibia`, `_patella` and `_femur` each took `orig_meshes[:2]` and
   nothing checked what they sliced from: measured, a six-mesh whole-joint list into
@@ -54,7 +70,69 @@ nsm @ git+https://github.com/gattia/nsm@v0.3.0
   depending on which arrays the original carried. This only decides which exception and
   whether it says why. Deleting the parameter is scheduled for v0.4.0 (plan §8.0.S).
 
+### Changed
+
+- **`chamfer_norm` and `sigma_rand_pts` have one default each** ([#56](https://github.com/gattia/nsm/issues/56), plan
+  §8.0.N). `compute_recon_loss`'s `chamfer_norm` goes 1 → **2**, matching `get_mean_errors`
+  and `reconstruct_mesh`; `reconstruct_mesh`'s `sigma_rand_pts` goes 0.001 → **0.01**,
+  matching `get_mean_errors` and the shipped config's `sigma_rand_pts_recon`. Both take the
+  value the ShapeMedKnee configuration already uses.
+
+  `chamfer_norm` changes no result on any NSM path: `train_deep_sdf.py` passes the argument
+  commented out and no shipped config carries the key, so every run has always taken
+  `get_mean_errors`' 2 and forwarded it explicitly. `sigma_rand_pts` **can** change a
+  result — see `docs/KNOWN_ISSUES.md` § History 29. `compute_chamfer(power=1)` is the same
+  knob under a fourth name and deliberately does not move: it is a generic distance helper,
+  1 is the textbook Chamfer definition, and its one NSM caller always passes the value
+  explicitly.
+
+- **Eight keys in the shipped `default_config.json`** (plan §8.0.N, §6.1). NSM never builds
+  a dataset from a config — `train_deep_sdf(config, model, sdf_dataset)` takes one already
+  built — so the dataset half of that file is a specification the caller translates into
+  `MultiSurfaceSDFSamples` arguments by hand, and six keys spelled that parameter
+  differently from the constructor while eighteen others did not. Renamed to the
+  constructor's spelling, values unchanged: `n_pts_per_object` → `n_pts`,
+  `percent_near_surface` → `p_near_surface`, `percent_further_from_surface` →
+  `p_further_from_surface`, `random_function` → `rand_function`, `normalize_pts` →
+  `norm_pts`, `dataset_uniform_pts_buffer` → `uniform_pts_buffer`. `decoder_type` and
+  `sdf_skip_connection` named nothing on either `model_type` path and are deleted. Nothing
+  in NSM reads either spelling, so no run changes; a config on disk keeps working, and
+  § History 6 says which spelling it will carry.
+
+- **The `verbose` flag no longer suppresses log records** (plan §8.0.N, completing §8.0.G).
+  Fifty-eight `logger.*` calls across eight modules sat inside `if verbose:`, so they were
+  gated twice — once by the level the host configured and once by a parameter the host does
+  not know exists. A host that configured `DEBUG` and asked for NSM's output now gets it.
+  Nothing new is emitted; what changes is that it arrives — **and not only at `DEBUG`**:
+  9 of the 58 are `WARNING` and 2 are `INFO`, so a host at default levels sees new output
+  too. The loud case is `mesh/main._finish_meshes`, which logs four warnings per surface
+  whose SDF does not cross zero — the ordinary state of a decoder early in training, which
+  is when validation runs. Those warnings were always *deserved* at their level (a missing
+  surface is a finding, not a trace); what was wrong before is that a host had no way to
+  receive them without a flag it could not see.
+
 ### Fixed
+
+- **`compute_recon_loss` no longer downcasts the caller's meshes** ([#55](https://github.com/gattia/nsm/issues/55), plan
+  §8.0.N). Under `calc_assd=True` it set `point_coords` to `float32` in place on both the
+  reconstruction and the caller's ground truth, under a comment reading "make sure the
+  points for the meshes are the same types". pymskt's `pcu_sdf` casts both sides to
+  `float64` itself, so the caller's dtype never reached the computation and the downcast
+  could only lose precision. See `docs/KNOWN_ISSUES.md` § History 28 for who is affected.
+
+- **The `sdf_gt` preprocess no longer rewrites the caller's list** ([#55](https://github.com/gattia/nsm/issues/55), plan
+  §8.0.N). `reconstruct_latent_preprocess_sdf_gt` assigned the clamped, device-moved
+  tensors back into the list it was handed and returned that list;
+  `reconstruct_latent_sdf_gt_type_check` passed the caller's object straight through. Both
+  build a new list now. The values are unchanged. This also makes the `tuple` the type
+  check has always advertised usable — the index assignment raised `TypeError: 'tuple'
+  object does not support item assignment` at every call before it.
+
+- **`interpolate_mesh` and `interpolate_points` state whether they mutate**
+  ([#55](https://github.com/gattia/nsm/issues/55), plan §8.0.N). `interpolate_mesh` advances the caller's mesh in place and
+  returns that object, by design; `interpolate_points` does not touch its input and returns
+  a new array. The contract was written only on the private engine both call. No behaviour
+  change.
 
 - **A surface the decoder did not produce no longer kills the process** (plan §8.0.N′).
   `create_mesh` leaves a surface's slot `None` when its SDF does not cross zero — the

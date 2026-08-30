@@ -10,6 +10,9 @@ pytest-xdist>=3.0.0  # For parallel test execution
 black>=22.0.0
 isort>=5.0.0  # configured with profile=black in pyproject.toml; `make lint` checks it
 flake8>=5.0.0
+# The D1xx half of `make lint`: every public module, class, method and function
+# carries a docstring. See .flake8 for which families are on and why the rest are not.
+flake8-docstrings>=1.7.0
 mypy>=1.0.0
 
 # Documentation

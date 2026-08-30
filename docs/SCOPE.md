@@ -187,6 +187,15 @@ Two qualifications from the maintainer:
   silently do nothing because the branch implementing them is commented out. Those read as
   working features and produce no error.
 
+  **That hazard is not hypothetical here, and this module is where it lands.** The shipped
+  `default_config.json` carries `sample_difficulty_lx` and its `_schedule`, `_cooldown` and
+  `_epsilon`, and the only code that reads any of them is this file and
+  `train_deep_sdf_multi_head` (§2.1, and broken). The supported trainer reads
+  `sample_difficulty_weight` and stops. So the four keys are settable, do nothing, and say
+  nothing — `KNOWN_ISSUES.md` § Open, and [#18](https://github.com/gattia/nsm/issues/18) is the port that would make them
+  live. Found by plan §8.0.N sweeping every shipped key against every live module, and
+  missed on that sweep's first pass because it counted the unsupported trainer as a reader.
+
 Neither has an importer; `train/deprecated/` has no `__init__.py`, so neither appears in
 the coverage denominator either. 880 untested lines are currently invisible to `make
 test-coverage`.

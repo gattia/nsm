@@ -34,17 +34,36 @@ Each entry says what is wrong and how to tell whether it affects you. **How to f
 the issue** — that is the split: this file is what survives in the repo, the issue is the
 queue.
 
+**Every row links to its entry, and a test asserts the two are the same set**
+(`testing/NSM/test_docs_references.py`). They were not, until plan §8.0.N: nine rows
+against twelve entries, with three rows naming no entry and six entries appearing in no
+row. An index maintained by hand goes stale the same way a transcribed number does, and
+this file's whole promise — "which of my runs are affected, answerable in 2031" — is worth
+more than that.
+
 | Defect | Severity | Issue |
 |---|---|---|
-| Sigma coordinate space depends on `scale_jointly` | **High** — ~100× over/under-sampling | [#3](https://github.com/gattia/nsm/issues/3) |
-| Shipped model configs omit two required architecture keys | Medium — refused at load, not silent | [#26](https://github.com/gattia/nsm/issues/26), [#45](https://github.com/gattia/nsm/issues/45) |
-| Parameters accepted and never read | Medium — **read the traps first** | [#20](https://github.com/gattia/nsm/issues/20) |
-| `xyz_in_all` accepted and never read | Medium — silent no-op | [#20](https://github.com/gattia/nsm/issues/20) |
-| A `None` surface cannot build | Medium — advertised feature, unusable | [#67](https://github.com/gattia/nsm/issues/67) |
-| `sample_difficulty_lx` shipped but unimplemented | Medium | [#18](https://github.com/gattia/nsm/issues/18) |
-| `enforce_minmax` clamps predictions | Medium — config semantics | *none — a docs/design call, see below* |
-| The bare `compare_cart_thickness` scores femoral regions whatever the model is | Low — NaN, not a wrong number | *none — documented at the constant, see below* |
-| `Pool` deadlocks after an in-process build | Low — hangs, does not corrupt | [#25](https://github.com/gattia/nsm/issues/25) |
+| [Sigma coordinate space depends on `scale_jointly`](#sigma-sampling-coordinate-space-depends-on-scale_jointly) | **High** — ~100× over/under-sampling | [#3](https://github.com/gattia/nsm/issues/3) |
+| [A `None` surface cannot build](#a-none-surface-cannot-build) | Medium — advertised feature, unusable | [#67](https://github.com/gattia/nsm/issues/67) |
+| [`center_pts` and `norm_pts` do not select which normalization happens](#center_pts-and-norm_pts-do-not-select-which-normalization-happens) | Medium — silent, and the shipped config asks for the half it does not get | [#20](https://github.com/gattia/nsm/issues/20) |
+| [Shipped model configs predate the `Target` requirement](#shipped-model-configs-predate-the-target-requirement-and-cannot-be-trained-from) | Medium — refused at train, inference unaffected | *none — the migration message is the fix, see below* |
+| [Shipped model configs omit two required architecture keys](#shipped-model-configs-omit-two-keys-load_model-requires-so-it-refuses-them) | Medium — refused at load, not silent | [#26](https://github.com/gattia/nsm/issues/26), [#45](https://github.com/gattia/nsm/issues/45) |
+| [`sample_difficulty_lx` is shipped and read by nothing supported](#sample_difficulty_lx-is-shipped-and-read-by-nothing-supported) | Medium — four config keys that do nothing | [#18](https://github.com/gattia/nsm/issues/18) |
+| [Hybrid / LBFGS reconstruction is unvalidated](#hybrid--lbfgs-reconstruction-is-unvalidated-on-current-nsm) | Medium — runs, unmeasured; production uses Adam | *none — see below* |
+| [`F401` is project-ignored, so unused imports never appear](#f401-is-project-ignored-so-unused-imports-do-not-appear-in-make-lint) | Low — tooling, not behaviour | *none — a judgement call, see below* |
+| [Latent gradients are summed over query points](#latent-gradients-are-summed-over-query-points-so-the-reg-balance-depends-on-n) | Medium — the reg balance moves with N | *none — a convention change, see below* |
+| [`enforce_minmax` clamps predictions](#enforce_minmax-clamps-the-prediction-not-just-the-target) | Medium — config semantics | *none — a docs/design call, see below* |
+| [`grad_clip` clips the model only, never the latent codes](#grad_clip-clips-the-model-only-never-the-latent-codes) | Medium — a global-sounding knob that is not | *none — an experiment first, see below* |
+| [The bare `compare_cart_thickness` scores femoral regions whatever the model is](#the-bare-compare_cart_thickness-scores-femoral-regions-whatever-the-model-is) | Low — NaN, not a wrong number | *none — documented at the constant, see below* |
+| [`Pool` deadlocks after an in-process build](#pool-deadlocks-after-an-in-process-build) | Low — hangs, does not corrupt | [#25](https://github.com/gattia/nsm/issues/25) |
+
+**Two rows left this table on 2026-08-30** rather than gaining an entry: "Parameters
+accepted and never read" and "`xyz_in_all` accepted and never read", both citing
+[#20](https://github.com/gattia/nsm/issues/20). #20 is **closed** — §8.0.H swept `models/` — and `xyz_in_all` is no longer a
+silent no-op: `Decoder(xyz_in_all=True)` raises `TypeError` naming it, measured. A falsy
+value is still ignored, deliberately and in writing, because that is what every NSM-owned
+config ships and it asked for nothing. The defect *class* has not gone anywhere and is
+tracked where a class belongs, in `ARCHITECTURE.md` §7.
 
 ---
 
@@ -122,9 +141,15 @@ The trigger is narrower than "a second dataset", and the distinction matters bec
 So a script that builds a train split in-process and then a val split on the default path
 deadlocks, with no message, on the second one. Long-standing rather than new.
 
-*Fix:* [#25](https://github.com/gattia/nsm/issues/25). *Worked around in:*
-`test_dataset_cache.TestSeedDerivation`, which builds its two datasets in separate
-subprocesses.
+**Ruled not-fixed, 2026-08-30 (maintainer, plan §8.0.N).** A `spawn` context would change
+behaviour nobody has asked for, and the constraint is cheaper than that: build both splits
+the same way, or build each in its own process. The constraint is now stated on the
+`multiprocessing=` parameter itself (`SDFSamples.__init__`'s docstring), which is where a
+user meets it — this entry is what they find afterwards. [#25](https://github.com/gattia/nsm/issues/25)
+stays open as the queue entry.
+
+*Worked around in:* `test_dataset_cache.TestSeedDerivation`, which builds its two datasets
+in separate subprocesses.
 
 ## Packaging and configuration
 
@@ -180,6 +205,31 @@ fifteen config keys and never calls `load_model`. What does not work unrepaired 
 260 MB and do not belong in CI. Run against both, it asserts the message names every
 missing key, that the repaired config loads strictly, and that `load_model`'s model is
 bitwise-identical to the consumer's own construction.
+
+### `sample_difficulty_lx` is shipped and read by nothing supported
+
+`NSM/configs/default_config.json` carries four keys — `sample_difficulty_lx`,
+`sample_difficulty_lx_schedule`, `sample_difficulty_lx_cooldown`,
+`sample_difficulty_lx_epsilon` — and the only code that reads them is
+`train/train_deep_sdf_multi_head.py`, which `SCOPE.md` §2.1 rules unsupported and which
+[#51](https://github.com/gattia/nsm/issues/51) says trains only its last decoder, and
+`train/deprecated/train_deep_sdf_orig.py`, which §2.2 quarantines.
+
+`train_deep_sdf` — the trainer `SCOPE` supports — reads `sample_difficulty_weight` and
+stops. So setting any of the four in a config for a supported run changes nothing and
+reports nothing: the inverse-Lx loss weighting they configure is in a file that is not the
+trainer.
+
+**How to tell whether it affects you:** it does not affect a *result* — nothing silently
+changed, the feature simply never ran. It affects you if you set one of these keys and
+believed it did something. Grep your config for `sample_difficulty_lx`; if it is there and
+non-null, the run you got is the run you would have got without it.
+
+*Fix:* [#18](https://github.com/gattia/nsm/issues/18) — port the ~12-line inverse-Lx branch out of the quarantined trainer,
+under the two conditions `SCOPE.md` §2.2 sets (impossible to enable by accident, documented
+at the config key). Scheduled at plan §8.0.P. *Pinned by:*
+`test_default_config_sync.test_the_sample_difficulty_lx_keys_are_read_by_nothing_supported`,
+which goes red the day the port lands.
 
 ### `F401` is project-ignored, so unused imports do not appear in `make lint`
 
@@ -741,7 +791,7 @@ preserving. Check out a pre-fix commit if an affected run must be reproduced exa
 
 | | |
 |---|---|
-| **Affects** | Uniform ("random") training samples: (a) any run with a nonzero `uniform_pts_buffer` — the parameter exists since Jan 2025 (`48c5f60`) and the shipped `default_config.json` sets `dataset_uniform_pts_buffer: 0.2`; (b) any **single-surface** run with `norm_pts=True` |
+| **Affects** | Uniform ("random") training samples: (a) any run with a nonzero `uniform_pts_buffer` — the parameter exists since Jan 2025 (`48c5f60`) and the shipped `default_config.json` sets it to `0.2` — spelled `dataset_uniform_pts_buffer` there until Aug 2026, so a config on disk from before then carries the old name; (b) any **single-surface** run with `norm_pts=True` |
 | **Unaffected** | Multi-surface runs at buffer 0 (the arithmetic is exactly zero — the harness baselines did not move); every `norm_pts=False` run, which is what `scale_jointly` requires and **both shipped ShapeMedKnee configs use**; reconstruction unless `get_rand_pts=True` (`kneepipeline` leaves it off) |
 | **Severity** | Silent — the samples were drawn from a slightly different region than configured |
 | **Fixed in** | `sdf-dataset-fixes`, Aug 2026 ([#40](https://github.com/gattia/nsm/issues/40)) |
@@ -773,8 +823,9 @@ no clipping in either sampler.
 
 ### How to tell whether one of your runs is affected
 
-Check the run's dataset settings: a nonzero `uniform_pts_buffer`
-(`dataset_uniform_pts_buffer` in configs), or a single-surface dataset with
+Check the run's dataset settings: a nonzero `uniform_pts_buffer` (spelled
+`dataset_uniform_pts_buffer` in configs written before Aug 2026), or a single-surface
+dataset with
 `norm_pts: true`, built before the fix → the uniform samples (and, under the clip, some
 near-surface samples) came from the old region.
 
@@ -1675,3 +1726,84 @@ the layout it assumes.
 `test_cartilage_func.TestTheMeshListLength` (the whole-joint list into the tibia wrapper,
 the wrong-length pairs, and the four-surface `["bone", "cart", "med_men", "lat_men"]`
 layout into the whole-joint function).
+
+
+## 28. ASSD downcast the caller's meshes to float32 before measuring them
+
+| | |
+|---|---|
+| **Affected** | `compute_recon_loss(..., calc_assd=True)` — and therefore `get_mean_errors` and `reconstruct_mesh` with `calc_assd`, which is what both shipped configs set — called with meshes whose `point_coords` are **float64**. → Aug 2026 |
+| **Unaffected** | Everything NSM produces or reads itself: VTK stores points at single precision, so `create_mesh`'s output and a mesh pymskt reads from disk are already float32 and the cast was a no-op. Bit-identical on both shipped ShapeMedKnee configs and on `kneepipeline`. The chamfer path never cast at all |
+| **Severity** | Silent, small, and in the direction of *less* precision |
+| **Fixed in** | `slice-n-phase2-close`, Aug 2026 (plan §8.0.N, [#55](https://github.com/gattia/nsm/issues/55)) |
+
+### What was wrong
+
+Before measuring ASSD, `recon_evaluation.compute_recon_loss` did this:
+
+```python
+# make sure the points for the meshes are the same types
+mesh.point_coords = mesh.point_coords.astype(np.float32)
+orig_meshes[mesh_idx].point_coords = orig_meshes[mesh_idx].point_coords.astype(np.float32)
+```
+
+Two things are wrong with it and only one of them is about precision.
+
+**The stated reason does not hold.** `get_assd_mesh` calls pymskt's `pcu_sdf`, which casts
+the query points *and* the mesh vertices to `float64` itself
+(`get_faces_vertices(..., points_dtype=np.float64)`, `_as_c_contig(pts, np.float64)`). The
+caller's dtype never reached the computation. Measured on a sphere pair, float32/float64,
+float64/float32 and float64/float64 all return the identical value — so the cast could
+never supply agreement, only remove precision on the way in.
+
+**It mutated the caller's objects.** Not copies: `mesh` is the caller's reconstruction and
+`orig_meshes[mesh_idx]` is the caller's ground-truth mesh, and both came back downcast.
+Conditional on the flag, too — a caller that scored chamfer only, then added ASSD later,
+lost precision on meshes it still held and had no way to notice.
+
+### How to tell whether one of your runs is affected
+
+Your ASSD numbers are affected only if the meshes you passed were float64. If they came
+from `create_mesh`, from `reconstruct_mesh`, or from reading a `.vtk` through pymskt, they
+were float32 and nothing changed. If you built them yourself at double precision — from a
+numpy array, or a mesh library that keeps doubles — the ASSD you recorded came from a
+float32 round-trip of your points.
+
+**The size of it:** measured on a sphere pair perturbed below float32 resolution, the ASSD
+moves by **7.2e-09**. That is far below any tolerance NSM reports against, so this is a
+correctness note rather than a call to re-run anything.
+
+*Pinned by:* `test_caller_object_mutation.TestSite2TheAssdDowncast`, which asserts the
+caller's dtypes survive the call, that the chamfer path still does not touch them, and that
+the reported ASSD is unchanged for the float32 meshes production actually passes.
+
+## 29. `reconstruct_mesh`'s random-point sampling widened from sigma 0.001 to 0.01
+
+| | |
+|---|---|
+| **Affected** | `reconstruct_mesh(get_rand_pts=True)` **without** an explicit `sigma_rand_pts`. Aug 2026 → |
+| **Unaffected** | `get_rand_pts=False`, which is what both shipped ShapeMedKnee configs set, so the sampling does not happen at all; any caller that passes `sigma_rand_pts` explicitly, which `kneepipeline`'s `steps/run_nsm.py` does; `get_mean_errors`, whose default was already 0.01 |
+| **Severity** | Silent — a 10× wider Gaussian around the surface, so a different sample set |
+| **Changed in** | `slice-n-phase2-close`, Aug 2026 (plan §8.0.N, [#56](https://github.com/gattia/nsm/issues/56)) |
+
+### What was wrong
+
+`sigma_rand_pts` is the width of the Gaussian the off-surface points are drawn from. It
+passed through three layers under one name with two values: `reconstruct_mesh` defaulted to
+**0.001**, `get_mean_errors` to **0.01**, and the shipped config's `sigma_rand_pts_recon` is
+**0.01**. So the same knob meant two different things depending on which layer you entered
+at, and neither end said so.
+
+Resolved to 0.01 — the value the ShapeMedKnee configuration uses and the one every path
+that reads a config already took. This is a **default** change, not an algorithm change:
+a caller who passed the value explicitly is unaffected, in either direction.
+
+### How to tell whether one of your runs is affected
+
+Two conditions, both required: you called `reconstruct_mesh` (not `get_mean_errors`) with
+`get_rand_pts=True`, and you did not pass `sigma_rand_pts`. If either is false, nothing
+moved. If both are true, your off-surface points were drawn at a tenth of the width they
+will be drawn at now; pass `sigma_rand_pts=0.001` to reproduce the old draw.
+
+*Pinned by:* `test_reconstruct_mesh_contracts.TestTheKnobsThatDifferByLayer`, which reads
+the defaults off the signatures rather than restating them.

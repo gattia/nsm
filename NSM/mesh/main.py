@@ -157,8 +157,7 @@ def scale_mesh_(mesh, scale=1.0, offset=(0.0, 0.0, 0.0), icp_transform=None, ver
     if not issubclass(type(mesh), mskt.mesh.Mesh):
         mesh = mskt.mesh.Mesh(mesh)
 
-    if verbose is True:
-        logger.debug("scale_mesh_. scale: %s", scale)
+    logger.debug("scale_mesh_. scale: %s", scale)
 
     pts = mesh.point_coords * scale
     pts += offset
@@ -169,10 +168,9 @@ def scale_mesh_(mesh, scale=1.0, offset=(0.0, 0.0, 0.0), icp_transform=None, ver
         transform = vtk.vtkTransform()
         transform.SetMatrix(icp_transform.GetMatrix())
         transform.Inverse()
-        if verbose is True:
-            logger.debug("%s", icp_transform)
-            logger.debug("INVERSE")
-            logger.debug("%s", transform)
+        logger.debug("%s", icp_transform)
+        logger.debug("INVERSE")
+        logger.debug("%s", transform)
         mesh.apply_transform_to_mesh(transform)
 
     return mesh
@@ -268,11 +266,10 @@ def _finish_meshes(
 
         # No zero crossing means no surface for this object; the slot stays None.
         if 0 < object_sdf.min() or 0 > object_sdf.max():
-            if verbose is True:
-                logger.warning("SDF values do not span 0 - there is no surface")
-                logger.warning("\tSDF min:  %s", object_sdf.min())
-                logger.warning("\tSDF max:  %s", object_sdf.max())
-                logger.warning("\tSDF mean:  %s", object_sdf.mean())
+            logger.warning("SDF values do not span 0 - there is no surface")
+            logger.warning("\tSDF min:  %s", object_sdf.min())
+            logger.warning("\tSDF max:  %s", object_sdf.max())
+            logger.warning("\tSDF mean:  %s", object_sdf.mean())
             meshes.append(None)
             continue
 
@@ -280,9 +277,8 @@ def _finish_meshes(
         meshes.append(extract(object_sdf, voxel_origin, voxel_size, verbose))
 
         if scale_to_original_mesh:
-            if verbose is True:
-                logger.debug("Scaling mesh to original mesh... ")
-                logger.debug("%s", icp_transform)
+            logger.debug("Scaling mesh to original mesh... ")
+            logger.debug("%s", icp_transform)
             meshes[mesh_idx] = scale_mesh(
                 meshes[mesh_idx],
                 old_mesh=path_original_mesh,
@@ -386,8 +382,7 @@ def sdf_grid_to_mesh(
     Returns:
         mskt Mesh: the extracted surface.
     """
-    if verbose is True:
-        logger.debug("Starting marching cubes... ")
+    logger.debug("Starting marching cubes... ")
 
     sub_sdf, crop_origin = _prepare_sdf_grid(
         sdf_values=sdf_values,
@@ -403,8 +398,7 @@ def sdf_grid_to_mesh(
         sub_sdf, level=0, spacing=(voxel_size, voxel_size, voxel_size)
     )
 
-    if verbose is True:
-        logger.debug("Starting vert/face conversion...")
+    logger.debug("Starting vert/face conversion...")
 
     verts += crop_origin
 
@@ -415,8 +409,7 @@ def sdf_grid_to_mesh(
 
     faces = np.hstack(faces_)
 
-    if verbose is True:
-        logger.debug("Creating mesh... ")
+    logger.debug("Creating mesh... ")
 
     mesh = mskt.mesh.Mesh(mesh=pv.PolyData(verts, faces))
 
@@ -443,10 +436,7 @@ def crop_sdf_to_narrow_band(
     """
     orig_nx, orig_ny, orig_nz = sdf_values.shape
 
-    if verbose:
-        logger.debug(
-            "Applying narrow band optimization (band_width=%s * voxel_size)...", band_width
-        )
+    logger.debug("Applying narrow band optimization (band_width=%s * voxel_size)...", band_width)
 
     # Find voxels within the narrow band around the surface.
     # The volume is in array[x, y, z] layout, so np.where's axes are (X, Y, Z).
@@ -455,8 +445,7 @@ def crop_sdf_to_narrow_band(
     ix, iy, iz = np.where(mask)
 
     if len(ix) == 0:
-        if verbose:
-            logger.warning("No voxels found within narrow band - using full volume")
+        logger.warning("No voxels found within narrow band - using full volume")
         return sdf_values, voxel_origin
 
     # Calculate cropping bounds with padding
@@ -476,9 +465,8 @@ def crop_sdf_to_narrow_band(
         voxel_origin[2] + z0 * voxel_size,
     )
 
-    if verbose:
-        logger.debug("Cropped volume from %sx%sx%s to %s", orig_nx, orig_ny, orig_nz, sub_sdf.shape)
-        logger.debug("Original origin: %s, Cropped origin: %s", voxel_origin, crop_origin)
+    logger.debug("Cropped volume from %sx%sx%s to %s", orig_nx, orig_ny, orig_nz, sub_sdf.shape)
+    logger.debug("Original origin: %s, Cropped origin: %s", voxel_origin, crop_origin)
 
     return sub_sdf, crop_origin
 
@@ -540,8 +528,7 @@ def sdf_grid_to_mesh_vtk(
     Returns:
         mskt.mesh.Mesh object
     """
-    if verbose:
-        logger.debug("Starting VTK Flying Edges mesh extraction...")
+    logger.debug("Starting VTK Flying Edges mesh extraction...")
 
     sub_sdf, crop_origin = _prepare_sdf_grid(
         sdf_values=sdf_values,
@@ -573,11 +560,8 @@ def sdf_grid_to_mesh_vtk(
 
     # Wrap the output as PyVista mesh and create mskt mesh directly
     mesh = mskt.mesh.Mesh(mesh=fe.GetOutput())
-    if verbose:
-        logger.debug(
-            "Extracted mesh with %s vertices and %s faces", mesh.n_points, mesh.n_faces_strict
-        )
-        logger.debug("Creating final mesh object...")
+    logger.debug("Extracted mesh with %s vertices and %s faces", mesh.n_points, mesh.n_faces_strict)
+    logger.debug("Creating final mesh object...")
 
     return mesh
 
@@ -726,8 +710,7 @@ def create_mesh_adaptive(
 
     Falls back to original create_mesh if bounds detection fails.
     """
-    if verbose:
-        logger.debug("Starting adaptive mesh creation...")
+    logger.debug("Starting adaptive mesh creation...")
 
     # Calculate voxel size if not provided
     if voxel_size is None:
@@ -747,8 +730,7 @@ def create_mesh_adaptive(
     decoder.eval()
 
     # Pass 1: Coarse grid to find object bounds
-    if verbose:
-        logger.debug("Pass 1: Evaluating coarse %s^3 grid...", n_pts_coarse)
+    logger.debug("Pass 1: Evaluating coarse %s^3 grid...", n_pts_coarse)
 
     coarse_origin = (search_bounds[0], search_bounds[0], search_bounds[0])
     coarse_extent = search_bounds[1] - search_bounds[0]
@@ -782,11 +764,9 @@ def create_mesh_adaptive(
     )
 
     if bounds_result is None:
-        if verbose:
-            logger.warning("Coarse pass found no surface. Falling back.")
+        logger.warning("Coarse pass found no surface. Falling back.")
         if fallback_to_original:
-            if verbose:
-                logger.warning("Falling back to original create_mesh...")
+            logger.warning("Falling back to original create_mesh...")
             # Keywords, not the 17 positionals this used to be: create_mesh's
             # signature is public and any insertion into it would have shifted them
             # silently. ARCHITECTURE.md section 7 lists this call as its example of
@@ -815,6 +795,8 @@ def create_mesh_adaptive(
 
     bounds_min, bounds_max = bounds_result
 
+    # This gate survives the §8.0.N ungating deliberately: `extent` is computed solely
+    # to be logged, and log arguments evaluate eagerly.
     if verbose:
         logger.debug("Coarse spacing: %.6f, tau: %.6f", coarse_spacing, tau_voxels * coarse_spacing)
         logger.debug("Coarse bounds: min=%s, max=%s", bounds_min, bounds_max)
@@ -822,8 +804,7 @@ def create_mesh_adaptive(
         logger.debug("Object extent: %s", extent)
 
     # Pass 2: Dense sampling in bounded region
-    if verbose:
-        logger.debug("Pass 2: Creating dense grid in bounded region...")
+    logger.debug("Pass 2: Creating dense grid in bounded region...")
 
     samples, grid_dims, voxel_origin = create_grid_samples_in_bounds(
         bounds_min,
@@ -834,10 +815,9 @@ def create_mesh_adaptive(
         min_pad_voxels_fine=min_pad_voxels_fine,
     )
 
-    if verbose:
-        logger.debug("Dense dims: %s, voxel_size: %.6f", grid_dims, original_spacing)
-        logger.debug("Dense grid: %s points (vs %s original)", samples.shape[0], n_pts_per_axis**3)
-        logger.debug("Speedup: %.1fx fewer points", n_pts_per_axis**3 / samples.shape[0])
+    logger.debug("Dense dims: %s, voxel_size: %.6f", grid_dims, original_spacing)
+    logger.debug("Dense grid: %s points (vs %s original)", samples.shape[0], n_pts_per_axis**3)
+    logger.debug("Speedup: %.1fx fewer points", n_pts_per_axis**3 / samples.shape[0])
 
     # Get SDF values for dense grid
     flat_sdfs = get_sdfs(

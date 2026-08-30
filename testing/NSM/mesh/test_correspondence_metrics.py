@@ -368,7 +368,7 @@ class TestRoundtripDistance:
     def test_identical_roundtrip_zero(self):
         """Round-trip that returns to origin should give zero distances."""
         pts = np.zeros((50, 3))
-        result = roundtrip_distance(pts, pts)
+        result = roundtrip_distance(original_points=pts, roundtrip_points=pts)
         assert result["min"] == pytest.approx(0.0)
         assert result["max"] == pytest.approx(0.0)
         assert "per_vertex" in result
@@ -379,7 +379,7 @@ class TestRoundtripDistance:
         orig = np.zeros((20, 3))
         rt = orig.copy()
         rt[:, 0] = 2.0
-        result = roundtrip_distance(orig, rt)
+        result = roundtrip_distance(original_points=orig, roundtrip_points=rt)
         assert result["mean"] == pytest.approx(2.0)
         assert result["min"] == pytest.approx(2.0)
         assert result["max"] == pytest.approx(2.0)
@@ -387,9 +387,69 @@ class TestRoundtripDistance:
 
     def test_all_keys_present(self):
         pts = np.ones((10, 3))
-        result = roundtrip_distance(pts, pts)
+        result = roundtrip_distance(original_points=pts, roundtrip_points=pts)
         for key in ("min", "p25", "p50", "mean", "p75", "p95", "max", "per_vertex"):
             assert key in result
+
+
+class TestTheReversedPairHidesASwap:
+    """
+    #56, part 4 — "adjacent metrics take their arguments in opposite order".
+
+    ``roundtrip_distance(original_points, roundtrip_points)`` and
+    ``forward_backward_disagreement(roundtrip_points, original_points)`` take **the same
+    two arrays in opposite order**, forty lines apart in one module, and neither swap was
+    visible in the numbers a caller reads:
+
+    * ``roundtrip_distance`` is ``norm(rt - orig)`` — symmetric, so a swap is a no-op;
+    * ``forward_backward_disagreement`` sign-flips ``field`` and leaves
+      ``magnitude_percentiles`` untouched, so a swap is invisible in the summary and
+      shows only in the raw displacement field.
+
+    The plan's dispositions table sent ``roundtrip_distance`` / ``directed_distance_
+    percentiles`` to keyword-only. That was the wrong sibling, and the third test says
+    why: ``directed_distance_percentiles`` is asymmetric, documented as directional, and
+    takes a point array against a *mesh-or-array* — a swap there changes the number
+    rather than hiding, so it keeps its positional signature.
+
+    The two that hide a swap are keyword-only as of §8.0.N, so a swap is a ``TypeError``.
+    The three tests above call by keyword and still pass, which is what says the *values*
+    did not move when the signatures did.
+    """
+
+    def _pair(self):
+        rng = np.random.default_rng(0)
+        a = rng.normal(size=(50, 3))
+        return a, a + rng.normal(scale=0.1, size=(50, 3))
+
+    def test_roundtrip_distance_is_symmetric_so_a_swap_is_invisible(self):
+        a, b = self._pair()
+        np.testing.assert_array_equal(
+            roundtrip_distance(original_points=a, roundtrip_points=b)["per_vertex"],
+            roundtrip_distance(original_points=b, roundtrip_points=a)["per_vertex"],
+        )
+
+    def test_the_disagreement_field_flips_sign_while_its_summary_does_not(self):
+        a, b = self._pair()
+        forward = forward_backward_disagreement(roundtrip_points=a, original_points=b)
+        backward = forward_backward_disagreement(roundtrip_points=b, original_points=a)
+        np.testing.assert_allclose(forward["field"], -backward["field"])
+        assert forward["magnitude_percentiles"]["mean"] == backward["magnitude_percentiles"]["mean"]
+
+    def test_the_directed_metric_is_asymmetric_so_a_swap_shows(self):
+        """Which is why it is not in the pair the keyword-only change covers."""
+        a, b = self._pair()
+        assert directed_distance_percentiles(a, b)["mean"] != pytest.approx(
+            directed_distance_percentiles(b, a)["mean"]
+        )
+
+    @pytest.mark.parametrize(
+        "func", [roundtrip_distance, forward_backward_disagreement], ids=["roundtrip", "disagree"]
+    )
+    def test_a_positional_call_is_refused(self, func):
+        a, b = self._pair()
+        with pytest.raises(TypeError):
+            func(a, b)
 
 
 # ---------------------------------------------------------------------------
@@ -401,14 +461,14 @@ class TestForwardBackwardDisagreement:
     def test_identical_gives_zero_field(self):
         """Zero disagreement when roundtrip equals original."""
         pts = np.zeros((30, 3))
-        result = forward_backward_disagreement(pts, pts)
+        result = forward_backward_disagreement(roundtrip_points=pts, original_points=pts)
         np.testing.assert_allclose(result["field"], 0.0, atol=1e-10)
         assert result["magnitude_percentiles"]["max"] == pytest.approx(0.0)
 
     def test_field_shape(self):
         orig = np.zeros((25, 3))
         rt = np.ones((25, 3))
-        result = forward_backward_disagreement(rt, orig)
+        result = forward_backward_disagreement(roundtrip_points=rt, original_points=orig)
         assert result["field"].shape == (25, 3)
 
     def test_known_field(self):
@@ -416,14 +476,14 @@ class TestForwardBackwardDisagreement:
         orig = np.zeros((10, 3))
         rt = np.zeros((10, 3))
         rt[:, 0] = 1.0
-        result = forward_backward_disagreement(rt, orig)
+        result = forward_backward_disagreement(roundtrip_points=rt, original_points=orig)
         np.testing.assert_allclose(result["field"][:, 0], 1.0)
         np.testing.assert_allclose(result["field"][:, 1:], 0.0)
         assert result["magnitude_percentiles"]["mean"] == pytest.approx(1.0)
 
     def test_magnitude_percentiles_keys(self):
         pts = np.zeros((5, 3))
-        result = forward_backward_disagreement(pts, pts)
+        result = forward_backward_disagreement(roundtrip_points=pts, original_points=pts)
         for key in ("min", "p25", "p50", "mean", "p75", "p95", "max"):
             assert key in result["magnitude_percentiles"]
 

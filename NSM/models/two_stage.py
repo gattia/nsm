@@ -1,3 +1,15 @@
+"""Triplanar and MLP decoders summed: ``sdf = triplanar(z1, xyz) + mlp(z2, xyz)``.
+
+``model_type: two_stage`` in ``loader``. The latent is split in half by position --
+the first ``model_latent_size`` columns drive the triplanar branch and the next
+``model_latent_size`` the MLP -- so the two halves are not interchangeable and the
+split point is fixed by the checkpoint.
+
+The intent is coarse-plus-detail: the triplanar branch carries what a feature grid is
+good at and the MLP the high-frequency remainder. Nothing enforces that division;
+it is what the sum is expected to learn.
+"""
+
 import torch
 from torch import nn
 
@@ -80,7 +92,7 @@ class TwoStageDecoder(nn.Module):
         self.triplanar = TriplanarDecoder(**triplanar_params)
         self.mlp = Decoder(**mlp_params)
 
-    def forward(self, input, epoch=None):
+    def forward(self, input, epoch=None):  # noqa: D102 - see the class docstring
         # Split the latent vector in half
         latent_triplanar = input[:, : self.model_latent_size]
         latent_mlp = input[:, self.model_latent_size : self.model_latent_size * 2]

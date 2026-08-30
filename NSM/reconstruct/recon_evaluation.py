@@ -33,7 +33,7 @@ def compute_recon_loss(
     # orig_pts,
     orig_meshes,
     n_samples_chamfer=None,
-    chamfer_norm=1,
+    chamfer_norm=2,
     calc_symmetric_chamfer=False,
     calc_assd=False,
 ):
@@ -45,12 +45,20 @@ def compute_recon_loss(
         orig_meshes (list): A list of ground truth meshes. (Replaced ``orig_pts``, which is
             commented out of the signature.)
         n_samples_chamfer (int, optional): The number of samples to use for the chamfer distance calculation. Defaults to None.
-        chamfer_norm (int, optional): The power to which the chamfer distance is raised. Defaults to 1.
+        chamfer_norm (int, optional): The power to which the chamfer distance is raised.
+            Defaults to 2, which is what every layer above uses and what every NSM run has
+            always taken -- this default was 1 for a year and no caller ever reached it (#56).
         calc_symmetric_chamfer (bool, optional): Whether to calculate the symmetric chamfer distance. Defaults to False.
         calc_assd (bool, optional): Whether to calculate the average symmetric surface distance. Defaults to False.
 
     Returns:
         dict: A dictionary containing the reconstruction loss for each mesh.
+
+    Neither list is modified, and neither are the meshes in them (#55). The ASSD branch
+    used to downcast both sides to ``float32`` in place, under a comment reading "make
+    sure the points for the meshes are the same types"; pymskt's ``pcu_sdf`` casts the
+    query points and the mesh vertices to ``float64`` itself, so the types were never
+    what reached the computation.
     """
     logger.info("Starting reconstruction loss computation")
     logger.debug("Computing loss for %s meshes", len(meshes) if isinstance(meshes, list) else 1)
@@ -121,11 +129,6 @@ def compute_recon_loss(
                 assd_loss_ = np.nan
                 logger.warning("Mesh %s: ASSD set to NaN (no %s mesh)", mesh_idx, missing)
             else:
-                # make sure the points for the meshes are the same types
-                mesh.point_coords = mesh.point_coords.astype(np.float32)
-                orig_meshes[mesh_idx].point_coords = orig_meshes[mesh_idx].point_coords.astype(
-                    np.float32
-                )
                 assd_loss_ = mesh.get_assd_mesh(orig_meshes[mesh_idx])
                 logger.debug("Mesh %s: ASSD = %.6f", mesh_idx, assd_loss_)
             result[f"assd_{mesh_idx}"] = assd_loss_
@@ -287,8 +290,7 @@ def get_mean_errors(
                     result_[f"chamfer_{mesh_idx}"] = np.nan
                 if calc_assd:
                     result_[f"assd_{mesh_idx}"] = np.nan
-        if verbose is True:
-            logger.debug("result_ %s", result_)
+        logger.debug("result_ %s", result_)
 
         if predict_val_variables is not None and "latent" in result_:
             reg.add_latent(result_["latent"].detach().cpu().numpy().ravel())
@@ -316,8 +318,7 @@ def get_mean_errors(
         if log_wandb is True:
             wandb.finish()
 
-    if verbose is True:
-        logger.debug("loss %s", loss)
+    logger.debug("loss %s", loss)
     loss_ = {}
 
     if predict_val_variables is not None:

@@ -4,17 +4,90 @@
 
 ## State
 
-**Updated:** 2026-08-29 · **Status:** open
+**Updated:** 2026-08-30 · **Status:** open
 
 - **Test-suite size is now a scheduled slice, not a grumble (maintainer, 2026-08-29).**
   `testing/` has passed `NSM/` in size — **14,770 lines against 14,460**, a ratio of 1.02
   from 0.26 at `v0.1.0` — and the slice index's new **T row** carries the measurements and
   three checkable trim criteria. It runs last because every slice adds to what it trims.
-- **Next:** **§8.0.N** (Phase 2 close + the `flake8-docstrings` gate), carrying the four
-  #56 knobs, #55 and #25 — see the dispositions table under the slice index. Two things
-  N′ hands it: §7.4's suite-time target is now **crossed** (below), and the module N′
-  opened is the first one whose docstring gate will pass without work. **Blocked on
-  nothing.**
+- **Next:** **§8.0.P** (0b quarantine + #18) or **§8.0.R** (the parameter surface), both
+  now unblocked — Phase 2 is closed and the docstring gate is in CI, so nothing else is
+  waiting on N. P is maintainer-gated on the nsosim survey and has been since Phase 0; R
+  needs no gate. §8.0.N also handed P a concrete first task it did not have: the four
+  `sample_difficulty_lx` config keys are dead on every supported path, which is #18 seen
+  from the config's side. **Blocked on nothing except P's survey.**
+- **§8.0.N executed (2026-08-30), based on `main` at `09c3834`:** commits 2–16 — the
+  characterization, the ASSD downcast, the `sdf_gt` list, the interpolation contract, the
+  two knob defaults, the keyword-only pair, #25's docstring, the eight config keys, the 58
+  `verbose` gates, 41 docstrings, the `flake8-docstrings` gate, the sweep's own hole,
+  §7.4's conversion, the `KNOWN_ISSUES` index, and this update. Suite 1144 →
+  **1174 passed / 4 skipped / 3 xfailed** (this line said 1172 until review — copied from
+  commit 15's count, before the last commit's two doc-citation cases): all 14 strict
+  xfails commit 2 raised were retired inside the slice, and the 3 that remain are the
+  regression harness's. The passed count is also environment-shaped — CI skips what its
+  runners cannot import (ubuntu 1166/12 skipped, macOS 1150/27) — so the stable figure is
+  the collected total, 1181.
+  **Zero D100–D103 in `NSM/` outside the three `SCOPE`-excluded modules**, gated by
+  `make lint` in CI. Net **+367** in `NSM/` against a +400 budget, nine tenths of it
+  docstrings. Two § History entries (28, 29), eight CHANGELOG entries — 2 Breaking,
+  3 Changed, 3 Fixed ("five" until review; the commit said eight) — all four Phase 2
+  checkboxes and §6.1's hunt ticked.
+- **A sweep that accepts an unsupported module as a reader reports the absence of exactly
+  what it is looking for.** §6.1 asked for config keys that silently do nothing. The first
+  sweep found eight and called the rest clean; checking `KNOWN_ISSUES`' #18 row against it
+  found four more it had passed — `sample_difficulty_lx` and its three companions, read
+  only by `train_deep_sdf_multi_head` (#51-broken) and the quarantined trainer. The bug was
+  in the *predicate*, not the data: "read by NSM" has to mean read by something a user can
+  run, which is the same three `SCOPE` exemptions the docstring gate and the `verbose`
+  sweep already use. **Three sweeps in this slice, one definition of the documented
+  surface — and the one that did not use it was the one that came out wrong.**
+- **Two of the three #55 sites needed different remedies, and the third's was already
+  written in the wrong place.** The issue says "each site copies, or documents the mutation
+  and stops returning the object; docstrings say which", and it is right to leave the
+  choice open. `compute_recon_loss`'s downcast was **deleted** rather than copied: its
+  stated reason — "make sure the points for the meshes are the same types" — is false,
+  pymskt's `pcu_sdf` casts both sides to `float64` itself, so the cast could only lose
+  precision. That is `CLAUDE.md`'s "never inherit a rationale along with the code" paying
+  for itself: the obvious fix was a copy, and the right fix was two fewer lines.
+  `interpolate_mesh`'s mutation was **already documented** — at `interpolate_common`, the
+  private engine, and at neither public entry point. Writing the pin then corrected this
+  slice's own characterization: `interpolate_points` does **not** mutate, so the pair is
+  opposite rather than alike.
+- **The disposition named the wrong sibling, and only running it said so.** #56's fourth
+  part went to "the `roundtrip_distance` / `directed_distance_percentiles` pair". Measured:
+  `roundtrip_distance` is symmetric, so a swap is elementwise identical;
+  `forward_backward_disagreement` — which takes **the same two arrays in the opposite
+  order**, forty lines away — sign-flips `field` while every summary statistic stays put;
+  `directed_distance_percentiles` is asymmetric and documented as directional, so a swap
+  there changes the number rather than hiding. The keyword-only change went to the first
+  two. The issue's own title said "adjacent metrics take their arguments in opposite
+  order" and the disposition had read past it.
+- **A `logger` ungating manufactures the accepted-and-ignored class it was cleaning up
+  after.** Removing 58 `if verbose:` wrappers left two `verbose` parameters with no reader
+  — and they were precisely the two `_verbose_deprecation` exempts from the bridge
+  *because* their `verbose` is required. Both deleted with their last reader, and the
+  paragraph explaining the exemption went with them. The order matters: the
+  accepted-and-ignored sweep has to run **after** a cleanup like this, not before.
+  Review also noted the ungating's blast radius is not `DEBUG`-only — 9 of the 58 records
+  are `WARNING`, and `_finish_meshes` emits four of them per absent surface, per subject,
+  per validation epoch, at default host levels. Whether those four collapse into one
+  record is a **maintainer call, undecided**: they are individually deserved (min/max/mean
+  of an SDF that missed zero), and collapsing them is a behaviour tweak nobody has asked
+  for yet. Left as-is; the CHANGELOG entry now names the population.
+- **§7.4's bound is not a gate and should not be.** A wall-clock assertion inside the suite
+  it measures is self-referential, and on a shared runner it goes red for reasons unrelated
+  to the code. What was wrong was that the number was hand-measured and lived in this
+  block. `make test` now passes `--durations=15`, so CI publishes it. The durations are the
+  half that is actionable: five subprocess tests account for **36 s** of the suite, led by
+  `test_dataset_cache`'s #25 workaround at 10.7 s. That is the **T** row's opening list.
+- **§8.0.R existed as a proposal for three days and in no table, which is how three
+  deferrals came to name a slice that could not be scheduled.** §8.0.K proposed it in its
+  own body on 2026-08-27 — the "read on one path, ignored on another" triage, five sites in
+  `reconstruct_latent` alone — and §8.0.L twice deferred to "§8.0.N or §8.0.R" without
+  anyone noticing the index runs G–Q plus S and T. Found by §8.0.N's sweep, in one command,
+  the same way §8.0.O's six lost Breaking items were found. **The rule the O review wrote —
+  build a row by sweeping what names it — catches a row that was never written, not just a
+  row that is incomplete.** R is now in the index with its three carriers.
 - **§8.0.N′ executed (2026-08-29), based on `main` at `751c226`:** commits 2–10 — the
   characterization, the absent-surface NaN, the missing-original NaN, the func-key
   `setdefault`, the `regions_label` refusal, the mesh-list length check, `CART_REGIONS`
@@ -369,7 +442,7 @@
 - **Measured and not fixed, so it is not re-found:** `code_regularization_warmup=0` raises
   `ZeroDivisionError` from inside the split loop. "Off" has never been spelled `0` here —
   the shipped config is `100` — so it is config validation with no reported instance
-  behind it. §8.0.N or §8.0.R.
+  behind it. **§8.0.R** — a row §8.0.N's sweep found proposed and never indexed, and added.
 - **§8.0.K, review round 2 (2026-08-28): the accepted-and-ignored class has a fourth site
   in this function, and the § Open entry named the wrong mechanism.** Audited while
   re-deriving `HYBRID_OPTIMIZER_REPORT.md` against the code. (1) `optimizer_name="lbfgs"`
@@ -1472,25 +1545,30 @@ Treat the 1,800 as a prediction that was tested and failed, not a target to hit.
 
 Only over modules that survived Phase 1.
 
-- [ ] Docstrings on every surviving public function/class: purpose, args, returns, raises,
+- [x] Docstrings on every surviving public function/class: purpose, args, returns, raises,
       **and any silent convention** (index orderings, coordinate spaces, units).
       `[0]=model, [1]=latent` is precisely the kind of thing that must be written down.
-      *(Partial, through the per-module passes: PR #37 — docstrings contradicting their
-      signatures; PR #66 — the 62 prose corrections plus the `train/`/`utils` conventions;
-      PR #70 — the `sdf_dataset.py` semantic pass. Modules no pass has reached remain.)*
-- [ ] Verify each existing docstring against the implementation — 48% coverage says
-      nothing about whether those 48% are *true*. *(Same per-module status: the passes
-      above verified what they touched, nothing else.)*
-- [ ] Enforce mechanically so it cannot rot: add `flake8-docstrings` (or `pydocstyle`) to
-      `make lint`, failing on missing docstrings in public API. *(Re-checked 2026-08-24:
-      `make lint` runs flake8 with no docstring plugin — fully open, and the accuracy paid
-      for above can rot silently until this lands.)*
-- [ ] Rewrite `CLAUDE.md` §Architecture from the Phase 1 map; drop the stale
+      *(Per-module passes — PR #37, #66, #70 — then **§8.0.N** for what G–M left: 41
+      docstrings written, 16 deliberately-bare overrides given a per-site `noqa`, and 11
+      sites left to the three `SCOPE`-excluded modules. The next checkbox is what keeps it
+      true.)*
+- [x] Verify each existing docstring against the implementation — 48% coverage says
+      nothing about whether those 48% are *true*. *(Done per module as each was opened;
+      `test_docstring_signatures` covers the mechanical half — a documented parameter that
+      is not in the signature — continuously, and `test_docs_references` does the same for
+      cross-file citations in `docs/`.)*
+- [x] Enforce mechanically so it cannot rot: add `flake8-docstrings` (or `pydocstyle`) to
+      `make lint`, failing on missing docstrings in public API. *(**§8.0.N.** D100–D103
+      over `NSM/`; every other D family is off with its reason in `.flake8` rather than
+      assumed, and the two `per-file-ignores` are different in kind — `testing/` documents
+      itself in class docstrings, and the three modules are outside the documented surface
+      by `SCOPE` ruling. Verified to bite by adding a bare public function. CI gates it.)*
+- [x] Rewrite `CLAUDE.md` §Architecture from the Phase 1 map; drop the stale
       "EIKONAL LOSS HAS NOT BEEN TESTED" shout-comment into a tracked issue instead.
-      *(**Half done, and this text said otherwise until 2026-08-29.** The shout is gone
-      from `CLAUDE.md` and from `NSM/` — §8.2's gate replaced its substance, and §8.0.L
-      corrected the surviving line from two entry points to three. What remains is the
-      §Architecture rewrite itself: **§8.0.N**.)*
+      *(The shout went with §8.2's gate. The rewrite is **§8.0.N**: the section named 3 of
+      `reconstruct/`'s 9 modules, 3 of `mesh/`'s 5 and 1 of `datasets/`' 3, and carried two
+      line counts that were both already wrong. It now names every module and **no** line
+      counts — rule 1 — and leads with the trap per package rather than a description.)*
 
 ### 6.1 Warnings, not just docstrings
 
@@ -1521,15 +1599,20 @@ of these is small and independent of the decomposition work:
       off-state has never been exercised; a feature whose disabled path is untested turns
       itself on eventually. Document it at the config key, not only in code.
       *(= #18; rides with the 0b quarantine.)*
-- [ ] **Find the config keys that silently do nothing** because their implementing branch is
+- [x] **Find the config keys that silently do nothing** because their implementing branch is
       commented out. These read as working features and produce no error — the inverse of
-      the hazard above, and harder to notice. *(One instance found and deleted by 8.0.C's
-      sweep — `compute_recon_loss(n_samples_assd)`, its implementing call commented out.
-      A second surfaced on 2026-08-29 without being looked for: `train_deep_sdf.py:354`
-      passes `# chamfer_norm` commented out, so the power is unreachable from any config
-      and the trainer silently takes `get_mean_errors`' default — which is what settled
-      #56. **Owner: §8.0.N**, which is the last slice that opens every file; the hunt had
-      none until then, and §8.0's expired-carrier note above is why that matters.)*
+      the hazard above, and harder to notice. *(**Hunted at §8.0.N**, and it found the
+      stronger form: of `default_config.json`'s 121 keys, **eight had no branch at all**.
+      Six of those named a real `MultiSurfaceSDFSamples` parameter under a different
+      spelling — NSM never builds a dataset from a config, so that half of the file is a
+      specification the user translates by hand, and it disagreed with itself — and two
+      named nothing on any `model_type` path. Renamed and deleted respectively. The
+      predicted commented-out form is also real and closed: `n_samples_assd` (§8.0.C) and
+      `# chamfer_norm` (which settled #56). What replaces the hunt is a two-clause test —
+      a key is legitimate if NSM reads it **or** if it names a dataset-constructor
+      parameter — so the next orphan goes red instead of being hunted for. Its first
+      version counted an unsupported trainer as a reader and hid four keys; see the State
+      block.)*
 
 **Deliverable:** docstring coverage ≥90% on surviving public API, lint-enforced.
 
@@ -1641,11 +1724,14 @@ Priority order (by lines × inverse coverage × production-reachability):
       Reproduce with `make test-coverage`.)* The **≥90% on the production API** half is
       **not** met and is the one target with no owner — the shortfall is concentrated in
       `reconstruct/cartilage_func.py`, which is why §8.0.N′ exists.
-- [ ] Suite stays under 2 minutes so nobody skips it *(**crossed on the next slice, as
-      predicted: 120.8 s under coverage after §8.0.N′, 110.9 s without.** It was 119 s
-      before, and the one second of headroom is spent. Nothing reported it — this line
-      did, because someone measured it by hand. §8.0.N converts it to a check or deletes
-      it; a bound nobody measures is not a bound.)*
+- [x] Suite stays under 2 minutes so nobody skips it *(**converted, §8.0.N: `make test`
+      passes `--durations=15`, so CI publishes the total and the slowest tests on every
+      PR.** The bound itself is not a gate and deliberately so — a wall-clock assertion
+      inside the suite it measures is self-referential, and on a shared CI runner it would
+      go red for reasons that have nothing to do with the code. What was actually wrong is
+      the thing rule 1 names: the number lived in a plan's State block, hand-measured, so
+      when §8.0.N′ crossed it at **120.8 s under coverage** nothing said so — this line
+      did, a slice later. The **T** row owns the trim; this owns the measurement.)*
 - [x] CI runs it on every PR *(`.github/workflows/build-test.yml` — lint job and test job,
       both required. Done since before this plan and unticked until 2026-08-29.)*
 
@@ -1702,9 +1788,10 @@ mistake `CLAUDE.md` names. What is fixed here is the *order* and each slice's *s
 | **M** | `NSM/utils.py` | #50, the module's remaining undocumented surface | §1.2's exhibit: the file that held the founding bug. Phase A documented the LR path and nothing else. *Executed, PR #96 — 6 of 23 symbols documented, and #50's unreported half was the one that fired on the shipped default.* |
 | **O** | v0.3.0 release *(executed — see the S row for what it could not carry)* | the pending Breaking set, setuptools-scm (§10.1), §7.1's GPU note, **`NSM.configs` ships in no wheel** (SCOPE §5), **`__all__` per subpackage** — deferred at Phase 0 (§3), owned by nothing since, and §10.1 makes it the stated gate for 1.0.0; it is packaging-shaped, so it belongs beside setuptools-scm and the wheel gap — and **two items §8.0.H deferred here by name**: (a) a **combined pre-v0.3.0 config message** — the release adds three required triplanar keys (`padding`, `conv_norm_type`, `conv_activation`), each refused separately, so an old config is fixed one round-trip at a time; one message naming every missing key at once is the `_lr_migration` pattern applied to the set. (b) **`TriplanarDecoder`/`VAEDecoder`'s signature defaults**, still `conv_norm_type="batch"` against the `"layer"` everything trained — unreachable from a config now that the loader requires the key, but reachable by direct construction, and changing a public-stable signature needs the version boundary. | **Moved ahead of N′ and N on 2026-08-29, and not by preference.** `NSM/_verbose_deprecation.py` promises one release of overlap and says *delete at v0.4.0*; it has shipped in **zero** releases (latest tag `v0.2.0`), so until v0.3.0 exists that removal can never become due and the bridge is permanent by default. The Breaking set is complete as of G–M — 34 entries in CHANGELOG § Unreleased — and N′/N add none, so waiting buys nothing. Cut timing was always the maintainer's call; this is that call. |
 | **N′** | `reconstruct/cartilage_func.py` *(executed)* | the module's 19% coverage and 5 undocumented public functions, the end-to-end `None`-surface reconstruction test #67 leaves owed — the half that works is pinned only at its preprocessing helper (`test_none_surfaces_are_skipped_not_dropped`), so the capability the maintainer actually uses can rot through any future slice in silence | *Added 2026-08-29.* The last production module no slice has opened — SCOPE §2.5 rules it production, `train_deep_sdf.py:47` makes its five functions the whole of `DICT_VALIDATION_FUNCS`, and §7.3's priority list never named it. Characterization first: every slice that has opened a file at this coverage found 5–8 defects. Not folded into N, because a docs slice carrying an untested production module is how N misses its budget. **Executed 2026-08-29** — eight defects, one of them a `SIGSEGV`; coverage 19% → 100%; the owed end-to-end test found `SCOPE` §2.5b's supported half unreachable in production. |
-| **N** | Phase 2 close + lint gate | the §6 checkboxes, `flake8-docstrings` in `make lint`, `CLAUDE.md` §Architecture rewrite, and the four #56 knobs + #55 + #25 (see the dispositions below) | Must follow G–M — that is where the missing docstrings are — and the lint gate is what stops G–M's accuracy rotting. **Re-scoped 2026-08-29, measured:** ~34 docstrings to write (57 bare, less the 16 deliberately-bare overrides, the 6 SCOPE-excluded, one nested decorator) ≈ 350–400 lines, three times §8.0.M's docstring count. **The gate is D1xx-only** — D100/101/102/103 — with `.flake8` recording why the D2xx/D4xx families stay off: at defaults they fire on existing accurate prose (139 D212, 42 D400, 31 D205, 9 D403), which is house style. Deliverable is "the gate passes", not a transcribed percentage. The 4 `get_learning_rate` and 12 `forward`/`backward` overrides that are bare on purpose take a per-site `# noqa: D102` naming the class docstring that carries the formula, **not** a rule exception — a `noqa` says why at the site, a config exception says it nowhere. |
+| **N** | Phase 2 close + lint gate *(executed — PR pending)* | the §6 checkboxes, `flake8-docstrings` in `make lint`, `CLAUDE.md` §Architecture rewrite, and the four #56 knobs + #55 + #25 (see the dispositions below) | Must follow G–M — that is where the missing docstrings are — and the lint gate is what stops G–M's accuracy rotting. **Re-scoped 2026-08-29, measured:** ~34 docstrings to write (57 bare, less the 16 deliberately-bare overrides, the 6 SCOPE-excluded, one nested decorator) ≈ 350–400 lines, three times §8.0.M's docstring count. **The gate is D1xx-only** — D100/101/102/103 — with `.flake8` recording why the D2xx/D4xx families stay off: at defaults they fire on existing accurate prose (139 D212, 42 D400, 31 D205, 9 D403), which is house style. Deliverable is "the gate passes", not a transcribed percentage. The 4 `get_learning_rate` and 12 `forward`/`backward` overrides that are bare on purpose take a per-site `# noqa: D102` naming the class docstring that carries the formula, **not** a rule exception — a `noqa` says why at the site, a config exception says it nowhere. |
 | **P** | 0b quarantine + #18 | `train/deprecated/` (876 lines), the `sample_difficulty_lx` port | Maintainer-gated on the nsosim survey, unchanged since Phase 0. |
 | **Q** | #3, sigma coordinate space | `BREAKING_CHANGE_PROPOSAL.md` + `SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` | Last, because it is the one remaining *behaviour* change: it needs a §4-style migration guard and a version boundary, so it wants a release on either side of it. |
+| **R** | The parameter surface: read on one path, ignored on another | **Added 2026-08-30 by §8.0.N's sweep, and it is an omission being repaired rather than new work** — §8.0.K proposed this row in its own body on 2026-08-27 and no one put it in the table, so three later deferrals named a slice that could never be scheduled. It carries: (a) §8.0.K's five sites in `reconstruct_latent` — `optimizer_name` under `hybrid_optimizer`, `lbfgs_lr` / `lbfgs_max_iter` / `lbfgs_history_size` on the non-hybrid path (requested `(1.0, 3, 7)`, constructed `(0.005, 10, 100)` — a 200× step size), and `log_wandb_step`, which `reconstruct_latent` names and `reconstruct_mesh` never forwards; (b) `grad_clip`, re-measured by §8.0.L and still deferred — `clip_grad_norm_` sees the decoder's tensors and never the latent embedding; (c) the config validation with no reported instance behind it: `code_regularization_warmup=0`, `WarmupLearningRateSchedule(length=0)` and `StepLearningRateSchedule(interval=0)` all raise `ZeroDivisionError`, and a config without `additional_checkpoints` raises `KeyError` from `get_checkpoints` | **After a release**, which is §8.0.K's stated reason and still holds: closing one of these sites is either a refusal (no boundary needed) or a signature change (a boundary), and the set should be triaged **once, together**, so the boundary is paid for once. The question per parameter is not "does anyone set it" — §8.0.K measured that a deletion pass would find about two — but "is it read on every path that accepts it" |
 | **S** | v0.4.0: the public signatures | **Added 2026-08-29, and it is an omission being repaired rather than new work.** Six Breaking items earlier slices deferred to §8.0.O *by name*, none of which the O row lists: (1) the four public signatures as **one set** — `reconstruct_mesh` (58 named + `**kwargs`), `reconstruct_latent` (38), `create_mesh_adaptive` (26), `create_mesh` (17) — "all four shrink at one release boundary or none of them does"; (2) `reconstruct_latent(pts_surface=None)`, a default that declares optional a parameter the type check has always rejected; (3) the `lbfgs_*` prefix decision (§8.0.K: read them on both paths or delete the non-hybrid path — a signature call either way); (4) refusing unknown `**kwargs` on `Decoder`/`TriplanarDecoder`; (5) deleting `max_batch_size`, currently accepted-and-warned; (6) submodule imports in `NSM/mesh/__init__.py` — *which looks additive rather than Breaking, so it may not need the boundary at all; §8.0.I did not say why it does.* **§8.0.N's keyword-only `roundtrip_distance`/`directed_distance_percentiles` pair joins them**, being a signature change too. | v0.4.0 is already scheduled by something else: `NSM/_verbose_deprecation.py` says *delete at v0.4.0*, and v0.3.0 existing is what makes that due. So these six do not need a boundary invented for them — they need the one that is coming. Cutting v0.3.0 without them is correct rather than a compromise: the constraint the slices stated was "all four together", and none-in-v0.3.0 satisfies it exactly. |
 | **T** | Trim the test suite | **Added 2026-08-29 (maintainer): "they have gotten VERY bloated during this refactor. Many are valuable, but they are also overkill."** Measured before scheduling: `testing/` is **14,770 lines across 45 test files against 14,460 lines of `NSM/`** — a ratio of **1.02**, up from **0.26** at `v0.1.0` (3,122 lines, 11 files) and **0.54** at `v0.2.0`. **1,116 tests**; the whole suite takes **109 s**, of which the §7.1 harness is **52 s** against a stated budget of two minutes for the harness alone. **28% of `testing/` is docstrings** (4,135 lines). Biggest single files: `test_dataset_cache.py` 1,357, `_harness.py` 855, `test_reconstruct_latent_internals.py` 706, `test_train_epoch_internals.py` 651. | **Last, and it cannot start earlier**: every slice G–S adds characterization tests, so trimming before they exist means doing it twice. **The trim cannot be measured in lines removed** — rule 3 makes a docstring carrying a measurement load-bearing, and 28% of the suite is docstrings. Three criteria that are checkable instead of aesthetic: (1) **a test that cannot fail** — revert the fix or delete the assertion and see if it goes red; two were found by accident on 2026-08-29 alone, one comparing `version("NSM")` against the artifact that shadows it, so the rate is not low; (2) **a characterization test whose strict xfail was retired inside its own slice and whose plain sibling now asserts the same thing** — the pairs were deliberate while the defect was live and are duplication afterwards; (3) **overlap between the per-slice `test_*_internals.py` files and the regression harness**, which are two coverage strategies that grew independently. |
 
@@ -3380,7 +3467,8 @@ logged at `:482`/`:483` with names.
   round 1 says a theory-only defect needs. Recorded in the State block.
 - **`code_regularization_warmup=0` raising `ZeroDivisionError`** from `:677`. Measured, but
   "off" has never been spelled `0` here — the shipped config is `100` — so this is config
-  validation with no reported instance behind it. §8.0.N or §8.0.R.
+  validation with no reported instance behind it. **§8.0.R**, whose index row exists as of
+  2026-08-30.
 - **`log_dict["l1_loss"]` and `mean(log_dict["l1_loss_i"])` disagree under
   `surface_weighting`.** Measured: `[3, 1]` gives 0.2743 against 0.2967, because the
   per-surface records are taken before weighting and the total after. That is the useful
@@ -4117,6 +4205,212 @@ additive and outside the budget.
 | the coercion mutates one input shape and copies the other | the caller's point-data key set asserted to gain `labels` and `thickness (mm)` for a `BoneMesh` argument and to be unchanged for a `Mesh` argument — the documented contract, pinned so the docstring cannot drift |
 | every docstring describes the body | `test_docstring_signatures` covers the mechanical half |
 | the suite still passes | **1109 passed / 4 skipped / 3 xfailed** on `main` at `751c226` is the baseline every commit is compared against |
+### 8.0.N Phase 2 close + the docstring gate — plan statement (2026-08-30)
+
+Every number below was re-run against `main` at `09c3834` before it was written. The row's
+scope was re-derived by **grepping `8.0.N` across the plan and the repo** rather than from
+the Next line, because that is the check §8.0.O's review paid for: *a slice index row has
+to be built by sweeping the deferrals that name the slice, not by recalling them.* The
+Next line names six things (the §6 checkboxes, the gate, the `CLAUDE.md` rewrite, #56, #55,
+#25). The sweep returns **six more**, each deferred to N by name in an earlier slice's
+body: §7.4's suite-time bound (`:1647`), the last `verbose`-gated log records (`:650`,
+`:3182`), the 25 parameter-form gates (`:316`), the `KNOWN_ISSUES` § Open table audit
+(`:3814`), the `correspondence_metrics` blanket-`except` argument (`:2831`), and §6.1's
+hunt for config keys that silently do nothing (`:1531`). The sweep also found the **R row missing from the index**:
+§8.0.K proposed it in its own body (`:478`) and three later deferrals name it (`:364`,
+`:372`, `:3383`, `:3378`), but the table runs G–Q plus S and T. That is §8.0.O's review
+finding recurring one level up — the row was not the union of what pointed at it, except
+that here the row was never written at all. **Added to the index this session**, built by
+sweeping what names it rather than by recall.
+
+**What the gate has to rule on, measured.** `flake8 --select=D100,D101,D102,D103 NSM/`
+reports **68**: 15 D100, 11 D101, 26 D102, 16 D103. The same select over `testing/` reports
+**385**, which is why the gate is scoped to `NSM/` by `per-file-ignores` rather than by
+narrowing what `make lint` walks — the D2xx/D4xx rationale and the test-suite exemption
+then sit in one file next to each other. The 68 split three ways and the split is the
+deliverable, not the count:
+
+| disposition | n | why |
+|---|---|---|
+| write the docstring | **41** | 11 modules, 11 classes, 10 methods, 9 functions |
+| `# noqa: D102` at the site | **16** | 10 `forward`, 2 `backward`, 4 `get_learning_rate` — each class docstring already carries the formula, and a `noqa` says why *there* |
+| `per-file-ignores`, naming the `SCOPE` ruling | **11** | `train/deprecated/` (6, §2.2 quarantine), `train_deep_sdf_multi_head.py` (3, §2.1 unsupported-until-needed), `reconstruct_latent_S3.py` (2, §2.4 deferred research) |
+
+The row's "~34" was measured differently and is superseded; the deliverable it states —
+"the gate passes" — is unchanged. **The D2xx/D4xx families stay off**, and the row's
+figures for them are stale, which is itself the argument: it cited "139 D212, 42 D400, 31
+D205, 9 D403" and today's run is **48 D400, 36 D205, 29 D401, 25 D202, 5 D200, 2 D209, 1
+D419, 1 D403 — and zero D212**. Every one of those fires on existing accurate prose. The
+`.flake8` comment records the measurement's *date and command*, not the numbers.
+
+**#55 — all three sites still reproduce.** Filed 2026-08-22, unverified since, three
+slices have rewritten those call sites; the disposition says re-run first, and re-running
+changed the shape of one of the three.
+
+1. `reconstruct_latent_preprocess_sdf_gt(sdf_gt, clamp_dist=1.0)` on a caller's list of
+   `[-5, 0.5, 5]` and `[-9, 9]` leaves the caller holding `[-1, 0.5, 1]` and `[-1, 1]`,
+   and returns that same list object. `reconstruct_latent_sdf_gt_type_check` returns the
+   caller's object too when handed a list. Both are among the five bare `D103`s in
+   `latent_fit.py`, so the docstring pass and #55 land on the same functions — which is
+   why they are one commit each rather than a combined sweep.
+2. `compute_recon_loss(..., calc_assd=True)` moves the caller's reconstruction **and the
+   caller's original** from `float64` to `float32`, in place, measured on a pair of
+   spheres. `calc_symmetric_chamfer=True` alone leaves both at `float64` — so the mutation
+   is conditional on a flag, which is the part that makes it hard to notice.
+3. `interpolate_mesh` returns the caller's own mesh with its 82 points moved by up to
+   **0.498**. This one is **already documented — in the wrong place**: `interpolate_common`,
+   the private engine, says "the returned object is the caller's own mesh, mutated";
+   `interpolate_mesh` and `interpolate_points`, the two public entry points a caller reads,
+   say nothing. #55's "documents the mutation" is satisfied at the frame nobody opens. That
+   is §7.1's lesson in miniature again — the ruling was written into the file the author had
+   open.
+
+**#56 — the disposition names the wrong sibling, and the measurement says which.** The
+dispositions table sends "the `roundtrip_distance` / `directed_distance_percentiles` pair"
+to keyword-only. Measured on 50 random points:
+
+| call | swapped | result |
+|---|---|---|
+| `roundtrip_distance(A, B)` | `(B, A)` | **elementwise identical** — `norm(rt - orig)` is symmetric |
+| `forward_backward_disagreement(A, B)` | `(B, A)` | `field` **sign-flips**; `magnitude_percentiles` identical |
+| `directed_distance_percentiles(A, B)` | `(B, A)` | different — 0.17265 vs 0.171247 |
+
+The pair whose arguments are *the same two arrays in the opposite order* is
+`roundtrip_distance(original_points, roundtrip_points)` and
+`forward_backward_disagreement(roundtrip_points, original_points)` — which is what the
+issue's own title says ("adjacent metrics take their arguments in opposite order") and
+what its body describes. `directed_distance_percentiles` takes a point array and a
+*mesh-or-array* in documented directional roles; it is asymmetric, so a swap changes the
+number rather than hiding. **The keyword-only change goes to the reversed pair.** The two
+default knobs are as the disposition measured them: `chamfer_norm` is `1` at
+`recon_evaluation.py:36` and `2` at `:174` and `main.py:343`; `sigma_rand_pts` is `0.01`
+at `:169` and `0.001` at `main.py:335`, against `0.01` in the shipped config.
+
+**§6.1's hunt found the stronger form of what it predicted.** The checkbox looks for
+"config keys that silently do nothing because their implementing branch is commented out".
+Sweeping all **121** keys of `NSM/configs/default_config.json` against every live `NSM/`
+module turns up **8 with no read at all** — not a commented-out branch, *no branch*:
+`dataset_uniform_pts_buffer`, `decoder_type`, `n_pts_per_object`, `normalize_pts`,
+`percent_further_from_surface`, `percent_near_surface`, `random_function`,
+`sdf_skip_connection`. Verified three ways: no occurrence outside the config and its
+generator anywhere in `NSM/`; none matches a parameter of `SDFSamples`,
+`MultiSurfaceSDFSamples`, `load_model` or `Decoder`; and no read in `train/deprecated/` or
+in the `kneepipeline` consumer either. They read as features a user would set —
+`normalize_pts: false`, `percent_near_surface: [0.45, 0.45]` — and setting them does
+nothing and says nothing. Deleting them changes no behaviour, which is what makes it a
+config-schema correction rather than a Breaking change.
+
+**The `verbose` residue is 86 gates, and 83 of them are pure logging.** Classified by AST
+rather than by grep, since "measuring the parameter form and reporting it as no gates" is
+the error §8.0.L's review caught: 83 whose body is nothing but `logger.*` calls with no
+`else`, and 3 the review reclassified: **argument guards, not control flow**
+(`sdf_dataset.py:376`, `mesh/main.py:818`, `models/triplanar.py:478`) — none affects a
+return value or state; each evaluates something solely to log it (a `sched_getaffinity`
+probe, an extent, two CUDA memory queries inside `forward`), and log arguments are eager
+— plus `_verbose_deprecation.py:104`, which is the bridge's own signature check. Of the
+83, **58 are in files on the documented surface** and are ungated here; the remaining 25
+are in `reconstruct_latent_S3.py` (9), `train_deep_sdf_multi_head.py` (7) and
+`train/deprecated/` (9) — the same three modules the docstring gate exempts, by the same
+three `SCOPE` rulings. After this slice the residue on everything `SCOPE` calls
+production is those three argument guards, each stating at its site why it stays.
+
+**`KNOWN_ISSUES` § Open's index has drifted both ways.** The audit the O slice deferred
+here. The summary table has 9 rows and the body has 12 `###` entries, and neither is a
+subset of the other: **3 rows have no body entry** (`Parameters accepted and never read`,
+`xyz_in_all accepted and never read`, `sample_difficulty_lx shipped but unimplemented`)
+and **6 body entries have no row** (`center_pts`/`norm_pts`, the shipped configs that
+predate `Target`, `F401`, hybrid/LBFGS, triplanar's summed latent gradients, `grad_clip`).
+A hand-maintained index of a file whose whole promise is "answerable years later" is the
+same defect class as a hand-transcribed number, so the fix is the same shape as rule 1's:
+every row links to its anchor, and **a test asserts the two sets are equal**.
+
+**`CLAUDE.md` §Architecture carries hand-transcribed line counts and two are already
+wrong.** `sdf_dataset.py` "(~2200 lines)" is **1880**; `reconstruct/main.py` "(~1400
+lines)" is **580** — both moved by the decompositions the same document describes. The
+rewrite therefore *drops* the counts rather than refreshing them (rule 1), and closes the
+larger gap: the section names 3 of `reconstruct/`'s 9 modules, 3 of `mesh/`'s 5, and 1 of
+`datasets/`' 3. `latent_fit.py`, `wandb_logging.py`, `correspondence_metrics.py`,
+`mesh_sampling.py` and `datasets/utils.py` are all products of slices A–N′ and none is
+named.
+
+**The blanket-`except` argument, with the evidence §8.0.I asked for.**
+`correspondence_metrics` wraps each metric in `except Exception` and writes
+`{"error": str(exc)}` into the results dict. After this slice's keyword-only change, a
+positional call to `roundtrip_distance` raises `TypeError` — and at `:697` that `TypeError`
+lands in `results["roundtrip_distance"] = {"error": "...takes 0 positional arguments but 2
+were given"}`. A programming error becomes indistinguishable from a data error, in a dict
+whose consumer is a metrics table. That is the argument; **it is not acted on here**,
+because narrowing the handler is a design call and the maintainer rules on those. Recorded
+in `ARCHITECTURE.md` and in the State block so it has a named home rather than a condition.
+
+**Not in this slice, each with a named home rather than a condition:**
+
+- **`code_regularization_warmup=0` raising `ZeroDivisionError`.** Deferred twice to
+  "§8.0.N or §8.0.R" — a row §8.0.K proposed and nobody indexed, so for two slices this
+  had a carrier that could not be scheduled. It is config validation with no reported
+  instance; it goes to **§8.0.R**, whose row now exists and says so.
+- **Deleting the 8 dead config keys from a user's own config.** Nothing reads them, so
+  nothing migrates; they go from the shipped default and its generator only.
+- **Narrowing `correspondence_metrics`' `except Exception`.** Above — maintainer's call.
+- **The 25 `verbose` gates in the three `SCOPE`-excluded modules.** They go with those
+  modules: §8.0.P for `deprecated/` and multi-head, §8.0.Q or a row of its own for S3.
+- **Trimming the suite.** The **T** row, last, and this slice adds to what it trims.
+
+**Size budget, by part.** Priced at physical lines under `black`, per the generalisation
+eight slices have paid for.
+
+| part | budget |
+|---|---|
+| 41 docstrings — 11 module, 11 class, 19 method/function | +360 |
+| 16 `# noqa: D102` — appended to existing `def` lines | +0 |
+| #55: two copies in `compute_recon_loss`, one in the sdf_gt preprocess, and what they say | +26 |
+| #55: the mutation stated at `interpolate_mesh` and `interpolate_points` | +12 |
+| #56: two defaults changed (net 0) + the keyword-only `*` + what the docstrings gain | +12 |
+| #25: the deadlock constraint on the `multiprocessing=` parameter | +11 |
+| 8 dead config keys, from the generator and the generated JSON | −28 |
+| 58 `verbose` gates deleted, bodies dedented | −58 |
+| **net in `NSM/`** | **+335** |
+
+Past **+400** net in `NSM/` is scope creep. Nine tenths of it is the docstrings the row
+budgeted at 350–400; the slice adds no capability and no helper. Tests, `.flake8`, `docs/`
+and the plan are additive and outside the budget.
+
+**Sequence** (one commit each; `make lint` clean and the full suite green at every step):
+
+1. this statement;
+2. characterization — #55's three sites, #56's four knobs, the 8 unread config keys, and
+   the `KNOWN_ISSUES` index drift. Strict xfails for the six that change;
+3. `compute_recon_loss` stops downcasting the caller's meshes;
+4. the `sdf_gt` preprocess stops clamping the caller's list;
+5. the interpolation mutation is stated where the caller reads it;
+6. one default each for `chamfer_norm` and `sigma_rand_pts`;
+7. the round-trip pair is keyword-only, so a swap is a `TypeError`;
+8. the `Pool` deadlock is documented at the parameter that triggers it;
+9. the eight config keys nothing reads are deleted;
+10. the last `verbose` gates over log records are removed;
+11. the 41 docstrings, and a `noqa` at each deliberately-bare override;
+12. `flake8-docstrings` joins `make lint`;
+13. §7.4's suite-time bound becomes a number CI publishes;
+14. `KNOWN_ISSUES` § Open's index is checked by a test;
+15. `CLAUDE.md` §Architecture, the docs sweep, and this plan's State.
+
+**Verification per claim:**
+
+| Claim | Verification |
+|---|---|
+| the sdf_gt preprocess mutates the caller | a caller's list of two tensors asserted clamped in place today and asserted unchanged after commit 4, with the returned values asserted equal either way — the fix must not move a number |
+| `compute_recon_loss` downcasts the caller's meshes | `point_coords.dtype` asserted `float32` after an `assd=True` call today and `float64` after commit 3; the returned `assd_0` asserted equal across the change to the full `float32` precision it is computed at |
+| the chamfer path does not mutate | asserted `float64` before and after, today and after — the pin that says the fix did not widen the mutation instead of removing it |
+| `interpolate_mesh` returns the caller's mesh | `out is mesh` asserted, and the points asserted moved; the docstring assertion is `test_docstring_signatures`' job |
+| the reversed pair, not the directed one, hides a swap | all three swaps asserted: `roundtrip_distance` elementwise-equal, `forward_backward_disagreement`'s field sign-flipped with equal magnitudes, `directed_distance_percentiles` unequal — today; `TypeError` from the first two after commit 7 |
+| the two knobs disagree by layer | the three signature defaults read by `inspect.signature` and asserted, today and after — a test that reads the source rather than restating it |
+| changing them changes no result | `train_deep_sdf.py:354` asserted to pass `chamfer_norm` commented out and the shipped config asserted to carry no `chamfer_norm` key, so `get_mean_errors`' 2 is what every NSM path already used |
+| 8 config keys are read by nothing | the sweep run as a test over `default_config.json` × every live `NSM/` module, asserted empty after commit 9 — so a key added later without a reader goes red |
+| 83 of 86 `verbose` gates are logging-only | the AST classification run as a test asserting **zero** logging-only gates outside the three `SCOPE`-excluded modules after commit 10 |
+| the docstring gate passes | `flake8 NSM/ testing/` exit 0 with `D100,D101,D102,D103` selected, in `make lint`, in CI |
+| the `KNOWN_ISSUES` index is complete | the § Open table's anchors and the § Open `###` headings asserted equal as sets |
+| the suite still passes | **1144 passed / 4 skipped / 3 xfailed in 110.6 s** on `main` at `09c3834` is the baseline every commit is compared against |
+
 ### 8.1 Make the library plural — added 2026-08-15
 
 > **Deferred 2026-08-26 — this is an upgrade, not the refactor.** All three bullets are

@@ -7,7 +7,6 @@
         "nsm"
     ],
     "model_type": "triplanar",
-    "decoder_type": "single_head",
     "objects_per_decoder": 2,
     "mesh_names": [
         "bone",
@@ -33,9 +32,6 @@
         512,
         512,
         512
-    ],
-    "sdf_skip_connection": [
-        4
     ],
     "concat_latent_input": true,
     "padding": 0.1,
@@ -74,15 +70,15 @@
     "seed": 52122,
     "list_mesh_paths": null,
     "val_paths": null,
-    "n_pts_per_object": [
+    "n_pts": [
         500000,
         500000
     ],
-    "percent_near_surface": [
+    "p_near_surface": [
         0.45,
         0.45
     ],
-    "percent_further_from_surface": [
+    "p_further_from_surface": [
         0.45,
         0.45
     ],
@@ -94,17 +90,17 @@
         2.35,
         2.35
     ],
-    "random_function": "normal",
+    "rand_function": "normal",
     "equal_pos_neg": true,
     "center_all_meshes": false,
     "center_pts": false,
-    "normalize_pts": false,
+    "norm_pts": false,
     "scale_all_meshes": true,
     "scale_jointly": true,
     "scale_method": "max_rad",
     "mesh_to_scale": 0,
     "reference_mesh": 0,
-    "dataset_uniform_pts_buffer": 0.2,
+    "uniform_pts_buffer": 0.2,
     "multiprocessing": true,
     "n_processes": 16,
     "cache": true,

@@ -43,6 +43,12 @@ def assert_finite(tensor, name):
 
 
 def add_cell_idx(mesh):
+    """Attach a ``cell_idx`` cell array numbering the faces, if it is not there.
+
+    The mesh path subdivides and smooths between latent steps, which renumbers cells;
+    stamping the original indices first is what lets a caller trace a face on the
+    result back to the face it came from. Idempotent, and it mutates ``mesh``.
+    """
     if "cell_idx" not in mesh.scalar_names:
         n_cells = mesh.mesh.GetNumberOfCells()
         cells = np.arange(n_cells)
@@ -461,8 +467,7 @@ def interpolate_common(
         # tangent-Laplacian smoothing (points-path only) is not exposed here
         # because the VTK smoothing already redistributes the mesh.
         for idx, step in enumerate(np.linspace(1 / n_steps, 1, n_steps)):
-            if verbose:
-                logger.debug("%s/%s", idx + 1, n_steps)
+            logger.debug("%s/%s", idx + 1, n_steps)
             new_latent = _to_model_tensor(
                 (
                     slerp_latent(latent1, latent2, step)
@@ -519,8 +524,7 @@ def interpolate_common(
         pin_mask = torch.as_tensor(pin_np, device=device)
 
     for idx, t in enumerate(np.linspace(1 / n_steps, 1, n_steps)):
-        if verbose:
-            logger.debug("%s/%s", idx + 1, n_steps)
+        logger.debug("%s/%s", idx + 1, n_steps)
         z_end = _latent_at(latent1, latent2, float(t), spherical)
         points = _advance(
             model,
@@ -584,7 +588,11 @@ def interpolate_points(
       mesh-interpolation experiments as the best single-config setting).
 
     Returns:
-    - np.ndarray: the warped points, shape (N, 3).
+    - np.ndarray: the warped points, shape (N, 3). A **new** array; ``points1``
+      is not modified, whether it arrives as an ndarray or a torch tensor
+      (measured both ways). Its sibling :func:`interpolate_mesh` advances the
+      caller's mesh in place instead -- the two are opposite in this respect, and
+      #55 is why both now say so.
     """
     return interpolate_common(
         model,
@@ -625,6 +633,14 @@ def interpolate_mesh(
     projection followed by the existing per-step VTK subdivide / smooth
     behaviour. For correspondence-quality stepping use :func:`interpolate_points`
     with ``tangent_laplacian=True`` instead.
+
+    **``mesh`` is advanced in place, and the return value is that same object**
+    (#55). Its ``point_coords`` are replaced at every step, and under
+    ``adaptive=True`` so is its topology. Pass ``mesh.copy()`` if you still need
+    shape A afterwards. The mutation is the operation rather than a side effect --
+    carrying a mesh along the level set is what this function is for, and a copy
+    per call of an 80k-vertex surface is not free. Its sibling
+    :func:`interpolate_points` does **not** mutate.
     """
     return interpolate_common(
         model,
