@@ -1650,11 +1650,14 @@ Priority order (by lines × inverse coverage × production-reachability):
       Reproduce with `make test-coverage`.)* The **≥90% on the production API** half is
       **not** met and is the one target with no owner — the shortfall is concentrated in
       `reconstruct/cartilage_func.py`, which is why §8.0.N′ exists.
-- [ ] Suite stays under 2 minutes so nobody skips it *(**crossed on the next slice, as
-      predicted: 120.8 s under coverage after §8.0.N′, 110.9 s without.** It was 119 s
-      before, and the one second of headroom is spent. Nothing reported it — this line
-      did, because someone measured it by hand. §8.0.N converts it to a check or deletes
-      it; a bound nobody measures is not a bound.)*
+- [x] Suite stays under 2 minutes so nobody skips it *(**converted, §8.0.N: `make test`
+      passes `--durations=15`, so CI publishes the total and the slowest tests on every
+      PR.** The bound itself is not a gate and deliberately so — a wall-clock assertion
+      inside the suite it measures is self-referential, and on a shared CI runner it would
+      go red for reasons that have nothing to do with the code. What was actually wrong is
+      the thing rule 1 names: the number lived in a plan's State block, hand-measured, so
+      when §8.0.N′ crossed it at **120.8 s under coverage** nothing said so — this line
+      did, a slice later. The **T** row owns the trim; this owns the measurement.)*
 - [x] CI runs it on every PR *(`.github/workflows/build-test.yml` — lint job and test job,
       both required. Done since before this plan and unticked until 2026-08-29.)*
 
