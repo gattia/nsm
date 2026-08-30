@@ -10,12 +10,23 @@
   `testing/` has passed `NSM/` in size — **14,770 lines against 14,460**, a ratio of 1.02
   from 0.26 at `v0.1.0` — and the slice index's new **T row** carries the measurements and
   three checkable trim criteria. It runs last because every slice adds to what it trims.
-- **Next:** **§7.5a**, the reconstruction/BScore A/B on the kneepipeline box, then
-  **§7.5b**, a real training run on the maintainer's server — both defined in §7.5 (added
-  2026-08-30) and scheduled ahead of every remaining slice, because production crossed
-  v0.3.0 unpinned the moment #100 merged. After both pass: **§8.0.R** and **§8.0.P** in
-  either order (P's gate fell — see below), then **S**, then **T**. Q left the plan (see
-  below). **Blocked on nothing.**
+- **Next:** **§7.5a**, the reconstruction/BScore version series against the production
+  archive on this box, then **§7.5b**, the 2 × 2 training matrix on the maintainer's
+  server — both defined in §7.5 (added 2026-08-30) and scheduled ahead of every remaining
+  slice, because production crossed v0.3.0 unpinned the moment #100 merged. After both
+  pass: **§8.0.R** and **§8.0.P** in either order (P's gate fell — see below), then
+  **S**, then **T**. Q left the plan (see below). **Blocked on nothing.**
+- **§7.5's premise was corrected by the maintainer the day it was written, and both runs
+  widened (2026-08-30).** "No archived BScore on this box" came from a sweep with the
+  wrong scope — it searched under the repo, and production data lives at
+  `/mnt/data/knee_pipeline_data`, where five cutover-day jobs keep their input meshes
+  and production latents, and April 2026's `nsm_seed_analysis/` holds 74 jobs × 10 seeds
+  of pre-refactor bone-only BScores. 7.5a is now a three-point version series over the
+  real archive (`bb2c6a3` → `v0.2.0` → `main`; `bb2c6a3` is the last commit before the
+  refactor — the very next is the LR fix); 7.5b a 2 × 2 — `deep_sdf` and `triplanar`,
+  pre-refactor and `main`, 50–100 meshes — judged on held-out reconstruction, not just
+  losses. Same failure §8.0.N's sweep taught: the claim was true for the scope searched
+  and the scope was not the claim.
 - **0b's survey is answered, and measured rather than transcribed (2026-08-30).** The
   maintainer states nsosim is inference-only; a sweep of a fresh `gattia/nsosim` clone
   confirms it — five symbols across three subpackages (`create_mesh`,
@@ -1769,20 +1780,37 @@ plus a State line; a divergence is an issue (reproduced by definition); a number
 keeping becomes an assertion in the §7.1 harness or `test_shipped_checkpoints.py`, never
 a transcribed figure.
 
-- [ ] **7.5a — reconstruction/BScore A/B, kneepipeline box (local).** No archived job
-  carrying a `bscore_results.json` was found on this box (depth-bounded sweep,
-  2026-08-30), so the baseline is produced, not retrieved: prepare one working_dir
-  through `steps.segment` → `label_remap` → `subregions` → `generate_meshes` on an
-  integration image (`kneepipeline/data/`), copy it, then run `steps.run_nsm`
-  (`nsm_type: "both"`) + `steps.compute_bscore` in each copy — once with
-  `DEPENDENCIES/nsm` checked out at the baseline ref (maintainer's call; `v0.2.0` is the
-  last cut before the Breaking set), once at current `main` — and diff
-  `NSM_recon_params.json` and `bscore_results.json`. If production values for a real
-  archived job are retrievable from the website box, diff those too, same criteria.
-  - **Pass:** bone-only BScore matches to numerical noise — no known nondeterminism on
-    that path (kneepipeline `CLAUDE.md` Known Issues 4–5); bone+cart within ~0.004, the
-    documented `fix_mesh`/VTK-float32 noise. **A shift of ~0.08 on either is the
-    seed-ordering signature (Known Issue 3): a finding, not noise.**
+- [ ] **7.5a — reconstruction/BScore re-runs against the production archive (this box).**
+  The first version of this step said no archived BScore exists locally; the sweep's
+  scope was wrong — it searched under the repo, and production data lives at
+  `/mnt/data/knee_pipeline_data` (the website's bind mount: this box *is* the production
+  server, `kneepipeline_segmentaton_website/docker/docker-compose.yml`). Measured
+  2026-08-30: **five archived jobs retain their input meshes**
+  (`archive/<uuid>/results/femur_mesh_raw.vtk` plus cartilage meshes and the production
+  `NSM_recon_params.json`; one also stored `bscore_results.json`; all archived
+  2026-08-17, the cutover day), and **`nsm_seed_analysis/` holds 74 jobs × 10 seeds of
+  bone-only BScores from April 2026** — the pre-refactor noise floor, per job. Those 74
+  jobs' input meshes lived in `results/` and retention has deleted them, so they are a
+  reference distribution, not re-runnable (driver:
+  `kneepipeline/analysis/run_nsm_seed_experiment.py`).
+  **Protocol — a version series, not one A/B (maintainer, 2026-08-30):** copy each of
+  the five jobs' inputs to scratch working_dirs; run `steps.run_nsm`
+  (`nsm_type: "both"`) + `steps.compute_bscore` with `DEPENDENCIES/nsm` checked out at
+  (1) **`bb2c6a3`** — the last `main` commit before the refactor (2026-05-22; the next
+  first-parent commit is PR #9, the LR fix), (2) **`v0.2.0`** (2026-08-19, mid-refactor),
+  (3) **current `main`** (v0.3.0 plus). Diff `NSM_recon_params.json` latents and BScores
+  across refs and against the archived values; a 10-seed repeat at the two endpoints on
+  one job sizes today's spread against April's per-job distributions.
+  - **First action per ref: a compatibility check** — `_fit_nsm_subprocess` on one job.
+    Today's kneepipeline steps against a three-month-old NSM may refuse a kwarg; that is
+    a compatibility note, not a numerical finding.
+  - **Operational:** this working tree IS the production worker's library (§10.1). Run
+    while the queue is idle, and `git -C DEPENDENCIES/nsm checkout main` is the last
+    step of every session, verified.
+  - **Pass:** across refs, bone-only BScore matches to numerical noise — no known
+    nondeterminism on that path (kneepipeline `CLAUDE.md` Known Issues 4–5); bone+cart
+    within ~0.004, the documented `fix_mesh`/VTK-float32 noise. **A shift of ~0.08 on
+    either is the seed-ordering signature (Known Issue 3): a finding, not noise.**
   - **No config refusal is expected, and hitting one is a finding:** `steps/run_nsm.py`
     hand-builds `TriplanarDecoder(**params)` and never calls `load_model`, the only place
     the required-key refusals live (`test_shipped_checkpoints.py`'s third assertion is
@@ -1791,23 +1819,35 @@ a transcribed figure.
     and with `NSM_SHIPPED_MODELS=/mnt/data/programming/kneepipeline/NSM_MODELS` set,
     `python -m pytest testing/NSM/regression/test_shipped_checkpoints.py` (that
     directory holds the 647, 551 and 231 model folders; all three discover).
-- [ ] **7.5b — a real training run, maintainer's server (fresh clone).** A small-but-real
-  `train_deep_sdf` run from a pre-refactor training script/config of the maintainer's
-  choosing — the ShapeMedKnee recipe is the reference case — real meshes, real cache
-  build. Read first: this section, `CLAUDE.md` § Learning Rate Schedules,
-  `docs/KNOWN_ISSUES.md` §1, and `NSM_TRAINING_IDEAS.md` Idea 13 (for what comes after,
-  not for this run).
-  - **Expected migrations, all by design, none a finding:** LR schedule entries missing
-    `Target` raise with a paste-ready annotation — take the message's suggestion
-    verbatim; the two optimizer families migrate to *opposite* annotations, so never
-    transcribe one run's fix onto another. A pre-Aug-2026 checkpoint resume is refused
-    outright (§4). A multi-surface config without `mesh_names` warns (#52 — prefer
-    declaring them on the dataset). A config routed through `load_model` needs the three
-    triplanar keys, named in one combined message.
-  - **Pass:** the run completes; per-group LR follows its `Target`'s schedule over the
-    first epochs, both groups logged (the point of Phase A); loss decreases; checkpoint
-    save → `load_model` → strict state-dict round-trip; `reconstruct_mesh` on one
-    training subject returns finite metrics.
+- [ ] **7.5b — real training runs, maintainer's server (fresh clone).** A **2 × 2 matrix**
+  (maintainer, 2026-08-30): both architectures — `deep_sdf` (`Decoder`) and `triplanar`
+  (`TriplanarDecoder`) — each trained once with NSM at the pre-refactor baseline and once
+  at current `main`, on one of the server's **small datasets (50–100 meshes)**, not the
+  6k ones. Baseline ref: **`bb2c6a3`** (2026-05-22, the last `main` commit before the
+  refactor) unless the maintainer names an older one at run time. A pre-refactor training
+  script/config of the maintainer's choosing; real meshes, real cache build. Read first:
+  this section, `CLAUDE.md` § Learning Rate Schedules, `docs/KNOWN_ISSUES.md` §1, and
+  `NSM_TRAINING_IDEAS.md` Idea 13 (for what comes after, not for this run).
+  - **The LR fix is the crux of comparability.** `bb2c6a3` predates Phase A, so it runs
+    the historical positional mapping natively. On `main` the same config raises for
+    missing `Target` — **take the paste-ready annotation from the message**, which
+    reproduces that run's historical assignment; then a trajectory difference indicts
+    the refactor, not the LR fix. (Annotating "correctly" instead measures the LR fix
+    itself — `KNOWN_ISSUES` §1's experiment, Idea 11's territory, not this run's.) The
+    two optimizer families migrate to *opposite* annotations; never transcribe one run's
+    fix onto another. Other by-design differences, none a finding: pre-Aug-2026
+    checkpoint resume is refused (§4); a multi-surface config without `mesh_names` warns
+    (#52); a config routed through `load_model` needs the three triplanar keys, named in
+    one combined message.
+  - **Pass:** all four runs complete; per-group LR follows its assignment over the first
+    epochs, both groups logged (the point of Phase A); loss decreases; per architecture,
+    the old-vs-new loss curves agree to within reseed noise (if in doubt, measure that
+    noise: two seeds, one ref); checkpoint save → `load_model` → strict state-dict
+    round-trip on the `main` runs.
+  - **The evaluation that matters is reconstruction, not losses (maintainer).** Hold out
+    a few subjects; `reconstruct_mesh` them with each of the four models; compare
+    chamfer/ASSD old-vs-new per architecture. **Not BScore** — a freshly trained model
+    has its own latent space, and the shipped BScore models do not apply to it.
   - **The stopping rule:** 7.5b is the baseline, and it ends this plan's interest. The
     maintainer's next question — a real pointwise `conv_activation`, does it help — is
     `NSM_TRAINING_IDEAS.md` **Idea 13**, already written, §8.3-fenced out of this plan:
