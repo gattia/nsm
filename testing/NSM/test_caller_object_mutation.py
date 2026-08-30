@@ -116,19 +116,36 @@ class TestSite2TheAssdDowncast:
 
     def test_the_assd_value_does_not_move(self):
         """
-        The number measured on ``main`` at ``09c3834``, i.e. **before** the downcast was
-        removed, and it is unchanged by removing it: these are pyvista spheres, whose
-        ``point_coords`` are already ``float32``, so the ``astype`` was a no-op on exactly
-        the meshes production hands over (VTK stores points at single precision).
+        Removing the downcast changed no reported number, asserted by running both paths
+        on identical meshes **on the same platform**: one pair scored as-is, one scored
+        after the ``astype(np.float32)`` the deleted code performed. Equal exactly, and
+        by construction on any platform: ``_plain``'s ``point_coords`` *originate* as
+        float32 (VTK stores points at single precision) before the fixture upcasts them,
+        so the emulated round-trip is lossless, and ``pcu_sdf`` casts both sides to
+        float64 either way.
 
-        For a caller holding genuine ``float64`` meshes it was not a no-op — measured, a
-        sphere pair perturbed below ``float32`` resolution moves ASSD by **7.2e-09**
-        through the round-trip. That is the § History entry's population, and it is why
-        this assertion is exact rather than approximate: if the removal had changed the
-        common case, this goes red.
+        The first form of this pin transcribed the ASSD itself (0.09831770188973551) and
+        went red on macOS CI — the constant encoded *linux's* sphere tessellation, off by
+        8.8e-07 against macOS float32 geometry, ~9x the tolerance. The claim was never
+        about the digits; a platform constant cannot pin a before/after invariant.
+
+        For a caller holding genuine float64 meshes the old cast was **not** a no-op —
+        measured, a sphere pair perturbed below float32 resolution moves ASSD by
+        **7.2e-09** through the round-trip. That is § History 28's population.
         """
-        result = compute_recon_loss([_plain(1.0)], [_plain(1.1)], calc_assd=True)
-        assert result["assd_0"] == pytest.approx(0.09831770188973551, rel=1e-6)
+        recon_a, orig_a = _plain(1.0), _plain(1.1)
+        recon_b, orig_b = _plain(1.0), _plain(1.1)
+        # What the deleted lines in compute_recon_loss did to the caller's meshes.
+        recon_b.point_coords = recon_b.point_coords.astype(np.float32)
+        orig_b.point_coords = orig_b.point_coords.astype(np.float32)
+
+        as_is = compute_recon_loss([recon_a], [orig_a], calc_assd=True)["assd_0"]
+        downcast = compute_recon_loss([recon_b], [orig_b], calc_assd=True)["assd_0"]
+
+        assert as_is == downcast
+        # A sanity bound, not a transcription: red if the metric returns nonsense,
+        # indifferent to the platform's last digits.
+        assert 0.05 < as_is < 0.15
 
 
 class TestSite3TheInterpolationMesh:
