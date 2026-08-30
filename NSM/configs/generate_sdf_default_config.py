@@ -21,7 +21,6 @@ config = {
     "tags": ["nsm"],
     # model (triplanar, as shipped)
     "model_type": "triplanar",
-    "decoder_type": "single_head",
     "objects_per_decoder": 2,
     "mesh_names": ["bone", "cart"],
     "latent_size": 512,
@@ -36,7 +35,6 @@ config = {
     "sum_conv_output_features": True,
     "sdf_latent_size": 128,
     "sdf_hidden_dims": [512, 512, 512],
-    "sdf_skip_connection": [4],
     "concat_latent_input": True,
     # Absent from 647's file -- which is the silent hazard KNOWN_ISSUES "padding is not
     # in the checkpoint" describes (#26). 0.1 is the constructor default every shipped
@@ -58,24 +56,34 @@ config = {
     # initialization
     "seed": 52122,
     # dataset (per-surface lists: [bone, cartilage])
+    #
+    # NSM never builds a dataset from this config -- `train_deep_sdf(config, model,
+    # sdf_dataset)` takes one already built -- so every key below is a specification the
+    # user translates into MultiSurfaceSDFSamples arguments by hand. Six of them used to
+    # spell that parameter differently from the constructor (n_pts_per_object,
+    # percent_near_surface, percent_further_from_surface, random_function, normalize_pts,
+    # dataset_uniform_pts_buffer), which made the config unusable as **kwargs and the
+    # translation a per-key guess. Renamed to the constructor's spelling in Aug 2026
+    # (plan §8.0.N, §6.1's "config keys that silently do nothing"); the values are
+    # unchanged, and nothing in NSM reads either spelling.
     "list_mesh_paths": None,
     "val_paths": None,
-    "n_pts_per_object": [500000, 500000],
-    "percent_near_surface": [0.45, 0.45],
-    "percent_further_from_surface": [0.45, 0.45],
+    "n_pts": [500000, 500000],
+    "p_near_surface": [0.45, 0.45],
+    "p_further_from_surface": [0.45, 0.45],
     "sigma_near": [0.7431352501, 0.7431352501],
     "sigma_far": [2.35, 2.35],
-    "random_function": "normal",
+    "rand_function": "normal",
     "equal_pos_neg": True,
     "center_all_meshes": False,
     "center_pts": False,
-    "normalize_pts": False,
+    "norm_pts": False,
     "scale_all_meshes": True,
     "scale_jointly": True,
     "scale_method": "max_rad",
     "mesh_to_scale": 0,
     "reference_mesh": 0,
-    "dataset_uniform_pts_buffer": 0.2,
+    "uniform_pts_buffer": 0.2,
     "multiprocessing": True,
     "n_processes": 16,
     "cache": True,

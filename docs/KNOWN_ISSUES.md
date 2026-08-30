@@ -747,7 +747,7 @@ preserving. Check out a pre-fix commit if an affected run must be reproduced exa
 
 | | |
 |---|---|
-| **Affects** | Uniform ("random") training samples: (a) any run with a nonzero `uniform_pts_buffer` — the parameter exists since Jan 2025 (`48c5f60`) and the shipped `default_config.json` sets `dataset_uniform_pts_buffer: 0.2`; (b) any **single-surface** run with `norm_pts=True` |
+| **Affects** | Uniform ("random") training samples: (a) any run with a nonzero `uniform_pts_buffer` — the parameter exists since Jan 2025 (`48c5f60`) and the shipped `default_config.json` sets it to `0.2` — spelled `dataset_uniform_pts_buffer` there until Aug 2026, so a config on disk from before then carries the old name; (b) any **single-surface** run with `norm_pts=True` |
 | **Unaffected** | Multi-surface runs at buffer 0 (the arithmetic is exactly zero — the harness baselines did not move); every `norm_pts=False` run, which is what `scale_jointly` requires and **both shipped ShapeMedKnee configs use**; reconstruction unless `get_rand_pts=True` (`kneepipeline` leaves it off) |
 | **Severity** | Silent — the samples were drawn from a slightly different region than configured |
 | **Fixed in** | `sdf-dataset-fixes`, Aug 2026 ([#40](https://github.com/gattia/nsm/issues/40)) |
@@ -779,8 +779,9 @@ no clipping in either sampler.
 
 ### How to tell whether one of your runs is affected
 
-Check the run's dataset settings: a nonzero `uniform_pts_buffer`
-(`dataset_uniform_pts_buffer` in configs), or a single-surface dataset with
+Check the run's dataset settings: a nonzero `uniform_pts_buffer` (spelled
+`dataset_uniform_pts_buffer` in configs written before Aug 2026), or a single-surface
+dataset with
 `norm_pts: true`, built before the fix → the uniform samples (and, under the clip, some
 near-surface samples) came from the old region.
 

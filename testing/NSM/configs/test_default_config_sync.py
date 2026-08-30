@@ -89,29 +89,44 @@ def _train_deep_sdf_source():
         return handle.read()
 
 
-@pytest.mark.xfail(strict=True, reason="§6.1 — the eight are deleted in this slice's commit 9")
-def test_every_shipped_key_is_read_by_something(shipped_config):
+def test_every_shipped_key_is_read_or_names_a_dataset_parameter(shipped_config):
     """
-    §6.1 looked for "config keys that silently do nothing because their implementing
-    branch is commented out". The sweep finds the stronger form: **no branch at all**.
+    §6.1's last checkbox: find the config keys that silently do nothing.
 
-    Eight of the 121 shipped keys have no occurrence anywhere in a live ``NSM/`` module
-    outside this config and its generator — ``dataset_uniform_pts_buffer``,
-    ``decoder_type``, ``n_pts_per_object``, ``normalize_pts``,
-    ``percent_further_from_surface``, ``percent_near_surface``, ``random_function``,
-    ``sdf_skip_connection``. Checked three further ways when they were found: none names a
-    parameter of ``SDFSamples``, ``MultiSurfaceSDFSamples``, ``load_model`` or
-    ``Decoder``; none is read by ``train/deprecated/``; and none is read by the
-    ``kneepipeline`` consumer. They read as features a user would set — ``normalize_pts``,
-    ``percent_near_surface`` — and setting them does nothing and says nothing.
+    It looked for keys "whose implementing branch is commented out". The sweep found the
+    stronger form — **no branch at all**: eight of the 121 shipped keys had no occurrence
+    anywhere in a live ``NSM/`` module outside this config and its generator.
 
-    This is a **substring** search on purpose. It is the loose direction: a key that
-    appears in a comment counts as read here, so anything this reports is dead beyond
-    argument. Tightening it to real reads would need a resolver for ``config[name]``
-    where ``name`` is a variable, and would report keys that are genuinely wired.
+    Investigating them changed what the defect *is*. NSM never builds a dataset from a
+    config — ``train_deep_sdf(config, model, sdf_dataset)`` takes one already built — so
+    the dataset half of this file is a specification the user translates into
+    ``MultiSurfaceSDFSamples`` arguments by hand, and **six of the eight named a real
+    parameter under a different spelling**: ``n_pts_per_object``/``n_pts``,
+    ``percent_near_surface``/``p_near_surface``,
+    ``percent_further_from_surface``/``p_further_from_surface``,
+    ``random_function``/``rand_function``, ``normalize_pts``/``norm_pts``,
+    ``dataset_uniform_pts_buffer``/``uniform_pts_buffer``. Eighteen other keys already
+    used the constructor's spelling, so the file was inconsistent with itself and unusable
+    as ``**kwargs``. Those six are renamed; ``decoder_type`` and ``sdf_skip_connection``
+    named nothing on either ``model_type`` path and are deleted.
+
+    Hence the two-clause rule, which is what makes this checkable rather than a one-off:
+    a shipped key is legitimate if NSM reads it **or** if it names a dataset-constructor
+    parameter the user is expected to pass. A new key that does neither goes red here.
+
+    The substring search is the loose direction on purpose — a key mentioned only in a
+    comment counts as read — so anything this reports is dead beyond argument. Tightening
+    it would need a resolver for ``config[name]`` where ``name`` is a variable.
     """
-    unread = sorted(key for key in shipped_config if not _key_appears_anywhere(key))
-    assert unread == [], f"shipped config keys nothing reads: {unread}"
+    import inspect
+
+    from NSM.datasets.sdf_dataset import MultiSurfaceSDFSamples
+
+    constructor = set(inspect.signature(MultiSurfaceSDFSamples.__init__).parameters)
+    orphans = sorted(
+        key for key in shipped_config if not _key_appears_anywhere(key) and key not in constructor
+    )
+    assert orphans == [], f"shipped config keys nothing reads and no constructor names: {orphans}"
 
 
 def test_the_trainer_passes_chamfer_norm_commented_out():
