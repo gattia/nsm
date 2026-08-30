@@ -136,11 +136,16 @@ class TestSite3TheInterpolationMesh:
     ``interpolate_mesh`` advances the caller's mesh in place and returns it — **by
     design**, and that is the ruling rather than a defect to fix.
 
-    What #55 asks for here is the documentation, and the documentation exists at the
-    wrong frame. ``interpolate_common``, the private engine, says "the returned object is
-    the caller's own mesh, mutated". ``interpolate_mesh`` and ``interpolate_points``, the
-    two public entry points, say nothing — so the contract is stated in the file the
-    author had open and not in the one a caller reads.
+    What #55 asked for here was the documentation, and the documentation existed at the
+    wrong frame. ``interpolate_common``, the private engine, said "the returned object is
+    the caller's own mesh, mutated"; ``interpolate_mesh`` and ``interpolate_points``, the
+    two public entry points, said nothing — the contract stated in the file the author had
+    open and not in the one a caller reads.
+
+    Writing the pin found that the two entry points are **opposite**, which this file's
+    first draft had wrong: it asserted both would document a mutation.
+    ``interpolate_points`` does not mutate, measured for both input types, so what each
+    needed was its own half.
     """
 
     class _SphereSDF(torch.nn.Module):
@@ -164,15 +169,38 @@ class TestSite3TheInterpolationMesh:
         assert out is mesh
         assert np.abs(before - mesh.point_coords).max() > 0.1
 
-    @pytest.mark.xfail(strict=True, reason="#55 site 3 — documented in this slice's commit 5")
-    @pytest.mark.parametrize("func", [interpolate_mesh, interpolate_points])
-    def test_the_public_entry_points_say_they_mutate(self, func):
+    def test_interpolate_points_does_not_mutate_its_input(self):
+        """
+        The measurement that corrected this file's first draft, which asserted both entry
+        points document a mutation. ``interpolate_points`` converts to a tensor and
+        returns a fresh ``ndarray``; the caller's points are untouched for an ndarray
+        *and* for a torch tensor already on the device. So the pair is **opposite**, not
+        alike, and that is the contract worth writing down.
+        """
+        model = self._SphereSDF()
+        array = np.random.default_rng(0).normal(size=(20, 3))
+        before = array.copy()
+        out = interpolate_points(model, np.array([0.0]), np.array([0.5]), n_steps=2, points1=array)
+        assert out is not array and np.array_equal(array, before)
+
+        tensor = torch.tensor(before, dtype=torch.float)
+        interpolate_points(model, np.array([0.0]), np.array([0.5]), n_steps=2, points1=tensor)
+        assert torch.equal(tensor, torch.tensor(before, dtype=torch.float))
+
+    @pytest.mark.parametrize(
+        "func,phrase",
+        [(interpolate_mesh, "in place"), (interpolate_points, "not modified")],
+        ids=["mesh-mutates", "points-does-not"],
+    )
+    def test_each_public_entry_point_states_its_own_half(self, func, phrase):
         """
         A docs-only fix needs a falsifiable pin or it is not a fix. ``in place`` is the
-        phrase ``interpolate_common`` already uses, so this asserts the contract reached
-        the frame above it rather than asserting any particular wording.
+        phrase ``interpolate_common`` already used, so the first half asserts the contract
+        reached the frame above it; the second asserts the sibling says the opposite
+        rather than saying nothing, which is how a caller reading one of them learns there
+        is a choice to make.
         """
-        assert "in place" in func.__doc__
+        assert phrase in func.__doc__
 
 
 def test_a_tuple_of_sdf_samples_now_survives_the_preprocess():
