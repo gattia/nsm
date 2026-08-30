@@ -51,6 +51,12 @@ def compute_recon_loss(
 
     Returns:
         dict: A dictionary containing the reconstruction loss for each mesh.
+
+    Neither list is modified, and neither are the meshes in them (#55). The ASSD branch
+    used to downcast both sides to ``float32`` in place, under a comment reading "make
+    sure the points for the meshes are the same types"; pymskt's ``pcu_sdf`` casts the
+    query points and the mesh vertices to ``float64`` itself, so the types were never
+    what reached the computation.
     """
     logger.info("Starting reconstruction loss computation")
     logger.debug("Computing loss for %s meshes", len(meshes) if isinstance(meshes, list) else 1)
@@ -121,11 +127,6 @@ def compute_recon_loss(
                 assd_loss_ = np.nan
                 logger.warning("Mesh %s: ASSD set to NaN (no %s mesh)", mesh_idx, missing)
             else:
-                # make sure the points for the meshes are the same types
-                mesh.point_coords = mesh.point_coords.astype(np.float32)
-                orig_meshes[mesh_idx].point_coords = orig_meshes[mesh_idx].point_coords.astype(
-                    np.float32
-                )
                 assd_loss_ = mesh.get_assd_mesh(orig_meshes[mesh_idx])
                 logger.debug("Mesh %s: ASSD = %.6f", mesh_idx, assd_loss_)
             result[f"assd_{mesh_idx}"] = assd_loss_

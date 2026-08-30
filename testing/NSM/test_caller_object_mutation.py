@@ -11,8 +11,8 @@ the third.
 **The fix is not the same at all three sites, and #55 says so** — "each site copies, or
 documents the mutation and stops returning the object; docstrings say which":
 
-* ``compute_recon_loss`` has no reason to mutate — the downcast is for one comparison —
-  so it copies.
+* ``compute_recon_loss`` mutated for a reason that turned out not to hold, so the code
+  went with it (``CLAUDE.md``: never inherit a rationale along with the code).
 * the ``sdf_gt`` preprocess has no reason either; the clamp is the function's product.
 * ``interpolate_mesh`` mutates **by design** — carrying a mesh along the level set is
   what it is for, and copying an 80k-vertex mesh per call is not free. That one is
@@ -46,9 +46,9 @@ class TestSite1TheSdfGtPreprocess:
 
     Measured on ``main`` at ``09c3834``: a caller holding ``[-5, 0.5, 5]`` and ``[-9, 9]``
     gets back ``[-1, 0.5, 1]`` and ``[-1, 1]`` at ``clamp_dist=1.0``, in its own list
-    object, with each element rebound. ``reconstruct_latent`` is the only caller and
-    passes the list it built, so nothing in the repo notices — but the list is the
-    caller's ``sdf_gt`` argument, one frame up.
+    object, with each element rebound. ``reconstruct_latent`` is the only caller and passes
+    the list it built, so nothing in the repo notices — but the list is the caller's
+    ``sdf_gt`` argument, one frame up.
     """
 
     def _caller_list(self):
@@ -81,20 +81,22 @@ class TestSite1TheSdfGtPreprocess:
 
 class TestSite2TheAssdDowncast:
     """
-    ``compute_recon_loss(calc_assd=True)`` moves the caller's meshes to ``float32``.
+    ``compute_recon_loss(calc_assd=True)`` moved the caller's meshes to ``float32``.
 
-    Both of them — ``mesh.point_coords`` (the reconstruction) and
-    ``orig_meshes[mesh_idx].point_coords`` (the caller's ground truth), at
-    ``recon_evaluation.py:125-128``, under a comment that says "make sure the points for
-    the meshes are the same types". The comment is right about why; the target is the
-    caller's object rather than a copy.
+    Both of them — the reconstruction and the caller's ground truth — under a comment
+    reading "make sure the points for the meshes are the same types". **The comment's
+    reason does not hold**: ``get_assd_mesh`` calls pymskt's ``pcu_sdf``, which casts the
+    query points *and* the mesh vertices to ``float64`` itself
+    (``points_dtype=np.float64``), so the caller's dtype never reached the computation.
+    Measured, every mixed and matched combination returns the identical value. The
+    downcast could only lose precision, never supply it, so it is deleted rather than
+    performed on copies.
 
-    **The mutation is conditional on a flag**, which is what makes it hard to notice: the
-    chamfer path leaves both at ``float64``. A caller that scores chamfer only, then adds
-    ASSD later, silently loses precision on meshes it still holds.
+    **The mutation was conditional on a flag**, which is what made it hard to notice: the
+    chamfer path left both at ``float64``. A caller that scored chamfer only, then added
+    ASSD later, silently lost precision on meshes it still held.
     """
 
-    @pytest.mark.xfail(strict=True, reason="#55 site 2 — fixed in this slice's commit 3")
     @pytest.mark.parametrize("which", ["reconstruction", "original"])
     def test_assd_does_not_downcast_the_callers_mesh(self, which):
         recon, orig = _plain(1.0), _plain(1.1)
@@ -114,10 +116,16 @@ class TestSite2TheAssdDowncast:
 
     def test_the_assd_value_does_not_move(self):
         """
-        ASSD is still computed at ``float32``, on copies. The number is the one measured on
-        ``main`` at ``09c3834`` for this fixed geometry; ``rel=1e-6`` is float32's own
-        resolution, so a change of *regime* — computing at float64 instead — would break
-        this while a change of precision would not.
+        The number measured on ``main`` at ``09c3834``, i.e. **before** the downcast was
+        removed, and it is unchanged by removing it: these are pyvista spheres, whose
+        ``point_coords`` are already ``float32``, so the ``astype`` was a no-op on exactly
+        the meshes production hands over (VTK stores points at single precision).
+
+        For a caller holding genuine ``float64`` meshes it was not a no-op — measured, a
+        sphere pair perturbed below ``float32`` resolution moves ASSD by **7.2e-09**
+        through the round-trip. That is the § History entry's population, and it is why
+        this assertion is exact rather than approximate: if the removal had changed the
+        common case, this goes red.
         """
         result = compute_recon_loss([_plain(1.0)], [_plain(1.1)], calc_assd=True)
         assert result["assd_0"] == pytest.approx(0.09831770188973551, rel=1e-6)
@@ -165,3 +173,4 @@ class TestSite3TheInterpolationMesh:
         the frame above it rather than asserting any particular wording.
         """
         assert "in place" in func.__doc__
+
