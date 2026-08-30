@@ -30,7 +30,10 @@ def reconstruct_latent_sdf_gt_type_check(sdf_gt, verbose=False):
     if type(sdf_gt) in (torch.Tensor, np.ndarray):
         sdf_gt = [sdf_gt]
     elif type(sdf_gt) in (list, tuple):
-        pass
+        # A new list, not the caller's (#55). Also what makes the accepted ``tuple`` work:
+        # the preprocess below assigns by index, so a tuple raised ``TypeError`` at every
+        # call before this — accepted by the type check and unusable.
+        sdf_gt = list(sdf_gt)
     elif type(sdf_gt) in (str,):
         raise Exception(
             "Must provided xyz/sdf from mesh - resconstruct latent will not load mesh"
@@ -93,15 +96,17 @@ def reconstruct_latent_get_lr_update_freq(n_lr_updates, num_iterations):
 @honour_verbose
 def reconstruct_latent_preprocess_sdf_gt(sdf_gt, clamp_dist, device="cuda", verbose=False):
     # Set a clamp (maximum) distance to "model"
+    processed = []
     for sdf_idx, sdf in enumerate(sdf_gt):
         if sdf is None:
             logger.warning("sdf_gt[%s] is None, skipping surface %s", sdf_idx, sdf_idx)
+            processed.append(None)
             continue
         if clamp_dist is not None:
             sdf = torch.clamp(sdf, -clamp_dist, clamp_dist)
         # Move to GPU
-        sdf_gt[sdf_idx] = sdf.to(device)
-    return sdf_gt
+        processed.append(sdf.to(device))
+    return processed
 
 
 def project_latent(latent, latent_norm):

@@ -45,21 +45,22 @@ class TestSite1TheSdfGtPreprocess:
     ``reconstruct_latent_preprocess_sdf_gt`` clamps and device-moves the caller's list.
 
     Measured on ``main`` at ``09c3834``: a caller holding ``[-5, 0.5, 5]`` and ``[-9, 9]``
-    gets back ``[-1, 0.5, 1]`` and ``[-1, 1]`` at ``clamp_dist=1.0``, in its own list
-    object, with each element rebound. ``reconstruct_latent`` is the only caller and passes
-    the list it built, so nothing in the repo notices — but the list is the caller's
+    got back ``[-1, 0.5, 1]`` and ``[-1, 1]`` at ``clamp_dist=1.0``, in its own list
+    object, with each slot rebound. ``reconstruct_latent`` is the only caller and passes
+    the list it built, so nothing in the repo noticed — but the list is the caller's
     ``sdf_gt`` argument, one frame up.
+
+    Note what was *not* mutated: ``torch.clamp`` returns a new tensor, so the caller's
+    tensors were always safe. What moved was the list's slots.
     """
 
     def _caller_list(self):
         return [torch.tensor([[-5.0], [0.5], [5.0]]), torch.tensor([[-9.0], [9.0]])]
 
-    @pytest.mark.xfail(strict=True, reason="#55 site 1 — fixed in this slice's commit 4")
     def test_the_callers_list_object_is_not_returned(self):
         sdf_gt = self._caller_list()
         assert reconstruct_latent_preprocess_sdf_gt(sdf_gt, 1.0, device="cpu") is not sdf_gt
 
-    @pytest.mark.xfail(strict=True, reason="#55 site 1 — fixed in this slice's commit 4")
     def test_the_callers_values_are_not_clamped(self):
         sdf_gt = self._caller_list()
         reconstruct_latent_preprocess_sdf_gt(sdf_gt, 1.0, device="cpu")
@@ -72,7 +73,6 @@ class TestSite1TheSdfGtPreprocess:
         assert result[0].flatten().tolist() == [-1.0, 0.5, 1.0]
         assert result[1].flatten().tolist() == [-1.0, 1.0]
 
-    @pytest.mark.xfail(strict=True, reason="#55 site 1 — fixed in this slice's commit 4")
     def test_the_type_check_does_not_hand_back_the_callers_list(self):
         """Same class, one frame earlier: a list in is the same object out."""
         sdf_gt = [torch.tensor([[1.0]])]
@@ -174,3 +174,16 @@ class TestSite3TheInterpolationMesh:
         """
         assert "in place" in func.__doc__
 
+
+def test_a_tuple_of_sdf_samples_now_survives_the_preprocess():
+    """
+    Fixed for free by the #55 repair, and worth a pin because it is the
+    accepted-and-broken shape: ``reconstruct_latent_sdf_gt_type_check`` names ``tuple``
+    as a supported type, and the preprocess below it assigned by index — so every tuple
+    raised ``TypeError: 'tuple' object does not support item assignment``, at every call,
+    since the function was written. Building a new list honours the declared type instead
+    of the code needing to grow a branch for it.
+    """
+    sdf_gt = reconstruct_latent_sdf_gt_type_check((torch.tensor([[-5.0]]), torch.tensor([[5.0]])))
+    result = reconstruct_latent_preprocess_sdf_gt(sdf_gt, 1.0, device="cpu")
+    assert [tensor.item() for tensor in result] == [-1.0, 1.0]

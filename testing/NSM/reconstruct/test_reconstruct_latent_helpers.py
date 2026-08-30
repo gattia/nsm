@@ -2,9 +2,13 @@
 Characterization of the latent-optimization helpers in ``reconstruct/main.py``, written
 immediately before their move to ``latent_fit.py`` (plan §8.0.C). Everything asserts
 behaviour as it stands, warts included: the bare-``Exception`` raises in the ``sdf_gt``
-type check, ``preprocess_sdf_gt`` mutating its argument and also returning it (#55's
-class), and ``latent_norm_penalty`` silently computing the quadratic penalty when asked
-for a barrier against a single target (documented in its docstring).
+type check, and ``latent_norm_penalty`` silently computing the quadratic penalty when
+asked for a barrier against a single target (documented in its docstring).
+
+``preprocess_sdf_gt`` mutating its argument and also returning it was the third wart, and
+it was fixed by plan §8.0.N (#55). The pin moved with the fix, to
+``testing/NSM/test_caller_object_mutation.py``, where #55's other two sites are: one
+issue, one file, rather than a copy per module.
 """
 
 import numpy as np
@@ -34,8 +38,15 @@ class TestSdfGtTypeCheck:
         assert isinstance(result, list) and result[0] is sdf
 
     def test_a_list_passes_through_unwrapped(self):
+        """
+        Unwrapped, and — since §8.0.N (#55) — not the caller's own list. The elements are
+        still the caller's objects; it is the container that is new, because the
+        preprocess below assigns into it by index.
+        """
         sdf_list = [torch.zeros(5, 1), None]
-        assert reconstruct_latent_sdf_gt_type_check(sdf_list) is sdf_list
+        result = reconstruct_latent_sdf_gt_type_check(sdf_list)
+        assert result == sdf_list and result is not sdf_list
+        assert result[0] is sdf_list[0]
 
     def test_an_unhandled_type_raises_a_bare_exception(self):
         with pytest.raises(Exception, match="Invalid sdf_gt type") as excinfo:
@@ -112,13 +123,6 @@ class TestPreprocessSdfGt:
         sdf_gt = [None, torch.tensor([0.5])]
         result = reconstruct_latent_preprocess_sdf_gt(sdf_gt, clamp_dist=0.1, device="cpu")
         assert result[0] is None and len(result) == 2
-
-    def test_mutates_the_list_it_was_given_and_returns_it(self):
-        """#55's class: in-place mutation and a return value, both."""
-        sdf_gt = [torch.tensor([-2.0])]
-        result = reconstruct_latent_preprocess_sdf_gt(sdf_gt, clamp_dist=0.1, device="cpu")
-        assert result is sdf_gt
-        assert sdf_gt[0].item() == pytest.approx(-0.1)
 
 
 class TestProjectLatent:
