@@ -13,19 +13,38 @@
   pipeline always produces (its meshes are float64 *on disk*, measured; the
   reconstruction is float32 from marching cubes) — every production `fit_nsm` call
   crashed at the ASSD step. Fix: align on copies, upcasting (PR #102, with the dtype
-  contract pinned by spy test); the series' current-code point is `main`+#102. **Until
-  #102 merges, production `main` cannot run an NSM-enabled job.** Same scope-vs-claim
-  failure this section's own premise correction records — this time the scope was a
-  dependency version. (`requirements.txt` has declared `mskt>=0.1.21` since v0.2.0, for
-  a training-path backstop; the floor is a statement, not an enforcement, on the
+  contract pinned by spy test); the series' current-code point is `main`+#102.
+  **#102 merged 2026-08-31 (580bc2a) and production is repaired** — verified by running
+  `steps.run_nsm` + `steps.compute_bscore` on an archived job against `main` in the
+  production environment after the merge. No worker restart was needed: the website's
+  orchestrator spawns every step as a fresh `python -m steps.<module>` subprocess, so a
+  working-tree checkout takes effect on the next job. Same scope-vs-claim failure this
+  section's own premise correction records — this time the scope was a dependency
+  version. (`requirements.txt` has declared `mskt>=0.1.21` since v0.2.0, for a
+  training-path backstop; the floor is a statement, not an enforcement, on the
   working-tree import path production uses.)
+- **The pymskt floor was measured rather than argued, and it is a results change
+  (2026-08-31, maintainer-requested follow-on).** Cloned production env + `mskt==0.1.21`
+  (the only package that moves), five archived jobs, full downstream. Control: the
+  0.1.19 env reproduces the Aug-17 archived outputs **byte-for-byte** — every mesh,
+  voxel-identical subregions, 24/24 thickness values. Upgraded: bone pipeline
+  byte-identical and bone-only BScore in noise, but **every cartilage mesh changes
+  vertex count**, regional thickness means move up to **0.0086 mm** and bone+cart BScore
+  up to **0.024** — 0.1.21's float64 SDF path is the more correct arithmetic, amplified
+  by marching cubes/pyacvd landing differently (Known Issue 8's class). So the upgrade
+  is a deliberate cutover, not a no-op, and it is the *website's* call, not this plan's:
+  the maintainer has ruled to take it, gated on provenance stamping landing first
+  (the consumer's provenance PR — each result records library versions, all
+  three repo SHAs including this working tree's, and one `environment_id`). Candidate
+  env kept aside on that box; the production env is
+  untouched at 0.1.19.
 - **The series itself: three refs indistinguishable beyond this box's own run-to-run
   noise.** Five jobs × both variants × `bb2c6a3`/`v0.2.0`/`main`+#102: max pairwise
   BScore diff 1.5e-04 bone+cart (documented band ~0.004), 1.4e-04 bone-only; a
   same-code back-to-back repeat differs by 3.9e-05, so the cross-ref spread is the
   measured noise, not the refactor (which also corrects kneepipeline's "no known
   nondeterminism on the bone-only path" — it is noise-bounded at ~1e-04 BScore on this
-  box, not bit-reproducible). 8ff02ee4 vs its archived production values: ≤3.2e-05.
+  box, not bit-reproducible). job A vs its archived production values: ≤3.2e-05.
   Ten-seed endpoints: SD 0.01360 vs 0.01357, means 5e-06 apart, inside April's per-job
   band [0.0046, 0.0306]. Full numbers in PR #102; details at the ticked §7.5a box.
 - **Test-suite size is now a scheduled slice, not a grumble (maintainer, 2026-08-29).**
@@ -41,7 +60,7 @@
 - **§7.5's premise was corrected by the maintainer the day it was written, and both runs
   widened (2026-08-30).** "No archived BScore on this box" came from a sweep with the
   wrong scope — it searched under the repo, and production data lives at
-  `/mnt/data/knee_pipeline_data`, where five cutover-day jobs keep their input meshes
+  the consumer's production data mount, where five cutover-day jobs keep their input meshes
   and production latents, and April 2026's `nsm_seed_analysis/` holds 74 jobs × 10 seeds
   of pre-refactor bone-only BScores. 7.5a is now a three-point version series over the
   real archive (`bb2c6a3` → `v0.2.0` → `main`; `bb2c6a3` is the last commit before the
@@ -1808,19 +1827,18 @@ a transcribed figure.
   which carries the full results table. Series = `bb2c6a3` / `v0.2.0` / `main`+#102, all
   five jobs, both variants: max pairwise BScore diff 1.5e-04 (bone+cart) / 1.4e-04
   (bone-only), same order as a same-code repeat (3.9e-05) — no 0.08 signature anywhere.
-  8ff02ee4 vs archived production ≤3.2e-05, ASSD to 2e-06, prepared meshes byte-identical
+  job A vs archived production ≤3.2e-05, ASSD to 2e-06, prepared meshes byte-identical
   to the archive and across refs. Ten-seed endpoints: SD 0.01360 vs 0.01357, means 5e-06
   apart, inside April's band. Suites on this box: 1012 passed / 1 skipped, regression 171
   passed / 3 xfailed with CUDA + `NSM_SHIPPED_MODELS`. Two premise corrections found in
-  execution: only 8ff02ee4 carries archived NSM values — the other four ran
+  execution: only job A carries archived NSM values — the other four ran
   `perform_nsm: false`, so "the production `NSM_recon_params.json`" was one job, not
   five; and those archived values came from the 2026-08-16/17 working tree (between
   e432f9a and d2ba1c7), a mid-refactor snapshot no series ref reproduces exactly.
   `checkout main` restored and verified at session end.)*
   The first version of this step said no archived BScore exists locally; the sweep's
   scope was wrong — it searched under the repo, and production data lives at
-  `/mnt/data/knee_pipeline_data` (the website's bind mount: this box *is* the production
-  server, `kneepipeline_segmentaton_website/docker/docker-compose.yml`). Measured
+  the consumer's production data mount on this box. Measured
   2026-08-30: **five archived jobs retain their input meshes**
   (`archive/<uuid>/results/femur_mesh_raw.vtk` plus cartilage meshes and the production
   `NSM_recon_params.json`; one also stored `bscore_results.json`; all archived
