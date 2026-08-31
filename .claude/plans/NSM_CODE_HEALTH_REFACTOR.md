@@ -13,12 +13,31 @@
   pipeline always produces (its meshes are float64 *on disk*, measured; the
   reconstruction is float32 from marching cubes) — every production `fit_nsm` call
   crashed at the ASSD step. Fix: align on copies, upcasting (PR #102, with the dtype
-  contract pinned by spy test); the series' current-code point is `main`+#102. **Until
-  #102 merges, production `main` cannot run an NSM-enabled job.** Same scope-vs-claim
-  failure this section's own premise correction records — this time the scope was a
-  dependency version. (`requirements.txt` has declared `mskt>=0.1.21` since v0.2.0, for
-  a training-path backstop; the floor is a statement, not an enforcement, on the
+  contract pinned by spy test); the series' current-code point is `main`+#102.
+  **#102 merged 2026-08-31 (580bc2a) and production is repaired** — verified by running
+  `steps.run_nsm` + `steps.compute_bscore` on an archived job against `main` in the
+  production environment after the merge. No worker restart was needed: the website's
+  orchestrator spawns every step as a fresh `python -m steps.<module>` subprocess, so a
+  working-tree checkout takes effect on the next job. Same scope-vs-claim failure this
+  section's own premise correction records — this time the scope was a dependency
+  version. (`requirements.txt` has declared `mskt>=0.1.21` since v0.2.0, for a
+  training-path backstop; the floor is a statement, not an enforcement, on the
   working-tree import path production uses.)
+- **The pymskt floor was measured rather than argued, and it is a results change
+  (2026-08-31, maintainer-requested follow-on).** Cloned production env + `mskt==0.1.21`
+  (the only package that moves), five archived jobs, full downstream. Control: the
+  0.1.19 env reproduces the Aug-17 archived outputs **byte-for-byte** — every mesh,
+  voxel-identical subregions, 24/24 thickness values. Upgraded: bone pipeline
+  byte-identical and bone-only BScore in noise, but **every cartilage mesh changes
+  vertex count**, regional thickness means move up to **0.0086 mm** and bone+cart BScore
+  up to **0.024** — 0.1.21's float64 SDF path is the more correct arithmetic, amplified
+  by marching cubes/pyacvd landing differently (Known Issue 8's class). So the upgrade
+  is a deliberate cutover, not a no-op, and it is the *website's* call, not this plan's:
+  the maintainer has ruled to take it, gated on provenance stamping landing first
+  (`kneepipeline_segmentaton_website` PR #6 — each result records library versions, all
+  three repo SHAs including this working tree's, and one `environment_id`). Candidate
+  env kept at `/mnt/data/conda-envs/kneepipeline-mskt021`; the production env is
+  untouched at 0.1.19.
 - **The series itself: three refs indistinguishable beyond this box's own run-to-run
   noise.** Five jobs × both variants × `bb2c6a3`/`v0.2.0`/`main`+#102: max pairwise
   BScore diff 1.5e-04 bone+cart (documented band ~0.004), 1.4e-04 bone-only; a
