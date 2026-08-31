@@ -186,8 +186,8 @@ training run per bound setting.
 level.** Measured on the kneepipeline machine's artifacts. Models:
 `NSM_MODELS/{647_nsm_femur,551_nsm_femur_bone,231_nsm_femur_cartilage}_v0.0.1`, all
 `latent_size` 512 / `latent_bound` 10 / `latent_init_std` 0.01 (init norm ≈ 0.23).
-Fits: `/mnt/data/knee_pipeline_data/archive` (website production jobs, one fit per
-subject) and `nsm_seed_analysis` (74 subjects × 10 seeds, bone-only).
+Fits: the downstream consumer's production archive (one fit per subject) and its
+seed-analysis set (74 subjects × 10 seeds, bone-only).
 
 - **Training-side saturation is real — on the one shipped latent-code file.** Only
   the 231 cartilage model ships `latent_codes/2000.pth`; the `aagatti/ShapeMedKnee`
