@@ -4,18 +4,40 @@
 
 ## State
 
-**Updated:** 2026-08-30 · **Status:** open
+**Updated:** 2026-08-31 · **Status:** open
 
+- **7.5a ran and passed — after its first action caught `main` breaking production
+  (2026-08-31, PR #102).** The compatibility check failed before any number existed:
+  #100's 686980e deleted the ASSD float32 downcast on a rationale measured against
+  nsm-dev's mskt 0.1.21, and production's mskt 0.1.19 refuses the mixed-dtype pair the
+  pipeline always produces (its meshes are float64 *on disk*, measured; the
+  reconstruction is float32 from marching cubes) — every production `fit_nsm` call
+  crashed at the ASSD step. Fix: align on copies, upcasting (PR #102, with the dtype
+  contract pinned by spy test); the series' current-code point is `main`+#102. **Until
+  #102 merges, production `main` cannot run an NSM-enabled job.** Same scope-vs-claim
+  failure this section's own premise correction records — this time the scope was a
+  dependency version. (`requirements.txt` has declared `mskt>=0.1.21` since v0.2.0, for
+  a training-path backstop; the floor is a statement, not an enforcement, on the
+  working-tree import path production uses.)
+- **The series itself: three refs indistinguishable beyond this box's own run-to-run
+  noise.** Five jobs × both variants × `bb2c6a3`/`v0.2.0`/`main`+#102: max pairwise
+  BScore diff 1.5e-04 bone+cart (documented band ~0.004), 1.4e-04 bone-only; a
+  same-code back-to-back repeat differs by 3.9e-05, so the cross-ref spread is the
+  measured noise, not the refactor (which also corrects kneepipeline's "no known
+  nondeterminism on the bone-only path" — it is noise-bounded at ~1e-04 BScore on this
+  box, not bit-reproducible). 8ff02ee4 vs its archived production values: ≤3.2e-05.
+  Ten-seed endpoints: SD 0.01360 vs 0.01357, means 5e-06 apart, inside April's per-job
+  band [0.0046, 0.0306]. Full numbers in PR #102; details at the ticked §7.5a box.
 - **Test-suite size is now a scheduled slice, not a grumble (maintainer, 2026-08-29).**
   `testing/` has passed `NSM/` in size — **14,770 lines against 14,460**, a ratio of 1.02
   from 0.26 at `v0.1.0` — and the slice index's new **T row** carries the measurements and
   three checkable trim criteria. It runs last because every slice adds to what it trims.
-- **Next:** **§7.5a**, the reconstruction/BScore version series against the production
-  archive on this box, then **§7.5b**, the 2 × 2 training matrix on the maintainer's
-  server — both defined in §7.5 (added 2026-08-30) and scheduled ahead of every remaining
-  slice, because production crossed v0.3.0 unpinned the moment #100 merged. After both
-  pass: **§8.0.R** and **§8.0.P** in either order (P's gate fell — see below), then
-  **S**, then **T**. Q left the plan (see below). **Blocked on nothing.**
+- **Next:** **§7.5b**, the 2 × 2 training matrix on the maintainer's server (fresh
+  clone; needs the maintainer to name the dataset and config) — §7.5a is done, see
+  above. After 7.5b passes: **§8.0.R** and **§8.0.P** in either order (P's gate fell —
+  see below), then **S**, then **T**. Q left the plan (see below). **Blocked on:
+  nothing for the maintainer decisions in flight (#102 merge, 7.5b scheduling); no code
+  is blocked.**
 - **§7.5's premise was corrected by the maintainer the day it was written, and both runs
   widened (2026-08-30).** "No archived BScore on this box" came from a sweep with the
   wrong scope — it searched under the repo, and production data lives at
@@ -1780,7 +1802,21 @@ plus a State line; a divergence is an issue (reproduced by definition); a number
 keeping becomes an assertion in the §7.1 harness or `test_shipped_checkpoints.py`, never
 a transcribed figure.
 
-- [ ] **7.5a — reconstruction/BScore re-runs against the production archive (this box).**
+- [x] **7.5a — reconstruction/BScore re-runs against the production archive (this box).**
+  *(Executed 2026-08-31; PASS. The compat check caught `main` breaking production before
+  any number existed — the ASSD mixed-dtype refusal under mskt 0.1.19, fixed in PR #102,
+  which carries the full results table. Series = `bb2c6a3` / `v0.2.0` / `main`+#102, all
+  five jobs, both variants: max pairwise BScore diff 1.5e-04 (bone+cart) / 1.4e-04
+  (bone-only), same order as a same-code repeat (3.9e-05) — no 0.08 signature anywhere.
+  8ff02ee4 vs archived production ≤3.2e-05, ASSD to 2e-06, prepared meshes byte-identical
+  to the archive and across refs. Ten-seed endpoints: SD 0.01360 vs 0.01357, means 5e-06
+  apart, inside April's band. Suites on this box: 1012 passed / 1 skipped, regression 171
+  passed / 3 xfailed with CUDA + `NSM_SHIPPED_MODELS`. Two premise corrections found in
+  execution: only 8ff02ee4 carries archived NSM values — the other four ran
+  `perform_nsm: false`, so "the production `NSM_recon_params.json`" was one job, not
+  five; and those archived values came from the 2026-08-16/17 working tree (between
+  e432f9a and d2ba1c7), a mid-refactor snapshot no series ref reproduces exactly.
+  `checkout main` restored and verified at session end.)*
   The first version of this step said no archived BScore exists locally; the sweep's
   scope was wrong — it searched under the repo, and production data lives at
   `/mnt/data/knee_pipeline_data` (the website's bind mount: this box *is* the production
