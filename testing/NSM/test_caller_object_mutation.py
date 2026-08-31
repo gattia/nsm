@@ -84,13 +84,14 @@ class TestSite2TheAssdDowncast:
     ``compute_recon_loss(calc_assd=True)`` moved the caller's meshes to ``float32``.
 
     Both of them — the reconstruction and the caller's ground truth — under a comment
-    reading "make sure the points for the meshes are the same types". **The comment's
-    reason does not hold**: ``get_assd_mesh`` calls pymskt's ``pcu_sdf``, which casts the
+    reading "make sure the points for the meshes are the same types". **In this suite's
+    pymskt the comment's reason does not hold**: mskt 0.1.21's ``pcu_sdf`` casts the
     query points *and* the mesh vertices to ``float64`` itself
-    (``points_dtype=np.float64``), so the caller's dtype never reached the computation.
+    (``points_dtype=np.float64``), so the caller's dtype never reaches the computation.
     Measured, every mixed and matched combination returns the identical value. The
-    downcast could only lose precision, never supply it, so it is deleted rather than
-    performed on copies.
+    downcast could only lose precision, never supply it, so it was deleted rather than
+    performed on copies — and *that* scoping error is ``TestSite2TheMixedDtypePair``'s
+    story: on mskt 0.1.19 the reason does hold, and the deletion crashed production.
 
     **The mutation was conditional on a flag**, which is what made it hard to notice: the
     chamfer path left both at ``float64``. A caller that scored chamfer only, then added
@@ -146,6 +147,65 @@ class TestSite2TheAssdDowncast:
         # A sanity bound, not a transcription: red if the metric returns nonsense,
         # indifferent to the platform's last digits.
         assert 0.05 < as_is < 0.15
+
+
+class TestSite2TheMixedDtypePair:
+    """
+    The downcast's comment — "make sure the points for the meshes are the same types" —
+    had a real reason after all, and deleting the cast outright broke production.
+
+    Whether ``get_assd_mesh`` tolerates a mixed-dtype pair depends on the pymskt
+    version: mskt 0.1.21 (this suite's environment) casts both sides to float64 inside
+    ``pcu_sdf``, but mskt 0.1.19 (the knee-pipeline production environment) hands both
+    straight to ``point_cloud_utils``, which raises ``ValueError: Invalid type (double,
+    Row Major) for argument 'v'`` — measured in that environment, 2026-08-30, the day
+    after the deletion merged. And the production path *always* produces a mixed pair:
+    the knee pipeline's input meshes carry float64 points on disk (measured on an
+    archived job, all of them) while the reconstruction arrives float32 from marching
+    cubes, so every ``fit_nsm`` call in the knee pipeline crashed at the ASSD step.
+
+    The fix aligns a mixed pair on copies, upcasting the float32 side. This class pins
+    the NSM-side half of the contract — the pair that reaches ``get_assd_mesh`` shares
+    one dtype — because this suite's pymskt would forgive a mixed pair and hide the
+    regression. The 0.1.19 behaviour itself can only be exercised in an environment
+    that has it.
+    """
+
+    def _mixed(self):
+        """The production shape: float32 reconstruction, float64 original."""
+        recon, orig = _plain(1.0), _plain(1.1)
+        recon.point_coords = recon.point_coords.astype(np.float32)
+        return recon, orig
+
+    def test_the_pair_reaching_get_assd_mesh_shares_one_dtype(self, monkeypatch):
+        seen = []
+        unpatched = Mesh.get_assd_mesh
+
+        def spy(self, other_mesh):
+            seen.append((self.point_coords.dtype, other_mesh.point_coords.dtype))
+            return unpatched(self, other_mesh)
+
+        monkeypatch.setattr(Mesh, "get_assd_mesh", spy)
+        recon, orig = self._mixed()
+        compute_recon_loss([recon], [orig], calc_assd=True)
+        assert seen == [(np.float64, np.float64)]
+
+    def test_a_mixed_pair_scores_and_the_caller_keeps_both_dtypes(self):
+        recon, orig = self._mixed()
+        result = compute_recon_loss([recon], [orig], calc_assd=True)
+        assert 0.05 < result["assd_0"] < 0.15
+        assert recon.point_coords.dtype == np.float32
+        assert orig.point_coords.dtype == np.float64
+
+    def test_the_aligned_value_is_the_matched_float64_value(self):
+        """The upcast is exact, so aligning must not move the number: a mixed pair and
+        an all-float64 pair of the same geometry score identically. (The fixture's
+        points originate as float32 from VTK, so the float64 "original" is the same
+        geometry bit-for-bit.)"""
+        recon32, orig64 = self._mixed()
+        mixed = compute_recon_loss([recon32], [orig64], calc_assd=True)
+        matched = compute_recon_loss([_plain(1.0)], [_plain(1.1)], calc_assd=True)
+        assert mixed["assd_0"] == matched["assd_0"]
 
 
 class TestSite3TheInterpolationMesh:

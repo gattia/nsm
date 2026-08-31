@@ -113,12 +113,20 @@ nsm @ git+https://github.com/gattia/nsm@v0.3.0
 
 ### Fixed
 
-- **`compute_recon_loss` no longer downcasts the caller's meshes** ([#55](https://github.com/gattia/nsm/issues/55), plan
-  §8.0.N). Under `calc_assd=True` it set `point_coords` to `float32` in place on both the
-  reconstruction and the caller's ground truth, under a comment reading "make sure the
-  points for the meshes are the same types". pymskt's `pcu_sdf` casts both sides to
-  `float64` itself, so the caller's dtype never reached the computation and the downcast
-  could only lose precision. See `docs/KNOWN_ISSUES.md` § History 28 for who is affected.
+- **`compute_recon_loss` no longer downcasts the caller's meshes — a mixed-dtype pair is
+  aligned on copies instead** ([#55](https://github.com/gattia/nsm/issues/55), plan §8.0.N;
+  corrected by plan §7.5a's compatibility check). Under `calc_assd=True` it set
+  `point_coords` to `float32` in place on both the reconstruction and the caller's ground
+  truth, under a comment reading "make sure the points for the meshes are the same types".
+  The mutation is gone, but the comment's reason was real: mskt 0.1.19 (the knee-pipeline
+  production environment) hands both dtypes straight to `point_cloud_utils`, which raises
+  `ValueError` on a mixed pair — and the production path always produces one, because
+  the knee pipeline's input meshes carry float64 points on disk while the reconstruction
+  arrives float32 from marching cubes. Deleting the cast outright (the first form of this change) broke every
+  production `calc_assd` call for the one day `main` carried it. A mixed pair is now
+  upcast to float64 on copies: the caller's meshes stay untouched, the upcast is exact,
+  and the value matches what mskt 0.1.21 (which casts inside `pcu_sdf`) computes. See
+  `docs/KNOWN_ISSUES.md` § History 28 for who is affected.
 
 - **The `sdf_gt` preprocess no longer rewrites the caller's list** ([#55](https://github.com/gattia/nsm/issues/55), plan
   §8.0.N). `reconstruct_latent_preprocess_sdf_gt` assigned the clamped, device-moved

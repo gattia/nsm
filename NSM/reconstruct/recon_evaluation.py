@@ -28,6 +28,19 @@ from .utils import compute_chamfer  # , compute_assd
 logger = logging.getLogger(__name__)
 
 
+def _mesh_as_float64(mesh):
+    """The same mesh if its points are float64 already, else a float64 copy.
+
+    The upcast is exact, and the copy keeps #55's contract: the caller's mesh is
+    never touched.
+    """
+    if mesh.point_coords.dtype == np.float64:
+        return mesh
+    mesh = mesh.copy()
+    mesh.point_coords = mesh.point_coords.astype(np.float64)
+    return mesh
+
+
 def compute_recon_loss(
     meshes,
     # orig_pts,
@@ -56,9 +69,16 @@ def compute_recon_loss(
 
     Neither list is modified, and neither are the meshes in them (#55). The ASSD branch
     used to downcast both sides to ``float32`` in place, under a comment reading "make
-    sure the points for the meshes are the same types"; pymskt's ``pcu_sdf`` casts the
-    query points and the mesh vertices to ``float64`` itself, so the types were never
-    what reached the computation.
+    sure the points for the meshes are the same types". The comment's reason was real:
+    whether ``pcu_sdf`` tolerates a mixed-dtype pair depends on the pymskt version —
+    mskt 0.1.21 casts the query points and the mesh vertices to ``float64`` itself, but
+    mskt 0.1.19 (the knee-pipeline production environment) hands both straight to
+    ``point_cloud_utils``, which raises ``ValueError`` on a mixed pair. And the
+    production path always hands one over: the knee pipeline's input meshes carry
+    float64 points on disk (measured on an archived job, all of them) while the
+    reconstruction arrives float32 from marching cubes. So a mixed pair is aligned here
+    on *copies* — upcasting the float32 side, so no precision is lost and the caller's
+    meshes stay untouched.
     """
     logger.info("Starting reconstruction loss computation")
     logger.debug("Computing loss for %s meshes", len(meshes) if isinstance(meshes, list) else 1)
@@ -129,7 +149,12 @@ def compute_recon_loss(
                 assd_loss_ = np.nan
                 logger.warning("Mesh %s: ASSD set to NaN (no %s mesh)", mesh_idx, missing)
             else:
-                assd_loss_ = mesh.get_assd_mesh(orig_meshes[mesh_idx])
+                recon_mesh = mesh
+                orig_mesh = orig_meshes[mesh_idx]
+                if recon_mesh.point_coords.dtype != orig_mesh.point_coords.dtype:
+                    recon_mesh = _mesh_as_float64(recon_mesh)
+                    orig_mesh = _mesh_as_float64(orig_mesh)
+                assd_loss_ = recon_mesh.get_assd_mesh(orig_mesh)
                 logger.debug("Mesh %s: ASSD = %.6f", mesh_idx, assd_loss_)
             result[f"assd_{mesh_idx}"] = assd_loss_
 

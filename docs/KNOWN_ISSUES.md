@@ -1732,10 +1732,10 @@ layout into the whole-joint function).
 
 | | |
 |---|---|
-| **Affected** | `compute_recon_loss(..., calc_assd=True)` — and therefore `get_mean_errors` and `reconstruct_mesh` with `calc_assd`, which is what both shipped configs set — called with meshes whose `point_coords` are **float64**. → Aug 2026 |
-| **Unaffected** | Everything NSM produces or reads itself: VTK stores points at single precision, so `create_mesh`'s output and a mesh pymskt reads from disk are already float32 and the cast was a no-op. Bit-identical on both shipped ShapeMedKnee configs and on `kneepipeline`. The chamfer path never cast at all |
+| **Affected** | `compute_recon_loss(..., calc_assd=True)` — and therefore `get_mean_errors` and `reconstruct_mesh` with `calc_assd`, which is what both shipped configs set — called with any **float64** `point_coords`. `kneepipeline`'s `assd_bone_mm`/`assd_cartilage_mm` are in this population: its input meshes carry float64 points *on disk* (measured on an archived production job — every mesh in it, `femur_mesh_raw.vtk` included), so the original was always downcast. → Aug 2026 |
+| **Unaffected** | Meshes that are float32 on both sides before the cast — `create_mesh`'s marching-cubes output starts there. A mesh read from disk is whatever the writer stored: VTK's legacy format keeps doubles, and pymskt writes the dtype it holds, so "read through pymskt" does **not** imply float32 (the first form of this entry claimed it did). The chamfer path never cast at all |
 | **Severity** | Silent, small, and in the direction of *less* precision |
-| **Fixed in** | `slice-n-phase2-close`, Aug 2026 (plan §8.0.N, [#55](https://github.com/gattia/nsm/issues/55)) |
+| **Fixed in** | `slice-n-phase2-close`, Aug 2026 (plan §8.0.N, [#55](https://github.com/gattia/nsm/issues/55)); corrected to align-on-copies by plan §7.5a's compatibility check, 2026-08-30 — the first form deleted the cast outright and crashed the production environment (see below) |
 
 ### What was wrong
 
@@ -1749,12 +1749,20 @@ orig_meshes[mesh_idx].point_coords = orig_meshes[mesh_idx].point_coords.astype(n
 
 Two things are wrong with it and only one of them is about precision.
 
-**The stated reason does not hold.** `get_assd_mesh` calls pymskt's `pcu_sdf`, which casts
-the query points *and* the mesh vertices to `float64` itself
-(`get_faces_vertices(..., points_dtype=np.float64)`, `_as_c_contig(pts, np.float64)`). The
-caller's dtype never reached the computation. Measured on a sphere pair, float32/float64,
-float64/float32 and float64/float64 all return the identical value — so the cast could
-never supply agreement, only remove precision on the way in.
+**The stated reason holds — on some pymskt versions.** mskt 0.1.21 casts the query points
+*and* the mesh vertices to `float64` inside `pcu_sdf`
+(`get_faces_vertices(..., points_dtype=np.float64)`, `_as_c_contig(pts, np.float64)`), so
+there the caller's dtype never reaches the computation — measured on a sphere pair,
+float32/float64, float64/float32 and float64/float64 all return the identical value. But
+mskt **0.1.19**, the knee-pipeline production environment, hands both dtypes straight to
+`point_cloud_utils`, which raises `ValueError: Invalid type (double, Row Major) for
+argument 'v'` on a mixed pair — measured in that environment, 2026-08-30. The first form
+of this fix took "the reason does not hold" as unconditional and deleted the cast; the
+day after it merged, plan §7.5a's compatibility check found every production
+`fit_nsm` call crashing at the ASSD step. The cast was load-bearing; what was wrong with
+it was the *instrument*: an in-place, precision-losing downcast of the caller's objects.
+Since 2026-08-30 a mixed pair is aligned on copies, upcast to float64 — exact, caller
+untouched, and the same value mskt 0.1.21 computes internally.
 
 **It mutated the caller's objects.** Not copies: `mesh` is the caller's reconstruction and
 `orig_meshes[mesh_idx]` is the caller's ground-truth mesh, and both came back downcast.
@@ -1763,11 +1771,11 @@ lost precision on meshes it still held and had no way to notice.
 
 ### How to tell whether one of your runs is affected
 
-Your ASSD numbers are affected only if the meshes you passed were float64. If they came
-from `create_mesh`, from `reconstruct_mesh`, or from reading a `.vtk` through pymskt, they
-were float32 and nothing changed. If you built them yourself at double precision — from a
-numpy array, or a mesh library that keeps doubles — the ASSD you recorded came from a
-float32 round-trip of your points.
+Your ASSD numbers are affected if either mesh reached the computation as float64. Check
+the *files* you passed, not an assumption about VTK: `Mesh(path).point_coords.dtype`.
+The knee pipeline's meshes are float64 on disk, so all of its runs are in the
+population. An ASSD recorded before this fix came from a float32 round-trip of those
+points; from the fix on, the same pair is computed at float64.
 
 **The size of it:** measured on a sphere pair perturbed below float32 resolution, the ASSD
 moves by **7.2e-09**. That is far below any tolerance NSM reports against, so this is a
