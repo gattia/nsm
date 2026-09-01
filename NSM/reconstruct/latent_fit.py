@@ -6,6 +6,7 @@ here, so ``NSM.reconstruct`` and ``NSM.reconstruct.main`` both still serve them 
 re-import block is public API, pinned by ``test_reconstruct_import_compat``.
 """
 
+import inspect
 import logging
 
 import numpy as np
@@ -23,6 +24,30 @@ from .._verbose_deprecation import honour_verbose
 from .utils import adjust_learning_rate, refuse_unknown_kwargs
 
 logger = logging.getLogger(__name__)
+
+
+def _decode(decoder, latent, xyz):
+    """
+    Evaluate ``decoder`` at ``xyz`` for one latent, through whichever forward interface
+    it exposes.
+
+    Two interfaces are in the wild and only one of them was called here. ``TriplanarDecoder``
+    (and every test double written against it) takes ``forward(x=None, latent=None,
+    xyz=None, ...)``; ``deep_sdf.Decoder`` takes ``forward(input_, epoch=None)`` and reads
+    the latent back out of the concatenated columns. ``reconstruct_latent`` called the
+    keyword form unconditionally, so reconstructing **any MLP model raised**
+    ``TypeError: forward() got an unexpected keyword argument 'latent'`` on the first
+    batch -- found by plan section 7.5b, whose MLP arm had to wrap the decoder to run at
+    all, and reproduced here on ``main``.
+
+    ``NSM/mesh/main.py`` has dispatched on the signature since before the refactor. This
+    is that dispatch, at the site that was missing it; the concatenation order
+    ``[latent, xyz]`` is the one the MLP is trained with.
+    """
+    signature = inspect.signature(decoder.forward)
+    if "latent" in signature.parameters and "xyz" in signature.parameters:
+        return decoder(latent=latent, xyz=xyz)
+    return decoder(torch.cat([latent.expand(xyz.shape[0], -1), xyz], dim=1))
 
 
 @honour_verbose
@@ -400,8 +425,7 @@ def _recon_loss(
     # output columns onto it.
     surface_offset = 0
     for decoder_idx, decoder in enumerate(decoders):
-        # Fast inference: pass latent and xyz separately
-        pred_sdf = decoder(latent=latent.squeeze(0), xyz=xyz_input)
+        pred_sdf = _decode(decoder, latent.squeeze(0), xyz_input)
 
         # initialize loss as zeros with same device (will be averaged later)
         _loss_ = 0
@@ -876,8 +900,7 @@ def reconstruct_latent(
                 xyz_input_grad = xyz_input.detach().requires_grad_(True)
 
                 for decoder_idx, decoder in enumerate(decoders):
-                    # Fast inference mode for eikonal loss
-                    pred_sdf_grad = decoder(latent=latent.squeeze(0), xyz=xyz_input_grad)
+                    pred_sdf_grad = _decode(decoder, latent.squeeze(0), xyz_input_grad)
                     eik_loss = eikonal_loss(pred_sdf_grad, xyz_input_grad, reduction="mean")
                     eikonal_loss_value += eik_loss
 

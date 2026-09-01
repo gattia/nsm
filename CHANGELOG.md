@@ -113,6 +113,17 @@ nsm @ git+https://github.com/gattia/nsm@v0.3.0
 
 ### Fixed
 
+- **`reconstruct_latent` can reconstruct an MLP model** (plan §7.5b). It called
+  `decoder(latent=..., xyz=...)` unconditionally, which `TriplanarDecoder` accepts and
+  `deep_sdf.Decoder.forward(input_, epoch=None)` does not, so reconstructing any MLP model
+  raised `TypeError: forward() got an unexpected keyword argument 'latent'` on the first
+  batch — through `reconstruct_mesh` and through `get_mean_errors`, the validation hook the
+  training loop calls. It now dispatches on the decoder's signature and falls back to the
+  concatenated `[latent, xyz]` form, which is what `NSM/mesh/main.py` has always done.
+  Present since before the refactor and invisible because production ships only triplanar
+  models. **No result changes**: the keyword interface is still called with keywords, and
+  the path that raised produced nothing to change.
+
 - **`compute_recon_loss` no longer downcasts the caller's meshes — a mixed-dtype pair is
   aligned on copies instead** ([#55](https://github.com/gattia/nsm/issues/55), plan §8.0.N;
   corrected by plan §7.5a's compatibility check). Under `calc_assd=True` it set
