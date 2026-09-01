@@ -69,10 +69,15 @@
   `latent_fit.py` never got it; unnoticed because production ships only triplanar.
   Verified here against `main` at `cd83ccc`. Its fix is its own slice, and the issue text
   is drafted for the maintainer to approve before filing (§ Documents and work).
-  **Open, deliberately:** last-100-epoch means run 7–9% higher on `main` for *both*
-  architectures with consistent sign, which is the one place the run stopped short of the
-  box's own "if in doubt, two seeds, one ref". One run settles it; triplanar being clean
-  is why it does not block.
+  **The MLP trend is closed: it is reconstruction noise, measured 2026-08-31.** Both MLP
+  models frozen, the same 10 subjects re-fitted under two further recon seeds — the
+  paired sign **flips wholesale**, with `main` better on 9/10 under seed 202, and only
+  1/10 subjects stable across all three. The trap the follow-up exposes is worth more
+  than the result: the eval harness reseeds identically before every subject, so a run's
+  10 fits share one latent-init draw and the honest unit is the per-seed mean (t(2)=0.86,
+  not the 2.68 a subject-level test would report). The training-loss tail statistic was
+  never separately measured and does not need to be — reconstruction is the criterion,
+  and it is equivalent. **§7.5b is closed with nothing open.**
 - **§7.5's premise was corrected by the maintainer the day it was written, and both runs
   widened (2026-08-30).** "No archived BScore on this box" came from a sweep with the
   wrong scope — it searched under the repo, and production data lives at
@@ -1911,15 +1916,34 @@ a transcribed figure.
   predates #102's ASSD dtype fix; both envs pinned mskt 0.1.21, where that defect cannot
   fire, so the results stand as a test of the refactor.)*
 
-  **Open, and the one place the run stopped short of this box's own criterion:** the
-  last-100-epoch mean is 7–9% higher on `main` for **both** architectures (MLP
-  0.00705 → 0.00767, triplanar 0.00312 → 0.00335), and MLP reconstruction is 2–3% worse
-  on 7 of 10 subjects. Each is individually within scatter, but the pass criterion says
-  *if in doubt, measure that noise: two seeds, one ref* — and the report is in doubt. The
-  consistent sign across two independent architectures is what makes it worth one more
-  run rather than a shrug: reseed noise should split direction evenly. **Next action if
-  anyone wants it settled: two seeds at one ref, one architecture.** Not a blocker —
-  triplanar is what production ships and triplanar is clean.
+  **The MLP trend was chased down and is noise — measured, 2026-08-31.** Both MLP models
+  were frozen and the same 10 subjects re-fitted under two further reconstruction seeds
+  (101, 202, beside the original 52122). **The sign flips wholesale with the seed**:
+  paired ASSD Δ (main − baseline) runs +0.024 (7/10 worse) → +0.070 (9/10 worse) →
+  **−0.024, with `main` better on 9/10**, and only 1/10 subjects (bone) keep a stable
+  sign across all three. That is the finding; the statistics merely agree with it.
+  - **The unit of analysis is the run, not the subject**, and this is the trap worth
+    carrying forward: the eval harness resets `torch.manual_seed` to the same value
+    before *every* subject, so all 10 fits in a run share one latent-init draw and a
+    seed shifts the cohort together. Per-seed means give t(2) = 0.86 (bone) / −0.56
+    (cart), nowhere near significance; a subject-level t on seed-averaged data reads
+    2.68 and is wrong, because it treats one shared draw as ten independent ones.
+  - Supporting signatures: Δbone and Δcart uncorrelated within subject (r = +0.01 — a
+    genuinely worse model degrades both surfaces of a knee together), Δcart
+    anti-correlated with baseline difficulty (r = −0.72, regression to the mean), and
+    the *baseline's* fits are the noisier of the two (cart across-seed SD 0.092 vs
+    0.057).
+  - **What this settles and what it does not.** It settles the reconstruction trend,
+    which is the criterion the maintainer named as decisive. It does **not** directly
+    measure the training-loss observation (last-100-epoch means 7–9% higher on `main`
+    for both architectures) — that would need a retrain at a second *training* seed,
+    which nobody ran. Recorded rather than blurred: final losses agreed to 1–3%, the
+    last-100-epoch mean is a noisy tail statistic, and reconstruction — the thing the
+    losses are a proxy for — is equivalent. Not worth a retrain unless someone has a
+    reason to care about the tail statistic itself.
+  - One phrasing note for anyone re-reading the source report: a sign flip shows any
+    systematic component is *small relative to the noise*, not that it is zero. Which is
+    the question that matters here, and the answer is that it is below the floor.
 
   Original specification follows.
 
