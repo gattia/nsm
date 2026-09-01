@@ -51,12 +51,28 @@
   `testing/` has passed `NSM/` in size — **14,770 lines against 14,460**, a ratio of 1.02
   from 0.26 at `v0.1.0` — and the slice index's new **T row** carries the measurements and
   three checkable trim criteria. It runs last because every slice adds to what it trims.
-- **Next:** **§7.5b**, the 2 × 2 training matrix on the maintainer's server (fresh
-  clone; needs the maintainer to name the dataset and config) — §7.5a is done, see
-  above. After 7.5b passes: **§8.0.R** and **§8.0.P** in either order (P's gate fell —
-  see below), then **S**, then **T**. Q left the plan (see below). **Blocked on:
-  nothing for the maintainer decisions in flight (#102 merge, 7.5b scheduling); no code
-  is blocked.**
+- **Next:** **§8.0.R**, then **§8.0.P** (either order — P's gate fell, see below), then
+  **S**, then **T**. Q left the plan (see below). **Both validation runs are done:**
+  §7.5a on the production box and **§7.5b on the maintainer's cluster (2026-08-31,
+  PASS)** — the refactor is validated for real training use, so nothing gates the
+  remaining slices. **Blocked on nothing.**
+- **§7.5b passed, and the run that validated the refactor also found a live bug in it
+  (2026-08-31, run by a second agent on the maintainer's cluster).** The 2 × 2 completed
+  with LR comparability verified at epoch 1, finals within 1–3%, strict checkpoint
+  round-trips, and — the criterion that decides it — **paired reconstruction on the
+  production architecture equivalent between refs** (triplanar ASSD Δ +0.0000 ± 0.0037
+  bone, −0.0006 ± 0.0073 cart, n=10). Two things came out of it that outlive the run:
+  three §9 ledger findings, and **`reconstruct_latent` cannot reconstruct an MLP model
+  on either ref** — it calls `decoder(latent=…, xyz=…)` while `deep_sdf.Decoder.forward`
+  takes `(input_, epoch=None)`, so `get_mean_errors` raises `TypeError` on the first
+  subject. `NSM/mesh/main.py` has the signature dispatch that fixes exactly this and
+  `latent_fit.py` never got it; unnoticed because production ships only triplanar.
+  Verified here against `main` at `cd83ccc`. Its fix is its own slice, and the issue text
+  is drafted for the maintainer to approve before filing (§ Documents and work).
+  **Open, deliberately:** last-100-epoch means run 7–9% higher on `main` for *both*
+  architectures with consistent sign, which is the one place the run stopped short of the
+  box's own "if in doubt, two seeds, one ref". One run settles it; triplanar being clean
+  is why it does not block.
 - **§7.5's premise was corrected by the maintainer the day it was written, and both runs
   widened (2026-08-30).** "No archived BScore on this box" came from a sweep with the
   wrong scope — it searched under the repo, and production data lives at
@@ -1873,7 +1889,41 @@ a transcribed figure.
     and with `NSM_SHIPPED_MODELS=/mnt/data/programming/kneepipeline/NSM_MODELS` set,
     `python -m pytest testing/NSM/regression/test_shipped_checkpoints.py` (that
     directory holds the 647, 551 and 231 model folders; all three discover).
-- [ ] **7.5b — real training runs, maintainer's server (fresh clone).** A **2 × 2 matrix**
+- [x] **7.5b — real training runs, maintainer's server (fresh clone).** *(Executed
+  2026-08-31 on the maintainer's cluster by a second agent; **PASS**, with one open
+  question and two ledger findings recorded at §9. Design as specified: 2 × 2 over
+  `deep_sdf` / `triplanar` × `bb2c6a3` / `main`@`55db823`, femur bone+cartilage, 50 mesh
+  pairs of the CVPR train split, 1000 epochs, seed 52122, AdamW, historical configs, two
+  clones with their own conda envs both pinned `mskt==0.1.21`, separate caches per ref.
+  **LR comparability was verified rather than assumed** — main's configs carry the
+  paste-ready `Target` annotation from its own `ValueError` (entry 0 → latent, entry 1 →
+  model: the historical AdamW swap), and both refs were confirmed to assign identical
+  effective LRs at epoch 1, which is what makes a trajectory difference indict the
+  refactor instead of the LR fix. All four runs completed; finals agree within 1–3%
+  (MLP 0.00692 → 0.00671, triplanar 0.00257 → 0.00260); checkpoint → `load_model` →
+  strict state-dict round-trip passed on both `main` models. Reconstruction, the
+  criterion the maintainer named: first 10 subjects of the val split, each model scored
+  through **its own ref's** `get_mean_errors`, paired per subject. **Triplanar — the
+  production architecture — is an unambiguous pass**: ASSD Δ +0.0000 ± 0.0037 (bone),
+  −0.0006 ± 0.0073 (cart), two orders of magnitude below between-subject spread, with
+  direction splitting 5–6/10. MLP shows no significant difference (paired t ≈ 1.5 / 1.0
+  at n=10) with a small unresolved trend. **The validated `main` is `55db823`**, which
+  predates #102's ASSD dtype fix; both envs pinned mskt 0.1.21, where that defect cannot
+  fire, so the results stand as a test of the refactor.)*
+
+  **Open, and the one place the run stopped short of this box's own criterion:** the
+  last-100-epoch mean is 7–9% higher on `main` for **both** architectures (MLP
+  0.00705 → 0.00767, triplanar 0.00312 → 0.00335), and MLP reconstruction is 2–3% worse
+  on 7 of 10 subjects. Each is individually within scatter, but the pass criterion says
+  *if in doubt, measure that noise: two seeds, one ref* — and the report is in doubt. The
+  consistent sign across two independent architectures is what makes it worth one more
+  run rather than a shrug: reseed noise should split direction evenly. **Next action if
+  anyone wants it settled: two seeds at one ref, one architecture.** Not a blocker —
+  triplanar is what production ships and triplanar is clean.
+
+  Original specification follows.
+
+  A **2 × 2 matrix**
   (maintainer, 2026-08-30): both architectures — `deep_sdf` (`Decoder`) and `triplanar`
   (`TriplanarDecoder`) — each trained once with NSM at the pre-refactor baseline and once
   at current `main`, on one of the server's **small datasets (50–100 meshes)**, not the
@@ -4723,6 +4773,30 @@ observable consequence, how to detect it in an existing run, how to reproduce ol
       entry lands with the fix, which is no longer this plan's to make: §8.0.Q re-homed
       to the two sigma plans on 2026-08-30.)*
 - [ ] Add every subsequent finding from Phases 1–4.
+- **Three findings from §7.5b's training runs (2026-08-31), recorded here rather than in
+  `KNOWN_ISSUES.md`, each for a stated reason:**
+  1. **`layer_split: False` meant "split at layer 0", and a real historical config relied
+     on it.** Pre-fix, `False == 0` duplicated the whole MLP per object (4,742,148
+     params); `main` coerces `False → None` (shared trunk, 2,371,588). This is #46 /
+     § History 14 confirmed against a config someone actually trained with, which is what
+     the entry was missing. Two consequences worth carrying: reproducing the historical
+     architecture on `main` needs an explicit **`layer_split: 0`** (7.5b's MLP cells did,
+     which is why both report 4,742,148 params and the comparison is architecture-matched),
+     and `False == 0` makes the difference **invisible to dict-equality config diffing** —
+     so "the configs are identical" does not imply the architectures are.
+  2. **A pre-refactor crash the refactor fixed silently**, and deliberately *not* filed:
+     at `bb2c6a3`, `scale_jointly=True` + `store_data_in_memory=True` raises
+     `KeyError: 'new_pts_0'` in `norm_and_scale_all_meshes` — only the on-disk npz branch
+     creates the numbered keys, and the in-memory branch reads keys nothing writes.
+     `main` handles both. It is a different site from #22 (`UnboundLocalError` on `time_`,
+     closed), so it was genuinely unrecorded. **No issue and no § History entry, per
+     `CLAUDE.md`: it always crashed, so nobody holds results from it, and it is already
+     fixed.** The ledger is the right and only home.
+  3. **`mskt>=0.1.21` is a hard floor for `main`'s sampling path** (the `seed=` kwarg on
+     `rand_pts_around_surface`), and the sampling library version must *match across refs*
+     for cache comparability — 7.5b pinned both envs to 0.1.21 for exactly that reason.
+     Already declared in `requirements.txt`; what is new is that a version *skew* between
+     two refs invalidates a comparison even when both versions are individually supported.
 - [ ] Assess whether the LR bug materially affected published/downstream results. Initial
       read: the hyperparameter search ran under the buggy mapping, so the chosen values were
       optimal *for that mapping*. The models are self-consistent; retuning under the fixed
