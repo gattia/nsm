@@ -4,7 +4,7 @@
 
 ## State
 
-**Updated:** 2026-08-31 · **Status:** open
+**Updated:** 2026-09-02 · **Status:** open
 
 - **7.5a ran and passed — after its first action caught `main` breaking production
   (2026-08-31, PR #102).** The compatibility check failed before any number existed:
@@ -67,8 +67,9 @@
   takes `(input_, epoch=None)`, so `get_mean_errors` raises `TypeError` on the first
   subject. `NSM/mesh/main.py` has the signature dispatch that fixes exactly this and
   `latent_fit.py` never got it; unnoticed because production ships only triplanar.
-  Verified here against `main` at `cd83ccc`. Its fix is its own slice, and the issue text
-  is drafted for the maintainer to approve before filing (§ Documents and work).
+  Verified here against `main` at `cd83ccc` and fixed in the same PR — one signature
+  dispatch, used at both `latent_fit.py` call sites. **No issue filed** (maintainer,
+  2026-09-02): it always crashed, so there is nothing to queue and no results to correct.
   **The MLP trend is closed: it is reconstruction noise, measured 2026-08-31.** Both MLP
   models frozen, the same 10 subjects re-fitted under two further recon seeds — the
   paired sign **flips wholesale**, with `main` better on 9/10 under seed 202, and only
