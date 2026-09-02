@@ -239,7 +239,11 @@ When you touch code a `docs/` file describes, verify it in the same commit or pu
 > pass and is the better starting point for any file below.
 
 **`NSM/models/`** — decoder architectures. `loader.load_model` is the way in: it reads a
-`model_params_config.json` and builds one of four, selected by `model_type`. Config keys
+`model_params_config.json` and builds one of four, selected by **`model_type`, which is a
+parameter of `load_model` and not read from the config** — it defaults to `"triplanar"`,
+and the MLP is spelled `"deepsdf"`. A config carrying `model_type` does not select
+anything; the caller passes it. (Noted by §7.5b's checkpoint round-trip, which had to
+pass `model_type="deepsdf"` explicitly.) Config keys
 and constructor parameters are **two vocabularies** and the loader is the translation
 (`layer_latent_in` → `latent_in`, `layer_dimensions` → `dims`), so a key that looks unused
 may simply be spelled differently one frame down.

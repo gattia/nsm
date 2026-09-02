@@ -704,3 +704,92 @@ class TestChunkedForwardAndBackward:
         named = inspect.signature(recon_main.reconstruct_mesh).parameters
         assert "n_samples_per_chunk_latent_recon" in named
         assert named["n_samples_per_chunk_latent_recon"].default is None
+
+
+# ---------------------------------------------------------------------------
+# 8. Both decoder forward interfaces
+# ---------------------------------------------------------------------------
+
+
+class LegacyInterfaceDecoder(torch.nn.Module):
+    """
+    ``deep_sdf.Decoder``'s interface: one concatenated tensor, optional ``epoch``.
+
+    Deliberately not a subclass of ``LinearDecoder`` -- the point of this double is the
+    *signature*, and inheriting one that accepts ``latent``/``xyz`` would defeat it.
+    Computes the same function as ``LinearDecoder(surfaces=1)`` given the same inputs, by
+    reading the latent and the points back out of the columns it is handed.
+    """
+
+    def __init__(self, latent_size=8):
+        super().__init__()
+        self.latent_size = latent_size
+
+    def forward(self, input_, epoch=None):
+        latent, pts = input_[:, : self.latent_size], input_[:, self.latent_size :]
+        return pts[:, :1] + latent[0].sum()
+
+
+class TestBothDecoderForwardInterfaces:
+    """
+    ``reconstruct_latent`` called ``decoder(latent=..., xyz=...)`` unconditionally, so
+    **reconstructing any MLP model raised** ``TypeError: forward() got an unexpected
+    keyword argument 'latent'`` on the first batch.
+
+    ``TriplanarDecoder.forward(x=None, latent=None, xyz=None, ...)`` accepts it;
+    ``deep_sdf.Decoder.forward(input_, epoch=None)`` does not -- measured, both
+    signatures, 2026-08-31. Unnoticed because production ships only triplanar models, and
+    invisible to this suite because every decoder double here was written against the
+    triplanar signature. Found by plan section 7.5b, whose MLP arm had to wrap its decoder
+    to evaluate at all, and reproduced on ``main`` at ``cd83ccc``.
+
+    ``NSM/mesh/main.py`` dispatches on the signature and falls back to the concatenated
+    form; ``latent_fit`` never got that. These pin the dispatch at both ends -- the legacy
+    interface works, and the keyword interface is still *called* as keywords rather than
+    quietly rerouted through concatenation.
+    """
+
+    def test_a_legacy_interface_decoder_reconstructs(self):
+        """The regression: this raised ``TypeError`` on the first batch before the fix."""
+        loss, latent = reconstruct_latent(
+            decoders=[LegacyInterfaceDecoder(latent_size=8)], **fit_kwargs()
+        )
+        assert torch.isfinite(torch.as_tensor(float(loss)))
+        assert latent.shape[-1] == 8
+
+    def test_the_keyword_interface_is_still_called_with_keywords(self):
+        """
+        The fix must not reroute the interface that already worked: a decoder advertising
+        ``latent``/``xyz`` must receive them as keywords, with ``x`` left unset. Asserted
+        by recording what arrives rather than by reading the source.
+        """
+        seen = []
+
+        class Recording(LinearDecoder):
+            def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+                seen.append(
+                    {"x_is_none": x is None, "kwargs_given": latent is not None and xyz is not None}
+                )
+                return super().forward(x=x, latent=latent, xyz=xyz)
+
+        reconstruct_latent(decoders=[Recording()], **fit_kwargs())
+        assert seen, "decoder was never called"
+        assert all(call["x_is_none"] and call["kwargs_given"] for call in seen)
+
+    def test_the_two_interfaces_agree(self):
+        """
+        The concatenation order is ``[latent, xyz]``, which is what the MLP is trained
+        with -- and the assertion that catches getting it backwards.
+
+        Both doubles compute ``pts[:, 0] + latent.sum()``, one from keywords and one by
+        slicing the concatenated tensor. Same seed, same data, so a wrong column order
+        would feed the legacy decoder three latent components as its points and land the
+        fit somewhere else. Bit-identical is the right bar here: the two paths differ only
+        in how the same numbers are packed.
+        """
+        kwargs_loss, kwargs_latent = reconstruct_latent(decoders=[LinearDecoder()], **fit_kwargs())
+        legacy_loss, legacy_latent = reconstruct_latent(
+            decoders=[LegacyInterfaceDecoder(latent_size=8)], **fit_kwargs()
+        )
+        assert float(kwargs_loss) == float(legacy_loss)
+        assert torch.equal(kwargs_latent, legacy_latent)

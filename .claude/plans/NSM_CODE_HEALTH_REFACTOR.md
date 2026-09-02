@@ -4,7 +4,7 @@
 
 ## State
 
-**Updated:** 2026-08-31 · **Status:** open
+**Updated:** 2026-09-02 · **Status:** open
 
 - **7.5a ran and passed — after its first action caught `main` breaking production
   (2026-08-31, PR #102).** The compatibility check failed before any number existed:
@@ -51,12 +51,34 @@
   `testing/` has passed `NSM/` in size — **14,770 lines against 14,460**, a ratio of 1.02
   from 0.26 at `v0.1.0` — and the slice index's new **T row** carries the measurements and
   three checkable trim criteria. It runs last because every slice adds to what it trims.
-- **Next:** **§7.5b**, the 2 × 2 training matrix on the maintainer's server (fresh
-  clone; needs the maintainer to name the dataset and config) — §7.5a is done, see
-  above. After 7.5b passes: **§8.0.R** and **§8.0.P** in either order (P's gate fell —
-  see below), then **S**, then **T**. Q left the plan (see below). **Blocked on:
-  nothing for the maintainer decisions in flight (#102 merge, 7.5b scheduling); no code
-  is blocked.**
+- **Next:** **§8.0.R**, then **§8.0.P** (either order — P's gate fell, see below), then
+  **S**, then **T**. Q left the plan (see below). **Both validation runs are done:**
+  §7.5a on the production box and **§7.5b on the maintainer's cluster (2026-08-31,
+  PASS)** — the refactor is validated for real training use, so nothing gates the
+  remaining slices. **Blocked on nothing.**
+- **§7.5b passed, and the run that validated the refactor also found a live bug in it
+  (2026-08-31, run by a second agent on the maintainer's cluster).** The 2 × 2 completed
+  with LR comparability verified at epoch 1, finals within 1–3%, strict checkpoint
+  round-trips, and — the criterion that decides it — **paired reconstruction on the
+  production architecture equivalent between refs** (triplanar ASSD Δ +0.0000 ± 0.0037
+  bone, −0.0006 ± 0.0073 cart, n=10). Two things came out of it that outlive the run:
+  three §9 ledger findings, and **`reconstruct_latent` cannot reconstruct an MLP model
+  on either ref** — it calls `decoder(latent=…, xyz=…)` while `deep_sdf.Decoder.forward`
+  takes `(input_, epoch=None)`, so `get_mean_errors` raises `TypeError` on the first
+  subject. `NSM/mesh/main.py` has the signature dispatch that fixes exactly this and
+  `latent_fit.py` never got it; unnoticed because production ships only triplanar.
+  Verified here against `main` at `cd83ccc` and fixed in the same PR — one signature
+  dispatch, used at both `latent_fit.py` call sites. **No issue filed** (maintainer,
+  2026-09-02): it always crashed, so there is nothing to queue and no results to correct.
+  **The MLP trend is closed: it is reconstruction noise, measured 2026-08-31.** Both MLP
+  models frozen, the same 10 subjects re-fitted under two further recon seeds — the
+  paired sign **flips wholesale**, with `main` better on 9/10 under seed 202, and only
+  1/10 subjects stable across all three. The trap the follow-up exposes is worth more
+  than the result: the eval harness reseeds identically before every subject, so a run's
+  10 fits share one latent-init draw and the honest unit is the per-seed mean (t(2)=0.86,
+  not the 2.68 a subject-level test would report). The training-loss tail statistic was
+  never separately measured and does not need to be — reconstruction is the criterion,
+  and it is equivalent. **§7.5b is closed with nothing open.**
 - **§7.5's premise was corrected by the maintainer the day it was written, and both runs
   widened (2026-08-30).** "No archived BScore on this box" came from a sweep with the
   wrong scope — it searched under the repo, and production data lives at
@@ -1873,7 +1895,60 @@ a transcribed figure.
     and with `NSM_SHIPPED_MODELS=/mnt/data/programming/kneepipeline/NSM_MODELS` set,
     `python -m pytest testing/NSM/regression/test_shipped_checkpoints.py` (that
     directory holds the 647, 551 and 231 model folders; all three discover).
-- [ ] **7.5b — real training runs, maintainer's server (fresh clone).** A **2 × 2 matrix**
+- [x] **7.5b — real training runs, maintainer's server (fresh clone).** *(Executed
+  2026-08-31 on the maintainer's cluster by a second agent; **PASS**, with one open
+  question and two ledger findings recorded at §9. Design as specified: 2 × 2 over
+  `deep_sdf` / `triplanar` × `bb2c6a3` / `main`@`55db823`, femur bone+cartilage, 50 mesh
+  pairs of the CVPR train split, 1000 epochs, seed 52122, AdamW, historical configs, two
+  clones with their own conda envs both pinned `mskt==0.1.21`, separate caches per ref.
+  **LR comparability was verified rather than assumed** — main's configs carry the
+  paste-ready `Target` annotation from its own `ValueError` (entry 0 → latent, entry 1 →
+  model: the historical AdamW swap), and both refs were confirmed to assign identical
+  effective LRs at epoch 1, which is what makes a trajectory difference indict the
+  refactor instead of the LR fix. All four runs completed; finals agree within 1–3%
+  (MLP 0.00692 → 0.00671, triplanar 0.00257 → 0.00260); checkpoint → `load_model` →
+  strict state-dict round-trip passed on both `main` models. Reconstruction, the
+  criterion the maintainer named: first 10 subjects of the val split, each model scored
+  through **its own ref's** `get_mean_errors`, paired per subject. **Triplanar — the
+  production architecture — is an unambiguous pass**: ASSD Δ +0.0000 ± 0.0037 (bone),
+  −0.0006 ± 0.0073 (cart), two orders of magnitude below between-subject spread, with
+  direction splitting 5–6/10. MLP shows no significant difference (paired t ≈ 1.5 / 1.0
+  at n=10) with a small unresolved trend. **The validated `main` is `55db823`**, which
+  predates #102's ASSD dtype fix; both envs pinned mskt 0.1.21, where that defect cannot
+  fire, so the results stand as a test of the refactor.)*
+
+  **The MLP trend was chased down and is noise — measured, 2026-08-31.** Both MLP models
+  were frozen and the same 10 subjects re-fitted under two further reconstruction seeds
+  (101, 202, beside the original 52122). **The sign flips wholesale with the seed**:
+  paired ASSD Δ (main − baseline) runs +0.024 (7/10 worse) → +0.070 (9/10 worse) →
+  **−0.024, with `main` better on 9/10**, and only 1/10 subjects (bone) keep a stable
+  sign across all three. That is the finding; the statistics merely agree with it.
+  - **The unit of analysis is the run, not the subject**, and this is the trap worth
+    carrying forward: the eval harness resets `torch.manual_seed` to the same value
+    before *every* subject, so all 10 fits in a run share one latent-init draw and a
+    seed shifts the cohort together. Per-seed means give t(2) = 0.86 (bone) / −0.56
+    (cart), nowhere near significance; a subject-level t on seed-averaged data reads
+    2.68 and is wrong, because it treats one shared draw as ten independent ones.
+  - Supporting signatures: Δbone and Δcart uncorrelated within subject (r = +0.01 — a
+    genuinely worse model degrades both surfaces of a knee together), Δcart
+    anti-correlated with baseline difficulty (r = −0.72, regression to the mean), and
+    the *baseline's* fits are the noisier of the two (cart across-seed SD 0.092 vs
+    0.057).
+  - **What this settles and what it does not.** It settles the reconstruction trend,
+    which is the criterion the maintainer named as decisive. It does **not** directly
+    measure the training-loss observation (last-100-epoch means 7–9% higher on `main`
+    for both architectures) — that would need a retrain at a second *training* seed,
+    which nobody ran. Recorded rather than blurred: final losses agreed to 1–3%, the
+    last-100-epoch mean is a noisy tail statistic, and reconstruction — the thing the
+    losses are a proxy for — is equivalent. Not worth a retrain unless someone has a
+    reason to care about the tail statistic itself.
+  - One phrasing note for anyone re-reading the source report: a sign flip shows any
+    systematic component is *small relative to the noise*, not that it is zero. Which is
+    the question that matters here, and the answer is that it is below the floor.
+
+  Original specification follows.
+
+  A **2 × 2 matrix**
   (maintainer, 2026-08-30): both architectures — `deep_sdf` (`Decoder`) and `triplanar`
   (`TriplanarDecoder`) — each trained once with NSM at the pre-refactor baseline and once
   at current `main`, on one of the server's **small datasets (50–100 meshes)**, not the
@@ -4723,6 +4798,30 @@ observable consequence, how to detect it in an existing run, how to reproduce ol
       entry lands with the fix, which is no longer this plan's to make: §8.0.Q re-homed
       to the two sigma plans on 2026-08-30.)*
 - [ ] Add every subsequent finding from Phases 1–4.
+- **Three findings from §7.5b's training runs (2026-08-31), recorded here rather than in
+  `KNOWN_ISSUES.md`, each for a stated reason:**
+  1. **`layer_split: False` meant "split at layer 0", and a real historical config relied
+     on it.** Pre-fix, `False == 0` duplicated the whole MLP per object (4,742,148
+     params); `main` coerces `False → None` (shared trunk, 2,371,588). This is #46 /
+     § History 14 confirmed against a config someone actually trained with, which is what
+     the entry was missing. Two consequences worth carrying: reproducing the historical
+     architecture on `main` needs an explicit **`layer_split: 0`** (7.5b's MLP cells did,
+     which is why both report 4,742,148 params and the comparison is architecture-matched),
+     and `False == 0` makes the difference **invisible to dict-equality config diffing** —
+     so "the configs are identical" does not imply the architectures are.
+  2. **A pre-refactor crash the refactor fixed silently**, and deliberately *not* filed:
+     at `bb2c6a3`, `scale_jointly=True` + `store_data_in_memory=True` raises
+     `KeyError: 'new_pts_0'` in `norm_and_scale_all_meshes` — only the on-disk npz branch
+     creates the numbered keys, and the in-memory branch reads keys nothing writes.
+     `main` handles both. It is a different site from #22 (`UnboundLocalError` on `time_`,
+     closed), so it was genuinely unrecorded. **No issue and no § History entry, per
+     `CLAUDE.md`: it always crashed, so nobody holds results from it, and it is already
+     fixed.** The ledger is the right and only home.
+  3. **`mskt>=0.1.21` is a hard floor for `main`'s sampling path** (the `seed=` kwarg on
+     `rand_pts_around_surface`), and the sampling library version must *match across refs*
+     for cache comparability — 7.5b pinned both envs to 0.1.21 for exactly that reason.
+     Already declared in `requirements.txt`; what is new is that a version *skew* between
+     two refs invalidates a comparison even when both versions are individually supported.
 - [ ] Assess whether the LR bug materially affected published/downstream results. Initial
       read: the hyperparameter search ran under the buggy mapping, so the chosen values were
       optimal *for that mapping*. The models are self-consistent; retuning under the fixed
