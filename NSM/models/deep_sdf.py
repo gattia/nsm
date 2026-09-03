@@ -1,7 +1,7 @@
 """DeepSDF: an MLP that maps ``[latent, xyz]`` to one signed distance per object.
 
 The original architecture NSM was built on, and still the ``model_type: deepsdf``
-path and the second half of ``two_stage``. :class:`Decoder` carries the whole of it;
+path. :class:`Decoder` carries the whole of it;
 ``loader.load_model`` translates config keys into its parameters (the two vocabularies
 differ -- ``layer_latent_in`` is ``latent_in``, ``layer_dimensions`` is ``dims``).
 
@@ -169,8 +169,8 @@ class Decoder(nn.Module):
         self._activation_ = activation
         self._final_activation_ = final_activation
         self.concat_latent_input = concat_latent_input
-        # list(), not `+ dims`: TwoStageDecoder's default mlp_params carries a tuple, and
-        # `[x] + (...)` is a TypeError -- so the type was not constructible at all (#46).
+        # list(), not `+ dims`: callers legitimately pass `dims` as a tuple, and
+        # `[x] + (...)` is a TypeError -- it made two_stage unconstructible for years (#46).
         self.dims = [latent_size + 3] + list(dims)
         self.latent_in = latent_in
         self.progressive_add_depth = progressive_add_depth

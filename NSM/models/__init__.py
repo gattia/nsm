@@ -1,7 +1,6 @@
 from .deep_sdf import *  # noqa: F401,F403  # re-export; see docs/ARCHITECTURE.md star-import trap
 from .loader import get_model_config_template, list_supported_models, load_model
 from .triplanar import TriplanarDecoder
-from .two_stage import TwoStageDecoder
 
 # What this package exports. Every name below is defined in this package -- the rule is
 # mechanical, so nothing is here by opinion. What it leaves out is the accident:
@@ -15,7 +14,6 @@ __all__ = [  # noqa: F405 - the deep_sdf names come through the star re-export a
     "Decoder",
     "Sine",
     "TriplanarDecoder",
-    "TwoStageDecoder",
     "deep_sdf",
     "get_activation",
     "get_model_config_template",
@@ -24,5 +22,4 @@ __all__ = [  # noqa: F405 - the deep_sdf names come through the star re-export a
     "load_model",
     "loader",
     "triplanar",
-    "two_stage",
 ]

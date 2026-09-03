@@ -21,7 +21,6 @@ import torch
 from NSM.models.loader import (
     _get_deepsdf_params,
     _get_triplanar_params,
-    _get_two_stage_params,
     get_model_config_template,
 )
 
@@ -34,7 +33,6 @@ N_LAYERS = 8
 EXTRACTORS = {
     "deepsdf": _get_deepsdf_params,
     "triplanar": _get_triplanar_params,
-    "two_stage": _get_two_stage_params,
 }
 
 
@@ -50,12 +48,6 @@ def small_config(model_type, **overrides):
             sdf_latent_size=12,
             sdf_hidden_dims=[16, 16],
         )
-    elif model_type == "two_stage":
-        config.update(latent_size=LATENT * 2)
-        config["triplanar_params"].update(
-            conv_hidden_dims=[8, 8], sdf_latent_size=12, sdf_hidden_dims=[16, 16]
-        )
-        config["mlp_params"].update(dims=[16] * 4)
     config.update(overrides)
     return config
 
@@ -70,8 +62,6 @@ def build(model_type, **overrides):
 def latent_width(model_type, model):
     if model_type == "triplanar":
         return model.latent_dim
-    if model_type == "two_stage":
-        return model.latent_size
     return model.dims[0] - 3
 
 
@@ -399,35 +389,4 @@ def test_triplanar_multi_object_forwards(objects_per_decoder):
     assert forwarded.shape == (N_POINTS, objects_per_decoder)
 
 
-# --- two_stage ---------------------------------------------------------------
-
-
-def test_two_stage_builds_from_its_own_defaults():
-    """
-    ``TwoStageDecoder`` with no arguments at all. Until Aug 2026 this raised for every
-    argument list, so the type had never been constructible: ``default_mlp_params["dims"]``
-    is a tuple and ``Decoder`` did ``[latent_size + 3] + dims`` (#46).
-    """
-    from NSM.models.two_stage import TwoStageDecoder
-
-    assert isinstance(TwoStageDecoder(), torch.nn.Module)
-
-
-def test_two_stage_does_not_mutate_its_module_level_defaults():
-    """
-    ``__init__`` writes ``latent_dim`` and ``n_objects`` into whichever dicts it was
-    handed, and the defaults are module-level. Until Aug 2026 one construction -- even a
-    failed one -- changed what every later default construction meant, process-wide (#46).
-    """
-    from NSM.models import two_stage
-
-    before = dict(two_stage.default_triplanar_params)
-    try:
-        two_stage.TwoStageDecoder(latent_size=64)
-    except Exception:
-        pass
-    assert two_stage.default_triplanar_params == before
-
-
-def test_two_stage_forwards_from_the_template():
-    assert build_and_forward("two_stage").shape == (N_POINTS, 2)
+# two_stage's construction tests left with the type (SCOPE.md section 2.9).

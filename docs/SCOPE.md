@@ -44,7 +44,7 @@ fix rather than limitations to document:
   decoders with a keyword-only `(latent=, xyz=)` interface that only `TriplanarDecoder`
   implements (`reconstruct.reconstruct_latent`), with no fallback — while `mesh.decode_sdf`
   inspects the signature and *does* fall back. Two conventions in one pipeline; `load_model`
-  advertises three model types and two of them cannot be reconstructed.
+  advertises two model types and one of them (`deepsdf`) cannot be reconstructed.
   → **Phase 4 work item: a common decoder interface plus a registration pathway**, so a
   third party can add a model and have it work in train, reconstruct, mesh and interpolate
   without editing NSM internals. One calling convention has to win.
@@ -60,8 +60,8 @@ fix rather than limitations to document:
   `647_nsm_femur_v0.0.1` triplanar config, pinned by the generator-sync test and a test
   that instantiates the trainer from the shipped file. That delivers the first of the
   per-model-type defaults.
-  → **Remaining Phase 4 work item: a default config for each *other* model type**
-  (deepsdf, two_stage).
+  → **Remaining Phase 4 work item: a default config for the *other* model type**
+  (deepsdf).
 
 **Unsupported by design, since Aug 2026 (§8.0.H):**
 
@@ -454,13 +454,19 @@ scripts) plus the two measured consumers (kneepipeline: `TriplanarDecoder` +
   vocabulary, non-SDF sigmoid default — the ruling this section replaces). `Sine` was
   re-homed to `deep_sdf` (it is `get_activation("sin")`'s activation and pairs with
   `SIREN_W0`); everything else in the module left with it.
+- **`two_stage` / `TwoStageDecoder`** (`models/two_stage.py`): triplanar + MLP summed.
+  **Zero training runs, ever** — no launcher script and no saved run config in the
+  maintainer's training project — and until #46 (Aug 2026) the class was not even
+  constructible, so nothing outside this repo can hold a checkpoint of it. Its §8.0.O
+  padding/norm-type repairs were correct and are kept as prose in the tests that pinned
+  the surviving triplanar path.
 
-**Resurrection:** `git show v0.3.0:NSM/models/modulated_periodic_activations.py` is the
-complete module as last shipped; its loader branch (`_get_implicit_params`), config
-template (`get_model_config_template("implicit")`) and tests live in the same tag under
-`NSM/models/loader.py` and `testing/NSM/models/`. Reviving it means re-adding those plus
-the Phase-4 registration pathway (§1) that removal pre-empted — the vocabulary
-reconciliation it always needed.
+**Resurrection:** `git show v0.3.0:NSM/models/modulated_periodic_activations.py` and
+`git show v0.3.0:NSM/models/two_stage.py` are the complete modules as last shipped; the
+loader branches (`_get_implicit_params`, `_get_two_stage_params`), config templates and
+tests live in the same tag under `NSM/models/loader.py` and `testing/NSM/models/`.
+Reviving either means re-adding those plus the Phase-4 registration pathway (§1) that
+removal pre-empted — for `implicit`, the vocabulary reconciliation it always needed.
 
 ---
 

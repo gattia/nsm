@@ -13,7 +13,6 @@ import torch
 
 from .deep_sdf import Decoder
 from .triplanar import TriplanarDecoder
-from .two_stage import TwoStageDecoder
 
 
 def load_model(
@@ -25,7 +24,7 @@ def load_model(
     """
     Loads a pre-trained Neural Shape Model (NSM) from configuration and state files.
 
-    Supports 'triplanar', 'deepsdf', and 'two_stage' model architectures.
+    Supports the 'triplanar' and 'deepsdf' model architectures.
     Initializes the model based on parameters in the `config` dictionary, loads the
     learned weights from `path_model_state`, moves the model to the specified device,
     and sets it to evaluation mode.
@@ -36,7 +35,7 @@ def load_model(
         path_model_state (str): Path to the .pt or .pth file containing the
             saved model state_dict.
         model_type (str, optional): The type of NSM architecture to load.
-            Supported values are 'triplanar', 'deepsdf', and 'two_stage'.
+            Supported values are 'triplanar' and 'deepsdf'.
             Defaults to 'triplanar'.
         device (str or torch.device, optional): Device to load the model on.
             If None, defaults to 'cuda' if available, otherwise 'cpu'.
@@ -59,12 +58,8 @@ def load_model(
         model_class, params = _get_triplanar_params(config)
     elif model_type == "deepsdf":
         model_class, params = _get_deepsdf_params(config)
-    elif model_type == "two_stage":
-        model_class, params = _get_two_stage_params(config)
     else:
-        raise ValueError(
-            f"Unknown model type: {model_type}. Supported types: triplanar, deepsdf, two_stage"
-        )
+        raise ValueError(f"Unknown model type: {model_type}. Supported types: triplanar, deepsdf")
 
     # Initialize model
     try:
@@ -247,68 +242,6 @@ def _get_deepsdf_params(config: Dict[str, Any]) -> tuple:
     return Decoder, params
 
 
-def _get_two_stage_params(config: Dict[str, Any]) -> tuple:
-    """Extract TwoStageDecoder parameters from config."""
-    required_keys = ["latent_size"]
-    _check_required_keys(config, required_keys, "two_stage")
-
-    # Extract triplanar and MLP specific parameters
-    triplanar_params = {}
-    mlp_params = {}
-
-    # Triplanar parameters. Either branch builds the same TriplanarDecoder as the
-    # triplanar model type, so both are held to the same required keys -- including
-    # `padding`, which this branch used to drop even when the config stated it.
-    if "triplanar_params" in config:
-        triplanar_params = config["triplanar_params"].copy()
-        _refuse_missing_architecture_keys(
-            triplanar_params, REQUIRED_ARCHITECTURE_KEYS, "two_stage triplanar_params"
-        )
-    else:
-        _refuse_missing_architecture_keys(config, REQUIRED_ARCHITECTURE_KEYS, "two_stage")
-        triplanar_params = {
-            "conv_hidden_dims": config.get("conv_hidden_dims", [512, 512, 512, 512, 512]),
-            "conv_deep_image_size": config.get("conv_deep_image_size", 2),
-            "conv_norm": config.get("conv_norm", True),
-            "conv_norm_type": config["conv_norm_type"],
-            "conv_start_with_mlp": config.get("conv_start_with_mlp", True),
-            "conv_activation": config["conv_activation"],
-            "sdf_latent_size": config.get("sdf_latent_size", 128),
-            "sdf_hidden_dims": config.get("sdf_hidden_dims", [512, 512, 512]),
-            "sdf_weight_norm": config.get("weight_norm", True),
-            "sdf_final_activation": config.get("final_activation", "tanh"),
-            "sdf_activation": config.get("activation", "relu"),
-            "padding": config["padding"],
-        }
-
-    # MLP parameters
-    if "mlp_params" in config:
-        mlp_params = config["mlp_params"].copy()
-    else:
-        # Use default MLP params with config overrides
-        mlp_params = {
-            "dims": list(config.get("layer_dimensions", (512, 512, 512, 512, 512, 512, 512, 512))),
-            "dropout": config.get("layers_with_dropout", None),
-            "dropout_prob": config.get("dropout_prob", 0.0),
-            "norm_layers": config.get("layers_with_norm", ()),
-            "latent_in": config.get("layer_latent_in", ()),
-            "weight_norm": config.get("weight_norm", True),
-            "xyz_in_all": config.get("xyz_in_all", None),
-            "activation": config.get("activation", "relu"),
-            "final_activation": config.get("final_activation", "tanh"),
-            "concat_latent_input": config.get("concat_latent_input", True),
-        }
-
-    params = {
-        "latent_size": config["latent_size"],
-        "n_objects": config.get("objects_per_decoder", 2),
-        "triplanar_params": triplanar_params,
-        "mlp_params": mlp_params,
-    }
-
-    return TwoStageDecoder, params
-
-
 def _check_required_keys(config: Dict[str, Any], required_keys: list, model_type: str):
     """Check that all required keys are present in config."""
     missing_keys = [key for key in required_keys if key not in config]
@@ -320,7 +253,7 @@ def _check_required_keys(config: Dict[str, Any], required_keys: list, model_type
 
 def list_supported_models() -> list:
     """Return a list of supported model types."""
-    return ["triplanar", "deepsdf", "two_stage"]
+    return ["triplanar", "deepsdf"]
 
 
 def get_model_config_template(model_type: str) -> Dict[str, Any]:
@@ -384,39 +317,6 @@ def get_model_config_template(model_type: str) -> Dict[str, Any]:
             "concat_latent_input": False,
             "progressive_add_depth": False,
             "layer_split": None,
-        }
-
-    elif model_type == "two_stage":
-        return {
-            # Required
-            "latent_size": 512,
-            # Optional
-            "objects_per_decoder": 2,
-            # Can specify nested params or use top-level params
-            "triplanar_params": {
-                "conv_hidden_dims": [512, 512, 512, 512, 512],
-                "conv_deep_image_size": 2,
-                "conv_norm": True,
-                "conv_norm_type": "layer",
-                "conv_start_with_mlp": True,
-                "conv_activation": None,
-                "sdf_latent_size": 128,
-                "sdf_hidden_dims": [512, 512, 512],
-                "sdf_weight_norm": True,
-                "sdf_final_activation": "tanh",
-                "sdf_activation": "relu",
-                "padding": 0.1,
-            },
-            "mlp_params": {
-                "dims": [512, 512, 512, 512, 512, 512, 512, 512],
-                "dropout": None,
-                "dropout_prob": 0.0,
-                "latent_in": (),
-                "weight_norm": True,
-                "activation": "relu",
-                "final_activation": "tanh",
-                "concat_latent_input": True,
-            },
         }
 
     else:
