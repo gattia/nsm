@@ -4,7 +4,7 @@
 
 ## State
 
-**Updated:** 2026-09-02 · **Status:** open
+**Updated:** 2026-09-03 · **Status:** open
 
 - **7.5a ran and passed — after its first action caught `main` breaking production
   (2026-08-31, PR #102).** The compatibility check failed before any number existed:
@@ -51,8 +51,63 @@
   `testing/` has passed `NSM/` in size — **14,770 lines against 14,460**, a ratio of 1.02
   from 0.26 at `v0.1.0` — and the slice index's new **T row** carries the measurements and
   three checkable trim criteria. It runs last because every slice adds to what it trims.
-- **Next:** **§8.0.R**, then **§8.0.P** (either order — P's gate fell, see below), then
-  **S**, then **T**. Q left the plan (see below). **Both validation runs are done:**
+- **§8.0.R executed (2026-09-03), based on `main` at `cb9d802`:** commits 2–8 — the
+  characterization, the `two_stage` translator, the shipped-key sweep's predicate,
+  the four refusals, the `_decode` memo, the polymorphic-hook correction, and the docs.
+  Suite 1180 → **1213 passed / 4 skipped / 3 xfailed**: all 11 strict xfails commit 2
+  raised were retired inside the slice, two of them by measurement rather than by a fix,
+  and the 3 that remain are the regression harness's. One § History entry (30), two
+  CHANGELOG Changed and one Fixed, `SCOPE` §2.6 and `ARCHITECTURE` §7's
+  accepted-and-ignored row. Net **+61** in `NSM/` against a +100 budget, two thirds of it
+  the four refusal messages.
+- **Re-measuring the row retired its whole first carrier, and that is the finding.** All
+  five `reconstruct_latent` sites §8.0.K deferred to R are closed on `main` — four in
+  §8.0.K's own review round 2 (`5f1dbf7`), the fifth through §8.0.J's kwargs refusal
+  (`63209df`). The row recorded the deferral and not the fix, so R was scheduled to
+  rediscover a "200× step size" that had already moved. **A slice can close a finding in
+  the same breath as deferring it**, and §8.0.N's sweep then built the row faithfully out
+  of the deferrals. The O review's rule needs one more clause: build the row by sweeping
+  what names it, *and re-run it before scheduling it*. The five are now pinned by tests,
+  because a closed site no test describes is indistinguishable from an open one at the
+  next sweep.
+- **The accepted-and-never-read class is empty on the documented function surface, and
+  the discriminator is what makes that true.** Five candidates; every one is a polymorphic
+  interface whose *sibling* reads the parameter — `epoch` on three decoders and one
+  schedule, and `cache_path`, which `SDFSamples._upgrade_cached_layout` ignores and
+  `MultiSurfaceSDFSamples`' override names in the warning it emits before a
+  delete-and-rebuild. That last one was written into the plan statement as the slice's one
+  deletion and survived until the deletion was *run*: `flake8` reported `F821` in the
+  override. **A polymorphic hook's parameters have to be judged across every
+  implementation and the sweep is per function**, so the sibling test is the second half of
+  the predicate, not a caveat on it — and it is what #20's delete-the-parameter remedy has
+  always needed to be safe.
+- **Every live instance of the class is one frame up, at the config layer.**
+  `_get_two_stage_params`' inline branch is a hand-copied subset of its two siblings and
+  had dropped four keys both read and both constructors accept (§ History 30);
+  `_get_implicit_params` drops `activation`, a third independent way the `implicit` type is
+  unreachable as configured (`SCOPE` §2.6). **Delegating to the siblings is the wrong fix
+  and only measuring says so** — they also disagree on `dropout_prob` and
+  `concat_latent_input`, and the second changes the MLP's input width, so delegating would
+  rebuild every existing two-stage model at a different architecture. Each key is read at
+  the default the branch produced by omission instead.
+- **The third sweep in this plan to be wrong in its predicate rather than its data.**
+  §6.1's first pass took an unsupported module as a reader; §8.0.N corrected that reader
+  set and left the *match granularity*; R corrects the granularity. Matching each shipped
+  config key as a **string literal** rather than a substring — an AST walk, needing none of
+  the `config[name]` resolver the old docstring said a tightening would require — reports
+  six keys the substring version passes, two of them hidden inside an unrelated identifier
+  (`n_val` in `_run_validation`, `modulated` in `modulated_periodic_activations`). Four
+  deleted, `seed` renamed to `random_seed`, `model_type` kept and the test's second clause
+  widened from the dataset constructor to `load_model`.
+- **`grad_clip` (carrier b) is unchanged and still deferred**, re-verified rather than
+  transcribed: one call site, `model.parameters()`, and no tensor of the latent embedding
+  in it. The repair is a training experiment, which this slice cannot run;
+  `KNOWN_ISSUES` § Open keeps it. **`TriplanarDecoder`'s silent `**kwargs` stays with
+  §8.0.S item (4)**, now with the evidence it lacked: `_get_two_stage_params` copies a
+  caller's `triplanar_params` verbatim, so a typo'd architecture key builds at
+  `padding=0.1` and says nothing — a config path to the swallow, asserted.
+- **Next:** **§8.0.P**, then **S**, then **T**. Q left the plan (see below). **Both
+  validation runs are done:**
   §7.5a on the production box and **§7.5b on the maintainer's cluster (2026-08-31,
   PASS)** — the refactor is validated for real training use, so nothing gates the
   remaining slices. **#105 merged 2026-09-02 (`f5106a5`) and this working tree is pulled
@@ -2030,8 +2085,8 @@ below exists so a decomposition bullet cannot be satisfied by relocation again.
 
 ### 8.0 Slice index — scheduled 2026-08-26
 
-§8.0.A–O, N′ and N are executed and keep their statements below. P, R, S and T remain —
-after §7.5's two validation runs — and Q re-homed to the sigma plans on 2026-08-30.
+§8.0.A–O, N′, N and R are executed and keep their statements below. P, S and T remain —
+§7.5's two validation runs are done — and Q re-homed to the sigma plans on 2026-08-30.
 **Each remaining slice gets its own §8.0-style statement as commit 1 of its own slice**,
 with every claim re-run against `main` first — writing the statements up front is the
 "size docs to your uncertainty" mistake `CLAUDE.md` names. What is fixed here is the
@@ -2051,7 +2106,7 @@ with every claim re-run against `main` first — writing the statements up front
 | **N** | Phase 2 close + lint gate *(executed, PR #100)* | the §6 checkboxes, `flake8-docstrings` in `make lint`, `CLAUDE.md` §Architecture rewrite, and the four #56 knobs + #55 + #25 (see the dispositions below) | Must follow G–M — that is where the missing docstrings are — and the lint gate is what stops G–M's accuracy rotting. **Re-scoped 2026-08-29, measured:** ~34 docstrings to write (57 bare, less the 16 deliberately-bare overrides, the 6 SCOPE-excluded, one nested decorator) ≈ 350–400 lines, three times §8.0.M's docstring count. **The gate is D1xx-only** — D100/101/102/103 — with `.flake8` recording why the D2xx/D4xx families stay off: at defaults they fire on existing accurate prose (139 D212, 42 D400, 31 D205, 9 D403), which is house style. Deliverable is "the gate passes", not a transcribed percentage. The 4 `get_learning_rate` and 12 `forward`/`backward` overrides that are bare on purpose take a per-site `# noqa: D102` naming the class docstring that carries the formula, **not** a rule exception — a `noqa` says why at the site, a config exception says it nowhere. |
 | **P** | 0b quarantine + #18 | `train/deprecated/` (876 lines), the `sample_difficulty_lx` port; #51 rides here (dispositions below) | **Ungated 2026-08-30**: the survey is answered and measured — nsosim is inference-only, five symbols and none of them in `train/` (`SCOPE` §5 has the sweep). What remains open is #18's own ruling, port-or-delete for the ~12 `sample_difficulty_lx` lines (§2.2's two conditions if ported), made at slice time; §8.0.N's finding is the first task either way — the four config keys of that name are dead on every supported path. |
 | **Q** | ~~#3, sigma coordinate space~~ **re-homed 2026-08-30 (maintainer)** | `BREAKING_CHANGE_PROPOSAL.md` + `SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md`, whose State blocks now own it | Moved out of the plan: a behaviour change with its own migration guard and release needs is an initiative, not a refactor slice — the refactor's close no longer waits on it, nor it on the refactor. Its sequencing constraint survives the move: it wants a release on either side, and v0.4.0 (the S row) is the near one. |
-| **R** | The parameter surface: read on one path, ignored on another | **Added 2026-08-30 by §8.0.N's sweep, and it is an omission being repaired rather than new work** — §8.0.K proposed this row in its own body on 2026-08-27 and no one put it in the table, so three later deferrals named a slice that could never be scheduled. It carries: (a) §8.0.K's five sites in `reconstruct_latent` — `optimizer_name` under `hybrid_optimizer`, `lbfgs_lr` / `lbfgs_max_iter` / `lbfgs_history_size` on the non-hybrid path (requested `(1.0, 3, 7)`, constructed `(0.005, 10, 100)` — a 200× step size), and `log_wandb_step`, which `reconstruct_latent` names and `reconstruct_mesh` never forwards; (b) `grad_clip`, re-measured by §8.0.L and still deferred — `clip_grad_norm_` sees the decoder's tensors and never the latent embedding; (c) the config validation with no reported instance behind it: `code_regularization_warmup=0`, `WarmupLearningRateSchedule(length=0)` and `StepLearningRateSchedule(interval=0)` all raise `ZeroDivisionError`, and a config without `additional_checkpoints` raises `KeyError` from `get_checkpoints`; (d) `_decode`'s `inspect.signature` call, added at `latent_fit.py:29` by #105 — it runs per decoder per batch inside `_recon_loss`'s optimization loop and is **not** a defect (negligible against the GPU work, and unmeasured against a real fit), but the check is loop-invariant and R is the slice that opens this function. **Every number in (a)–(c) predates two rewrites of `latent_fit.py`** (§8.0.N and #105) and is to be re-measured rather than transcribed — the `lbfgs_*` triple especially | **After a release**, which is §8.0.K's stated reason and still holds: closing one of these sites is either a refusal (no boundary needed) or a signature change (a boundary), and the set should be triaged **once, together**, so the boundary is paid for once. The question per parameter is not "does anyone set it" — §8.0.K measured that a deletion pass would find about two — but "is it read on every path that accepts it" |
+| **R** | The parameter surface: read on one path, ignored on another *(executed 2026-09-03 — the statement below supersedes every number in this cell)* | **Added 2026-08-30 by §8.0.N's sweep, and it is an omission being repaired rather than new work** — §8.0.K proposed this row in its own body on 2026-08-27 and no one put it in the table, so three later deferrals named a slice that could never be scheduled. It carries: (a) §8.0.K's five sites in `reconstruct_latent` — `optimizer_name` under `hybrid_optimizer`, `lbfgs_lr` / `lbfgs_max_iter` / `lbfgs_history_size` on the non-hybrid path (requested `(1.0, 3, 7)`, constructed `(0.005, 10, 100)` — a 200× step size), and `log_wandb_step`, which `reconstruct_latent` names and `reconstruct_mesh` never forwards; (b) `grad_clip`, re-measured by §8.0.L and still deferred — `clip_grad_norm_` sees the decoder's tensors and never the latent embedding; (c) the config validation with no reported instance behind it: `code_regularization_warmup=0`, `WarmupLearningRateSchedule(length=0)` and `StepLearningRateSchedule(interval=0)` all raise `ZeroDivisionError`, and a config without `additional_checkpoints` raises `KeyError` from `get_checkpoints`; (d) `_decode`'s `inspect.signature` call, added at `latent_fit.py:29` by #105 — it runs per decoder per batch inside `_recon_loss`'s optimization loop and is **not** a defect (negligible against the GPU work, and unmeasured against a real fit), but the check is loop-invariant and R is the slice that opens this function. **Every number in (a)–(c) predates two rewrites of `latent_fit.py`** (§8.0.N and #105) and is to be re-measured rather than transcribed — the `lbfgs_*` triple especially. **Re-measured, and (a) was already closed in full**: the row records §8.0.K's deferral and not §8.0.K's own fix. (b) unchanged, (c) fixed, (d) memoized; the live instances the sweep found are at the config layer, not in `latent_fit.py` | **After a release**, which is §8.0.K's stated reason and still holds: closing one of these sites is either a refusal (no boundary needed) or a signature change (a boundary), and the set should be triaged **once, together**, so the boundary is paid for once. The question per parameter is not "does anyone set it" — §8.0.K measured that a deletion pass would find about two — but "is it read on every path that accepts it" |
 | **S** | v0.4.0: the public signatures | **Added 2026-08-29, and it is an omission being repaired rather than new work.** Six Breaking items earlier slices deferred to §8.0.O *by name*, none of which the O row lists: (1) the four public signatures as **one set** — `reconstruct_mesh` (58 named + `**kwargs`), `reconstruct_latent` (38), `create_mesh_adaptive` (26), `create_mesh` (17) — "all four shrink at one release boundary or none of them does"; (2) `reconstruct_latent(pts_surface=None)`, a default that declares optional a parameter the type check has always rejected; (3) the `lbfgs_*` prefix decision (§8.0.K: read them on both paths or delete the non-hybrid path — a signature call either way); (4) refusing unknown `**kwargs` on `Decoder`/`TriplanarDecoder`; (5) deleting `max_batch_size`, currently accepted-and-warned; (6) submodule imports in `NSM/mesh/__init__.py` — *which looks additive rather than Breaking, so it may not need the boundary at all; §8.0.I did not say why it does.* **§8.0.N's keyword-only `roundtrip_distance`/`directed_distance_percentiles` pair joins them**, being a signature change too. | v0.4.0 is already scheduled by something else: `NSM/_verbose_deprecation.py` says *delete at v0.4.0*, and v0.3.0 existing is what makes that due. So these six do not need a boundary invented for them — they need the one that is coming. Cutting v0.3.0 without them is correct rather than a compromise: the constraint the slices stated was "all four together", and none-in-v0.3.0 satisfies it exactly. |
 | **T** | Trim the test suite | **Added 2026-08-29 (maintainer): "they have gotten VERY bloated during this refactor. Many are valuable, but they are also overkill."** Measured before scheduling: `testing/` is **14,770 lines across 45 test files against 14,460 lines of `NSM/`** — a ratio of **1.02**, up from **0.26** at `v0.1.0` (3,122 lines, 11 files) and **0.54** at `v0.2.0`. **1,116 tests**; the whole suite takes **109 s**, of which the §7.1 harness is **52 s** against a stated budget of two minutes for the harness alone. **28% of `testing/` is docstrings** (4,135 lines). Biggest single files: `test_dataset_cache.py` 1,357, `_harness.py` 855, `test_reconstruct_latent_internals.py` 706, `test_train_epoch_internals.py` 651. | **Last, and it cannot start earlier**: every slice G–S adds characterization tests, so trimming before they exist means doing it twice. **The trim cannot be measured in lines removed** — rule 3 makes a docstring carrying a measurement load-bearing, and 28% of the suite is docstrings. Three criteria that are checkable instead of aesthetic: (1) **a test that cannot fail** — revert the fix or delete the assertion and see if it goes red; two were found by accident on 2026-08-29 alone, one comparing `version("NSM")` against the artifact that shadows it, so the rate is not low; (2) **a characterization test whose strict xfail was retired inside its own slice and whose plain sibling now asserts the same thing** — the pairs were deliberate while the defect was live and are duplication afterwards; (3) **overlap between the per-slice `test_*_internals.py` files and the regression harness**, which are two coverage strategies that grew independently. |
 

@@ -1815,3 +1815,48 @@ will be drawn at now; pass `sigma_rand_pts=0.001` to reproduce the old draw.
 
 *Pinned by:* `test_reconstruct_mesh_contracts.TestTheKnobsThatDifferByLayer`, which reads
 the defaults off the signatures rather than restating them.
+
+## 30. A `two_stage` config's `layer_split`, `progressive_add_depth`, `conv_pred_sdf` and `sum_conv_output_features` reached neither half of the model
+
+| | |
+|---|---|
+| **Affected** | `load_model(..., model_type="two_stage")` from a config that sets any of those four keys **and** does not supply an explicit `triplanar_params` / `mlp_params` block. 2023 → Sep 2026 |
+| **Unaffected** | every other `model_type` — `_get_triplanar_params` and `_get_deepsdf_params` have always read them; a `two_stage` config that supplies `triplanar_params`/`mlp_params` explicitly, which are copied verbatim; a config that sets none of the four, which is every config in this repo. Nothing in production is a two-stage model |
+| **Severity** | Silent for `progressive_add_depth` — the model trains without the phase-in it asked for. Loud for the other three: they change the architecture, so an affected checkpoint fails `load_state_dict` |
+| **Changed in** | `slice-r-parameter-surface`, Sep 2026 (plan §8.0.R) |
+
+### What was wrong
+
+`loader._get_two_stage_params` builds its `triplanar_params` and `mlp_params` inline
+rather than from the two sibling translators, and the inline copy had drifted: four config
+keys that `_get_triplanar_params` or `_get_deepsdf_params` reads, and that
+`TriplanarDecoder.__init__` or `Decoder.__init__` accepts, were named in neither branch.
+Setting one in a `two_stage` config did nothing and said nothing.
+
+Delegating to the siblings would have been the obvious repair and is the wrong one: the
+inline branch also defaults `dropout_prob` to `0.0` where `_get_deepsdf_params` uses `0.2`,
+and `concat_latent_input` to `True` where it uses `False` — and `concat_latent_input`
+changes the MLP's input width, so delegating would have rebuilt every existing two-stage
+model at a different architecture. Each key is read with the default the branch produced by
+omission instead, so a config that does not set it builds exactly what it built before.
+
+### How to tell whether one of your runs is affected
+
+Look at the config you trained from. If `model_type` is not `two_stage`, nothing moved. If
+it is, and the config has its own `triplanar_params` or `mlp_params` block, nothing moved —
+those are copied verbatim and always have been. Otherwise, check for the four keys:
+
+```
+python -c "import json,sys; c=json.load(open(sys.argv[1])); \
+print([k for k in ('layer_split','progressive_add_depth','conv_pred_sdf', \
+'sum_conv_output_features') if k in c])" your_config.json
+```
+
+Anything it prints was ignored when the model was built. To reproduce the old behaviour,
+delete those keys from the config; the model then builds at the constructor defaults, which
+is what it was doing all along.
+
+*Pinned by:* `test_parameter_surface.TestTwoStageTranslatesWhatItsSiblingsRead`, whose
+`test_the_built_params_are_unchanged_when_the_key_is_absent` is the half that says no
+existing model moved.
+
