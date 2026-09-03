@@ -438,17 +438,34 @@ class TestPolymorphicConformanceIsNotTheAcceptedAndIgnoredClass:
         assert "epoch" in source, "the sibling that reads it is what makes the rest conformance"
 
 
-class TestUpgradeCachedLayoutTakesNoCachePath:
+class TestUpgradeCachedLayoutKeepsItsCachePath:
     """
-    The one genuine member of the accepted-and-never-read class on the function surface.
-    `get_sample_data_dict` passes `cache_path` to the hook and neither implementation --
-    `SDFSamples`' nor `MultiSurfaceSDFSamples`' -- reads it. Private, so it goes.
+    The sweep's one candidate on the function surface, and running it retired that too.
+
+    `SDFSamples._upgrade_cached_layout` never reads the `cache_path` it is handed, so the
+    per-function predicate reports it as accepted-and-never-read and #20's standing
+    remedy says delete it. Deleting it breaks the override: `MultiSurfaceSDFSamples`
+    names the file in the warning it emits before asking for a delete-and-rebuild, which
+    is the one message that says *which* subject's cache was beyond repair.
+
+    Was two strict xfails, retired by measurement rather than by a fix. It is the same
+    discriminator as `TestPolymorphicConformanceIsNotTheAcceptedAndIgnoredClass` and the
+    reason that class exists: **a polymorphic hook's parameters have to be judged across
+    every implementation, not per function.** The sweep is per function, so the
+    discriminator is not optional -- it is the second half of the predicate. After it, the
+    accepted-and-never-read class is **empty** on NSM's documented function surface.
     """
 
     @pytest.mark.parametrize("cls", [SDFSamples, MultiSurfaceSDFSamples])
-    @pytest.mark.xfail(strict=True, reason="§8.0.R commit 6: the unread argument is deleted")
-    def test_the_hook_does_not_accept_what_neither_implementation_reads(self, cls):
-        assert "cache_path" not in inspect.signature(cls._upgrade_cached_layout).parameters
+    def test_the_hook_still_accepts_the_path_one_implementation_names(self, cls):
+        assert "cache_path" in inspect.signature(cls._upgrade_cached_layout).parameters
+
+    def test_the_subclass_is_the_implementation_that_reads_it(self):
+        base = inspect.getsource(SDFSamples._upgrade_cached_layout)
+        override = inspect.getsource(MultiSurfaceSDFSamples._upgrade_cached_layout)
+
+        assert "cache_path" not in base.split('"""')[-1]
+        assert "cache_path" in override.split('"""')[-1]
 
 
 class TestDecodeDispatchesOnTheForwardInterface:

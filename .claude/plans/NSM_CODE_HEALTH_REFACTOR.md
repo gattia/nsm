@@ -4725,15 +4725,22 @@ The row's real question is not its list: *"is it read on every path that accepts
 Two predicates over the documented surface — `NSM/` less the three `SCOPE` exemptions the
 docstring gate and the `verbose` sweep already use:
 
-- **accepted and never read: 5.** Four are polymorphic conformance — `epoch` on
-  `ImplicitDecoder.forward`, `TwoStageDecoder.forward` and
+- **accepted and never read: 5, and after the discriminator, zero.** Four are polymorphic
+  conformance — `epoch` on `ImplicitDecoder.forward`, `TwoStageDecoder.forward` and
   `ConstantLearningRateSchedule.get_learning_rate`, each of which a *sibling* does read
   (`deep_sdf.Decoder.forward` uses it for `progressive_add_depth`, and `train_epoch` calls
   every decoder as `model(inputs, epoch=epoch)`). **That sibling test is the discriminator
   this class has always needed**: deleting the parameter is the standing remedy (#20), and
   it is wrong exactly when another implementation of the same interface reads it. The
-  fifth, `SDFSamples._upgrade_cached_layout(cache_path)`, is read by neither
-  implementation and is private, so it goes.
+  fifth looked different and is the same thing:
+  `SDFSamples._upgrade_cached_layout(cache_path)` genuinely reads nothing, it is private,
+  and it was written up here as the slice's one deletion — until the deletion was run and
+  `flake8` reported `F821 undefined name 'cache_path'` in
+  `MultiSurfaceSDFSamples`' override, which names the file in the warning it emits before
+  asking for a delete-and-rebuild. **A polymorphic hook's parameters have to be judged
+  across every implementation, and the sweep is per function**, so the discriminator is
+  the second half of the predicate rather than a caveat on it. Reverted; the class is
+  empty on the documented function surface.
 - **read only when another parameter says so: 25**, and 24 are the parameter's documented
   role (`smooth_type` under `smooth`, `chamfer_norm` under `calc_symmetric_chamfer`). The
   25th is `TriplanarDecoder.forward(epoch)`, which is conformance again.
@@ -4816,9 +4823,9 @@ name being passed elsewhere. §8.0.N corrected this sweep's *reader set* and lef
 | four refusals for the zero/missing config values, with the remedy in the message | +40 |
 | `_get_two_stage_params` translates the four sibling keys | +6 |
 | four shipped keys deleted, one renamed, in the generator and the JSON | −8 |
-| `_decode` inspects once per fit; `_upgrade_cached_layout` loses `cache_path` | +4 |
+| `_decode`'s interface check memoized on the decoder class | +12 |
 | the generator comment says what the MLP keys do on a triplanar config | +4 |
-| **net in `NSM/`** | **+46** |
+| **net in `NSM/`** | **+54** |
 
 Past **+100** net in `NSM/` is scope creep: this slice closes sites and adds no capability.
 Tests, `docs/` and the plan are additive and outside the budget.
@@ -4835,7 +4842,7 @@ One commit each; `make lint` clean and the full suite green at every step.
 3. `_get_two_stage_params` translates the four keys its siblings read;
 4. the shipped-key sweep matches string literals, and the six it then finds are dispositioned;
 5. the four zero/missing config values refuse, naming the spelling that means "off";
-6. `_decode` inspects the decoder once per fit, and `_upgrade_cached_layout` drops `cache_path`;
+6. `_decode` inspects each decoder class once, not once per batch;
 7. `docs/`, `CHANGELOG` and this plan's State.
 
 #### Verification per claim
@@ -4850,6 +4857,7 @@ One commit each; `make lint` clean and the full suite green at every step.
 | the substring predicate hides six keys | the AST literal sweep run as the test, asserted empty after commit 4; the two clauses (dataset constructor, `load_model`) named in the assertion message |
 | `TriplanarDecoder` swallows a config's typo | `TwoStageDecoder(triplanar_params=…"paddding")` asserted to build at `padding=0.1`, as the evidence §8.0.S item (4) is missing — a plain test, since S owns the change |
 | `_decode`'s signature check is negligible | measured 20.5 µs against 5.00 ms and 56.79 ms per decode+backward; not asserted — a wall-clock assertion inside the suite it measures is what §7.4 ruled against. The hoist is pinned by behaviour: both forward interfaces asserted to dispatch identically after commit 6 |
+| `_upgrade_cached_layout`'s `cache_path` is unread | asserted **present** in both signatures, with the base's body asserted not to name it and the override's asserted to — the correction, kept as the test that says why the deletion is wrong rather than as a sentence in this plan |
 | the suite still passes | **1180 passed / 4 skipped / 3 xfailed in 116.6 s** on `main` at `cb9d802` is the baseline every commit is compared against |
 
 ### 8.1 Make the library plural — added 2026-08-15
