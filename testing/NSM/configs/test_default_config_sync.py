@@ -234,7 +234,6 @@ def _literals_in_live_sources():
 LIVE_LITERALS = _literals_in_live_sources()
 
 
-@pytest.mark.xfail(strict=True, reason="§8.0.R commit 4: the six keys are dispositioned")
 def test_every_shipped_key_appears_as_a_literal_or_names_a_parameter(shipped_config):
     """
     §8.0.R. The sweep above matches substrings, and six shipped keys pass it only because
