@@ -286,8 +286,8 @@ class TestTwoStageTranslatesWhatItsSiblingsRead:
     """
 
     @pytest.mark.parametrize("key", sorted(TWO_STAGE_DROPPED))
-    @pytest.mark.xfail(strict=True, reason="§8.0.R commit 3: the four sibling keys are read")
     def test_a_key_both_siblings_read_reaches_the_two_stage_model(self, key):
+        """Were four strict xfails: each key reached neither half of the model."""
         half, parameter, value = TWO_STAGE_DROPPED[key]
         config = dict(BOTH_MODEL_TYPES, **{key: value})
 

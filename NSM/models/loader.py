@@ -283,6 +283,15 @@ def _get_two_stage_params(config: Dict[str, Any]) -> tuple:
             "sdf_final_activation": config.get("final_activation", "tanh"),
             "sdf_activation": config.get("activation", "relu"),
             "padding": config["padding"],
+            # The four keys below are read by `_get_triplanar_params` and
+            # `_get_deepsdf_params` and were named by neither branch here (§8.0.R). Each
+            # default is what this branch produced by omission -- the constructor's own --
+            # so a config that does not set the key builds exactly the model it did
+            # before. Delegating to the siblings instead would also import their
+            # `dropout_prob` and `concat_latent_input` defaults, which differ, and the
+            # second of those changes the MLP's input width.
+            "conv_pred_sdf": config.get("conv_pred_sdf", False),
+            "sum_sdf_features": config.get("sum_conv_output_features", True),
         }
 
     # MLP parameters
@@ -301,6 +310,10 @@ def _get_two_stage_params(config: Dict[str, Any]) -> tuple:
             "activation": config.get("activation", "relu"),
             "final_activation": config.get("final_activation", "tanh"),
             "concat_latent_input": config.get("concat_latent_input", True),
+            # See the note in the triplanar branch above: read by `_get_deepsdf_params`,
+            # named by neither branch here, and defaulted to `Decoder`'s own values.
+            "layer_split": config.get("layer_split", None),
+            "progressive_add_depth": config.get("progressive_add_depth", False),
         }
 
     params = {
