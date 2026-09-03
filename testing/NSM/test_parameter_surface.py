@@ -204,21 +204,26 @@ class TestZeroAndMissingConfigValuesRefuse:
     split loop, several hundred steps into a run, as `ZeroDivisionError: division by
     zero` naming nothing.
 
-    The correct spelling of "off" is already written in the docstring beside each one.
+    The correct spelling of "off" was already written in the docstring beside each one.
     The fix moves that sentence into the refusal, which is where a caller reads it.
+
+    Were four strict xfails. Measured before the fix: ``ZeroDivisionError: integer
+    division or modulo by zero`` (Step), ``float division by zero`` (Warmup),
+    ``division by zero`` (the code-regularization warmup) and ``KeyError:
+    'additional_checkpoints'`` -- four messages, none of which names the config key that
+    produced it or what to set instead.
     """
 
-    @pytest.mark.xfail(strict=True, reason="§8.0.R commit 5: refuses instead of dividing")
-    def test_a_step_schedule_refuses_a_zero_interval(self):
+    @pytest.mark.parametrize("interval", [0, -1])
+    def test_a_step_schedule_refuses_a_non_positive_interval(self, interval):
         with pytest.raises(ValueError, match="Factor"):
-            StepLearningRateSchedule(initial=0.001, interval=0, factor=0.5)
+            StepLearningRateSchedule(initial=0.001, interval=interval, factor=0.5)
 
-    @pytest.mark.xfail(strict=True, reason="§8.0.R commit 5: refuses instead of dividing")
-    def test_a_warmup_schedule_refuses_a_zero_length(self):
+    @pytest.mark.parametrize("length", [0, -1])
+    def test_a_warmup_schedule_refuses_a_non_positive_length(self, length):
         with pytest.raises(ValueError, match="Constant"):
-            WarmupLearningRateSchedule(initial=0.0, warmed_up=0.001, length=0)
+            WarmupLearningRateSchedule(initial=0.0, warmed_up=0.001, length=length)
 
-    @pytest.mark.xfail(strict=True, reason="§8.0.R commit 5: refuses instead of dividing")
     def test_code_regularization_refuses_a_zero_warmup(self):
         config = {
             "code_regularization_type_prior": "spherical",
@@ -238,7 +243,6 @@ class TestZeroAndMissingConfigValuesRefuse:
                 config=config,
             )
 
-    @pytest.mark.xfail(strict=True, reason="§8.0.R commit 5: names the remedy")
     def test_get_checkpoints_names_the_key_and_the_remedy(self):
         with pytest.raises(KeyError, match=r"\[\]"):
             get_checkpoints({"checkpoint_epochs": 100, "n_epochs": 1000})
