@@ -202,3 +202,85 @@ def test_the_trainer_passes_chamfer_norm_commented_out():
 def test_no_shipped_config_carries_a_chamfer_norm_key(shipped_config):
     """The other half: there is no key for the commented-out argument to have read."""
     assert "chamfer_norm" not in shipped_config
+
+
+# ---------------------------------------------------------------------------
+# The predicate, not the data — plan §8.0.R
+# ---------------------------------------------------------------------------
+
+
+def _literals_in_live_sources():
+    """
+    Every string literal in a live ``NSM/`` module, by AST.
+
+    The tightening the sweep above says it cannot have. Its docstring defends the
+    substring match as "a key mentioned only in a comment counts as read" and adds that
+    tightening it "would need a resolver for ``config[name]`` where ``name`` is a
+    variable" -- which conflates two different tightenings. Matching *string literals*
+    needs no resolver: the loose direction is preserved (a literal anywhere counts, in a
+    docstring or a ``dict`` far from any config read), and what stops counting is a key
+    that only ever appears as a **substring of an identifier**.
+    """
+    import ast
+
+    literals = set()
+    for source in LIVE_SOURCES:
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                literals.add(node.value)
+    return literals
+
+
+LIVE_LITERALS = _literals_in_live_sources()
+
+
+@pytest.mark.xfail(strict=True, reason="§8.0.R commit 4: the six keys are dispositioned")
+def test_every_shipped_key_appears_as_a_literal_or_names_a_parameter(shipped_config):
+    """
+    §8.0.R. The sweep above matches substrings, and six shipped keys pass it only because
+    their name is a substring of an unrelated identifier or of a keyword argument being
+    passed somewhere else:
+
+    ======================  =========================================  ==================
+    key                     what hid it                                disposition
+    ======================  =========================================  ==================
+    ``n_val``               ``_run_validation``                        deleted
+    ``modulated``           ``modulated_periodic_activations``         deleted
+    ``entity``              ``identity`` (the code-reg prior)          deleted
+    ``cache``               ``empty_cache``                            deleted
+    ``seed``                ``seed=seed`` in ``reconstruct/main``      renamed
+    ``model_type``          ``model_type=`` in ``recon_evaluation``    kept
+    ======================  =========================================  ==================
+
+    Two of the six collide with an identifier rather than a comment, which is the class
+    the older docstring's justification does not cover. ``seed`` named a real dataset
+    parameter under a different spelling (``random_seed``) -- §8.0.N's own disposition for
+    the six it found that way -- and ``model_type`` names ``load_model``'s own argument,
+    which is why the second clause widens from the dataset constructor to ``load_model``
+    as well. That widening is not a loophole for this one key: it is the same rule the
+    dataset clause already states, applied to the other entry point a user drives with
+    this file.
+
+    This is the third time in this plan that a sweep was wrong in its *predicate* rather
+    than its data -- §6.1's first pass took an unsupported module as a reader, §8.0.N
+    corrected that reader set and left the match granularity, and this corrects the
+    granularity.
+    """
+    import inspect
+
+    from NSM.datasets.sdf_dataset import MultiSurfaceSDFSamples
+    from NSM.models.loader import load_model
+
+    named = set(inspect.signature(MultiSurfaceSDFSamples.__init__).parameters)
+    named |= set(inspect.signature(load_model).parameters)
+
+    orphans = sorted(
+        key
+        for key in shipped_config
+        if key not in LIVE_LITERALS and key not in named and key not in SAMPLE_DIFFICULTY_LX
+    )
+
+    assert orphans == [], (
+        "shipped config keys that appear as no string literal in a live NSM module and "
+        f"name no MultiSurfaceSDFSamples or load_model parameter: {orphans}"
+    )
