@@ -239,7 +239,7 @@ When you touch code a `docs/` file describes, verify it in the same commit or pu
 > pass and is the better starting point for any file below.
 
 **`NSM/models/`** — decoder architectures. `loader.load_model` is the way in: it reads a
-`model_params_config.json` and builds one of four, selected by **`model_type`, which is a
+`model_params_config.json` and builds one of two, selected by **`model_type`, which is a
 parameter of `load_model` and not read from the config** — it defaults to `"triplanar"`,
 and the MLP is spelled `"deepsdf"`. A config carrying `model_type` does not select
 anything; the caller passes it. (Noted by §7.5b's checkpoint round-trip, which had to
@@ -254,9 +254,9 @@ may simply be spelled differently one frame down.
 - `triplanar.py`: `TriplanarDecoder` — a `VAEDecoder` generates three feature planes and
   the SDF head samples them. This is what ShapeMedKnee ships. `conv_activation=None` is
   the historical architecture and the only one existing checkpoints fit.
-- `modulated_periodic_activations.py`: SIREN blocks and `ImplicitDecoder`. `modulation`
-  is an architecture choice, not a runtime switch — it changes the MLP's input width.
-- `two_stage.py`: triplanar + MLP summed, with the latent split **by position**.
+- The `two_stage` and `implicit` (modulated periodic activations) model types were
+  removed 2026-08-31; `docs/SCOPE.md` §2.9 holds the ruling and the v0.3.0
+  resurrection path.
 
 **`NSM/datasets/`** — meshes to SDF samples, and the cache.
 - `sdf_dataset.py`: `SDFSamples` and `MultiSurfaceSDFSamples`. **NSM never builds one of

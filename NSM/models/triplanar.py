@@ -273,7 +273,7 @@ class TriplanarDecoder(nn.Module):
         conv_deep_image_size=2,
         conv_norm=True,
         # "layer" from v0.3.0, and it is what everything already trained: every
-        # ShapeMedKnee config, NSM's default_config.json and two_stage's defaults say so.
+        # ShapeMedKnee config and NSM's default_config.json say so.
         # The old "batch" was reachable only by direct construction -- load_model requires
         # the key -- and direct construction is what the downstream consumer does. Under
         # "batch" the VAE trains nonlinear and evaluates affine (ARCHITECTURE.md section

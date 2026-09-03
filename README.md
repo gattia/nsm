@@ -103,7 +103,7 @@ with open('experiment_dir/model_params_config.json', 'r') as f:
 model = load_model(
     config=config,
     path_model_state='experiment_dir/model/2000.pth',
-    model_type='triplanar'  # or 'deepsdf', 'two_stage', 'implicit'
+    model_type='triplanar'  # or 'deepsdf'
 )
 
 # Ready for inference!
@@ -113,9 +113,7 @@ model.eval()
 ### Supported Model Types
 
 - `'triplanar'` - TriplanarDecoder for triplanar neural representations
-- `'deepsdf'` - Standard DeepSDF decoder  
-- `'two_stage'` - Two-stage decoder combining triplanar and MLP
-- `'implicit'` - ImplicitDecoder with modulated periodic activations
+- `'deepsdf'` - Standard DeepSDF decoder
 
 ### Configuration Templates
 
@@ -126,7 +124,7 @@ from NSM.models import get_model_config_template, list_supported_models
 
 # See all supported model types
 print(list_supported_models())
-# ['triplanar', 'deepsdf', 'two_stage', 'implicit']
+# ['triplanar', 'deepsdf']
 
 # Get configuration template for any model type
 config = get_model_config_template('deepsdf')
