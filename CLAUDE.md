@@ -254,8 +254,6 @@ may simply be spelled differently one frame down.
 - `triplanar.py`: `TriplanarDecoder` — a `VAEDecoder` generates three feature planes and
   the SDF head samples them. This is what ShapeMedKnee ships. `conv_activation=None` is
   the historical architecture and the only one existing checkpoints fit.
-- `modulated_periodic_activations.py`: SIREN blocks and `ImplicitDecoder`. `modulation`
-  is an architecture choice, not a runtime switch — it changes the MLP's input width.
 - `two_stage.py`: triplanar + MLP summed, with the latent split **by position**.
 
 **`NSM/datasets/`** — meshes to SDF samples, and the cache.

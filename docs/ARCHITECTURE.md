@@ -83,7 +83,6 @@ flowchart LR
     MDpkg["__init__"]
     MDdeep["deep_sdf"]
     MDload["loader"]
-    MDmpa["modulated_periodic_activations"]
     MDtri["triplanar"]
     MDtwo["two_stage"]
   end
@@ -124,14 +123,12 @@ flowchart LR
   MEinterp --> Uutils
 
   MDpkg -->|star| MDdeep
-  MDpkg --> MDmpa
   MDpkg --> MDtri
   MDpkg --> MDtwo
   MDpkg --> MDload
   MDload --> MDdeep
   MDload --> MDtri
   MDload --> MDtwo
-  MDload --> MDmpa
   MDtri --> MDdeep
   MDtwo --> MDtri
   MDtwo --> MDdeep
@@ -297,10 +294,11 @@ package in total.
 
 `NSM.models` inherited a subtler problem: `from .deep_sdf import *` runs *before* the
 explicit imports, and `deep_sdf` defined its own `Sine` with a hardcoded `w0=30` while
-`modulated_periodic_activations` defines a different `Sine` taking `w0` as an argument, so
-`NSM.models.Sine` resolved to the hardcoded one. *Closed in §8.0.H — there is one `Sine`,
-and `deep_sdf` imports it.* The star-import that decided which one is still there, and is
-still the reason the ordering mattered.
+`modulated_periodic_activations` defined a different `Sine` taking `w0` as an argument, so
+`NSM.models.Sine` resolved to the hardcoded one. *Closed in §8.0.H — there is one `Sine`;
+it moved into `deep_sdf` when `modulated_periodic_activations` was retired with the
+`implicit` model type (SCOPE.md §2; v0.3.0 holds the last copy).* The star-import that
+decided which one is still there, and is still the reason the ordering mattered.
 
 ---
 
@@ -312,7 +310,7 @@ The plan flagged one. There are six.
 |---|---|---|
 | **Two `adjust_learning_rate`** | `utils.adjust_learning_rate` (target-keyed, per-epoch) and `reconstruct/utils.py` (step decay for latent fitting) | Unrelated signatures, same name, and the second is *leaked into `NSM.reconstruct`'s namespace* by the star-import — so `from NSM.reconstruct import adjust_learning_rate` silently gets the wrong one. |
 | **Four `loss_l1 = torch.nn.L1Loss(...)`** | module-level `loss_l1` in `train_deep_sdf.py`, `train_deep_sdf_multi_head.py`, and both `deprecated/` trainers | Four copies of a shared import-time module. |
-| ~~**Two `Sine` classes**~~ | *Closed in §8.0.H.* The `deep_sdf` copy (w0 hardcoded, `__init__` misspelled as `__init` and so name-mangled to `_Sine__init`, never ran) is deleted; `deep_sdf` imports `modulated_periodic_activations.Sine` and `get_activation("sin")` returns `Sine(w0=30)`. Both computed `sin(30 * x)`, so no run's arithmetic changed. | Kept as an entry because *why* it was hard to see is the durable part: the star-import ordering, not the duplication. |
+| ~~**Two `Sine` classes**~~ | *Closed in §8.0.H.* The `deep_sdf` copy (w0 hardcoded, `__init__` misspelled as `__init` and so name-mangled to `_Sine__init`, never ran) is deleted; the surviving parameterized `Sine` now lives in `deep_sdf` itself (re-homed when `modulated_periodic_activations` was retired) and `get_activation("sin")` returns `Sine(w0=30)`. Both computed `sin(30 * x)`, so no run's arithmetic changed. | Kept as an entry because *why* it was hard to see is the durable part: the star-import ordering, not the duplication. |
 | **Two edge-ratio implementations** | `correspondence_metrics.triangle_health` and `triangle_metrics.py` | Divergent results from the same-named statistic. |
 | ~~**Two mesh-building tails**~~ | *Closed in §8.0.I.* `create_mesh` and `create_mesh_adaptive` each carried the whole reshape → zero-crossing check → extract → rescale → save sequence; `_finish_meshes` is it once. | The durable part is *how* they had already drifted: the adaptive copy forwarded `verbose` to the extraction twins and the dense one did not. Nothing named the two copies, so nothing compared them — duplication behind a caller boundary has no name trap to notice. |
 | ~~**Five unvalidated face reshapes**~~ | *Closed by [#57](https://github.com/gattia/nsm/issues/57) in §8.0.I.* `triangle_metrics.get_faces` is the one accessor; `refine_mesh` imports the name it used to define, so `refine_mesh.get_faces` still resolves — to the same object, with no forwarder and no second docstring to drift. | Kept because the *reason* it survived is durable: `reshape(-1, 4)` reads as a validation and is not one. It raises or silently fabricates depending on the cell count mod 4, so testing it on one mesh proves nothing about another. |

@@ -12,7 +12,6 @@ from typing import Any, Dict, Optional, Union
 import torch
 
 from .deep_sdf import Decoder
-from .modulated_periodic_activations import ImplicitDecoder, LinearBlockFactory, SirenBlockFactory
 from .triplanar import TriplanarDecoder
 from .two_stage import TwoStageDecoder
 
@@ -26,7 +25,7 @@ def load_model(
     """
     Loads a pre-trained Neural Shape Model (NSM) from configuration and state files.
 
-    Supports 'triplanar', 'deepsdf', 'two_stage', and 'implicit' model architectures.
+    Supports 'triplanar', 'deepsdf', and 'two_stage' model architectures.
     Initializes the model based on parameters in the `config` dictionary, loads the
     learned weights from `path_model_state`, moves the model to the specified device,
     and sets it to evaluation mode.
@@ -37,7 +36,7 @@ def load_model(
         path_model_state (str): Path to the .pt or .pth file containing the
             saved model state_dict.
         model_type (str, optional): The type of NSM architecture to load.
-            Supported values are 'triplanar', 'deepsdf', 'two_stage', and 'implicit'.
+            Supported values are 'triplanar', 'deepsdf', and 'two_stage'.
             Defaults to 'triplanar'.
         device (str or torch.device, optional): Device to load the model on.
             If None, defaults to 'cuda' if available, otherwise 'cpu'.
@@ -62,12 +61,9 @@ def load_model(
         model_class, params = _get_deepsdf_params(config)
     elif model_type == "two_stage":
         model_class, params = _get_two_stage_params(config)
-    elif model_type == "implicit":
-        model_class, params = _get_implicit_params(config)
     else:
         raise ValueError(
-            f"Unknown model type: {model_type}. Supported types: "
-            f"triplanar, deepsdf, two_stage, implicit"
+            f"Unknown model type: {model_type}. Supported types: triplanar, deepsdf, two_stage"
         )
 
     # Initialize model
@@ -313,45 +309,6 @@ def _get_two_stage_params(config: Dict[str, Any]) -> tuple:
     return TwoStageDecoder, params
 
 
-def _get_implicit_params(config: Dict[str, Any]) -> tuple:
-    """Extract ImplicitDecoder parameters from config."""
-    required_keys = ["latent_dim", "hidden_dim", "num_layers"]
-    _check_required_keys(config, required_keys, "implicit")
-
-    # Determine block factory
-    block_type = config.get("block_type", "linear")
-    if block_type == "siren":
-        block_factory = SirenBlockFactory(w0=config.get("w0", 30), bias=config.get("bias", True))
-    elif block_type == "linear":
-        block_factory = LinearBlockFactory(bias=config.get("bias", True))
-    else:
-        raise ValueError(f"Unknown block_type: {block_type}. Supported: 'siren', 'linear'")
-
-    # Determine final activation
-    final_activation = config.get("final_activation", "sigmoid")
-    if final_activation == "sigmoid":
-        final_activation_fn = torch.sigmoid
-    elif final_activation == "tanh":
-        final_activation_fn = torch.tanh
-    elif final_activation == "linear" or final_activation is None:
-        final_activation_fn = None
-    else:
-        raise ValueError(f"Unknown final_activation: {final_activation}")
-
-    params = {
-        "latent_dim": config["latent_dim"],
-        "out_dim": config.get("out_dim", 1),
-        "hidden_dim": config["hidden_dim"],
-        "num_layers": config["num_layers"],
-        "block_factory": block_factory,
-        "modulation": config.get("modulation", False),
-        "dropout": config.get("dropout", 0.0),
-        "final_activation": final_activation_fn,
-    }
-
-    return ImplicitDecoder, params
-
-
 def _check_required_keys(config: Dict[str, Any], required_keys: list, model_type: str):
     """Check that all required keys are present in config."""
     missing_keys = [key for key in required_keys if key not in config]
@@ -363,7 +320,7 @@ def _check_required_keys(config: Dict[str, Any], required_keys: list, model_type
 
 def list_supported_models() -> list:
     """Return a list of supported model types."""
-    return ["triplanar", "deepsdf", "two_stage", "implicit"]
+    return ["triplanar", "deepsdf", "two_stage"]
 
 
 def get_model_config_template(model_type: str) -> Dict[str, Any]:
@@ -460,22 +417,6 @@ def get_model_config_template(model_type: str) -> Dict[str, Any]:
                 "final_activation": "tanh",
                 "concat_latent_input": True,
             },
-        }
-
-    elif model_type == "implicit":
-        return {
-            # Required
-            "latent_dim": 256,
-            "hidden_dim": 512,
-            "num_layers": 4,
-            # Optional
-            "out_dim": 1,
-            "block_type": "linear",  # 'linear' or 'siren'
-            "w0": 30,  # Only for siren blocks
-            "bias": True,
-            "modulation": False,
-            "dropout": 0.0,
-            "final_activation": "sigmoid",  # 'sigmoid', 'tanh', 'linear'
         }
 
     else:

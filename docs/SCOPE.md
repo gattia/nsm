@@ -44,19 +44,16 @@ fix rather than limitations to document:
   decoders with a keyword-only `(latent=, xyz=)` interface that only `TriplanarDecoder`
   implements (`reconstruct.reconstruct_latent`), with no fallback — while `mesh.decode_sdf`
   inspects the signature and *does* fall back. Two conventions in one pipeline; `load_model`
-  advertises four model types and three of them cannot be reconstructed.
+  advertises three model types and two of them cannot be reconstructed.
   → **Phase 4 work item: a common decoder interface plus a registration pathway**, so a
   third party can add a model and have it work in train, reconstruct, mesh and interpolate
   without editing NSM internals. One calling convention has to win.
 
-  The `implicit` type is the furthest gone of the three, in two independent ways
-  (audit rulings, re-verified 2026-08-22): `loader._get_implicit_params` requires
-  `latent_dim`/`hidden_dim`/`num_layers` — a vocabulary no real training config uses
-  (the shipped configs carry `latent_size`/`layer_dimensions`) — and both that loader
-  and `ImplicitDecoder` default the output through a sigmoid, whose (0, 1) range cannot
-  represent a signed distance. Unreachable from real configs, and non-SDF by default
-  even when reached. Fold any fix into the registration-pathway work; neither half is
-  worth patching in isolation.
+  The `implicit` type was the furthest gone of the three and was **removed rather than
+  reconciled** (2026-08-31, §2.9): its loader vocabulary was unreachable from real
+  configs and its default sigmoid output could not represent a signed distance, so no
+  shipped checkpoint could ever have round-tripped through it. v0.3.0 holds the last
+  copy.
 - **The shipped `default_config.json` describes only the triplanar production model.**
   PR #64 (issue #48) replaced the old 61-key DeepSDF-shaped default — which could not
   drive `train_deep_sdf` at all — with a sanitized snapshot of the ShapeMedKnee
@@ -64,7 +61,7 @@ fix rather than limitations to document:
   that instantiates the trainer from the shipped file. That delivers the first of the
   per-model-type defaults.
   → **Remaining Phase 4 work item: a default config for each *other* model type**
-  (deepsdf, two_stage; `implicit` first needs the vocabulary reconciliation above).
+  (deepsdf, two_stage).
 
 **Unsupported by design, since Aug 2026 (§8.0.H):**
 
@@ -441,6 +438,29 @@ work over `reconstruct/main.py` (branch `wandb-optional`; CHANGELOG Unreleased
 Two audit rulings needed no new text, verified rather than assumed: `refine_mesh`'s
 cross-mesh cell-indexing precondition is already condition 2 of §2.3, and the
 only-TriplanarDecoder reconstruction limit is already §1's first bullet.
+
+### 2.9 Removed model types — **last shipped in v0.3.0, resurrectable from there**
+
+Removed 2026-08-31 (maintainer ruling), on measured non-use: a survey of every launcher
+in the maintainer's training project (`nsm_femur/training_run_files/python_calls`, ~120
+scripts) plus the two measured consumers (kneepipeline: `TriplanarDecoder` +
+`reconstruct_mesh`; nsosim: five symbols including `Decoder` and `TriplanarDecoder` —
+§5).
+
+- **`implicit` / `ImplicitDecoder`** (`models/modulated_periodic_activations.py`): the
+  modulated-periodic-activations comparison arm of the paper-era experiments — 17
+  training runs, none after the CVPR comparison set, all launched by config override
+  rather than through `load_model`. Its `load_model` path was doubly dead (unreachable
+  vocabulary, non-SDF sigmoid default — the ruling this section replaces). `Sine` was
+  re-homed to `deep_sdf` (it is `get_activation("sin")`'s activation and pairs with
+  `SIREN_W0`); everything else in the module left with it.
+
+**Resurrection:** `git show v0.3.0:NSM/models/modulated_periodic_activations.py` is the
+complete module as last shipped; its loader branch (`_get_implicit_params`), config
+template (`get_model_config_template("implicit")`) and tests live in the same tag under
+`NSM/models/loader.py` and `testing/NSM/models/`. Reviving it means re-adding those plus
+the Phase-4 registration pathway (§1) that removal pre-empted — the vocabulary
+reconciliation it always needed.
 
 ---
 

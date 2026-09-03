@@ -14,7 +14,6 @@ import torch
 
 from NSM.models import (
     Decoder,
-    ImplicitDecoder,
     TriplanarDecoder,
     TwoStageDecoder,
     get_model_config_template,
@@ -31,7 +30,7 @@ class TestModelLoader:
         models = list_supported_models()
         assert isinstance(models, list)
         assert len(models) > 0
-        expected_models = ["triplanar", "deepsdf", "two_stage", "implicit"]
+        expected_models = ["triplanar", "deepsdf", "two_stage"]
         for model in expected_models:
             assert model in models
 
@@ -45,12 +44,7 @@ class TestModelLoader:
             assert len(config) > 0
 
             # Each config should have some required parameters
-            if model_type in ["triplanar", "deepsdf", "two_stage"]:
-                assert "latent_size" in config
-            elif model_type == "implicit":
-                assert "latent_dim" in config
-                assert "hidden_dim" in config
-                assert "num_layers" in config
+            assert "latent_size" in config
 
     def test_get_model_config_template_invalid_type(self):
         """Test that invalid model type raises ValueError."""
@@ -67,7 +61,6 @@ class TestModelLoader:
             # Import the internal parameter extraction functions
             from NSM.models.loader import (
                 _get_deepsdf_params,
-                _get_implicit_params,
                 _get_triplanar_params,
                 _get_two_stage_params,
             )
@@ -81,9 +74,6 @@ class TestModelLoader:
             elif model_type == "two_stage":
                 model_class, params = _get_two_stage_params(config)
                 assert model_class == TwoStageDecoder
-            elif model_type == "implicit":
-                model_class, params = _get_implicit_params(config)
-                assert model_class == ImplicitDecoder
 
             # Initialize the model
             model = model_class(**params)
@@ -187,23 +177,6 @@ def temp_model_files():
                 mlp_params=config["mlp_params"],
             )
 
-        elif model_type == "implicit":
-            config["latent_dim"] = 64
-            config["hidden_dim"] = 128
-            config["num_layers"] = 3
-            from NSM.models.modulated_periodic_activations import LinearBlockFactory
-
-            model = ImplicitDecoder(
-                latent_dim=config["latent_dim"],
-                out_dim=config["out_dim"],
-                hidden_dim=config["hidden_dim"],
-                num_layers=config["num_layers"],
-                block_factory=LinearBlockFactory(),
-                modulation=config["modulation"],
-                dropout=config["dropout"],
-                final_activation=torch.sigmoid if config["final_activation"] == "sigmoid" else None,
-            )
-
         # Save model to temporary file
         temp_file = tempfile.NamedTemporaryFile(suffix=".pt", delete=False)
         state_dict = {"model": model.state_dict()}
@@ -243,31 +216,17 @@ class TestModelLoadingFullWorkflow:
             assert not loaded_model.training  # Should be in eval mode
 
             # Test that the model can perform inference
-            if model_type in ["triplanar", "deepsdf", "two_stage"]:
-                latent_size = config["latent_size"]
-                batch_size = 10
+            latent_size = config["latent_size"]
+            batch_size = 10
 
-                # Create test input: [latent, xyz]
-                test_input = torch.randn(batch_size, latent_size + 3)
+            # Create test input: [latent, xyz]
+            test_input = torch.randn(batch_size, latent_size + 3)
 
-                with torch.no_grad():
-                    output = loaded_model(test_input)
+            with torch.no_grad():
+                output = loaded_model(test_input)
 
-                assert output.shape[0] == batch_size
-                assert output.shape[1] == config.get("objects_per_decoder", 1)
-
-            elif model_type == "implicit":
-                latent_size = config["latent_dim"]
-                batch_size = 10
-
-                # Create test input: [latent, xyz]
-                test_input = torch.randn(batch_size, latent_size + 3)
-
-                with torch.no_grad():
-                    output = loaded_model(test_input)
-
-                assert output.shape[0] == batch_size
-                assert output.shape[1] == config.get("out_dim", 1)
+            assert output.shape[0] == batch_size
+            assert output.shape[1] == config.get("objects_per_decoder", 1)
 
     def test_different_state_dict_formats(self, temp_model_files):
         """Test loading models with different state dict save formats."""

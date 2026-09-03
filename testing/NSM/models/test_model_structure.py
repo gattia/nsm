@@ -295,15 +295,15 @@ class TestOneSine:
     incompatible defaults -- ``w0`` hardcoded to 30 in one, an argument defaulting to 1.0
     in the other -- and ``NSM.models.__init__``'s ``from .deep_sdf import *`` runs before
     the explicit imports, so ``NSM.models.Sine`` silently meant the hardcoded one
-    (ARCHITECTURE section 6). ``deep_sdf`` now imports the parameterized one.
+    (ARCHITECTURE section 6). The parameterized one won; it moved into ``deep_sdf`` when
+    ``modulated_periodic_activations`` was retired with the ``implicit`` model type.
     """
 
     def test_there_is_only_one_sine(self):
         import NSM.models as models
-        from NSM.models.deep_sdf import Sine as ReExported
-        from NSM.models.modulated_periodic_activations import Sine
+        from NSM.models.deep_sdf import Sine
 
-        assert models.Sine is Sine is ReExported
+        assert models.Sine is Sine
 
     def test_the_sin_activation_still_computes_sin_30x(self):
         """

@@ -21,13 +21,34 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .modulated_periodic_activations import Sine
-
 logger = logging.getLogger(__name__)
 
 #: SIREN's frequency scaling. See the paper's sec. 3.2, final paragraph, and supplement
 #: sec. 1.5, for the discussion of the factor 30.
 SIREN_W0 = 30
+
+
+class Sine(nn.Module):
+    """``sin(w0 * x)``. The one ``Sine`` in NSM.
+
+    There were two identical implementations until Aug 2026 and neither referenced the
+    other, so a change to either would have applied to half the models
+    (``docs/ARCHITECTURE.md`` section 6). It lived in ``modulated_periodic_activations``
+    until that module was retired with the ``implicit`` model type (v0.3.0 holds the
+    last copy); ``SIREN_W0`` above is the ``w0`` that ``get_activation("sin")``
+    constructs it with, which is why the two sit together.
+    """
+
+    def __init__(self, w0=1.0):
+        super().__init__()
+        self.w0 = w0
+
+    def forward(self, x):  # noqa: D102 - see the class docstring
+        return torch.sin(self.w0 * x)
+
+    def __repr__(self):
+        return f"Sine(w0={self.w0})"
+
 
 PROGRESSIVE_PARAMS = {
     "n_layers": 3,
@@ -404,8 +425,8 @@ def get_activation(activation):
     elif activation == "swish":
         return nn.SiLU()
     elif activation == "sin":
-        # One Sine, imported rather than redefined here -- ARCHITECTURE.md section 6 for
-        # why the duplicate was invisible. Both computed sin(30 * x).
+        # The one Sine in NSM, defined above -- ARCHITECTURE.md section 6 for why the
+        # historical duplicate was invisible. Both computed sin(30 * x).
         return Sine(w0=SIREN_W0)
     elif activation == "linear":
         return None
