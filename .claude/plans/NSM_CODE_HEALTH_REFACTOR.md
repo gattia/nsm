@@ -1948,8 +1948,13 @@ a transcribed figure.
   - **What this settles and what it does not.** It settles the reconstruction trend,
     which is the criterion the maintainer named as decisive. It does **not** directly
     measure the training-loss observation (last-100-epoch means 7–9% higher on `main`
-    for both architectures) — that would need a retrain at a second *training* seed,
-    which nobody ran. Recorded rather than blurred: final losses agreed to 1–3%, the
+    for both architectures) — that would need a retrain at a second *training* seed.
+    **One exists now** (`NSM_TRAINING_IDEAS.md` Idea 13's reseeded control, 2026-09-03,
+    triplanar on `main` only): redrawing init and batch order with the sample cache
+    fixed moved the last-100-epoch mean by 0.6%, so the 7–9% is not init noise.
+    Resampling noise (the dataset seed keys the cache) and a real code-path difference
+    both remain possible and unmeasured. Recorded rather than blurred: final losses
+    agreed to 1–3%, the
     last-100-epoch mean is a noisy tail statistic, and reconstruction — the thing the
     losses are a proxy for — is equivalent. Not worth a retrain unless someone has a
     reason to care about the tail statistic itself.

@@ -359,9 +359,12 @@ activations carry no parameters, but `nn.Sequential` names its children by posit
 inserting them renumbers every later key — measured on 647, `conv_activation="leaky_relu"`
 fails with `Missing key(s): vae_decoder.decoder.10.weight`. The default is therefore `None`,
 the historical architecture, **forever**: it is what every existing checkpoint was fitted as.
-`load_model` requires the config to say which, so neither can be reached by omission. What
-remains open is whether an activation *helps* — `NSM_TRAINING_IDEAS.md` Idea 13, which the
-rest of this section is the argument for.
+`load_model` requires the config to say which, so neither can be reached by omission.
+Whether an activation *helps* — `NSM_TRAINING_IDEAS.md` Idea 13, which the rest of this
+section is the argument for — was measured on real data on 2026-09-03: dropped in after
+LayerNorm at the historical learning rates, ReLU and leaky ReLU are ~20% worse in held-out
+ASSD on every subject, and swish trains 7% better but reconstructs no better. The retuned
+case is still open; numbers and provenance in the Idea 13 entry.
 
 **The first draft then claimed this leaves the decoder "an affine map." That is false for
 the shipped models,** and the correction matters:

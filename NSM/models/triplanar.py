@@ -68,8 +68,10 @@ class VAEDecoder(nn.Module):
         Placement is ``conv -> norm -> activation`` and is **provisional**: whether that or
         ``conv -> activation -> norm`` is right, and which activation, is what the retrain
         in ``NSM_TRAINING_IDEAS.md`` Idea 13 settles. A naive drop-in measured *worse* on
-        the synthetic harness -- LayerNorm's scale invariance is normalizing the gradients
-        today, so both learning rates want retuning before any comparison means anything.
+        the synthetic harness and again on real data (Idea 13, 2026-09-03: ReLU and leaky
+        ReLU ~20% worse in held-out ASSD, swish no better) -- LayerNorm's scale invariance
+        is normalizing the gradients today, so both learning rates want retuning before
+        any comparison means anything.
         """
         super(VAEDecoder, self).__init__()
 
