@@ -72,6 +72,27 @@ nsm @ git+https://github.com/gattia/nsm@v0.3.0
 
 ### Changed
 
+- **The shipped `default_config.json` sheds four keys nothing reads and renames a fifth**
+  (plan §8.0.R). `entity`, `modulated`, `cache` and `n_val` are deleted — the spellings
+  that are actually read (`entity_name`, `load_cache`) already ship alongside two of them,
+  `modulated` is not the loader's `modulation`, and `n_val` names nothing anywhere.
+  `seed: 52122` becomes **`random_seed`**, the `MultiSurfaceSDFSamples` parameter it was
+  always meant to be translated into. Nothing NSM runs reads any of the five, so no result
+  moves; a caller who built a dataset by hand from this file and passed `seed=` was already
+  passing an argument the constructor does not have. All six were hidden from §8.0.N's
+  sweep by matching each key as a *substring* of any live source — `n_val` inside
+  `_run_validation`, `modulated` inside `modulated_periodic_activations` — and the sweep
+  now matches string literals.
+
+- **A `two_stage` config's `layer_split`, `progressive_add_depth`, `conv_pred_sdf` and
+  `sum_conv_output_features` now reach the model** (plan §8.0.R). All four are read by
+  `_get_triplanar_params` or `_get_deepsdf_params` and accepted by the constructor;
+  `_get_two_stage_params`' inline branch named none of them. Each is read at the default
+  the branch produced by omission, so a config that does not set the key builds exactly
+  the model it built before — a config that *does* set one gets what it asked for, which
+  changes that model. See `docs/KNOWN_ISSUES.md` § History 30 for whether a run you have
+  is affected.
+
 - **`chamfer_norm` and `sigma_rand_pts` have one default each** ([#56](https://github.com/gattia/nsm/issues/56), plan
   §8.0.N). `compute_recon_loss`'s `chamfer_norm` goes 1 → **2**, matching `get_mean_errors`
   and `reconstruct_mesh`; `reconstruct_mesh`'s `sigma_rand_pts` goes 0.001 → **0.01**,
@@ -112,6 +133,17 @@ nsm @ git+https://github.com/gattia/nsm@v0.3.0
   receive them without a flag it could not see.
 
 ### Fixed
+
+- **Four config values refuse instead of dividing by zero** (plan §8.0.R). A `Step`
+  schedule with `Interval: 0`, a `Warmup` with `Length: 0`, `code_regularization_warmup: 0`
+  and a config with no `additional_checkpoints` each raised from arithmetic, somewhere
+  other than where the config was read — the warmup surfaced from inside the batch split
+  loop as `ZeroDivisionError: division by zero`, naming neither the key nor a remedy. Each
+  now refuses with the working spelling in the message (`"Factor": 1` for no decay,
+  `Type: "Constant"` for no warmup, `code_regularization_weight: 0` for no
+  regularization, `[]` for no extra checkpoints), and the two schedules refuse at
+  construction, while `get_learning_rate_schedules` is still reading the config. Every one
+  of these already crashed, so no result changes.
 
 - **`reconstruct_latent` can reconstruct an MLP model** (plan §7.5b). It called
   `decoder(latent=..., xyz=...)` unconditionally, which `TriplanarDecoder` accepts and

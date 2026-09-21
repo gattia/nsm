@@ -86,11 +86,18 @@ class StepLearningRateSchedule(LearningRateSchedule):
     """
     ``Type: "Step"``. ``initial * factor ** (epoch // interval)``.
 
-    From the entry's ``Initial``, ``Interval`` and ``Factor``. ``interval`` of 0 is a
-    ``ZeroDivisionError``; "no decay" is ``Factor: 1``, not ``Interval: 0``.
+    From the entry's ``Initial``, ``Interval`` and ``Factor``. "No decay" is
+    ``Factor: 1``; ``Interval: 0`` is refused at construction, which is where the config
+    is being read -- it used to divide by zero at epoch 0, several frames into training.
     """
 
     def __init__(self, initial, interval, factor):
+        if interval <= 0:
+            raise ValueError(
+                f"A Step LearningRateSchedule needs a positive Interval; got {interval!r}. "
+                'The rate is initial * factor ** (epoch // interval), so "no decay" is '
+                '"Factor": 1 and a one-step decay is "Interval": n_epochs.'
+            )
         self.initial = initial
         self.interval = interval
         self.factor = factor
@@ -106,10 +113,19 @@ class WarmupLearningRateSchedule(LearningRateSchedule):
     then flat.
 
     Note the two names for the destination rate: the config entry calls it ``Final`` and
-    this class calls it ``warmed_up``. ``length`` of 0 is a ``ZeroDivisionError``.
+    this class calls it ``warmed_up``. ``Length: 0`` is refused at construction rather
+    than dividing by zero at epoch 0: a warmup with no length is a constant rate, which
+    is ``Type: "Constant"``.
     """
 
     def __init__(self, initial, warmed_up, length):
+        if length <= 0:
+            raise ValueError(
+                f"A Warmup LearningRateSchedule needs a positive Length; got {length!r}. "
+                "The rate ramps from Initial to Final over Length epochs, so a warmup "
+                'with no length is a constant rate: use {"Type": "Constant", "Value": '
+                f"{warmed_up!r}}} instead."
+            )
         self.initial = initial
         self.warmed_up = warmed_up
         self.length = length
@@ -471,13 +487,22 @@ def get_checkpoints(config):
 
     Every ``checkpoint_epochs``-th epoch up to and including ``n_epochs``, plus everything
     in ``additional_checkpoints`` -- which is required, not defaulted, so a config missing
-    it raises here rather than silently checkpointing on the regular cadence only.
+    it raises here rather than silently checkpointing on the regular cadence only. The
+    refusal names the remedy, because a bare ``KeyError`` names the key and leaves the
+    reader to guess whether the answer is a value or a code change (plan §8.0.R).
 
     An ``additional_checkpoints`` entry that repeats a regular epoch appears twice in the
     result. Both consumers test membership (``train_deep_sdf``'s epoch loop), so the
     duplicate cannot save an epoch twice; it is left in rather than deduplicated because
     the list is recorded verbatim in ``model_params_config.json``.
     """
+    if "additional_checkpoints" not in config:
+        raise KeyError(
+            "config is missing 'additional_checkpoints', the list of one-off epochs to "
+            "checkpoint on top of every checkpoint_epochs-th. It has no default; set it "
+            "to [] for none."
+        )
+
     checkpoints = list(
         range(
             config["checkpoint_epochs"],

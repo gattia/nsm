@@ -55,8 +55,13 @@ fix rather than limitations to document:
   (the shipped configs carry `latent_size`/`layer_dimensions`) — and both that loader
   and `ImplicitDecoder` default the output through a sigmoid, whose (0, 1) range cannot
   represent a signed distance. Unreachable from real configs, and non-SDF by default
-  even when reached. Fold any fix into the registration-pathway work; neither half is
-  worth patching in isolation.
+  even when reached. **A third, measured 2026-09-03 (plan §8.0.R):**
+  `_get_implicit_params` is the only one of the four translators that does not read
+  `activation`, so `block_type: "linear"` builds `LinearBlockFactory()` at its `nn.ReLU`
+  default whatever the config asks for — the same key both sibling translators honour.
+  Fold any fix into the registration-pathway work; no half is worth patching in
+  isolation. Pinned by
+  `test_parameter_surface.TestTheEvidenceForSlicesThatOwnTheFix`.
 - **The shipped `default_config.json` describes only the triplanar production model.**
   PR #64 (issue #48) replaced the old 61-key DeepSDF-shaped default — which could not
   drive `train_deep_sdf` at all — with a sanitized snapshot of the ShapeMedKnee
