@@ -106,8 +106,6 @@ flowchart LR
     TRtds["train_deep_sdf"]
     TRmh["train_deep_sdf_multi_head"]
     TRutils["utils"]
-    TRdep1["deprecated.train_deep_sdf_orig"]
-    TRdep2["deprecated.train_deep_sdf_multi_surface_orig"]
   end
 
   NSMpkg --> Uutils

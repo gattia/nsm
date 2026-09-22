@@ -28,11 +28,7 @@ import torch
 
 import NSM
 from NSM.datasets.sdf_dataset import MultiSurfaceSDFSamples, SDFSamples
-from NSM.models.loader import (
-    _get_deepsdf_params,
-    _get_implicit_params,
-    _get_triplanar_params,
-)
+from NSM.models.loader import _get_deepsdf_params, _get_implicit_params
 from NSM.models.triplanar import TriplanarDecoder
 from NSM.reconstruct.latent_fit import _decode, reconstruct_latent
 from NSM.reconstruct.utils import refuse_unknown_kwargs

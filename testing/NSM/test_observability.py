@@ -186,9 +186,10 @@ class TestTheConversionHolds:
                     offenders.append(f"{path}:{node.lineno}")
         assert offenders == []
 
-    #: ``SCOPE`` rules these three out of the documented surface, so their gates go with
-    #: the modules rather than with this sweep: §2.4 (deferred research), §2.1
-    #: (unsupported until someone needs it), §2.2 (quarantined). §8.0.P and §8.0.R own them.
+    #: ``SCOPE`` rules these two out of the documented surface, so their gates go with
+    #: the modules rather than with this sweep: §2.4 (deferred research) and §2.1
+    #: (unsupported until someone needs it). §2.2 (quarantined) was a third until §8.0.P
+    #: deleted ``train/deprecated/``; the sweep covers every file under ``NSM/`` now.
     UNDOCUMENTED_SURFACE = (
         "NSM/reconstruct/reconstruct_latent_S3.py",
         "NSM/train/train_deep_sdf_multi_head.py",

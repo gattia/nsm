@@ -63,12 +63,13 @@ def test_importing_the_generator_writes_nothing(tmp_path, monkeypatch):
 NSM_ROOT = os.path.dirname(NSM.__file__)
 
 #: Modules that do not count as a reader, and the ruling that says so. The config
-#: generator holds every key name by definition. The other three are what ``docs/SCOPE.md``
-#: puts outside the documented surface: §2.2 (quarantined), §2.1 (unsupported until someone
-#: needs it, and broken -- #51), §2.4 (deferred research). A key read only by one of those
-#: does nothing on any path a user of the library can take, which is what §6.1 is asking
-#: about. Same three exemptions as the docstring gate in ``.flake8`` and the ``verbose``
-#: sweep in ``test_observability``, for the same reason.
+#: generator holds every key name by definition. The other two are what ``docs/SCOPE.md``
+#: puts outside the documented surface: §2.1 (unsupported until someone needs it, and
+#: broken -- #51) and §2.4 (deferred research). A key read only by one of those does
+#: nothing on any path a user of the library can take, which is what §6.1 is asking
+#: about. Same exemptions as the docstring gate in ``.flake8`` and the ``verbose`` sweep
+#: in ``test_observability``, for the same reason. §2.2 was a third until §8.0.P deleted
+#: ``train/deprecated/``; the directory-level skip that carved it out went with it.
 NOT_A_READER = (
     "generate_sdf_default_config.py",
     "train_deep_sdf_multi_head.py",

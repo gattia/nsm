@@ -43,17 +43,15 @@ per-file-ignores =
 #   thoroughly. Requiring one on every `def test_...` as well would add several hundred
 #   restatements of a name that is already a sentence.
 #
-# The three modules below are ruled out of the documented surface by docs/SCOPE.md, and
+# The two modules below are ruled out of the documented surface by docs/SCOPE.md, and
 #   the ruling is the reason: section 2.4 (reconstruct_latent_S3 -- deferred research),
 #   section 2.1 (train_deep_sdf_multi_head -- unsupported until someone needs it, and
-#   broken: issue #51), section 2.2 (train/deprecated/ -- quarantined, ported or deleted
-#   at plan section 8.0.P). Documenting them would say they are supported. A per-site
+#   broken: issue #51). Documenting them would say they are supported. A per-site
 #   noqa is the right instrument when a specific symbol is deliberately bare and the
 #   reason is local; a file that is not part of the API is a property of the file.
     testing/*: D100,D101,D102,D103
     NSM/reconstruct/reconstruct_latent_S3.py: D100,D103
     NSM/train/train_deep_sdf_multi_head.py: D100,D103
-    NSM/train/deprecated/*: D100,D103
 exclude =
     .git,
     __pycache__,

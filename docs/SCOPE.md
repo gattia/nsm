@@ -407,8 +407,11 @@ that it was neither live nor gone — 880 lines with no `__init__.py`, invisible
 | **Total** | **882** |
 | Plan's expectation | ~1,800 |
 
-**No module ruled dead had zero cost to remove.** That is the finding, and it argues for
-keeping Principle 2 ("quarantine, don't delete") rather than relaxing it.
+**No module ruled dead had zero cost to remove.** That is the finding, and it is what
+made Principle 2 ("quarantine, don't delete") worth keeping as the *first* move. It does
+not argue for a second one: the Sep 2026 ruling above deletes code that had already been
+quarantined for a year, which is the point at which quarantine has bought everything it
+can and the remaining cost is all on the reader.
 
 ### 2.8 Function-level rulings — audit round, ruled 2026-08-22
 
