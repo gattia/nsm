@@ -57,6 +57,9 @@ Operational facts that are not derivable from the code, and that cost time to re
   main — silently, and #79 had to re-land it.
 - **Fold related commits into one PR.** A docs-only change or a State-block update rides
   along with the work that caused it.
+- **No AI attribution lines.** No `Co-Authored-By: Claude …` trailer on commits and no
+  "🤖 Generated with Claude Code" line on PR descriptions. The Claude Code harness adds
+  both by default; strip them (maintainer, 2026-08-30 and 2026-09-17).
 - **Reading files in tests needs `encoding="utf-8"` explicitly.** Something in the suite
   resets the locale to ASCII, so a bare `read_text()` passes in isolation and raises
   `UnicodeDecodeError` under the full suite.

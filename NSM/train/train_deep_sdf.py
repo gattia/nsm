@@ -488,7 +488,20 @@ def _code_regularization_loss(*, batch_vecs, mu, logvar, num_sdf_samples, epoch,
     ``mu`` and ``logvar`` come from :func:`_batch_latents` and are ``None`` unless the
     model is variational -- in which case they are what the KLD is computed from, and
     ``batch_vecs`` is the sample drawn from them.
+
+    ``code_regularization_warmup`` is the epoch count the term ramps in over and must be
+    positive. ``0`` used to divide by zero from inside the split loop, several hundred
+    steps into a run, naming nothing; "off" has never been spelled here (plan §8.0.R).
     """
+    if config["code_regularization_warmup"] <= 0:
+        raise ValueError(
+            "config['code_regularization_warmup'] is the number of epochs the latent "
+            "regularization ramps in over and must be positive; got "
+            f"{config['code_regularization_warmup']!r}. To ramp in immediately set it to "
+            "1; to turn regularization off set 'code_regularization': false, or "
+            "'code_regularization_weight': 0."
+        )
+
     if "variational" in config and config["variational"] is True:
         reg_loss = torch.mean(-0.5 * torch.sum(1 + logvar - mu**2 - logvar.exp(), dim=1), dim=0)
         code_reg_norm = 1

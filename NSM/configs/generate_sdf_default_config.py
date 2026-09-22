@@ -26,7 +26,6 @@ import os
 config = {
     # wandb / run identity (set per run)
     "project_name": "nsm",
-    "entity": None,
     "entity_name": None,
     "run_name": None,
     "tags": ["nsm"],
@@ -51,10 +50,13 @@ config = {
     # in the checkpoint" describes (#26). 0.1 is the constructor default every shipped
     # model effectively runs at; recorded here so new runs carry it explicitly.
     "padding": 0.1,
-    "modulated": False,
     "progressive_add_depth": False,
     "layer_split": False,
-    # MLP-decoder keys, carried by the shipped config for loader fallbacks
+    # MLP-decoder keys, carried so `load_model` can build a deepsdf or two_stage
+    # model from this file. **None of them is read while `model_type` is
+    # `triplanar`**, which is what this file ships as: `layer_latent_in` reads as
+    # "the SDF head re-injects the latent at layer 4" and configures nothing
+    # (plan §8.0.R).
     "layer_dimensions": [512] * 8,
     "layers_with_dropout": list(range(8)),
     "dropout_prob": 0,
@@ -64,8 +66,6 @@ config = {
     "weight_norm": True,
     "activation": "relu",
     "final_activation": "tanh",
-    # initialization
-    "seed": 52122,
     # dataset (per-surface lists: [bone, cartilage])
     #
     # NSM never builds a dataset from this config -- `train_deep_sdf(config, model,
@@ -95,14 +95,13 @@ config = {
     "mesh_to_scale": 0,
     "reference_mesh": 0,
     "uniform_pts_buffer": 0.2,
+    "random_seed": 52122,
     "multiprocessing": True,
     "n_processes": 16,
-    "cache": True,
     "load_cache": True,
     "store_data_in_memory": False,
     "fix_mesh": False,
     "n_samples": None,
-    "n_val": None,
     # data loading during training
     "objects_per_batch": 64,
     "batch_split": 1,

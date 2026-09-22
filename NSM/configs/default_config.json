@@ -1,6 +1,5 @@
 {
     "project_name": "nsm",
-    "entity": null,
     "entity_name": null,
     "run_name": null,
     "tags": [
@@ -35,7 +34,6 @@
     ],
     "concat_latent_input": true,
     "padding": 0.1,
-    "modulated": false,
     "progressive_add_depth": false,
     "layer_split": false,
     "layer_dimensions": [
@@ -67,7 +65,6 @@
     "weight_norm": true,
     "activation": "relu",
     "final_activation": "tanh",
-    "seed": 52122,
     "list_mesh_paths": null,
     "val_paths": null,
     "n_pts": [
@@ -101,14 +98,13 @@
     "mesh_to_scale": 0,
     "reference_mesh": 0,
     "uniform_pts_buffer": 0.2,
+    "random_seed": 52122,
     "multiprocessing": true,
     "n_processes": 16,
-    "cache": true,
     "load_cache": true,
     "store_data_in_memory": false,
     "fix_mesh": false,
     "n_samples": null,
-    "n_val": null,
     "objects_per_batch": 64,
     "batch_split": 1,
     "samples_per_object_per_batch": 17000,
