@@ -196,15 +196,21 @@ class TestOnePerUserCallNotPerInternalHop:
 
 
 class TestTheDeprecationNotice:
-    #: One real entry point per subpackage. Each warns in the wrapper, before the
-    #: function body runs, so deliberately invalid arguments cost nothing and reach no
-    #: mesh, model or file.
+    #: One real entry point per subpackage that has one. Each warns in the wrapper,
+    #: before the function body runs, so deliberately invalid arguments cost nothing and
+    #: reach no mesh, model or file.
+    #:
+    #: ``train`` is absent, and that is a fact about the library rather than a gap here:
+    #: after §8.0.P removed ``train_deep_sdf_multi_head``, whose ``train_epoch`` was its
+    #: only decorated function, **no function under ``NSM/train/`` takes ``verbose=``**.
+    #: The bridge's own site count fell to 28 with it, which `SCOPE.md` §2.1 records --
+    #: plan Step S item (7), which deletes the bridge at v0.4.0, should count them again
+    #: rather than trust a number.
     REPRESENTATIVE_CALLS = {
         "datasets": ("NSM.datasets.mesh_sampling", "read_meshes_get_sampled_pts"),
         "mesh": ("NSM.mesh.main", "create_mesh"),
         "models": ("NSM.models.triplanar", "TriplanarDecoder.forward"),
         "reconstruct": ("NSM.reconstruct.main", "reconstruct_mesh"),
-        "train": ("NSM.train.train_deep_sdf_multi_head", "train_epoch"),
         "utils": ("NSM.utils", "adjust_learning_rate"),
     }
 

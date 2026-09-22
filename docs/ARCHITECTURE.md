@@ -104,7 +104,6 @@ flowchart LR
   subgraph TR["NSM.train"]
     TRpkg["__init__"]
     TRtds["train_deep_sdf"]
-    TRmh["train_deep_sdf_multi_head"]
     TRutils["utils"]
   end
 
@@ -152,7 +151,6 @@ flowchart LR
   RCs3 --> RCutils
 
   TRpkg --> TRtds
-  TRpkg --> TRmh
   TRpkg --> TRutils
   TRtds --> Uutils
   TRtds --> Ulosses
@@ -227,7 +225,6 @@ Modules with no inaccurate docstrings and an unremarkable status are omitted.
 | `mesh/interpolate.py` | 2 | prod |
 | `losses.py` | 2 | research — gated behind `NotImplementedError` |
 | `reconstruct/reconstruct_latent_S3.py` | 2 | deferred research |
-| `train/train_deep_sdf_multi_head.py` | 0 | **unsupported until someone needs it** (SCOPE §2.1, ruling changed 2026-08-29) |
 | `datasets/utils.py` | 0 | prod — leaf helpers, received from `sdf_dataset.py` (§8.0, 2026-08-22) |
 | `datasets/mesh_sampling.py` | 0 | prod — the two reader pipelines, same move |
 | `_lr_migration.py` | 0 | prod (transitional — delete-when in its header) |
@@ -305,7 +302,7 @@ The plan flagged one. There are six.
 | Trap | Where | Why it bites |
 |---|---|---|
 | **Two `adjust_learning_rate`** | `utils.adjust_learning_rate` (target-keyed, per-epoch) and `reconstruct/utils.py` (step decay for latent fitting) | Unrelated signatures, same name, and the second is *leaked into `NSM.reconstruct`'s namespace* by the star-import — so `from NSM.reconstruct import adjust_learning_rate` silently gets the wrong one. |
-| **Two `loss_l1 = torch.nn.L1Loss(...)`** | module-level `loss_l1` in `train_deep_sdf.py` and `train_deep_sdf_multi_head.py` | Two copies of a shared import-time module. Was four; the two `deprecated/` trainers went with the directory (`SCOPE.md` §2.2). |
+| ~~**Four `loss_l1 = torch.nn.L1Loss(...)`**~~ | *Closed in §8.0.P.* One remains, in `train_deep_sdf.py`. The two `deprecated/` trainers went with the directory (`SCOPE.md` §2.2) and the fourth with `train_deep_sdf_multi_head` (§2.1). | Kept as an entry because the duplication was a symptom: each copy arrived with a trainer that was forked rather than shared, which is also what put 47% of the multi-head trainer verbatim inside `train_deep_sdf.py`. |
 | ~~**Two `Sine` classes**~~ | *Closed in §8.0.H.* The `deep_sdf` copy (w0 hardcoded, `__init__` misspelled as `__init` and so name-mangled to `_Sine__init`, never ran) is deleted; `deep_sdf` imports `modulated_periodic_activations.Sine` and `get_activation("sin")` returns `Sine(w0=30)`. Both computed `sin(30 * x)`, so no run's arithmetic changed. | Kept as an entry because *why* it was hard to see is the durable part: the star-import ordering, not the duplication. |
 | **Two edge-ratio implementations** | `correspondence_metrics.triangle_health` and `triangle_metrics.py` | Divergent results from the same-named statistic. |
 | ~~**Two mesh-building tails**~~ | *Closed in §8.0.I.* `create_mesh` and `create_mesh_adaptive` each carried the whole reshape → zero-crossing check → extract → rescale → save sequence; `_finish_meshes` is it once. | The durable part is *how* they had already drifted: the adaptive copy forwarded `verbose` to the extraction twins and the dense one did not. Nothing named the two copies, so nothing compared them — duplication behind a caller boundary has no name trap to notice. |

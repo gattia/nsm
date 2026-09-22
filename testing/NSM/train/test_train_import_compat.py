@@ -55,7 +55,7 @@ TRAINER_MODULE_NAMES = [
 
 #: Modules ``NSM.train``'s ``__init__`` exposes; frozen so an ``__init__`` edit cannot
 #: narrow the package namespace unnoticed either.
-PACKAGE_MODULES = ["train_deep_sdf", "train_deep_sdf_multi_head", "utils"]
+PACKAGE_MODULES = ["train_deep_sdf", "utils"]
 
 
 @pytest.mark.parametrize("name", TRAINER_MODULE_NAMES)

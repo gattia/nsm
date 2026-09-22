@@ -650,9 +650,9 @@ def train_epoch(
     are refused below before any batch is fetched.
     """
     # Refused here rather than where they are consulted. train_deep_sdf gates
-    # eikonal_weight at its own entry, but train_epoch is public
-    # (test_train_import_compat) and train_deep_sdf_multi_head calls it with no gate, so
-    # the loss the plan calls gated ran through this function. multi_object_overlap used
+    # eikonal_weight at its own entry, but train_epoch is a frozen public name
+    # (test_train_import_compat), so a caller reaches it without passing that gate and the
+    # loss the plan calls gated ran through this function. multi_object_overlap used
     # to raise a bare Exception from the innermost loop, 174 lines below the read and
     # after a full forward and backward.
     if config.get("eikonal_weight", 0) > 0:

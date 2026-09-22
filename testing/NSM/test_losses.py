@@ -6,9 +6,11 @@ part of fixing it. Why it is gated:
 
 **Three entry points, not two.** ``train_deep_sdf`` and ``reconstruct_latent`` are the two
 the plan and CLAUDE.md name, and both are orchestrators. ``train_epoch`` is the code they
-guard, it is a frozen public name (``test_train_import_compat``), and
-``train_deep_sdf_multi_head`` calls it with no gate of its own -- so it is reachable two
-ways. Counting the doors is this file's job (§8.0.L).
+guard and it is a frozen public name (``test_train_import_compat``), so a caller reaches it
+without passing either orchestrator's gate -- which is why it carries its own. It had a
+second unguarded caller inside the library, ``train_deep_sdf_multi_head``, until §8.0.P
+removed that module; the gate stays because the public name is the door, not the caller.
+Counting the doors is this file's job (§8.0.L).
 """
 
 from unittest.mock import MagicMock

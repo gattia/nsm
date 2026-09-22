@@ -63,16 +63,19 @@ def test_importing_the_generator_writes_nothing(tmp_path, monkeypatch):
 NSM_ROOT = os.path.dirname(NSM.__file__)
 
 #: Modules that do not count as a reader, and the ruling that says so. The config
-#: generator holds every key name by definition. The other two are what ``docs/SCOPE.md``
-#: puts outside the documented surface: §2.1 (unsupported until someone needs it, and
-#: broken -- #51) and §2.4 (deferred research). A key read only by one of those does
-#: nothing on any path a user of the library can take, which is what §6.1 is asking
-#: about. Same exemptions as the docstring gate in ``.flake8`` and the ``verbose`` sweep
-#: in ``test_observability``, for the same reason. §2.2 was a third until §8.0.P deleted
-#: ``train/deprecated/``; the directory-level skip that carved it out went with it.
+#: generator holds every key name by definition. The other is ``reconstruct_latent_S3``,
+#: which ``docs/SCOPE.md`` §2.4 puts outside the documented surface as deferred research:
+#: a key read only by it does nothing on any path a user of the library can take, which is
+#: what §6.1 is asking about. Same exemption as the docstring gate in ``.flake8``.
+#:
+#: This list was four modules long. §8.0.P deleted two of them -- ``train/deprecated/``
+#: (§2.2), carved out by directory rather than by name, and
+#: ``train_deep_sdf_multi_head`` (§2.1) -- so the sweep now covers all of ``NSM/`` bar
+#: the generator and one research module. **An exemption that outlives its module reports
+#: a dead key as live**, which is the failure this list exists to prevent, so shrink it in
+#: the commit that deletes the module.
 NOT_A_READER = (
     "generate_sdf_default_config.py",
-    "train_deep_sdf_multi_head.py",
     "reconstruct_latent_S3.py",
 )
 

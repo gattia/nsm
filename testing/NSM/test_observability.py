@@ -186,14 +186,12 @@ class TestTheConversionHolds:
                     offenders.append(f"{path}:{node.lineno}")
         assert offenders == []
 
-    #: ``SCOPE`` rules these two out of the documented surface, so their gates go with
-    #: the modules rather than with this sweep: §2.4 (deferred research) and §2.1
-    #: (unsupported until someone needs it). §2.2 (quarantined) was a third until §8.0.P
-    #: deleted ``train/deprecated/``; the sweep covers every file under ``NSM/`` now.
-    UNDOCUMENTED_SURFACE = (
-        "NSM/reconstruct/reconstruct_latent_S3.py",
-        "NSM/train/train_deep_sdf_multi_head.py",
-    )
+    #: ``SCOPE`` §2.4 rules this one out of the documented surface as deferred
+    #: research, so its gate goes with the module rather than with this sweep. It had two
+    #: companions until §8.0.P: ``train/deprecated/`` (§2.2) and
+    #: ``train_deep_sdf_multi_head`` (§2.1), both deleted. The sweep now covers every file
+    #: under ``NSM/`` but this one.
+    UNDOCUMENTED_SURFACE = ("NSM/reconstruct/reconstruct_latent_S3.py",)
 
     def test_no_log_record_is_gated_behind_verbose(self):
         """

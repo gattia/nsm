@@ -52,7 +52,6 @@ more than that.
 | [`F401` is project-ignored, so unused imports never appear](#f401-is-project-ignored-so-unused-imports-do-not-appear-in-make-lint) | Low — tooling, not behaviour | *none — a judgement call, see below* |
 | [Latent gradients are summed over query points](#latent-gradients-are-summed-over-query-points-so-the-reg-balance-depends-on-n) | Medium — the reg balance moves with N | *none — a convention change, see below* |
 | [`enforce_minmax` clamps predictions](#enforce_minmax-clamps-the-prediction-not-just-the-target) | Medium — config semantics | *none — a docs/design call, see below* |
-| [`grad_clip` clips the model only, never the latent codes](#grad_clip-clips-the-model-only-never-the-latent-codes) | Medium — a global-sounding knob that is not | *none — an experiment first, see below* |
 | [The bare `compare_cart_thickness` scores femoral regions whatever the model is](#the-bare-compare_cart_thickness-scores-femoral-regions-whatever-the-model-is) | Low — NaN, not a wrong number | *none — documented at the constant, see below* |
 | [`Pool` deadlocks after an in-process build](#pool-deadlocks-after-an-in-process-build) | Low — hangs, does not corrupt | [#25](https://github.com/gattia/nsm/issues/25) |
 
@@ -350,20 +349,6 @@ clamp vs. target-only clamp vs. tanh-plus-loose-clamp at matched δ — is a nam
 surface-residual metric.
 *Pinned by:* `test_training_regression.TestClampedPredictionGradients`.
 
-### `grad_clip` clips the model only, never the latent codes
-
-`train_epoch` hands `torch.nn.utils.clip_grad_norm_` the model's parameter tensors and
-nothing else; the latent `nn.Embedding` is a first-class optimizer param group and is
-never clipped. Verified by wrapping the clip call on a real epoch: called on the 21 model
-tensors only. A user setting a knob named `grad_clip` will reasonably assume it is
-global. Clipping the latents now would silently change the numerics of every run that
-sets `grad_clip`, so this is documented rather than fixed.
-
-**Revisit (maintainer, 2026-08-22):** worth an experiment rather than a permanent
-shrug — train with the clip applied to both groups (or one global clip) and compare
-stability and latent-norm trajectories against the current behaviour. If adopted, it
-changes numerics for every run that sets `grad_clip` → § History entry.
-
 ## Upstream
 
 Dependency bugs that reach an NSM user.
@@ -560,6 +545,13 @@ current production models before assuming either is better. Not yet done.
 ---
 
 ## 2. `train_deep_sdf_multi_head` optimizes only the last model
+
+> **The module was deleted in Sep 2026** (`SCOPE.md` §2.1, plan §8.0.P), so this entry
+> describes code that is no longer in the tree. It is kept because it answers a question
+> about runs rather than about the current code: if you trained with the multi-head trainer
+> before Sep 2026, only your last decoder was ever optimized.
+> `git show v0.3.0:NSM/train/train_deep_sdf_multi_head.py` is the last shipped copy, and
+> [#51](https://github.com/gattia/nsm/issues/51) holds the two-identifier repair.
 
 | | |
 |---|---|

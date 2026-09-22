@@ -83,6 +83,23 @@ nsm @ git+https://github.com/gattia/nsm@v0.3.0
 
 ### Changed
 
+- **`NSM/train/train_deep_sdf_multi_head.py` is removed** (plan §8.0.P,
+  [#51](https://github.com/gattia/nsm/issues/51) closed). `NSM.train.train_deep_sdf_multi_head`
+  is gone and `NSM.train.__all__` is `["train_deep_sdf", "utils"]`. It was not a model type
+  — no class, just a training loop taking `models: tuple`, N ordinary decoders against one
+  shared latent. **Only its last decoder ever trained** (`KNOWN_ISSUES.md` § History 2, a
+  two-identifier bug open since 2023), so no run on disk depends on the capability it
+  advertised. 47% of its non-comment lines were verbatim copies of `train_deep_sdf.py`, and
+  its last feature work was Jan 2025. `v0.3.0` holds the last copy; `docs/SCOPE.md` §2.1
+  holds the ruling and the revival path.
+
+  **One side effect worth knowing about.** Its `train_epoch` was the only function under
+  `NSM/train/` that took `verbose=`, and the only one carrying `@honour_verbose`, so **no
+  function in that package accepts `verbose=` any more**. `train_deep_sdf` and its
+  `train_epoch` never did — verified: both raise `TypeError` on it, and did before this
+  change too — so nothing that worked stops working. What it means is that the `verbose=`
+  bridge, which Step S deletes at v0.4.0, no longer reaches `NSM/train/` at all.
+
 - **The four `sample_difficulty_lx*` config keys are removed** (plan §8.0.P,
   [#18](https://github.com/gattia/nsm/issues/18), closed won't-fix). `sample_difficulty_lx`,
   `_schedule`, `_cooldown` and `_epsilon` have shipped in `default_config.json` since 2023
