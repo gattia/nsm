@@ -16,6 +16,7 @@ out at the sphere's diameter — the ray cast passes clean through. The *value* 
 artifact; only its constancy is used, and no assertion here depends on the number.
 """
 
+import inspect
 import json
 import os
 
@@ -218,38 +219,53 @@ class TestFuncKeysAcrossSubjects:
         assert result["cart_thick_11_orig_mean"] == pytest.approx(1.5)
 
 
-class TestRegionsLabel:
+class TestTheRegionArrayNameIsNotAChoice:
     """
-    The transfer honours ``regions_label``; the read ignores it. pymskt's
-    ``get_cart_thickness_mean``/``_std`` open ``self.get_scalar("labels")`` with the name
-    hardcoded, so no other value can work — and no caller passes one:
-    ``get_mean_errors`` invokes these functions with two positional arguments.
+    ``regions_label`` was a parameter until v0.4.0 and never a choice. The transfer
+    honoured it; the read ignored it. pymskt's ``get_cart_thickness_mean``/``_std`` open
+    ``self.get_scalar("labels")`` with the name hardcoded, so no other value could work —
+    and no caller passed one: ``get_mean_errors`` invokes these functions with two
+    positional arguments.
+
+    Both arrangements raised ``KeyError: 'labels'`` before §8.0.N′ turned them into a
+    ``ValueError``, from opposite sides. With the original carrying only the alternative
+    name it was the original's read that failed; with the original carrying **both**, the
+    read of the original succeeded and the copy landed on the reconstruction under the
+    caller's name, so it was the reconstruction's read that failed. There was no
+    arrangement that worked, which is why the parameter is gone rather than validated.
     """
 
-    def test_the_default_scores_normally(self):
+    def test_the_hardcoded_name_scores_normally(self):
         orig_meshes, recon_meshes = _pair()
         result = compare_cart_thickness(orig_meshes, recon_meshes, cart_regions=(11,))
         assert set(result) == REGION_11_KEYS
         assert not any(np.isnan(value) for value in result.values())
 
-    @pytest.mark.parametrize("also_label_it_labels", [False, True])
-    def test_a_non_default_name_is_refused_by_name(self, also_label_it_labels):
+    @pytest.mark.parametrize(
+        "function",
+        [
+            compare_cart_thickness,
+            compare_cart_thickness_tibia,
+            compare_cart_thickness_patella,
+            compare_cart_thickness_femur,
+            compare_cart_thickness_whole_joint,
+        ],
+    )
+    def test_none_of_the_five_takes_it_any_more(self, function):
+        assert "regions_label" not in inspect.signature(function).parameters
+
+    def test_an_original_labelled_under_another_name_fails_at_the_read(self):
         """
-        Both arrangements raised ``KeyError: 'labels'`` before, from opposite sides. With
-        the original carrying only the alternative name it is the original's read that
-        fails; with the original carrying **both**, the read of the original succeeds and
-        the copy lands on the reconstruction under the caller's name, so it is the
-        reconstruction's read that fails. There is no arrangement that works.
+        What a caller who used to pass ``regions_label`` now gets: the same failure they
+        got with any value, arriving from pymskt rather than from a refusal here. The
+        message names ``labels``, which is what to go and rename the array to.
         """
         orig_bone = _original_bone(label_name="cart_regions")
-        if also_label_it_labels:
-            orig_bone.point_data["labels"] = orig_bone.point_data["cart_regions"]
-        with pytest.raises(ValueError, match="regions_label"):
+        with pytest.raises(KeyError, match="labels"):
             compare_cart_thickness(
                 [orig_bone, _plain(1.1)],
                 [_plain(1.0), _plain(1.1)],
                 cart_regions=(11,),
-                regions_label="cart_regions",
             )
 
 
@@ -261,6 +277,13 @@ class TestTheOriginalCartilageIsNeverRead:
     an unread argument is to delete it, not to honour it — honouring this one, by
     computing the original's thickness here, would move every ``orig_mean`` the function
     has ever reported.
+
+    Deleting it is what plan §8.0.N′ scheduled for v0.4.0 and Step S then ruled out: this
+    is not a parameter but element 1 of a list whose length is the fixed-layout contract,
+    and ``reconstruct_mesh`` hands the same surface layout to both sides
+    (``func(sampled["orig_mesh"], meshes)``). ``docs/SCOPE.md`` §2.5 has the ruling. What
+    the tests below record is the consequence a caller can rely on: the slot is required
+    and its contents are not read.
     """
 
     @pytest.mark.parametrize("substitute", [None, "not a mesh at all", 7])
