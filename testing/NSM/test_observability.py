@@ -135,7 +135,8 @@ class TestTheConversionHolds:
     """
     Structural pins over ``NSM/`` itself: what the §8.0.G conversion established, so a
     later slice reintroducing a ``print`` or an f-string log line goes red rather than
-    unnoticed. ``train/deprecated/`` is out of scope until §8.0.P.
+    unnoticed. Every file under ``NSM/`` is in scope: ``train/deprecated/`` used to be
+    carved out and was deleted at §8.0.P.
     """
 
     #: A script's own output on its own stdout is not the library speaking.
@@ -262,10 +263,8 @@ class TestTheConversionHolds:
 
 
 def _library_modules():
-    """(repo-relative path, parsed module) for every ``NSM/`` file outside ``deprecated/``."""
+    """(repo-relative path, parsed module) for every ``NSM/`` file."""
     root = pathlib.Path(__file__).resolve().parents[2] / "NSM"
     for path in sorted(root.rglob("*.py")):
-        if "deprecated" in path.parts:
-            continue
         relative = path.relative_to(root.parent).as_posix()
         yield relative, ast.parse(path.read_text(encoding="utf-8"))

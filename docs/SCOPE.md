@@ -171,39 +171,47 @@ Two qualifications from the maintainer:
   tuned and it has effectively never been used. Keep the capability, keep it out of the
   documented surface until someone runs it.
 
-### 2.2 `train/deprecated/` (880 lines) — **split; one is dead, one is not yet**
+### 2.2 `train/deprecated/` (880 lines) — **deleted, Sep 2026 (plan §8.0.P)**
 
-- `train_deep_sdf_multi_surface_orig.py` (562) — strict subset of `train_deep_sdf.py`.
-  Nothing unique. **Dead. Quarantine.**
-- `train_deep_sdf_orig.py` (318) — contains the only *live* `sample_difficulty_lx`
-  inverse-Lx loss-weighting branch (in its `train_epoch`). `train_deep_sdf.py` stops at
-  `sample_difficulty_weight` and has that algorithm only as a commented-out
-  block. **Port those ~12 lines into `train_deep_sdf.py` first** — the helpers are already
-  imported there — then it is dead.
+Both files are gone, and so is the one feature that kept them alive. `v0.3.0` holds the
+last copy of each.
 
-  Two conditions on the port. **It must be impossible to enable by accident**: nobody has
-  used it, so its off-state has never been exercised, and a feature whose disabled path is
-  untested is a feature that turns itself on eventually. **And it must be documented at the
-  config key**, not just in code. This is the specific instance of a general problem the
-  maintainer raised — the config options are poorly documented and many names do not
-  describe what the code does with them. That is tracked as the config overhaul in §1.
+- `train_deep_sdf_multi_surface_orig.py` (562) — strict subset of `train_deep_sdf.py`,
+  nothing unique, no importer. Dead on every reading it ever got.
+- `train_deep_sdf_orig.py` (318) — held the only *live* `sample_difficulty_lx` inverse-Lx
+  loss-weighting branch, which is why this directory outlived its sibling rulings.
+  [#18](https://github.com/gattia/nsm/issues/18) proposed porting those ~12 lines into
+  `train_deep_sdf.py`; it is **closed as won't-fix** and the four config keys go with the
+  file. The ruling, taken 2026-09-22 once the branch was actually read:
 
-  The inverse hazard is equally live and easy to miss: config keys a user can set that
-  silently do nothing because the branch implementing them is commented out. Those read as
-  working features and produce no error.
+  - **The two curriculum components NSM advertises are both already implemented and both
+    are the paper's.** Curriculum DeepSDF ([arXiv:2003.08593](https://arxiv.org/abs/2003.08593))
+    has equation 5, surface accuracy (`surface_accuracy_e`), and equation 6, sample
+    difficulty (`sample_difficulty_weight`). Both are live in `_surface_l1_loss`.
+  - **The inverse-Lx form is not in the paper.** It has no inverse-power weighting of any
+    kind. `sample_difficulty_lx` was NSM's own experiment.
+  - **It was tried, and turned off.** Live in both trainers from `5188417` (Aug 2023) until
+    `e173adc` (14 Feb 2024, "Remove some hard sample difficulty weight"), which commented
+    it out along with `hard_sample_difficulty_power` and kept equation 6. No shipped model
+    was trained with it.
+  - **It did not work, and the reason is structural.** Its weight is built from the loss it
+    multiplies and was never detached, so the gradient pointed the wrong way above error
+    `(epsilon / (lx - 1)) ** (1 / lx)` — 0.01 at `lx=2, epsilon=1e-4`. Equation 6 is immune
+    because its weight is built from `sgn`, which passes no gradient. The two branches
+    Feb 2024 removed are exactly the two that lacked that property
+    (`KNOWN_ISSUES.md` § History 31).
 
-  **That hazard is not hypothetical here, and this module is where it lands.** The shipped
-  `default_config.json` carries `sample_difficulty_lx` and its `_schedule`, `_cooldown` and
-  `_epsilon`, and the only code that reads any of them is this file and
-  `train_deep_sdf_multi_head` (§2.1, and broken). The supported trainer reads
-  `sample_difficulty_weight` and stops. So the four keys are settable, do nothing, and say
-  nothing — `KNOWN_ISSUES.md` § Open, and [#18](https://github.com/gattia/nsm/issues/18) is the port that would make them
-  live. Found by plan §8.0.N sweeping every shipped key against every live module, and
-  missed on that sweep's first pass because it counted the unsupported trainer as a reader.
+  Porting it would have meant carrying ~150 lines of code, tests and documentation for an
+  untuned experiment with no users that its author had already rejected. Reviving it means
+  `git show v0.3.0:NSM/train/deprecated/train_deep_sdf_orig.py`, and a `.detach()`.
 
-Neither has an importer; `train/deprecated/` has no `__init__.py`, so neither appears in
-the coverage denominator either. 880 untested lines are currently invisible to `make
-test-coverage`.
+What the directory demonstrated, and what survives it: **a config key can be settable, do
+nothing, and say nothing, because the branch implementing it lives in a module the
+supported path does not import.** The four `sample_difficulty_lx` keys were exactly that
+from Feb 2024 until this release deleted them. Found by plan §8.0.N sweeping every shipped
+key against every live module, and missed on that sweep's first pass because it counted the
+unsupported trainer as a reader — which is now pinned by `test_default_config_sync`, whose
+sweep excludes the modules `SCOPE` puts outside the documented surface.
 
 ### 2.3 `mesh/refine_mesh.py` (480 lines) — **research, keep**
 
@@ -378,21 +386,20 @@ Principle 2 prefers quarantine over delete because downstream forks may reach in
 anything, and `git rm` converts "someone's pipeline broke" into a support burden with no
 visible cause. Moving a file at least leaves it findable.
 
-For this repo the distinction is nearly moot: both files below are *already* in
-`NSM/train/deprecated/`, quarantined in Aug 2025. So Phase 1's quarantine step is close to
-a no-op, and the real open decision is the one after it — see the note below the table.
+For this repo the distinction turned out to be moot: both files below were *already* in
+`NSM/train/deprecated/`, quarantined in Aug 2025, so Phase 1's quarantine step was a no-op
+and the real decision was the one after it. **It was taken in Sep 2026 and it was delete**
+(§2.2): a second quarantine adds nothing over the first, and the directory's real cost was
+that it was neither live nor gone — 880 lines with no `__init__.py`, invisible to
+`make test-coverage` and indistinguishable from library code to anyone reading the tree.
 
 | | Lines |
 |---|---|
-| Quarantine now: `train/deprecated/train_deep_sdf_multi_surface_orig.py` | 562 |
-| Quarantine after porting 12 lines: `train/deprecated/train_deep_sdf_orig.py` | 318 |
+| Deleted Sep 2026: `train/deprecated/train_deep_sdf_multi_surface_orig.py` | 562 |
+| Deleted Sep 2026, after porting 12 lines: `train/deprecated/train_deep_sdf_orig.py` | 318 |
 | ~~Delete when Phase 4 lands: `datasets/utils.py`~~ — became live code instead (§2.6) | 0 |
 | **Total** | **882** |
 | Plan's expectation | ~1,800 |
-
-They are already in a `deprecated/` directory, so the quarantine step is close to a no-op —
-what is missing is an `__init__.py` so coverage counts them, or removal so they stop being
-counted as library code at all.
 
 **No module ruled dead had zero cost to remove.** That is the finding, and it argues for
 keeping Principle 2 ("quarantine, don't delete") rather than relaxing it.
@@ -636,15 +643,16 @@ subject.)
 `requirements-lock.txt` pins an editable `nsm@b7cfd49`. Inference-only, which the
 maintainer stated and the sweep confirms. This paragraph's original guess — that a
 mesh-oriented consumer most likely reaches into `refine_mesh` and `interpolate` — was
-half right: `interpolate` yes, at both entry points; `refine_mesh` no. **The
-quarantine move this gated is `NSM_CODE_HEALTH_REFACTOR.md` §8.0.P, now ungated.**
+half right: `interpolate` yes, at both entry points; `refine_mesh` no. **The move this
+gated is `NSM_CODE_HEALTH_REFACTOR.md` §8.0.P, ungated in Aug 2026 and executed in
+Sep 2026 as a delete rather than a second quarantine (§2.2).**
 
 **Recommendation — split the gate.** Nothing above requires the survey except the physical
 move of `train/deprecated/`. Mapping, documenting and testing a module that might later be
 quarantined costs nothing; moving it costs a broken downstream. So:
 
 - **0a (done, this document):** rulings from evidence available here → unblocks Phase 1.
-- **0b (blocked on the survey):** the quarantine move only.
+- **0b (was blocked on the survey, now done):** the removal of `train/deprecated/` only.
 
 **The release tag no longer needs settling, and the mechanism it depended on is gone.**
 From v0.3.0 `pyproject.toml` derives the version from the git tag via setuptools-scm, and

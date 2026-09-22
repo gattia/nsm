@@ -78,7 +78,7 @@ NOT_A_READER = (
 
 def _live_sources():
     for root, _dirs, files in os.walk(NSM_ROOT):
-        if "deprecated" in root or "__pycache__" in root:
+        if "__pycache__" in root:
             continue
         for name in files:
             if not name.endswith(".py") or name in NOT_A_READER:

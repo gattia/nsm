@@ -72,6 +72,14 @@ nsm @ git+https://github.com/gattia/nsm@v0.3.0
 
 ### Changed
 
+- **`NSM/train/deprecated/` is deleted** (plan §8.0.P). 880 lines in two files,
+  quarantined since Aug 2025 with no importer, no `__init__.py` and so no place in the
+  coverage denominator. `train_deep_sdf_multi_surface_orig.py` was a strict subset of
+  `train_deep_sdf.py`; `train_deep_sdf_orig.py` held the only live copy of the inverse-Lx
+  sample weighting, which is removed rather than ported — see the entry below. Nothing
+  imported either file, so nothing that worked stops working; `v0.3.0` holds the last copy
+  of both.
+
 - **The shipped `default_config.json` sheds four keys nothing reads and renames a fifth**
   (plan §8.0.R). `entity`, `modulated`, `cache` and `n_val` are deleted — the spellings
   that are actually read (`entity_name`, `load_cache`) already ship alongside two of them,

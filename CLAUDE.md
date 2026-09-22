@@ -269,6 +269,10 @@ may simply be spelled differently one frame down.
 
 **`NSM/train/`** — training pipelines:
 - `train_deep_sdf.py`: `train_deep_sdf` (orchestrator) and `train_epoch` (the batch loop).
+  `_surface_l1_loss` holds both curriculum-SDF sample weightings, and they are
+  alternatives rather than a stack: `sample_difficulty_lx` (inverse-Lx, ported out of the
+  deleted `train/deprecated/` at #18) is an `elif` after `sample_difficulty_weight`, which
+  every shipped config sets — so no shipped config can reach it.
 - `train_deep_sdf_multi_head.py`: Multi-head training (N independent decoders, one shared
   latent) — **broken, do not use**: only the last decoder trains. `docs/SCOPE.md` §2.1
   ruled it *supported, fix it* in Aug 2026 and **downgraded that to unsupported-until-
@@ -277,9 +281,6 @@ may simply be spelled differently one frame down.
   checklist for whoever needs it — what stopped is the intent to do it
 - `utils.py`: Weight scheduling (linear, exponential, exponential_plateau, constant), KLD
   loss, and the profiler the trainer opens.
-- `deprecated/`: quarantined (`SCOPE.md` §2.2). It holds the only live
-  `sample_difficulty_lx` branch, which is why the four config keys of that name do nothing
-  on any supported path (#18, `KNOWN_ISSUES.md` § Open).
 
 **`NSM/reconstruct/`** — fit a latent to an unseen shape, then score it.
 - `main.py`: `reconstruct_mesh`, the public entry point. **Its return type depends on its
