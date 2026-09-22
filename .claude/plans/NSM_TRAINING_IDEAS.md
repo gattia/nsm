@@ -2,7 +2,7 @@
 
 ## State
 
-**Updated:** 2026-08-25 · **Status:** open
+**Updated:** 2026-09-04 · **Status:** open
 
 > **This is the ideas file.** Per `CLAUDE.md` § Documents and work, new training ideas are
 > appended here rather than given their own plan. An idea graduates to its own plan only
@@ -26,12 +26,18 @@
   independent failures and gated the loss behind `NotImplementedError`.
 - **Blocked on:** the Next is a maintainer call; every entry stays independently
   executable in the meantime.
-- **Done:** Idea 4(a), 2026-08-25 — training-shell saturation confirmed on the one
+- **Done:** Idea 13's first real-data pass, 2026-09-03 — a drop-in ReLU or leaky ReLU
+  after LayerNorm in the triplanar conv stack is ~20% worse in held-out ASSD on 10/10
+  subjects; swish trains 7% better and reconstructs no better; learning rates not
+  retuned, so the retuned case stays open. Numbers, design and provenance in the
+  Idea 13 entry. Earlier: Idea 4(a), 2026-08-25 — training-shell saturation confirmed on the one
   shipped latent-code file (median code norm 9.987 of a 10 bound), fitted
   production norms median ~7.3, and the error–norm correlation splits by level
   (within-subject spearman −0.81; across-subject +0.12 to +0.56). Numbers, method
   and provenance in the Idea 4 entry.
-- **Surprises:** the error–norm correlation has opposite signs at the two levels —
+- **Surprises:** Idea 13 — a 7% lower training loss (swish) bought nothing in held-out
+  reconstruction, so the two metrics can disagree at n=50 and retuned follow-ups must be
+  judged on ASSD, not loss. Earlier: the error–norm correlation has opposite signs at the two levels —
   with anatomy fixed, fits landing nearer the training shell are almost universally
   better, yet across subjects the higher-norm fits are the *worse* ones (difficulty
   confound) — so "pull every fit to norm 10" is not the free win the premise alone
@@ -608,13 +614,63 @@ harness scale — that is the finding above, not an assumption.
 **Priority.** Below triplane resolution and feature dimension. Expect a modest gain rather
 than a step change; the honest position is that nobody knows, and the shipped models work.
 
-**Status.** Idea — not started, and **the code no longer blocks it** (§8.0.H, PR #90):
-`conv_activation` exists, defaults to `None` (the historical stack, byte-identical and
-loading every existing checkpoint), and `load_model` requires the config to state which
-architecture it means. What is left is purely the experiment — two production-scale runs
-with the learning rates retuned. No tracker issue remains: the defect's code half shipped
-in that PR, and this entry is the research half (per the docs rules, an experiment is not
-a fixable defect and does not meet the tracker bar).
+**Executed 2026-09-03 — first real-data pass: a drop-in activation hurts (ReLU family) or
+does not transfer (swish).** Run on the §7.5b harness
+(`/dataNAS/people/aagatti/projects/testing_nsm_library_update/`; design in
+`NSM_CODE_HEALTH_REFACTOR.md` §7.5b). Control is that plan's `triplanar_n50_main` cell:
+`main` @ `55db823`, femur bone+cartilage, first 50 CVPR train pairs, 1000 epochs, seed
+52122, AdamW, the historical LRs (latent 0.005 step-decay, model 1e-4). Four cells, each the
+control config plus exactly one change (`scripts/make_activation_configs.py` there):
+`conv_activation` = `relu`, `leaky_relu` (torch's 0.01 slope — the 0.2 named above is not
+reachable through the string API), `swish` (SiLU), and a **reseeded control**
+(`model_seed: 101`: init and batch order redrawn, dataset seed and therefore the sample
+cache unchanged) as the noise floor. Placement conv → LayerNorm → activation, as
+`VAEDecoder` builds it. Parameter count identical in all five (20,801,924). **Learning rates
+deliberately not retuned** — this pass asks the drop-in question only. Reconstruction: the
+same 10 CVPR val subjects, settings and per-subject protocol as §7.5b
+(`scripts/reconstruct_eval.py`), ASSD primary. Raw per-subject JSONs in `recon_results/`
+(`recon_triplanar_n50_<cell>.json`); wandb `bone-modeling/testing_nsm_library_update`, tag
+`conv_activation`; comparison scripts `compare_training.py` and `compare_activation.py`.
+Ran on rtx8000s (the control ran on an a6000 — same code, cache and seed).
+
+| run | last-100-epoch train loss | vs control | paired Δ ASSD bone (n=10) | paired Δ ASSD cart |
+|---|---|---|---|---|
+| control | 0.00335 | — | — | — |
+| reseeded control | 0.00333 | −0.6% | +0.0004 ± 0.014 (5/10 worse) | +0.003 ± 0.010 (8/10) |
+| swish | 0.00312 | **−7.0%** | +0.011 ± 0.011 (9/10, t=3.2) | +0.000 ± 0.012 (4/10) |
+| leaky_relu | 0.00405 | **+20.8%** | +0.045 ± 0.017 (10/10, t=8.6) | +0.032 ± 0.020 (10/10, t=5.0) |
+| relu | 0.00441 | **+31.7%** | +0.053 ± 0.019 (10/10, t=8.8) | +0.033 ± 0.019 (10/10, t=5.5) |
+
+Control ASSD is 0.236 (bone) / 0.189 (cart); chamfer moves the same way as ASSD in every row.
+
+- **ReLU and leaky ReLU hurt, unambiguously**: ~20% worse bone ASSD and ~17% worse
+  cartilage ASSD on every one of the 10 subjects — an order of magnitude past both floors
+  (the reseed here, and §7.5b's ±0.004–0.007 old-vs-new Δ on the same subjects). Their
+  loss curves trail from epoch 1, run ~1.9× the control's over epochs 25–100 and still
+  ~1.3× at 900–1000: closing slowly, not converged, which is the LR-retune caveat above
+  showing up on real data.
+- **Swish fits the training set better and reconstructs no better**: −7% training loss
+  (ten times the reseed floor), cartilage ASSD identical, bone ASSD ~4% worse on 9/10
+  subjects — above the one cohort draw of reseed noise available, not far above. Lower
+  train loss with no held-out gain at n=50 reads as mild overfitting rather than added
+  capacity. Its curve is ~1.10× the control's early and overtakes only after epoch ~500.
+- **The reseed measured something §7.5b had left open**: init + batch-order noise moves
+  the last-100-epoch loss mean by 0.6%, so that plan's 7–9% old-vs-new gap on the same
+  statistic is not init noise (resampling noise — the dataset seed keys the cache — is
+  still unmeasured; the §7.5b verdict rested on reconstruction and stands).
+
+**What this does not settle** is the retuned case. The ReLU-family curves were still
+converging at epoch 1000, and LayerNorm's scale invariance is the stated reason the
+historical LRs may be the wrong ones once an activation is present. If pursued: swish or
+leaky ReLU with the model LR raised and/or the schedule lengthened, two seeds each, judged
+on held-out ASSD rather than loss — this pass shows the two can disagree.
+
+**Status.** First real-data pass executed 2026-09-03, results above: no drop-in activation
+helps at the historical learning rates. The retuned experiment is not started, and nothing
+in the code blocks it (§8.0.H, PR #90: `conv_activation` exists, defaults to `None` — the
+historical stack, loading every existing checkpoint — and `load_model` requires the config
+to state which architecture it means). No tracker issue: an experiment is not a fixable
+defect and does not meet the tracker bar.
 
 ---
 
