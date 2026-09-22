@@ -23,8 +23,11 @@ under the same number.
 
 **Updated:** 2026-09-22 · **Status:** open
 
-- **Next:** **PR #110 (slice P) is open and needs review.** After it merges: pull this tree
-  and restart the celery worker, then start slice **S**.
+- **Next:** **PR #110 (slice P) is open and needs review.** Rebuilt 2026-09-22 after the
+  maintainer read the ported branch: the inverse-Lx port is dropped and #18 closes
+  won't-fix, so P is now four commits and a pure deletion. After it merges: pull this tree
+  and restart the celery worker, then open the **multi_head removal** as its own PR
+  (maintainer's call, 2026-09-22 — see Step P), then start slice **S**.
 - **Blocked on:** nothing this session can do. Two maintainer decisions are open
   (§ Decisions); neither blocked P and neither blocks S.
 - **Done:** Phases 0–3 complete. Eighteen slices executed, A through R, each with its own
@@ -35,8 +38,10 @@ under the same number.
   detail is in the history file. **Step 0 closed 2026-09-22:** its last item validated R
   against production and passed — R moves the production BScore less than re-running the
   same code does (numbers at the ticked box). **Slice P executed 2026-09-22 as PR #110**,
-  unmerged at the time of writing: the inverse-Lx port (closing #18), the deletion of
-  `train/deprecated/`, and the `two_stage` removal carried out of the closed #108.
+  unmerged at the time of writing: the deletion of `train/deprecated/`, the `two_stage`
+  removal carried out of the closed #108, the six references the first sweep left behind,
+  and the `sample_difficulty_lx` config keys — #18 closes won't-fix rather than porting,
+  on the maintainer's reading of the branch (Step P).
 - **Surprises:**
   - **A slice can close a finding in the same breath as deferring it.** All five
     `reconstruct_latent` sites §8.0.K deferred to R were already fixed by §8.0.K's own
@@ -56,16 +61,24 @@ under the same number.
     install's meta-path finder, which otherwise beats `PYTHONPATH`. The production tree is
     never modified, so there is nothing to restore and no window where an arriving job
     would run the wrong code.
-  - **A deletion slice is mostly a documentation slice.** P deleted 1,112 lines of `NSM/`
-    and touched 22 files to do it: every carve-out that existed only for the deleted code
-    (two test sweeps that skipped `train/deprecated/`), every ruling that assumed it
-    (`SCOPE.md` §1, §2.2, §2.6, §2.7, §2.9 and §5, plus the `ARCHITECTURE.md` coverage and
-    duplicate-name tables), and two `KNOWN_ISSUES` entries about code that no longer
-    exists. A History
+  - **A deletion slice is mostly a documentation slice, and the sweep needs its own
+    sweep.** P deleted 1,108 lines of `NSM/` and touched 23 files to do it: every carve-out
+    that existed only for the deleted code, every ruling that assumed it (`SCOPE.md` §1,
+    §2.2, §2.6, §2.7, §2.9 and §5, plus the `ARCHITECTURE.md` coverage and duplicate-name
+    tables), and two `KNOWN_ISSUES` entries about code that no longer exists. A History
     entry outlives the code it describes on purpose — it answers a question about runs —
     but a *dotted citation* in one does not: `test_docs_references` requires every
     `module.symbol` in `docs/` to resolve in the current tree, which is a good rule that a
-    deletion slice will trip.
+    deletion slice will trip. **The first pass still missed six**, all prose rather than
+    code: see Step P.
+  - **Porting a feature means reading it, not moving it.** #18 had a maintainer-endorsed
+    "port this" on the issue since Aug 2026, and the first version of P carried it out
+    faithfully — including the defect that had made its author switch it off in Feb 2024,
+    which nothing in the issue, `SCOPE.md` or the plan recorded because nobody had run it.
+    `CLAUDE.md`'s "never inherit a rationale along with the code" is the rule that would
+    have caught it, and what it needs in practice is a *behavioural* check: the four tests
+    the port shipped all passed with and without the one-word fix, because they asserted
+    the forward value and the defect was in the gradient.
   - **The test suite grew faster than the library it tests.** Slice T was scheduled at a
     1.02 test-to-source ratio and a 109-second suite; measured 2026-09-21 it is **1.10 and
     180 seconds**. Every slice since has added to what T was created to trim.
@@ -169,62 +182,72 @@ T is the one with judgment in it.
 
 ### Step P — slice §8.0.P: quarantine and delete — **executed, PR #110 open**
 
-*Three commits on `slice-p-quarantine-and-delete`, 361 lines added and 1,550 deleted
-(`NSM/` itself: 41 and 1,112). Suite 1048 → 1031 passed, `make lint` clean, and the
-production consumer verified by importing its two symbols in the kneepipeline environment,
-which imports this tree. Every bullet below was carried; what each one turned out to be:*
+*Four commits on `slice-p-quarantine-and-delete`, **284 lines added and 1,608 deleted**
+(`NSM/` itself: 13,998 from 15,106). Suite 1189 passed / 4 skipped / 3 xfailed, `make lint`
+clean, and the production consumer verified by importing its two symbols in the
+kneepipeline environment, which imports this tree.*
 
-- ***#18 was ruled port, not won't-fix***, *on the issue's own record that the maintainer
-  wants the weighting available. It is an `elif` after `sample_difficulty_weight` and is
-  read with `.get`, which is §2.2's "impossible to enable by accident" made concrete, and
-  the off-state has three tests to the algorithm's one. Both halves of the claim were run
-  rather than argued: disabling the branch reddens the algorithm test, and an `if` in place
-  of the `elif` reddens the precedence test.*
-- ***The port silently changes training for a config that set the key*** *— `lx` non-null
-  with `sample_difficulty_weight` null — so it took a `KNOWN_ISSUES.md` § History 31 entry.
-  No shipped or production config is in that position: both ShapeMedKnee configs set
-  `sample_difficulty_weight: 0.2` and carry no `lx` key at all.*
-- ***#108's §1 line was wrong in the other direction too.*** *The plan said its "`deepsdf`
-  cannot be reconstructed" was false. Measured 2026-09-22: **all three** advertised types —
-  `triplanar`, `deepsdf`, `implicit` — fit a latent through `reconstruct_latent` end to end,
-  so `SCOPE.md` §1's "only `TriplanarDecoder` survives the reconstruction path" is what
-  needed rewriting, not the count in it. What survives of that bullet is that `load_model`'s
-  type list is a hardcoded `if/elif` — the registration pathway, §8.1.*
+**The slice was executed twice.** The first version ported the inverse-Lx weighting per
+#18 and was opened as PR #110 on 2026-09-22. The maintainer read the ported branch the
+same day and ruled it out; the branch was rebuilt without it (force-push, old tip kept as
+the local `backup-before-drop`). What each bullet turned out to be:
+
+- ***#18 closes won't-fix, and the four config keys go with the file.*** *The port was
+  rejected on four measured counts, not on taste. **The paper's curriculum is already
+  fully implemented**: Curriculum DeepSDF (arXiv:2003.08593) has two components, equation
+  5 surface accuracy and equation 6 sample difficulty, and both are live in
+  `_surface_l1_loss`. The paper contains **no inverse-power weighting at all**, so
+  `sample_difficulty_lx` is NSM's own experiment rather than a missing piece of a published
+  method. **It was tried and switched off** — live from `5188417` (Aug 2023) to `e173adc`
+  (14 Feb 2024, "Remove some hard sample difficulty weight"). **It did not work**: its
+  weight is built from the loss it multiplies and was never detached, so autograd
+  differentiates `l1 / (l1 ** lx + eps)` whole, which has a maximum at
+  `(eps / (lx - 1)) ** (1 / lx)` — 0.01 at `lx=2, eps=1e-4` — above which the gradient
+  inverts (+4800 at error 0.005, then −1200 at 0.02, −355 at 0.05, −4.0 at 0.5), and with
+  `surface_accuracy_e` and `lx < 1` it returns NaN on a run that exits 0. **And porting cost
+  ~150 lines** of code, tests and docs for an untuned experiment with no users.*
+- ***Equation 6 is immune for a reason worth keeping.*** *Its weight is built from
+  `torch.sign`, which passes no gradient, so it is constant by construction. The two
+  branches Feb 2024 removed — inverse-Lx and `hard_sample_difficulty_power` — are exactly
+  the two that lacked that property. That is now a rule in `CLAUDE.md`: a weight built from
+  the prediction or the loss has to be detached.*
+- ***`KNOWN_ISSUES` § History 31 answers a question about runs, not about code.*** *The
+  keys doing nothing since Feb 2024 is inert and needed no entry. The Aug 2023 – Feb 2024
+  window, when the branch was live and its gradient inverted, is not: a reader holding a
+  run from then has a model that is not what its config describes.*
+- ***#108's §1 line was wrong in the other direction too.*** *Measured 2026-09-22: **all
+  three** advertised types — `triplanar`, `deepsdf`, `implicit` — fit a latent through
+  `reconstruct_latent` end to end, so `SCOPE.md` §1's "only `TriplanarDecoder` survives the
+  reconstruction path" is what needed rewriting, not the count in it. What survives of that
+  bullet is that `load_model`'s type list is a hardcoded `if/elif` — §8.1. **Nothing pins
+  this**, and it replaced a documented limitation; S or §8.1 should give it a test.*
 - ***§8.0.S item (4) loses its only config route.*** *The evidence test removed with
-  two_stage was the one config path reaching `TriplanarDecoder`'s unread `**kwargs`. S
-  should know it is back to having none before it re-derives one.*
-- ***#51 needed nothing***, *as predicted: `SCOPE.md` §2.1 already carries the downgrade.*
+  `two_stage` was the one config path reaching `TriplanarDecoder`'s unread `**kwargs`.*
+- ***#51 needed nothing***, *as predicted — but see the next step.*
 
-*Left for the maintainer: reviewing and merging #110. The working tree is back on `main`,
-so production is not running branch code; after the merge, pull and restart the worker.*
+**A deletion slice is mostly a documentation slice, and its sweep needs its own sweep.**
+The first version deleted 1,112 lines of `NSM/` and touched 22 files to do it, and still
+left six references to the deleted code behind: a `per-file-ignores` entry in `.flake8`,
+two exemption docstrings that said "these three" over a two-entry tuple, two orphan nodes
+in `ARCHITECTURE.md`'s module diagram, an import left unused by the test deletions (which
+`make lint` cannot see, because `.flake8` project-ignores F401), and a `SCOPE.md` §2.7
+line still arguing for quarantine-not-delete three lines below the decision to delete. A
+second config-key sweep also had its own copy of the exemption the first one dropped.
+**Grep for the deleted name in prose as well as code, and count the things a sentence
+claims to count.**
 
-Ungated 2026-08-30: the 0b consumer survey is answered and measured, and `nsosim` is
-inference-only with a five-symbol NSM surface, none of it in `train/` (`docs/SCOPE.md` §5).
+**Ruled 2026-09-22, executed next as its own PR: remove `train_deep_sdf_multi_head.py`**
+(443 lines). Not a model type — a training loop taking N ordinary decoders, defining no
+model class, 47% of its non-comment lines verbatim copies of `train_deep_sdf.py`. Broken
+since 2023 (only the last decoder trains), last feature work 2025-01-27, and every 2026
+commit to it is a refactor sweep that touched every file. `SCOPE.md` §2.1's
+unsupported-until-needed ruling and #51's repair checklist are superseded: the checklist
+moves to `SCOPE.md` or the issue closes there. It rides its own PR because #110 is already
+23 files.
 
-- Delete `NSM/train/deprecated/` — 876 lines, two files.
-- **Rule on #18 first, because it decides the shape of that deletion.**
-  `train_deep_sdf_orig.py` holds the only live `sample_difficulty_lx` implementation, ~12
-  lines. Port it into `train_deep_sdf.py`, or delete it and close #18 as won't-fix. Either
-  way §8.0.N's finding is the first task: the four `sample_difficulty_lx` config keys are
-  dead on every supported path today (`docs/KNOWN_ISSUES.md` § Open), so nothing regresses
-  by deleting them with it.
-- Cherry-pick `3d0775e` from the closed #108 — delete the `two_stage` model type. **Strip
-  its `Co-Authored-By: Claude Fable 5` trailer.** Fetch it with
-  `git fetch origin refs/pull/108/head:pr-108`, which GitHub keeps after the branch is
-  deleted; the branch `drop-implicit-two-stage` may be gone by then. It needs reconciling with #107, which
-  added two-stage tests that the deletion makes dead: remove
-  `TestTwoStageTranslatesWhatItsSiblingsRead` and the two-stage evidence test from
-  `testing/NSM/test_parameter_surface.py`, and note in `docs/KNOWN_ISSUES.md` § History 30
-  that the model type it describes was removed in the same release.
-- **Correct #108's `SCOPE.md` §1 line as you carry it.** It says `load_model` advertises two
-  model types and one of them, `deepsdf`, cannot be reconstructed. That was measured false
-  on 2026-09-04: since #105's `_decode` signature dispatch, both `deep_sdf.Decoder` and
-  `ImplicitDecoder` reconstruct end to end.
-- #51 rides here: `docs/SCOPE.md` §2.1 already carries the downgrade to
-  unsupported-until-needed, and the issue stays open as the repair checklist. Confirm, do
-  not redo.
-
-Net effect is roughly 1,300 lines deleted and nothing added.
+*Left for the maintainer: reviewing and merging #110, and approving the #18 close text.
+The working tree is on `main`, so production is not running branch code; after the merge,
+pull and restart the worker.*
 
 ### Step S — slice §8.0.S: v0.4.0, the public signatures
 
