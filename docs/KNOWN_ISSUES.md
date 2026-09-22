@@ -1825,9 +1825,15 @@ the defaults off the signatures rather than restating them.
 | **Severity** | Silent for `progressive_add_depth` — the model trains without the phase-in it asked for. Loud for the other three: they change the architecture, so an affected checkpoint fails `load_state_dict` |
 | **Changed in** | `slice-r-parameter-surface`, Sep 2026 (plan §8.0.R) |
 
+> **The `two_stage` model type was removed in the same release** (`SCOPE.md` §2.9, plan
+> §8.0.P), on the evidence that it has no training run anywhere and was not constructible
+> until Aug 2026. This entry is kept because it answers a question about runs, not about
+> the current code: if you hold a two-stage checkpoint, it tells you what built it.
+> `git show v0.3.0:NSM/models/two_stage.py` is the last shipped copy.
+
 ### What was wrong
 
-`loader._get_two_stage_params` builds its `triplanar_params` and `mlp_params` inline
+The loader's `_get_two_stage_params` built its `triplanar_params` and `mlp_params` inline
 rather than from the two sibling translators, and the inline copy had drifted: four config
 keys that `_get_triplanar_params` or `_get_deepsdf_params` reads, and that
 `TriplanarDecoder.__init__` or `Decoder.__init__` accepts, were named in neither branch.
@@ -1856,7 +1862,8 @@ Anything it prints was ignored when the model was built. To reproduce the old be
 delete those keys from the config; the model then builds at the constructor defaults, which
 is what it was doing all along.
 
-*Pinned by:* `test_parameter_surface.TestTwoStageTranslatesWhatItsSiblingsRead`, whose
-`test_the_built_params_are_unchanged_when_the_key_is_absent` is the half that says no
-existing model moved.
+*Pinned by:* `test_parameter_surface.TestTwoStageTranslatesWhatItsSiblingsRead` in v0.3.0,
+whose `test_the_built_params_are_unchanged_when_the_key_is_absent` was the half that said
+no existing model moved. The class went with the model type at §8.0.P; nothing pins this
+entry on `main`, because there is no longer anything to pin.
 

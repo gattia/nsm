@@ -87,7 +87,6 @@ flowchart LR
     MDload["loader"]
     MDmpa["modulated_periodic_activations"]
     MDtri["triplanar"]
-    MDtwo["two_stage"]
   end
 
   subgraph RC["NSM.reconstruct"]
@@ -128,15 +127,11 @@ flowchart LR
   MDpkg -->|star| MDdeep
   MDpkg --> MDmpa
   MDpkg --> MDtri
-  MDpkg --> MDtwo
   MDpkg --> MDload
   MDload --> MDdeep
   MDload --> MDtri
-  MDload --> MDtwo
   MDload --> MDmpa
   MDtri --> MDdeep
-  MDtwo --> MDtri
-  MDtwo --> MDdeep
 
   RCpkg -->|star| RCmain
   RCpkg --> RCs3
@@ -417,7 +412,8 @@ expressive class as the function being deployed.
 
 **`batch` was also the default in three of the four places that had one** — the `VAEDecoder`
 and `TriplanarDecoder` signatures, `_get_triplanar_params` and the triplanar template —
-against `layer` in `_get_two_stage_params`, `two_stage`'s default triplanar params and
+against `layer` in the two_stage loader branch and defaults (the type has since been
+removed, SCOPE.md §2.9) and in
 `NSM/configs/default_config.json`. The value that won three of them is the one **nothing has
 ever been trained with**: 647, 551, `ShapeMedKnee_2024_config.json` and the regenerated
 default all say `layer`, and the default only says `layer` at all because `651a810`

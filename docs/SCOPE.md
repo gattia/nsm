@@ -40,16 +40,22 @@ The library is not a wrapper around one hybrid model; adding a new architecture 
 it work end-to-end is the point. Two things currently prevent that, and both are defects to
 fix rather than limitations to document:
 
-- **Only `TriplanarDecoder` survives the reconstruction path.** `reconstruct_latent` calls
-  decoders with a keyword-only `(latent=, xyz=)` interface that only `TriplanarDecoder`
-  implements (`reconstruct.reconstruct_latent`), with no fallback — while `mesh.decode_sdf`
-  inspects the signature and *does* fall back. Two conventions in one pipeline; `load_model`
-  advertises four model types and three of them cannot be reconstructed.
+- **Adding a model type means editing NSM internals.** ~~Only `TriplanarDecoder` survives
+  the reconstruction path.~~ That half is **fixed**: `reconstruct_latent` called decoders
+  through a keyword-only `(latent=, xyz=)` interface with no fallback, which only
+  `TriplanarDecoder` implements, while `mesh.decode_sdf` had inspected the signature and
+  fallen back since before the refactor. `_decode` is that dispatch at the site that was
+  missing it (§8.0.K, memoized in §8.0.R), and **measured 2026-09-22, all three advertised
+  types — `triplanar`, `deepsdf` and `implicit` — fit a latent through `reconstruct_latent`
+  end to end.** What remains is the part a fallback does not buy: `load_model` is a
+  hardcoded `if/elif` over type names, so a model NSM does not already know about cannot be
+  reached from a config at all.
   → **Phase 4 work item: a common decoder interface plus a registration pathway**, so a
   third party can add a model and have it work in train, reconstruct, mesh and interpolate
-  without editing NSM internals. One calling convention has to win.
+  without editing NSM internals. One calling convention has to win, and `_decode` has made
+  it the permissive one.
 
-  The `implicit` type is the furthest gone of the three, in two independent ways
+  The `implicit` type is the furthest from usable, in two independent ways
   (audit rulings, re-verified 2026-08-22): `loader._get_implicit_params` requires
   `latent_dim`/`hidden_dim`/`num_layers` — a vocabulary no real training config uses
   (the shipped configs carry `latent_size`/`layer_dimensions`) — and both that loader
@@ -69,7 +75,7 @@ fix rather than limitations to document:
   that instantiates the trainer from the shipped file. That delivers the first of the
   per-model-type defaults.
   → **Remaining Phase 4 work item: a default config for each *other* model type**
-  (deepsdf, two_stage; `implicit` first needs the vocabulary reconciliation above).
+  (deepsdf; `implicit` first needs the vocabulary reconciliation above).
 
 **Unsupported by design, since Aug 2026 (§8.0.H):**
 
@@ -342,7 +348,7 @@ naming it. That test is the mechanism that will report the day the build starts 
 
 | Module | Lines | Status | What decides it |
 |---|---|---|---|
-| `models/loader.py` | 411 | **production — keep; the extensibility question moves to §8.1** | It is the documented entry point (README, `examples/`) *and* the natural home of the extensibility work in §1, since `load_model` is what a registration pathway would hang off. Three of its four advertised model types still cannot be reconstructed — that part is §8.1. **The open question is answered, by execution (2026-08-26): see below.** |
+| `models/loader.py` | 411 | **production — keep; the extensibility question moves to §8.1** | It is the documented entry point (README, `examples/`) *and* the natural home of the extensibility work in §1, since `load_model` is what a registration pathway would hang off. All three of its advertised model types reconstruct as of Sep 2026 (§1); what is left for §8.1 is that the type list is hardcoded here. **The open question is answered, by execution (2026-08-26): see below.** |
 
 **Could the consumer switch to `load_model` today?** **Yes, after one edit to two files
 it does not own.** Answered by running it, not by reading: both shipped
@@ -453,6 +459,29 @@ work over `reconstruct/main.py` (branch `wandb-optional`; CHANGELOG Unreleased
 Two audit rulings needed no new text, verified rather than assumed: `refine_mesh`'s
 cross-mesh cell-indexing precondition is already condition 2 of §2.3, and the
 only-TriplanarDecoder reconstruction limit is already §1's first bullet.
+
+### 2.9 Removed model types — **last shipped in v0.3.0, resurrectable from there**
+
+- **`two_stage` / `TwoStageDecoder`** (`models/two_stage.py`): triplanar + MLP summed.
+  Removed Sep 2026 (plan §8.0.P) on measured non-use: **zero training runs, ever** — no
+  launcher script and no saved run config in the maintainer's training project
+  (`nsm_femur/training_run_files/python_calls`, ~120 scripts), neither measured consumer
+  imports it (kneepipeline: `TriplanarDecoder` + `reconstruct_mesh`; nsosim: five symbols,
+  §5), and until [#46](https://github.com/gattia/nsm/issues/46) (Aug 2026) the class was
+  not even constructible — `[latent_size + 3] + dims` on a tuple — so nothing outside this
+  repo can hold a checkpoint of it. Its §8.0.O padding and norm-type repairs were correct
+  and survive as prose in the tests that pin the same behaviour on the triplanar path.
+
+  **`implicit` / `ImplicitDecoder` is not in this section, deliberately.** The same survey
+  proposed removing it and the maintainer ruled on 2026-09-04 that it **stays**: it is the
+  ShapeMed-Knee paper's modulated-periodic-activations baseline, so the gaps §1 records
+  against it are defects against a published result rather than reasons to delete it.
+
+**Resurrection:** `git show v0.3.0:NSM/models/two_stage.py` is the complete module as last
+shipped; its loader branch (`_get_two_stage_params`), config template and tests live in the
+same tag under `NSM/models/loader.py`, `testing/NSM/models/` and
+`testing/NSM/test_parameter_surface.py`. Reviving it means re-adding those plus the Phase-4
+registration pathway (§1) that removal pre-empted.
 
 ---
 

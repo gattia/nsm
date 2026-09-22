@@ -32,6 +32,17 @@ nsm @ git+https://github.com/gattia/nsm@v0.3.0
 
 ### Breaking
 
+- **The `two_stage` model type is removed** (plan §8.0.P). `NSM.models.TwoStageDecoder`,
+  `load_model(..., model_type="two_stage")`, its loader branch and its config template are
+  all gone, and `list_supported_models()` now returns `["triplanar", "deepsdf",
+  "implicit"]`. It had **zero training runs, ever** — no launcher script, no saved run
+  config, and neither measured consumer imports it — and until
+  [#46](https://github.com/gattia/nsm/issues/46) the class was not constructible at all,
+  so no checkpoint of it can exist outside this repo. `docs/SCOPE.md` §2.9 records the
+  ruling and the resurrection path; `v0.3.0` holds the last copy. The `implicit` type is
+  **not** removed — the maintainer ruled on 2026-09-04 that it stays, as the
+  ShapeMed-Knee paper's modulated-periodic-activations baseline.
+
 - **`roundtrip_distance` and `forward_backward_disagreement` are keyword-only**
   ([#56](https://github.com/gattia/nsm/issues/56), plan §8.0.N). The two take *the same two arrays in opposite order*, forty
   lines apart in `mesh/correspondence_metrics.py`, and neither swap was visible in what a

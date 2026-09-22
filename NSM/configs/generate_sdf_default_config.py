@@ -52,8 +52,8 @@ config = {
     "padding": 0.1,
     "progressive_add_depth": False,
     "layer_split": False,
-    # MLP-decoder keys, carried so `load_model` can build a deepsdf or two_stage
-    # model from this file. **None of them is read while `model_type` is
+    # MLP-decoder keys, carried so `load_model` can build a deepsdf model from this
+    # file. **None of them is read while `model_type` is
     # `triplanar`**, which is what this file ships as: `layer_latent_in` reads as
     # "the SDF head re-injects the latent at layer 4" and configures nothing
     # (plan §8.0.R).
