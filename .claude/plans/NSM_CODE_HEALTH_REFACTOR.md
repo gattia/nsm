@@ -23,11 +23,15 @@ under the same number.
 
 **Updated:** 2026-09-22 · **Status:** open
 
-- **Next:** **PR #110 (slice P) is open and needs review.** Rebuilt 2026-09-22 after the
-  maintainer read the ported branch: the inverse-Lx port is dropped and #18 closes
-  won't-fix, so P is now four commits and a pure deletion. After it merges: pull this tree
-  and restart the celery worker, then open the **multi_head removal** as its own PR
-  (maintainer's call, 2026-09-22 — see Step P), then start slice **S**.
+- **Next:** **PRs #110 and #111 are open and need review.** #111 is stacked on #110, so
+  merge #110 first **and delete its branch in the same action** — GitHub only retargets a
+  stacked PR to `main` when the base branch is deleted, which #78 learned the hard way.
+  After both merge: pull this tree and restart the celery worker, then start slice **S**.
+  - **#110** (slice P, four commits, +284/−1608): delete `train/deprecated/`, remove
+    `two_stage`, sweep the six references the first pass left behind, delete the
+    `sample_difficulty_lx` config keys. **#18 closed won't-fix**, not ported.
+  - **#111** (two commits, +126/−612): remove the multi-head trainer (**#51 closed**), and
+    close the `grad_clip` entry as working by design.
 - **Blocked on:** nothing this session can do. Two maintainer decisions are open
   (§ Decisions); neither blocked P and neither blocks S.
 - **Done:** Phases 0–3 complete. Eighteen slices executed, A through R, each with its own
@@ -337,18 +341,26 @@ waiting on its own §2 layout ruling.
 
 ## Decisions the maintainer owes
 
-Neither blocks step 0 or slice P.
+**Both were ruled 2026-09-22 and are struck through below.** Nothing is outstanding. They
+are kept rather than deleted because each records an argument that outlives its answer.
 
-1. **Does slice S shrink the four public signatures, or does the config initiative?**
-   Recommendation: **hand item (1) to the config initiative and ship the rest of S now.**
+1. ~~**Does slice S shrink the four public signatures, or does the config initiative?**~~
+   **Ruled 2026-09-22: the config initiative.** S ships its other six items and leaves the
+   59-parameter `reconstruct_mesh` alone; `NSM_CONFIG_SECTIONS_AND_MODEL_REGISTRY.md` takes
+   item (1) when it gets there. The reasoning, kept because it is the argument rather than
+   the answer: **shrinking it now and regrouping it later is two breaking changes for one
+   result.**
    The 59-parameter `reconstruct_mesh` is exactly where the wanted "set the reference mesh"
    option lands, and the config plan's `recon` section is what that signature should
    mirror. Shrinking it now and regrouping it later is two breaking changes for one result.
    This is narrower than the config plan's own §5 proposal to absorb **all** of S, which
    should be declined — that would tie the refactor's ending to a new feature being
    designed and built.
-2. **Close the `grad_clip` entry in `docs/KNOWN_ISSUES.md` § Open as working by design?**
-   Recommendation: **yes.** `train_epoch` passes `model.parameters()` to `clip_grad_norm_`
+2. ~~**Close the `grad_clip` entry in `docs/KNOWN_ISSUES.md` § Open as working by design?**~~
+   **Ruled 2026-09-22: yes; executed in PR #111.** The entry leaves § Open and the ruling
+   lands in `SCOPE.md` under a new *working by design* heading, because a won't-fix that
+   closes nowhere becomes the eleventh document. The upstream comparison was **re-fetched
+   and re-read** rather than inherited from the note below. `train_epoch` passes `model.parameters()` to `clip_grad_norm_`
    and never the latent embedding. Verified 2026-09-21 against the upstream reference:
    `facebookresearch/DeepSDF/train_deep_sdf.py:521` clips `decoder.parameters()` and never
    `lat_vecs`, so NSM matches it. The knob is `null` in the shipped default and in both
