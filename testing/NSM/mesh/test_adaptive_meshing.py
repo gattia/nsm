@@ -382,7 +382,6 @@ class TestCreateMeshAdaptive:
             objects=1,
             device="cpu",
             use_vtk=True,
-            verbose=False,
         )
         assert mesh is not None
         assert mesh.n_points > 0
@@ -403,7 +402,6 @@ class TestCreateMeshAdaptive:
             scale_to_original_mesh=False,
             objects=1,
             device="cpu",
-            verbose=False,
             fallback_to_original=True,
         )
         assert mesh is None
@@ -423,7 +421,6 @@ class TestCreateMeshAdaptive:
             scale_to_original_mesh=False,
             objects=1,
             device="cpu",
-            verbose=False,
             fallback_to_original=False,
         )
         assert result is None
@@ -454,7 +451,6 @@ class TestCreateMeshAdaptive:
             scale_to_original_mesh=False,
             objects=1,
             device="cpu",
-            verbose=False,
         )
         assert mesh is not None
         # Total points evaluated (coarse + dense) should be less than full grid
@@ -478,7 +474,6 @@ class TestCreateMeshAdaptive:
             scale_to_original_mesh=False,
             objects=2,
             device="cpu",
-            verbose=False,
         )
         assert isinstance(meshes, list)
         assert len(meshes) == 2

@@ -15,7 +15,7 @@ and reports on itself in fewer places than it measures.
    ``scale_jointly`` alone pays for a mean shape nothing consults -- and aborts the run if
    that mesh has no surface.
 4. **Six stage timings are measured and five are returned.**
-5. **Ten of fifteen log records are gated behind the deprecated ``verbose`` flag**, so a
+5. **Ten of fifteen log records were gated behind the deprecated ``verbose`` flag**, so a
    host that configured logging is not the audience for them.
 
 6. **A subject missing a surface** fits and decodes, but every metric flag on it raises
@@ -64,7 +64,7 @@ class SphereDecoder(torch.nn.Module):
         self.objects = objects
         self.n_points_evaluated = 0
 
-    def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+    def forward(self, x=None, latent=None, xyz=None, epoch=None):
         pts = xyz if xyz is not None else x[:, -3:]
         self.n_points_evaluated += pts.shape[0]
         sdf = torch.norm(pts, dim=1, keepdim=True) - 0.5
@@ -76,7 +76,7 @@ class SphereDecoder(torch.nn.Module):
 class NoZeroLevelSetDecoder(torch.nn.Module):
     """SDF is +1 everywhere, so the mean shape has no surface. See the regression twin."""
 
-    def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+    def forward(self, x=None, latent=None, xyz=None, epoch=None):
         n_points = xyz.shape[0] if xyz is not None else x.shape[0]
         return torch.ones(n_points, 1)
 
@@ -164,9 +164,14 @@ class TestUnknownKeywordsAreRefused:
     def test_the_consumers_own_keyword_set_is_accepted(self, sphere_path):
         """
         Every keyword ``kneepipeline/steps/run_nsm.py:185`` passes, together, against a
-        signature that is about to start refusing unknown ones. This is the list that must
-        never become a ``TypeError``; it is asserted as a set against the signature rather
-        than by running a fit, because several of its values need a real model.
+        signature that refuses unknown ones. It is asserted as a set against the signature
+        rather than by running a fit, because several of its values need a real model.
+
+        **Two of these are not named parameters, for opposite reasons.**
+        ``batch_size_latent_recon`` is deprecated-and-accepted and goes on working.
+        ``verbose`` was deleted at v0.4.0 and now raises -- see
+        ``TestTheDeletedVerboseFlagIsRefused`` below, which is the pin for the consumer
+        change that has to land before this tree is pulled into production.
         """
         import inspect
 
@@ -201,9 +206,10 @@ class TestUnknownKeywordsAreRefused:
         }
         named = set(inspect.signature(recon_main.reconstruct_mesh).parameters)
         unknown = consumer_keywords - named
-        assert unknown == {"batch_size_latent_recon"}, (
-            "the consumer's only unnamed keyword is the deprecated one; anything else "
-            f"here would break on a refusal: {sorted(unknown)}"
+        assert unknown == {"batch_size_latent_recon", "verbose"}, (
+            "the consumer's unnamed keywords are the deprecated one, which still works, "
+            "and the deleted one, which does not; anything else here would break on a "
+            f"refusal nobody has been told about: {sorted(unknown)}"
         )
 
 
@@ -325,7 +331,6 @@ class TestTheReferenceMeshIsBuiltWhenItIsUsed:
             search_bounds=(-1.0, 1.0),
             objects=1,
             batch_size=32**3,
-            verbose=False,
             device="cpu",
         )
         numpy_after = np.random.get_state()
@@ -389,39 +394,16 @@ class TestReturnTimingCoversEveryStage:
 # ---------------------------------------------------------------------------
 
 
-def _verbose_gated_log_calls():
-    """``logger.*`` calls under an ``if verbose ...:`` inside ``reconstruct_mesh``."""
-    source = open(recon_main.__file__, encoding="utf-8").read()
-    function = next(
-        node
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.FunctionDef) and node.name == "reconstruct_mesh"
-    )
-    gated = []
-    for node in ast.walk(function):
-        if not isinstance(node, ast.If) or "verbose" not in ast.dump(node.test):
-            continue
-        for inner in ast.walk(node):
-            if (
-                isinstance(inner, ast.Call)
-                and isinstance(inner.func, ast.Attribute)
-                and isinstance(inner.func.value, ast.Name)
-                and inner.func.value.id == "logger"
-            ):
-                gated.append(inner.func.attr)
-    return gated
-
-
 class TestLogRecordsReachAConfiguredHost:
     """
     §8.0.G made logging the mechanism; ten records went on answering to the parameter it
     deprecated. A host that ran ``logging.getLogger("NSM").setLevel(DEBUG)`` -- the exact
     replacement the deprecation warning names -- saw none of them.
-    """
 
-    def test_no_log_record_is_gated_on_the_deprecated_flag(self):
-        """Was a strict xfail: ten of fifteen, one of them the skipped-surface warning."""
-        assert _verbose_gated_log_calls() == []
+    The AST sweep that asserted no record was left gated on the flag went with the flag at
+    v0.4.0: with no ``verbose`` parameter in scope, an ``if verbose:`` is a ``NameError``
+    rather than a defect this could find, so the assertion could no longer fail.
+    """
 
     def test_a_host_at_debug_sees_the_stage_records(self, sphere_path, caplog):
         """Was a strict xfail: empty, for a host that did exactly what the notice said."""
@@ -435,24 +417,32 @@ class TestLogRecordsReachAConfiguredHost:
         assert "Loaded mesh in" in messages
         assert "Created mesh in" in messages
 
-    def test_verbose_true_shows_them_today_and_must_keep_doing_so(self, sphere_path, caplog):
-        """
-        The bridge attaches at ``DEBUG`` (``_verbose_deprecation.py:82``), so ungating
-        cannot take anything away from a ``verbose=True`` caller. ``caplog`` stands in for
-        the bridge's handler -- it is a handler on the root, so the bridge declines to add
-        its own and the records land here either way.
-        """
-        with caplog.at_level(logging.DEBUG, logger="NSM"):
-            with pytest.warns(DeprecationWarning):
-                recon_main.reconstruct_mesh(
-                    path=sphere_path,
-                    decoders=SphereDecoder(),
-                    verbose=True,
-                    **sampled_run_kwargs(),
-                )
-        messages = " ".join(record.getMessage() for record in caplog.records)
-        assert "Loaded mesh in" in messages
-        assert "Created mesh in" in messages
+
+class TestTheDeletedVerboseFlagIsRefused:
+    """
+    ``verbose=`` was deprecated at v0.3.0 and honoured for that release, then deleted at
+    v0.4.0 with ``NSM/_verbose_deprecation.py``.
+
+    A caller who kept passing it gets a ``TypeError`` naming it, which is the good failure
+    mode and is still a failure: the production consumer passes ``verbose=True`` on every
+    fit (``kneepipeline/steps/run_nsm.py:211``) and imports this tree unpinned, so the
+    pull is the deploy. The bridge's own header records why the release of overlap did not
+    reach that consumer -- a ``DeprecationWarning`` is invisible under Python's default
+    filter outside ``__main__``, and it calls NSM from inside a module.
+
+    Nothing is lost by dropping it: the records it showed are the ones the test above
+    already gets from ``logging.getLogger("NSM").setLevel(DEBUG)``, which is what the
+    deprecation notice has named as the replacement since v0.3.0.
+    """
+
+    def test_it_raises_naming_the_parameter(self, sphere_path):
+        with pytest.raises(TypeError, match="verbose"):
+            recon_main.reconstruct_mesh(
+                path=sphere_path,
+                decoders=SphereDecoder(),
+                verbose=True,
+                **sampled_run_kwargs(),
+            )
 
 
 # ---------------------------------------------------------------------------

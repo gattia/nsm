@@ -38,7 +38,6 @@ def test_the_shipped_default_config_drives_train_deep_sdf(tmp_path):
     overrides = {
         **ARCHITECTURE,
         "device": "cpu",
-        "verbose": False,
         "n_epochs": 2,
         "checkpoint_epochs": 2,
         "additional_checkpoints": [],

@@ -21,7 +21,7 @@ a default they did not ask for.
    phase decays its way to exactly 0.0.
 6. **``compute_loss`` resamples on every call** and LBFGS calls it many times per step, so
    the line search optimises a function that moves under it.
-7. **25 of 30 log records are gated behind the deprecated ``verbose`` flag**, three of
+7. **25 of 30 log records were gated behind the deprecated ``verbose`` flag**, three of
    them warnings about the result rather than chatter.
 
 Plus the end-to-end pin the commit-9 extraction and the commit-10 chunking are measured
@@ -61,7 +61,7 @@ class LinearDecoder(torch.nn.Module):
         self.surfaces = surfaces
         self.scale = scale
 
-    def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+    def forward(self, x=None, latent=None, xyz=None, epoch=None):
         pts = xyz if xyz is not None else x[:, -3:]
         base = (pts[:, :1] + latent.sum()) * self.scale
         return base.repeat(1, self.surfaces)
@@ -74,10 +74,10 @@ class RecordingDecoder(LinearDecoder):
         super().__init__(**kwargs)
         self.draws = []
 
-    def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+    def forward(self, x=None, latent=None, xyz=None, epoch=None):
         pts = xyz if xyz is not None else x[:, -3:]
         self.draws.append(round(float(pts.sum()), 9))
-        return super().forward(x=x, latent=latent, xyz=xyz, epoch=epoch, verbose=verbose)
+        return super().forward(x=x, latent=latent, xyz=xyz, epoch=epoch)
 
 
 @contextlib.contextmanager
@@ -806,7 +806,7 @@ class TestBothDecoderForwardInterfaces:
         seen = []
 
         class Recording(LinearDecoder):
-            def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+            def forward(self, x=None, latent=None, xyz=None, epoch=None):
                 seen.append(
                     {"x_is_none": x is None, "kwargs_given": latent is not None and xyz is not None}
                 )

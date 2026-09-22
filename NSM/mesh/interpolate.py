@@ -28,7 +28,6 @@ import scipy
 import torch
 from vtk.util.numpy_support import numpy_to_vtk
 
-from .._verbose_deprecation import honour_verbose
 from .triangle_metrics import get_faces
 
 logger = logging.getLogger(__name__)
@@ -333,8 +332,7 @@ def _tangent_laplacian_step(
 # ---------------------------------------------------------------------------
 
 
-@honour_verbose
-def update_positions(model, new_latent, current_points, surface_idx=0, verbose=True):
+def update_positions(model, new_latent, current_points, surface_idx=0):
     """Single Newton projection of ``current_points`` onto the level set.
 
     Kept with its original signature and CPU-tensor return value for backward
@@ -346,7 +344,6 @@ def update_positions(model, new_latent, current_points, surface_idx=0, verbose=T
     - new_latent (np.ndarray or torch.Tensor): the target latent vector.
     - current_points (np.ndarray or torch.Tensor): points to project.
     - surface_idx (int): which decoder output / surface to use.
-    - verbose (bool): unused; retained for signature compatibility.
 
     Returns:
     - new_points (torch.Tensor): the projected points, on CPU.
@@ -401,7 +398,6 @@ def _advance(
     return points
 
 
-@honour_verbose
 def interpolate_common(
     model,
     latent1,
@@ -409,7 +405,6 @@ def interpolate_common(
     n_steps=100,
     data=None,
     surface_idx=0,
-    verbose=False,
     spherical=True,
     is_mesh=False,
     max_edge_len=0.04,
@@ -541,7 +536,6 @@ def interpolate_common(
     return points.detach().cpu().numpy()
 
 
-@honour_verbose
 def interpolate_points(
     model,
     latent1,
@@ -549,7 +543,6 @@ def interpolate_points(
     n_steps=100,
     points1=None,
     surface_idx=0,
-    verbose=False,
     spherical=True,
     *,
     faces=None,
@@ -575,7 +568,6 @@ def interpolate_points(
     - n_steps (int): number of latent increments (the NFE knob).
     - points1 (np.ndarray): source vertices, on shape A's surface, shape (N, 3).
     - surface_idx (int): which decoder output / surface to interpolate.
-    - verbose (bool): print per-step progress.
     - spherical (bool): slerp the latent (vs linear interpolation).
     - faces (np.ndarray): source-mesh triangle connectivity (M, 3); required
       when ``tangent_laplacian=True``.
@@ -601,7 +593,6 @@ def interpolate_points(
         n_steps,
         points1,
         surface_idx,
-        verbose,
         spherical,
         is_mesh=False,
         faces=faces,
@@ -612,7 +603,6 @@ def interpolate_points(
     )
 
 
-@honour_verbose
 def interpolate_mesh(
     model,
     latent1,
@@ -620,7 +610,6 @@ def interpolate_mesh(
     n_steps=100,
     mesh=None,
     surface_idx=0,
-    verbose=False,
     spherical=True,
     max_edge_len=0.04,
     adaptive=False,
@@ -649,7 +638,6 @@ def interpolate_mesh(
         n_steps,
         mesh,
         surface_idx,
-        verbose,
         spherical,
         is_mesh=True,
         max_edge_len=max_edge_len,

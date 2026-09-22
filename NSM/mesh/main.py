@@ -24,8 +24,6 @@ import torch
 import vtk
 from skimage.measure import marching_cubes
 
-from .._verbose_deprecation import honour_verbose
-
 logger = logging.getLogger(__name__)
 
 
@@ -133,8 +131,7 @@ def coarse_bounds_from_sign_change(
     return bounds_min, bounds_max
 
 
-@honour_verbose
-def scale_mesh_(mesh, scale=1.0, offset=(0.0, 0.0, 0.0), icp_transform=None, verbose=False):
+def scale_mesh_(mesh, scale=1.0, offset=(0.0, 0.0, 0.0), icp_transform=None):
     """
     Scale, offset, and (optionally) inverse-ICP-transform a mesh — sometimes in place.
 
@@ -149,7 +146,6 @@ def scale_mesh_(mesh, scale=1.0, offset=(0.0, 0.0, 0.0), icp_transform=None, ver
         offset: translation added after scaling.
         icp_transform (vtkTransform, optional): if given, its INVERSE is applied after
             scale+offset (undoing a registration).
-        verbose (bool): print progress.
 
     Returns:
         mskt Mesh: the input object (Mesh input) or the new wrapper (other inputs).
@@ -176,7 +172,6 @@ def scale_mesh_(mesh, scale=1.0, offset=(0.0, 0.0, 0.0), icp_transform=None, ver
     return mesh
 
 
-@honour_verbose
 def scale_mesh(
     new_mesh,
     old_mesh=None,
@@ -184,7 +179,6 @@ def scale_mesh(
     offset=(0.0, 0.0, 0.0),
     scale_method="max_rad",
     icp_transform=None,
-    verbose=False,
 ):
     """
     Scale/offset new_mesh, deriving the transform from old_mesh when one is given.
@@ -215,9 +209,7 @@ def scale_mesh(
         else:
             raise NotImplementedError
 
-    mesh = scale_mesh_(
-        new_mesh, scale=scale, offset=offset, icp_transform=icp_transform, verbose=verbose
-    )
+    mesh = scale_mesh_(new_mesh, scale=scale, offset=offset, icp_transform=icp_transform)
     return mesh
 
 
@@ -236,20 +228,21 @@ def _finish_meshes(
     icp_transform,
     path_save,
     filename,
-    verbose,
 ):
     """Flat per-object SDF values -> extracted, rescaled, saved meshes.
 
     Everything create_mesh and create_mesh_adaptive do after the decoder has been
     evaluated; they differ only in how the grid was chosen. Two copies of this is what
-    let them drift over whether ``verbose`` reached the extraction twins -- it did in
-    one and not the other, and it does in both now.
+    let them drift over whether the deprecated ``verbose`` flag reached the extraction
+    twins -- it did in one and not the other, until v0.4.0 deleted the flag.
+
+    Thirteen arguments in a fixed order, not fourteen: ``verbose`` went with it.
 
     ``flat_sdfs`` is (N, objects) in get_sdfs' Z-fastest sample order, so the C-order
     reshape to ``grid_dims`` gives array[x, y, z] (module docstring). Remaining
     arguments are create_mesh's own. Returns its return value.
 
-    Keyword-only, and that is the point rather than a style choice: fourteen arguments
+    Keyword-only, and that is the point rather than a style choice: a dozen arguments
     in a fixed order is the shape that produced #60 one function down, where
     create_mesh_adaptive's fallback passed seventeen of them positionally and the fourth
     was wrong. A caller cannot get this list out of order because it cannot supply it in
@@ -274,7 +267,7 @@ def _finish_meshes(
             continue
 
         extract = sdf_grid_to_mesh_vtk if use_vtk else sdf_grid_to_mesh
-        meshes.append(extract(object_sdf, voxel_origin, voxel_size, verbose))
+        meshes.append(extract(object_sdf, voxel_origin, voxel_size))
 
         if scale_to_original_mesh:
             logger.debug("Scaling mesh to original mesh... ")
@@ -285,7 +278,6 @@ def _finish_meshes(
                 scale=scale,
                 offset=offset,
                 icp_transform=icp_transform,
-                verbose=verbose,
             )
 
         if path_save is not None:
@@ -294,7 +286,6 @@ def _finish_meshes(
     return meshes[0] if objects == 1 else meshes
 
 
-@honour_verbose
 def create_mesh(
     decoder,
     latent_vector,
@@ -310,7 +301,6 @@ def create_mesh(
     scale_to_original_mesh=True,
     icp_transform=None,
     objects=1,
-    verbose=False,
     device="cuda",
     use_vtk=True,
 ):
@@ -325,8 +315,8 @@ def create_mesh(
 
     Returns:
         A single mskt Mesh when objects == 1, else a list of length `objects`.
-        An object whose SDF never crosses zero yields None in its slot (with a
-        warning when verbose).
+        An object whose SDF never crosses zero yields None in its slot, with a
+        warning.
     """
     if voxel_size is None:
         voxel_size = 2.0 / (n_pts_per_axis - 1)
@@ -352,16 +342,13 @@ def create_mesh(
         icp_transform=icp_transform,
         path_save=path_save,
         filename=filename,
-        verbose=verbose,
     )
 
 
-@honour_verbose
 def sdf_grid_to_mesh(
     sdf_values,
     voxel_origin,
     voxel_size,
-    verbose=False,
     narrow_band=True,
     band_width=3.0,
     pad_voxels=2,
@@ -391,7 +378,6 @@ def sdf_grid_to_mesh(
         narrow_band=narrow_band,
         band_width=band_width,
         pad_voxels=pad_voxels,
-        verbose=verbose,
     )
 
     verts, faces, normals, values = marching_cubes(
@@ -416,10 +402,7 @@ def sdf_grid_to_mesh(
     return mesh
 
 
-@honour_verbose
-def crop_sdf_to_narrow_band(
-    sdf_values, voxel_origin, voxel_size, band_width=3.0, pad_voxels=2, verbose=False
-):
+def crop_sdf_to_narrow_band(sdf_values, voxel_origin, voxel_size, band_width=3.0, pad_voxels=2):
     """
     Crop SDF volume to a narrow band around the surface for faster processing.
 
@@ -429,7 +412,6 @@ def crop_sdf_to_narrow_band(
         voxel_size: Size of each voxel
         band_width: Width of narrow band, as a multiplier of voxel_size
         pad_voxels: Number of voxels to pad around cropped region
-        verbose: Whether to print progress messages
 
     Returns:
         tuple: (cropped_sdf, new_origin) or (original_sdf, original_origin) if no cropping needed
@@ -471,9 +453,7 @@ def crop_sdf_to_narrow_band(
     return sub_sdf, crop_origin
 
 
-def _prepare_sdf_grid(
-    *, sdf_values, voxel_origin, voxel_size, narrow_band, band_width, pad_voxels, verbose
-):
+def _prepare_sdf_grid(*, sdf_values, voxel_origin, voxel_size, narrow_band, band_width, pad_voxels):
     """Coerce an SDF grid to numpy and, if asked, crop it to the band around the surface.
 
     The input handling both extraction twins share, in one place so it cannot drift.
@@ -499,16 +479,13 @@ def _prepare_sdf_grid(
         voxel_size=voxel_size,
         band_width=band_width,
         pad_voxels=pad_voxels,
-        verbose=verbose,
     )
 
 
-@honour_verbose
 def sdf_grid_to_mesh_vtk(
     sdf_values,
     voxel_origin,
     voxel_size,
-    verbose=False,
     narrow_band=True,
     band_width=3.0,
     pad_voxels=2,
@@ -520,7 +497,6 @@ def sdf_grid_to_mesh_vtk(
         sdf_values: torch tensor or numpy array containing SDF values
         voxel_origin: Origin point of the voxel grid (x, y, z)
         voxel_size: Size of each voxel
-        verbose: Whether to print progress messages
         narrow_band: Whether to crop volume to narrow band around surface for speed
         band_width: Width of narrow band, as a multiplier of voxel_size
         pad_voxels: Number of voxels to pad around cropped region
@@ -537,7 +513,6 @@ def sdf_grid_to_mesh_vtk(
         narrow_band=narrow_band,
         band_width=band_width,
         pad_voxels=pad_voxels,
-        verbose=verbose,
     )
 
     # Get grid dimensions (cropped or original)
@@ -621,7 +596,6 @@ def create_grid_samples_in_bounds(
     return samples, (nx, ny, nz), (padded_min[0], padded_min[1], padded_min[2])
 
 
-@honour_verbose
 def create_mesh_adaptive(
     decoder,
     latent_vector,
@@ -645,7 +619,6 @@ def create_mesh_adaptive(
     scale_to_original_mesh=True,
     icp_transform=None,
     objects=1,
-    verbose=False,
     device="cuda",
     use_vtk=True,
     fallback_to_original=True,
@@ -700,7 +673,6 @@ def create_mesh_adaptive(
         scale_to_original_mesh: Whether to scale to original mesh
         icp_transform: ICP transform to apply
         objects: Number of objects to extract
-        verbose: Print progress messages
         device: Device for computation
         use_vtk: Use VTK Flying Edges (vs marching cubes)
         fallback_to_original: Fall back to full grid if bounds detection fails
@@ -786,7 +758,6 @@ def create_mesh_adaptive(
                 scale_to_original_mesh=scale_to_original_mesh,
                 icp_transform=icp_transform,
                 objects=objects,
-                verbose=verbose,
                 device=device,
                 use_vtk=use_vtk,
             )
@@ -795,9 +766,9 @@ def create_mesh_adaptive(
 
     bounds_min, bounds_max = bounds_result
 
-    # This gate survives the §8.0.N ungating deliberately: `extent` is computed solely
-    # to be logged, and log arguments evaluate eagerly.
-    if verbose:
+    # A level check and not a flag: `extent` is computed solely to be logged, and
+    # log arguments evaluate eagerly.
+    if logger.isEnabledFor(logging.DEBUG):
         logger.debug("Coarse spacing: %.6f, tau: %.6f", coarse_spacing, tau_voxels * coarse_spacing)
         logger.debug("Coarse bounds: min=%s, max=%s", bounds_min, bounds_max)
         extent = bounds_max - bounds_min
@@ -838,7 +809,6 @@ def create_mesh_adaptive(
         icp_transform=icp_transform,
         path_save=path_save,
         filename=filename,
-        verbose=verbose,
     )
 
 

@@ -16,7 +16,6 @@ import time
 import numpy as np
 from pymskt.mesh import Mesh
 
-from .._verbose_deprecation import honour_verbose
 from .utils import (
     combine_meshes,
     derive_seed,
@@ -389,7 +388,6 @@ def _draw_surface_samples(
     return np.concatenate(rand_pts, axis=0), np.concatenate(pts_surface, axis=0)
 
 
-@honour_verbose
 def read_meshes_get_sampled_pts(
     paths,
     sigma=[1, 1],
@@ -407,7 +405,6 @@ def read_meshes_get_sampled_pts(
     scale_all_meshes=True,
     center_all_meshes=False,
     mesh_to_scale=0,
-    verbose=False,
     icp_transform=None,
     uniform_pts_buffer=0.0,
     seed=None,
@@ -450,7 +447,6 @@ def read_meshes_get_sampled_pts(
             centered on the bone, scaled by bone + cartilage. Defaults to False.
         mesh_to_scale (int or list, optional): Index(es) of mesh(es) to use for registration and scaling.
             If int, uses single mesh. If list, combines multiple meshes for registration. Defaults to 0.
-        verbose (bool, optional): Whether to print verbose output. Defaults to False.
         icp_transform (vtk.vtkTransform, optional): Pre-computed transform to apply
             instead of registering. The dataset's sampling passes reuse the first pass's
             transform this way, so all of a subject's points share one registration.

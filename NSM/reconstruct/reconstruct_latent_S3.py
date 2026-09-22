@@ -14,7 +14,6 @@ from NSM.datasets import (
     read_mesh_get_sampled_pts,
 )
 
-from .._verbose_deprecation import honour_verbose
 from .utils import adjust_learning_rate
 
 logger = logging.getLogger(__name__)
@@ -67,7 +66,6 @@ def get_axis_angle_rotation_matrix(polar_angle, azimuthal_angle, theta, epsilon=
     return R
 
 
-@honour_verbose
 def reconstruct_latent_S3(
     decoder,
     num_iterations,
@@ -95,7 +93,6 @@ def reconstruct_latent_S3(
     translation_constrain_deviation=0.05,
     init_scale_method="max_rad",
     transform_update_patience=500,
-    verbose=False,
     device="cuda",
 ):
     """
@@ -147,9 +144,8 @@ def reconstruct_latent_S3(
     )
     init_center = torch.from_numpy(init_center).float()
 
-    if verbose is True:
-        logger.debug("init_center: %s", init_center)
-        logger.debug("init_scale: %s", init_scale)
+    logger.debug("init_center: %s", init_center)
+    logger.debug("init_scale: %s", init_scale)
 
     # constrain the scale to be within a fraction of the initial scale
     scale_constrain = init_scale * scale_constrain_deviation
@@ -239,13 +235,12 @@ def reconstruct_latent_S3(
         rotated = (Rinv @ translated.T).T
         scaled = rotated / scale
 
-        if verbose is True:
-            logger.debug("scale %s", scale)
-            logger.debug("R %s", R)
-            logger.debug("translation %s", translation)
-            logger.debug("theta_contrain_deviation %s", theta_constrain_deviation)
-            logger.debug("scale_constrain %s", scale_constrain)
-            logger.debug("translation_constrain %s", translation_constrain)
+        logger.debug("scale %s", scale)
+        logger.debug("R %s", R)
+        logger.debug("translation %s", translation)
+        logger.debug("theta_contrain_deviation %s", theta_constrain_deviation)
+        logger.debug("scale_constrain %s", scale_constrain)
+        logger.debug("translation_constrain %s", translation_constrain)
 
         latent_input = latent.expand(n_samples, -1)
         inputs = torch.cat([latent_input, scaled], dim=1).to(device)
@@ -269,9 +264,8 @@ def reconstruct_latent_S3(
             # can probably tighten up the scale parameter
             if soft_contrain_scale is True:
                 scale_diff = torch.abs(scale - init_scale)
-                if verbose is True:
-                    logger.debug("scale diff: %s", scale_diff)
-                    logger.debug("scale constrain: %s", scale_constrain)
+                logger.debug("scale diff: %s", scale_diff)
+                logger.debug("scale constrain: %s", scale_constrain)
                 if scale_diff > scale_constrain:
                     update = 1000 * (scale_diff - scale_constrain) ** 2
                 # if (scale - scale_constrain) > init_scale:
@@ -281,8 +275,7 @@ def reconstruct_latent_S3(
                 else:
                     # normalize this to the initalization scale
                     update = (scale_diff / init_scale) * 1e-6
-                if verbose is True:
-                    logger.debug("scale update: %s", update)
+                logger.debug("scale update: %s", update)
                 loss_ += torch.squeeze(update)
 
             if soft_constrain_theta is True:
@@ -290,19 +283,16 @@ def reconstruct_latent_S3(
                 #     loss_ += (theta - theta_constrain_max) * 1000
                 # elif (theta < theta_constrain_min):
                 #     loss_ += (theta_constrain_min - theta) * 1000
-                if verbose is True:
-                    logger.debug("theta: %s", theta)
+                logger.debug("theta: %s", theta)
                 if torch.abs(theta) > theta_constrain_deviation:
                     update = 1000 * (theta - theta_constrain_deviation) ** 2
                 else:
                     update = torch.abs(theta) * 1e-8
-                if verbose is True:
-                    logger.debug("theta update: %s", update)
+                logger.debug("theta update: %s", update)
                 loss_ += torch.squeeze(update)
 
             if soft_constrain_translation is True:
-                if verbose is True:
-                    logger.debug("translation: %s", translation)
+                logger.debug("translation: %s", translation)
 
                 if torch.linalg.norm(translation - init_center) > translation_constrain:
                     update = (
@@ -314,8 +304,7 @@ def reconstruct_latent_S3(
                     # normalize this to the initalization scale
                     update = (torch.linalg.norm(translation - init_center) / init_scale) * 1e-6
 
-                if verbose is True:
-                    logger.debug("translation update: %s", update)
+                logger.debug("translation update: %s", update)
 
                 loss_ += torch.squeeze(update)
 
@@ -324,8 +313,7 @@ def reconstruct_latent_S3(
 
         if step % 50 == 0:
             logger.debug("Step:  %s Loss:  %s", step, loss_.item())
-            if verbose is True:
-                logger.debug("\tLatent norm:  %s", latent.norm)
+            logger.debug("\tLatent norm:  %s", latent.norm)
 
         if log_wandb is True:
             wandb.log(

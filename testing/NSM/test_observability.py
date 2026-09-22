@@ -92,8 +92,8 @@ class TestNSMOwnsNoStream:
         What the ``NullHandler`` on the ``"NSM"`` logger buys: records from ``NSM.*``
         find a handler, so ``logging.lastResort`` never fires and even a ``warning``
         stays silent until the host asks for it. That is the stdlib idiom's known
-        consequence, not an oversight -- ``verbose=`` is the bridge for callers who
-        want the output without configuring logging.
+        consequence, not an oversight: a library that emitted without being asked would
+        be deciding its host's output format for it.
         """
         completed = _run(
             """
@@ -127,7 +127,7 @@ class TestNSMOwnsNoStream:
 
 
 #: The Logger methods that emit a record. ``addHandler`` and friends are configuration,
-#: which ``_verbose_deprecation`` does to a *local* named ``logger``.
+#: which a library does to nobody's logger but under a host's explicit instruction.
 EMIT_METHODS = {"debug", "info", "warning", "error", "exception", "critical", "log"}
 
 
@@ -193,7 +193,7 @@ class TestTheConversionHolds:
     #: under ``NSM/`` but this one.
     UNDOCUMENTED_SURFACE = ("NSM/reconstruct/reconstruct_latent_S3.py",)
 
-    def test_no_log_record_is_gated_behind_verbose(self):
+    def test_no_log_record_is_gated_behind_a_flag(self):
         """
         The last of §8.0.G's residue. A ``logger.debug`` inside ``if verbose:`` is gated
         twice — once by the level the host configured and once by a parameter the host
@@ -203,37 +203,64 @@ class TestTheConversionHolds:
 
         Measured on ``main`` at ``09c3834``: **86** ``verbose``-conditioned ``if``
         statements, **83** of them nothing but ``logger.*`` calls with no ``else``. §8.0.N
-        removed the 58 of those on the documented surface; the other 25 are in the three
-        modules exempted above. The 3 survivors stay everywhere, and they are **argument
-        guards, not control flow**: each evaluates something solely to log it — a
-        ``sched_getaffinity`` probe, an extent computed for the record, two CUDA memory
-        queries inside ``forward`` — and log arguments are eager, so ungating them would
-        run those unconditionally. Each says so at its site.
-        Classified by AST rather than by grep, because "measuring the parameter form and
-        reporting it as no gates" is the error §8.0.L's review caught.
+        removed the 58 of those on the documented surface; v0.4.0 took the parameter
+        itself, so the only gates left anywhere are the three **argument guards**: each
+        evaluates something solely to log it — a ``sched_getaffinity`` probe, an extent
+        computed for the record, two CUDA memory queries inside ``forward`` — and log
+        arguments are eager, so ungating them would run those unconditionally. Each is
+        now written as ``logger.isEnabledFor(logging.DEBUG)``, which is the same guard
+        asking the host rather than the caller, and each says so at its site.
 
-        Removing a gate can leave the ``verbose`` parameter itself unread, which is the
-        accepted-and-ignored trap in miniature. Two were left that way here —
-        ``SDFSamples.load_mesh_step`` and ``_process_meshes_for_wandb``, the two whose
-        ``verbose`` was *required* and therefore never bridged — and both parameters were
-        deleted rather than kept.
+        The sweep is for the *shape* rather than for the name ``verbose``: with the
+        parameter gone, matching its name would be a test that cannot fail. What it looks
+        for is a record reachable only through a **parameter of its own function** --
+        ``if flag:`` or ``if flag is True:`` over nothing but ``logger.*`` calls -- which
+        is the accepted-and-ignored trap in its logging form, whatever the flag is called.
+        A condition that is real control flow is not this shape and does not match, and
+        ``isEnabledFor`` asks the host rather than the caller. Classified by AST rather
+        than by grep, because "measuring the parameter form and reporting it as no gates"
+        is the error §8.0.L's review caught.
         """
+
+        def gating_parameter(test):
+            """The parameter name ``test`` gates on, for ``flag`` and ``flag is True``."""
+            if isinstance(test, ast.Name):
+                return test.id
+            if (
+                isinstance(test, ast.Compare)
+                and isinstance(test.left, ast.Name)
+                and len(test.ops) == 1
+                and isinstance(test.ops[0], ast.Is)
+                and isinstance(test.comparators[0], ast.Constant)
+            ):
+                return test.left.id
+            return None
+
         offenders = []
         for path, tree in _library_modules():
-            if path in self.UNDOCUMENTED_SURFACE or path == "NSM/_verbose_deprecation.py":
+            if path in self.UNDOCUMENTED_SURFACE:
                 continue
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.If) or "verbose" not in ast.unparse(node.test):
+            for function in ast.walk(tree):
+                if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
-                if node.orelse or not node.body:
-                    continue
-                if all(
-                    isinstance(statement, ast.Expr)
-                    and isinstance(statement.value, ast.Call)
-                    and ast.unparse(statement.value.func).startswith("logger.")
-                    for statement in node.body
-                ):
-                    offenders.append(f"{path}:{node.lineno}")
+                parameters = {
+                    argument.arg
+                    for argument in function.args.args
+                    + function.args.posonlyargs
+                    + function.args.kwonlyargs
+                }
+                for node in ast.walk(function):
+                    if not isinstance(node, ast.If) or node.orelse or not node.body:
+                        continue
+                    if gating_parameter(node.test) not in parameters:
+                        continue
+                    if all(
+                        isinstance(statement, ast.Expr)
+                        and isinstance(statement.value, ast.Call)
+                        and ast.unparse(statement.value.func).startswith("logger.")
+                        for statement in node.body
+                    ):
+                        offenders.append(f"{path}:{node.lineno}")
         assert offenders == []
 
     def test_every_module_that_speaks_has_its_own_logger(self):

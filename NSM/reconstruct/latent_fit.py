@@ -21,7 +21,6 @@ except ImportError:
 
 from NSM.losses import EIKONAL_UNSUPPORTED, eikonal_loss
 
-from .._verbose_deprecation import honour_verbose
 from .utils import adjust_learning_rate, refuse_unknown_kwargs
 
 logger = logging.getLogger(__name__)
@@ -65,8 +64,7 @@ def _decode(decoder, latent, xyz):
     return decoder(torch.cat([latent.expand(xyz.shape[0], -1), xyz], dim=1))
 
 
-@honour_verbose
-def reconstruct_latent_sdf_gt_type_check(sdf_gt, verbose=False):
+def reconstruct_latent_sdf_gt_type_check(sdf_gt):
     """Normalise ``sdf_gt`` to a list of per-surface tensors, one entry per surface.
 
     A single tensor or array is wrapped; a list or tuple is copied into a new list
@@ -104,8 +102,7 @@ def reconstruct_latent_sdf_gt_type_check(sdf_gt, verbose=False):
     return sdf_gt
 
 
-@honour_verbose
-def reconstruct_latent_pts_surface_type_check(pts_surface, verbose=False, device="cuda"):
+def reconstruct_latent_pts_surface_type_check(pts_surface, device="cuda"):
     """Return ``pts_surface`` as a tensor on ``device``.
 
     Unlike the ``sdf_gt`` check above, this one raises ``ValueError`` rather than a
@@ -163,8 +160,7 @@ def reconstruct_latent_get_lr_update_freq(n_lr_updates, num_iterations):
     return adjust_lr_every
 
 
-@honour_verbose
-def reconstruct_latent_preprocess_sdf_gt(sdf_gt, clamp_dist, device="cuda", verbose=False):
+def reconstruct_latent_preprocess_sdf_gt(sdf_gt, clamp_dist, device="cuda"):
     """Clamp each surface's SDF samples to ±``clamp_dist`` and move them to ``device``.
 
     Clamping is what makes the fit match training: the decoder was trained against
@@ -571,7 +567,6 @@ def _normalized_choice(value, *, allowed, parameter):
     return normalized
 
 
-@honour_verbose
 def reconstruct_latent(
     decoders,
     num_iterations,
@@ -593,7 +588,6 @@ def reconstruct_latent(
     convergence_patience=50,
     log_wandb=False,
     log_wandb_step=10,
-    verbose=False,
     optimizer_name="adam",
     n_samples=None,
     max_n_samples=None,  # 100000,
@@ -677,10 +671,8 @@ def reconstruct_latent(
     if eikonal_weight > 0:
         raise NotImplementedError(EIKONAL_UNSUPPORTED)
 
-    sdf_gt = reconstruct_latent_sdf_gt_type_check(sdf_gt, verbose=verbose)
-    pts_surface = reconstruct_latent_pts_surface_type_check(
-        pts_surface, verbose=verbose, device=device
-    )
+    sdf_gt = reconstruct_latent_sdf_gt_type_check(sdf_gt)
+    pts_surface = reconstruct_latent_pts_surface_type_check(pts_surface, device=device)
     decoders = reconstruct_latent_decoders_type_check(decoders)
 
     # print info about xyz
@@ -697,9 +689,7 @@ def reconstruct_latent(
     else:
         n_samples_init = None
 
-    sdf_gt = reconstruct_latent_preprocess_sdf_gt(
-        sdf_gt, clamp_dist, device=device, verbose=verbose
-    )
+    sdf_gt = reconstruct_latent_preprocess_sdf_gt(sdf_gt, clamp_dist, device=device)
 
     # A subsampled objective is redrawn on every loss evaluation, which is what gives the
     # fit its coverage of the point cloud (see `_select_samples`). LBFGS evaluates the loss

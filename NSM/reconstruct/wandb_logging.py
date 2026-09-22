@@ -14,8 +14,6 @@ import logging
 import numpy as np
 import torch
 
-from .._verbose_deprecation import honour_verbose
-
 logger = logging.getLogger(__name__)
 
 # Optional (#5): every wandb use is behind an explicit request that raises when absent.
@@ -81,8 +79,7 @@ def _process_meshes_for_wandb(meshes, mesh_prefix, max_points_3d, log_faces):
     return mesh_data
 
 
-@honour_verbose
-def prepare_results_for_wandb(result, max_points_3d=10000, log_faces=True, verbose=False):
+def prepare_results_for_wandb(result, max_points_3d=10000, log_faces=True):
     """
     Prepare reconstruction results for wandb logging with 3D point cloud visualization and robust JSON serialization.
 
@@ -90,7 +87,6 @@ def prepare_results_for_wandb(result, max_points_3d=10000, log_faces=True, verbo
         result (dict): Dictionary containing reconstruction results
         max_points_3d (int): Maximum number of points to log for 3D visualization (subsampled if exceeded)
         log_faces (bool): Whether to include mesh faces in 3D visualization if available
-        verbose (bool): Whether to print preparation details
 
     Returns:
         dict: Dictionary ready for wandb logging (JSON serializable + 3D objects)

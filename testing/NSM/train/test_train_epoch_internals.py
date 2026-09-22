@@ -23,7 +23,7 @@ of, and when there is none the caller gets an epoch they did not ask for.
    alongside an epoch-constant weight normalisation.
 6. **``samples_per_object_per_batch`` restates the dataset's ``subsample``** and nothing
    checks the two agree.
-7. **20 ``logger.debug`` records sit behind 8 ``config["verbose"]`` gates** -- §8.0.G's
+7. **20 ``logger.debug`` records sat behind 8 ``config["verbose"]`` gates** -- §8.0.G's
    residue in its config-key form.
 
 Plus the invariance matrix the commit-10 and commit-11 extractions are measured against:
@@ -122,7 +122,6 @@ def epoch_config(model_lr=1e-3, latent_lr=1e-3, **overrides):
         "code_cyclic_anneal": False,
         "n_epochs": 4,
         "grad_clip": None,
-        "verbose": False,
         "log_latent": None,
         "latent_size": LATENT_SIZE,
         "latent_bound": 10,
@@ -523,7 +522,7 @@ class TestSamplesPerObjectPerBatchMatchesItsBatch:
 
 
 # ---------------------------------------------------------------------------
-# 7. The verbose-gated records
+# 7. The records that were gated on a config key
 # ---------------------------------------------------------------------------
 
 #: The message templates ``train_epoch`` emits at ``DEBUG`` for one 2-surface epoch.
@@ -549,7 +548,7 @@ DEBUG_TEMPLATES = {
     "l1 loss: %s",
     # From NSM.utils.adjust_learning_rate, which train_epoch's caller reaches. Gated on
     # its own `verbose` PARAMETER until §8.0.N -- the form §8.0.L measured separately and
-    # deferred, and the last of it.
+    # deferred. The parameter itself went at v0.4.0 with the rest of the bridge.
     "optimizer param groups:  %s",
     "lr_schedules:  %s",
 }
@@ -558,29 +557,35 @@ DEBUG_TEMPLATES = {
 class TestTheDebugRecordsAreNotGatedOnAConfigKey:
     """
     All 20 records are already ``logger.debug``, so the gate only ever subtracted. The
-    shipped ``NSM/configs/default_config.json`` sets ``verbose: true``, which left the
+    shipped ``NSM/configs/default_config.json`` set ``verbose: true``, which left the
     gate permanently open and the *level* doing the filtering; a config with
     ``verbose: false`` hid all 20 from a host that configured ``DEBUG`` and asked for
-    them. ``config["verbose"]`` is still read -- ``_run_validation`` forwards it -- so
-    ungating these did not turn the key into an accepted-and-ignored one.
+    them.
 
     §8.0.L ungated the *config-key* form and measured 25 more in the *parameter* form,
     which it left alone. §8.0.N cleared those; two of them are in this path, from
     ``NSM.utils.adjust_learning_rate``, and they are in the set below.
+
+    **Since v0.4.0 nothing reads ``config["verbose"]``**, so the two tests that used to
+    stand here -- one per value of the key -- assert the same thing and are one test. The
+    key is not refused and every ``model_params_config.json`` on disk keeps working; it
+    selects nothing, and the level the host configures is the whole of the filtering.
     """
 
-    def test_the_record_set_under_verbose_true_is_what_it_is(self):
+    def test_a_host_at_debug_sees_them_whatever_the_config_says(self):
         """
-        The before-and-after pin for the ungating: it may not change what a host with
-        ``verbose: true`` sees. The deletion pass that followed removed four templates and
-        renamed three, and both show up in this set rather than in a count.
+        Was a strict xfail: the set was empty, whatever the host had configured. It is
+        also the before-and-after pin for the ungating -- it may not change what a host
+        that had set ``verbose: true`` used to see. The deletion pass that followed
+        removed four templates and renamed three, and both show up in this set rather
+        than in a count.
         """
         with records_at(logging.DEBUG) as collected:
-            run_epoch(verbose=True)
+            run_epoch()
         assert {record.msg for record in collected} == DEBUG_TEMPLATES
 
-    def test_a_host_at_debug_sees_them_without_the_config_key(self):
-        """Was a strict xfail: the set was empty, whatever the host had configured."""
+    def test_the_key_is_accepted_and_changes_nothing(self):
+        """A config still carrying the key trains, and sees the same records."""
         with records_at(logging.DEBUG) as collected:
             run_epoch(verbose=False)
         assert {record.msg for record in collected} == DEBUG_TEMPLATES

@@ -25,8 +25,6 @@ import warnings
 
 import torch
 
-from ._verbose_deprecation import honour_verbose
-
 logger = logging.getLogger(__name__)
 
 try:
@@ -284,8 +282,7 @@ def get_learning_rate_schedules(config):
     return dict(zip(targets, schedules))
 
 
-@honour_verbose
-def adjust_learning_rate(lr_schedules, optimizer, epoch, verbose=False):
+def adjust_learning_rate(lr_schedules, optimizer, epoch):
     """
     Set each optimizer param group's learning rate for ``epoch``.
 

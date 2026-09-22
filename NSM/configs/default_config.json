@@ -119,7 +119,6 @@
     "save_frequency": 50,
     "device": "cuda:0",
     "profiler": false,
-    "verbose": true,
     "log_latent": null,
     "enforce_minmax": true,
     "clamp_dist": 1,
