@@ -23,8 +23,8 @@ under the same number.
 
 **Updated:** 2026-09-22 · **Status:** open
 
-- **Next:** finish step 0 — merge PR #109 (ready, green) and close PR #108 without
-  merging. Then validate §8.0.R against production once, and start slice **P**.
+- **Next:** validate §8.0.R against production once (step 0, the last item), then start
+  slice **P**. There are no open PRs.
 - **Blocked on:** nothing. Two maintainer decisions are open (§ Decisions) and neither
   blocks step 0 or slice P.
 - **Done:** Phases 0–3 complete. Eighteen slices executed, A through R, each with its own
@@ -66,7 +66,10 @@ T is the one with judgment in it.
       knee-pipeline-worker.service`, verified idle first (no step children, no active or
       reserved celery tasks, only the 102 MiB bare CUDA context). New PID 803823, pings
       OK, and the stamp it will now compute is `v0.3.0-64-g066223f` against the stale
-      `v0.3.0-46-gcd83ccc` the twenty exposed jobs recorded. The website computes each job's `nsm`
+      `v0.3.0-46-gcd83ccc` the twenty exposed jobs recorded. **Restarted again after
+      pulling #109** (`v0.3.0-70-gfcf170f`), which is the standing rule this exposes:
+      **every pull of this tree needs a worker restart, or the next job's stamp lies.**
+      That rule has no permanent home yet and wants one in the website repo. The website computes each job's `nsm`
       version stamp with `git describe` but caches it with `@lru_cache` for the life of the
       worker process (`backend/services/version.py`). The worker has been up since
       2026-09-01, so all twenty of those manifests record `nsm: v0.3.0-46-gcd83ccc` while
@@ -80,24 +83,20 @@ T is the one with judgment in it.
       `main` and compare both BScore variants against the archived values; the measured
       run-to-run band on that box is ~1e-04. This is cheap and it is the last unvalidated
       slice.
-- [ ] **Commit the `CLAUDE.md` attribution rule**, uncommitted on this tree since
-      2026-09-17.
-- [ ] **Merge PR #109** (`idea-13-conv-activation-results`). Records the first real-data
-      test of `NSM_TRAINING_IDEAS.md` Idea 13: a drop-in activation in the triplanar conv
-      stack does not help. **Ready — all four checks green, `mergeable: true`.** It needed
-      repair first: its one plan-file hunk amended §7.5b, which the 2026-09-21 split moved
-      to the history file, so it conflicted. Resolved on its own branch by merge commit
-      `7cf519d`, taking `main`'s plan unchanged and applying the same amendment to the
-      history file. No force-push, and the wording is byte-identical to what the branch
-      already carried.
-- [ ] **Close PR #108** (`drop-implicit-two-stage`) **without merging**, and fold its second
-      commit into slice P. Its first commit `9d2224a` deletes
+- [x] **Committed the `CLAUDE.md` attribution rule** (`555fcf4`), uncommitted on this tree
+      since 2026-09-17.
+- [x] **PR #109 merged** 2026-09-22 (`fcf170f`). Records the first real-data test of
+      `NSM_TRAINING_IDEAS.md` Idea 13: a drop-in activation in the triplanar conv stack
+      does not help. It needed repair before it could merge — its one plan-file hunk
+      amended §7.5b, which the 2026-09-21 split moved to the history file, so it
+      conflicted. Resolved on its own branch by merge commit `7cf519d`, no force-push.
+- [x] **PR #108 closed unmerged** 2026-09-22. Its first commit `9d2224a` deletes
       `NSM/models/modulated_periodic_activations.py` entire, which the maintainer ruled on
-      2026-09-04 **stays** as the ShapeMed-Knee paper's MPA baseline. The PR was last
-      updated the day before that ruling and still carries it, so merging as-is deletes a
-      published benchmark model. Its second commit `3d0775e` (delete `two_stage`, −414
-      lines) is approved and survives. Closing rather than rebasing also avoids a conflict
-      with #107 in `loader.py` and `SCOPE.md`.
+      2026-09-04 **stays** as the ShapeMed-Knee paper's MPA baseline; the PR predated the
+      ruling by a day and still carried it. Its second commit `3d0775e` (delete
+      `two_stage`, −414 lines) is approved and **is now owed to slice P** — see there. It
+      also conflicted with #107 on `NSM/models/loader.py` and `docs/SCOPE.md`, so closing
+      rather than rebasing saved that work too.
 - [x] **Archive the handoff files.** Done 2026-09-22: the three files moved to
       `.claude/handoff/archive/`, superseded by this plan and by the posted #107
       description. The directory is gitignored, so none of it is in the repo. Handoff files
@@ -117,7 +116,9 @@ inference-only with a five-symbol NSM surface, none of it in `train/` (`docs/SCO
   dead on every supported path today (`docs/KNOWN_ISSUES.md` § Open), so nothing regresses
   by deleting them with it.
 - Cherry-pick `3d0775e` from the closed #108 — delete the `two_stage` model type. **Strip
-  its `Co-Authored-By: Claude Fable 5` trailer.** It needs reconciling with #107, which
+  its `Co-Authored-By: Claude Fable 5` trailer.** Fetch it with
+  `git fetch origin refs/pull/108/head:pr-108`, which GitHub keeps after the branch is
+  deleted; the branch `drop-implicit-two-stage` may be gone by then. It needs reconciling with #107, which
   added two-stage tests that the deletion makes dead: remove
   `TestTwoStageTranslatesWhatItsSiblingsRead` and the two-stage evidence test from
   `testing/NSM/test_parameter_surface.py`, and note in `docs/KNOWN_ISSUES.md` § History 30
