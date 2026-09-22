@@ -68,8 +68,12 @@ T is the one with judgment in it.
       OK, and the stamp it will now compute is `v0.3.0-64-g066223f` against the stale
       `v0.3.0-46-gcd83ccc` the twenty exposed jobs recorded. **Restarted again after
       pulling #109** (`v0.3.0-70-gfcf170f`), which is the standing rule this exposes:
-      **every pull of this tree needs a worker restart, or the next job's stamp lies.**
-      That rule has no permanent home yet and wants one in the website repo. The website computes each job's `nsm`
+      **every pull of this tree needs a worker restart before the next job runs, or that
+      job's stamp lies.** Measured 2026-09-22: `environment_versions()` is imported and
+      called *inside* the manifest writer, not at worker startup, so `lru_cache` freezes
+      the stamp at the **first job after a restart** and holds it for that worker's life.
+      A commit made after a restart but before any job is therefore harmless. That rule
+      has no permanent home yet and wants one in the website repo. The website computes each job's `nsm`
       version stamp with `git describe` but caches it with `@lru_cache` for the life of the
       worker process (`backend/services/version.py`). The worker has been up since
       2026-09-01, so all twenty of those manifests record `nsm: v0.3.0-46-gcd83ccc` while
