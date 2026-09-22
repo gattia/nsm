@@ -77,6 +77,23 @@ fix rather than limitations to document:
   → **Remaining Phase 4 work item: a default config for each *other* model type**
   (deepsdf; `implicit` first needs the vocabulary reconciliation above).
 
+**Working by design, ruled 2026-09-22:**
+
+- **`grad_clip` clips the model's parameters and never the latent codes.** The name reads
+  global and is not, so this sat in `KNOWN_ISSUES.md` § Open from Aug 2026 with an
+  experiment proposed against it. Closed as correct rather than run, on three checks:
+  `train_epoch` passes `model.parameters()` to `clip_grad_norm_` and nothing else, which
+  **matches the upstream reference**: in `facebookresearch/DeepSDF/train_deep_sdf.py`,
+  `lat_vecs` is its own optimizer param group and the only `clip_grad_norm_` call takes
+  `decoder.parameters()` (re-fetched and re-read 2026-09-22 — it was at line 521, and a
+  line number in someone else's repo is the part of this that will go stale first). The
+  latents also already carry their own L2 regularization with warmup and their own LR
+  schedule, so they are not unregularized; and the knob is `null` in the shipped default
+  and in both production model configs, so nothing has ever set it. Pinned by
+  `test_parameter_surface.TestGradClipReachesTheModelOnly`. Clipping the latents too would
+  change the numerics of every run that sets `grad_clip`, which makes it a training
+  experiment rather than a defect.
+
 **Unsupported by design, since Aug 2026 (§8.0.H):**
 
 - **Per-layer LayerNorm in `deep_sdf.Decoder` (`norm_layers` / the `layers_with_norm`
