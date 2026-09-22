@@ -249,32 +249,121 @@ moves to `SCOPE.md` or the issue closes there. It rides its own PR because #110 
 The working tree is on `main`, so production is not running branch code; after the merge,
 pull and restart the worker.*
 
-### Step S — slice §8.0.S: v0.4.0, the public signatures
+### Step S — slice §8.0.S: v0.4.0, the public signatures — **plan statement, 2026-09-22**
 
 Six Breaking items earlier slices deferred to §8.0.O by name. v0.4.0 is already scheduled
 by something else — `NSM/_verbose_deprecation.py` says *delete at v0.4.0* and v0.3.0
 existing is what makes that due — so these do not need a boundary invented for them.
 
-**Re-measured 2026-09-21**, because the row's numbers were a year of slices old:
+Everything below was re-run against `main` at `1e5fd4a` before it was written. Four of the
+seven re-measured rows came back different from what the table said, and two of those
+change what the slice does.
 
-| Item | State today |
-|---|---|
-| (1) the four public signatures as one set | `reconstruct_mesh` **59** named + `**kwargs`, `reconstruct_latent` **39** + `**kwargs`, `create_mesh_adaptive` **26**, `create_mesh` **17**. The row said 58 and 38. |
-| (2) `reconstruct_latent(pts_surface=None)` | still present — a default that declares optional a parameter the type check has always rejected |
-| (3) the `lbfgs_*` prefix decision | read them on both paths or delete the non-tested non-hybrid path; a signature call either way. `docs/KNOWN_ISSUES.md` § Open records the hybrid path as unvalidated |
-| (4) refuse unknown `**kwargs` on `Decoder` / `TriplanarDecoder` | still open, and #107 asserted the config path to it: a misspelled key in a `two_stage` config's `triplanar_params` block builds at the default `padding=0.1` and says nothing |
-| (5) delete `max_batch_size` | still accepted-and-warned, `NSM/reconstruct/latent_fit.py:684` |
-| (6) submodule imports in `NSM/mesh/__init__.py` | **derive the rationale before doing it.** The row itself says this looks additive rather than Breaking and that §8.0.I never said why it needs the boundary. If it is additive, it does not belong in S. |
-| (7) the `verbose` bridge | delete `NSM/_verbose_deprecation.py` and the 13 sites it decorates. Its own header names v0.4.0 as the delete-when condition. |
+#### What the items turned out to be
 
-**One item on the old row is already done and should not be re-attempted.** It listed
-§8.0.N's keyword-only `roundtrip_distance` / `directed_distance_percentiles` pair as
-joining S. Verified 2026-09-21: `roundtrip_distance` and `forward_backward_disagreement`
-are keyword-only on `main` today, and `directed_distance_percentiles` was deliberately
-excluded because it is asymmetric, so a swap there changes the number rather than hiding.
-That landed in §8.0.N and the CHANGELOG already carries it.
+| Item | Measured on `main`, 2026-09-22 | Disposition |
+|---|---|---|
+| (1) the four public signatures as one set | `reconstruct_mesh` 59 named + `**kwargs`, `reconstruct_latent` 40 + `**kwargs`, `create_mesh_adaptive` 26, `create_mesh` 17 | **Not in S.** Ruled 2026-09-22 to `NSM_CONFIG_SECTIONS_AND_MODEL_REGISTRY.md`; see § Decisions |
+| (2) `reconstruct_latent(pts_surface=None)` | `reconstruct_latent_pts_surface_type_check(None)` raises `ValueError: pts_surface must be list, tuple, np.ndarray, or torch.Tensor`. The one in-library caller, `reconstruct/main.py:551`, always passes it | **In S.** Make it required |
+| (3) the `lbfgs_*` prefix decision | **Already closed, by §8.0.R.** `test_parameter_surface.TestTheDeferredSitesAreClosed::test_the_lbfgs_triple_is_read_on_the_non_hybrid_path` asserts the constructed `(lr, max_iter, history_size)` is the requested `(1.0, 3, 7)` and not `(0.005, 10, 100)`. No signature change is owed | **Closed.** One docs repair rides along: `docs/KNOWN_ISSUES.md:252` names `TestTheLbfgsParametersAreReadOnBothPaths` as the pin, and that class does not exist anywhere in `testing/` |
+| (4) refuse unknown `**kwargs` on `Decoder` / `TriplanarDecoder` | Still open. `Decoder(latent_size=8, dims=[16, 16], paddding=0.35, totally_made_up=7)` builds, and `TriplanarDecoder(paddding=0.35)` builds at `padding=0.1` | **In S**, with its evidence changed — see below |
+| (5) delete `max_batch_size` | Still accepted-and-warned, `NSM/reconstruct/latent_fit.py:684`; it is the whole of `latent_fit._DEPRECATED_KWARGS` | **In S** |
+| (6) submodule imports in `NSM/mesh/__init__.py` | **Additive, measured.** After a bare `import NSM.mesh`, `refine_mesh`, `correspondence_metrics`, `triangle_metrics` and `interpolate` are all unbound. Adding them binds four names, unbinds none, costs 0.002 s and pulls in no top-level module that `main` had not already loaded | **Rides in S as Added, not Breaking.** It does not need the boundary. It rides because the alternative is a deferral with no carrier, which is the failure §8.0's expiry note describes |
+| (7) the `verbose` bridge | **27 decorated sites, not 13**, plus four private functions that take `verbose` undecorated, 31 in all. `NSM/train/train_deep_sdf.py:363` forwards `config["verbose"]` into `get_mean_errors` | **In S**, and it is the item with a consumer constraint on it — see below |
 
-Then **tag v0.4.0**.
+#### Two items the re-measured table lost
+
+§8.0.N′ deferred `compare_cart_thickness`'s `regions_label` and `orig_cart` to "the S row,
+by name, where the other seven are". The 2026-09-21 re-measure rebuilt the table from the
+§8.0.S row alone and neither survived. Both are still true on `main`:
+
+- `regions_label` is refused unless it is `"labels"`, because pymskt's two readers hardcode
+  that name. Its own docstring says it is kept only until this slice removes it.
+- `orig_cart` is unpacked from `orig_meshes` and never read again. It is pinned by
+  `TestTheOriginalCartilageIsNeverRead`, which passes `None`, a string and an integer in
+  its place and gets the same answer each time.
+
+Both go. That is the `CLAUDE.md` remedy for an accepted-and-never-read argument, and it is
+what put them in S in the first place.
+
+#### Item (4): the evidence moved, the defect did not
+
+The history file's argument for (4) was a *config* path — `_get_two_stage_params` copied
+`config["triplanar_params"]` verbatim into the constructor, so a misspelled key built at
+the default and said nothing. That path is gone: §8.0.P deleted `two_stage`, and the three
+surviving translators in `models/loader.py` build an explicit `params` dict, so
+`load_model` cannot hand a constructor a key it does not name.
+
+What is left is direct construction, which is what the production consumer does
+(`kneepipeline/steps/run_nsm.py:112` calls `TriplanarDecoder(**params)`). All 15 keys it
+passes are named parameters, so the refusal does not reach it — checked against
+`inspect.signature`, not assumed. The four deprecated `Decoder` keys (`xyz_in_all`,
+`latent_noise_sigma`, `norm_layers`, `latent_dropout`) keep their current warn-or-refuse
+behaviour; the refusal is for everything else.
+
+#### Item (7): deleting the bridge breaks the production consumer, loudly
+
+`kneepipeline/steps/run_nsm.py:211` passes `verbose=True` to `reconstruct_mesh`. Once the
+parameter is gone, `refuse_unknown_kwargs` turns that into a `TypeError` on the next NSM
+fit. It is loud rather than silent, which is the good case, but this tree is imported
+unpinned by that consumer, so **the pull is the deploy** and the next job after a pull is
+the one that fails.
+
+The overlap release was supposed to be the warning, and for this consumer it never was:
+the bridge's own header records that a `DeprecationWarning` is invisible under Python's
+default filter outside `__main__`, and the consumer calls NSM from inside a module.
+
+**Sequencing, stated so it is not discovered at deploy time.** The one-line removal of
+`verbose=True` in `kneepipeline/steps/run_nsm.py` lands *before* this tree is pulled into
+the production checkout. That consumer change is inert against `main` today — on v0.3.0 the
+flag only routes NSM's records to stderr for the duration of the call — so it can land at
+any time, and until it does the production tree stays where it is. Merging S does not
+deploy S.
+
+A second consequence inside the library: after the deletion nothing in `NSM/` reads
+`config["verbose"]`. The key is not refused and every `model_params_config.json` on disk
+keeps working, but it selects nothing, and the CHANGELOG entry that called it "an on-disk
+format contract that keeps its meaning" needs correcting to say so. The replacement is the
+one the deprecation has always named: `logging.getLogger("NSM").setLevel(logging.DEBUG)`
+with a handler on it.
+
+#### Permanent and transitional
+
+Everything this slice adds is permanent: two constructor refusals and four package
+imports. Everything else it does is deletion. Nothing transitional is created, and one
+transitional module is retired — `NSM/_verbose_deprecation.py`, whose header has named
+v0.4.0 as its delete-when since §8.0.G.
+
+The two other transitional modules stay, and their conditions are not this release:
+`NSM/_lr_migration.py` and `NSM/reconstruct/_config_migration.py` both say *delete once no
+config still in use predates the change*, which is a statement about configs on disk and
+not about a version number.
+
+#### Size budget
+
+Strongly net-negative in `NSM/`, which is what makes it a release slice rather than a
+feature. The permanent additions are about **+40 lines** — two refusals and four imports,
+with their messages. Anything past **+60** is scope creep and the deletion pass has to say
+why. The deletions are not budgeted, because a budget on a deletion is an argument for
+deleting less.
+
+#### Sequence — one commit each, `make lint` clean and the suite green at every step
+
+1. this statement
+2. **(2)** `pts_surface` becomes required on `reconstruct_latent`
+3. **(5)** `max_batch_size` deleted. `reconstruct_mesh`'s `batch_size_latent_recon` is a
+   different key and **stays** — the production consumer passes it
+   (`kneepipeline/steps/run_nsm.py:201`), so deleting it is not this slice's to do
+4. **(4)** `Decoder` and `TriplanarDecoder` refuse what they do not name
+5. **`compare_cart_thickness`** loses `regions_label` and `orig_cart`
+6. **(7)** the `verbose` bridge and all 31 parameters deleted; `NSM/_verbose_deprecation.py`
+   and its test file go
+7. **(6)** `NSM/mesh/__init__.py` exports its four submodules
+8. the release cut: CHANGELOG § Unreleased renamed to v0.4.0, the docs swept for claims this
+   slice falsifies (including (3)'s missing test name), and this plan's State updated
+
+Then **tag v0.4.0** — the maintainer's action after the merge, as at v0.3.0. Nothing in the
+PR bumps a version number; from v0.3.0 the version *is* the tag.
 
 ### Step T — slice §8.0.T: trim the test suite
 
