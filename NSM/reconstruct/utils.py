@@ -144,9 +144,9 @@ def refuse_unknown_kwargs(kwargs, *, function_name, deprecated=()):
     Both public entry points take a ``**kwargs`` that reads one key and swallowed the
     rest, so a misspelling among dozens of near-synonymous parameter names ran with the
     intended parameter's default and said nothing at all. One implementation because it
-    is one defect: ``reconstruct_mesh`` (58 named parameters, deprecating
-    ``batch_size_latent_recon``) and ``reconstruct_latent`` (38, deprecating
-    ``max_batch_size``). See ``docs/KNOWN_ISSUES.md`` § History 20.
+    is one defect. ``reconstruct_mesh`` still deprecates ``batch_size_latent_recon``;
+    ``reconstruct_latent`` deprecates nothing since v0.4.0 deleted ``max_batch_size``,
+    so it passes no ``deprecated`` set at all. See ``docs/KNOWN_ISSUES.md`` § History 20.
     """
     unknown = sorted(set(kwargs) - set(deprecated))
     if unknown:

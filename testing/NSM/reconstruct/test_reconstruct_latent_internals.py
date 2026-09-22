@@ -134,9 +134,12 @@ MISSPELLINGS = [
 
 class TestUnknownKeywordsAreRefused:
     """
-    ``**kwargs`` is inspected for exactly one key, ``max_batch_size``. Every other key
-    reaches the end of the function unread, so the caller gets the default for the
+    ``**kwargs`` used to be inspected for exactly one key, ``max_batch_size``. Every other
+    key reached the end of the function unread, so the caller got the default for the
     parameter they meant to set and no indication that they had not set it.
+
+    Since v0.4.0 deleted ``max_batch_size`` there is no key ``**kwargs`` is for, and
+    ``reconstruct_latent`` passes no ``deprecated`` set at all.
     """
 
     @pytest.mark.parametrize("wrong", MISSPELLINGS)
@@ -149,14 +152,15 @@ class TestUnknownKeywordsAreRefused:
         with pytest.raises(TypeError, match=wrong):
             reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(**{wrong: 999}))
 
-    def test_the_deprecated_key_is_still_accepted(self, caplog):
+    def test_the_last_deprecated_key_is_now_refused_like_any_other(self):
         """
-        ``max_batch_size`` is the one key ``**kwargs`` is *for*. Refusing unknown keys must
-        not refuse it: it warns and runs, as it has since the chunked forward was removed.
+        ``max_batch_size`` was the one key ``**kwargs`` was *for*: it warned and ran, from
+        the removal of the chunked forward until v0.4.0. It named a capability that no
+        longer existed either way -- #75's replacement is ``n_samples_per_chunk``, which
+        is a named parameter and not a keyword this has to catch.
         """
-        with caplog.at_level(logging.WARNING, logger="NSM"):
+        with pytest.raises(TypeError, match="max_batch_size"):
             reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(max_batch_size=1))
-        assert any("max_batch_size is deprecated" in r.getMessage() for r in caplog.records)
 
     def test_reconstruct_mesh_passes_only_parameters_this_signature_names(self):
         """

@@ -525,7 +525,6 @@ def reconstruct_mesh(
             "convergence": convergence,
             "convergence_patience": convergence_patience,
             "verbose": verbose,
-            # "max_batch_size" parameter removed - now handled automatically
             "optimizer_name": latent_optimizer_name,
             "n_samples": n_samples_latent_recon,
             "n_samples_per_chunk": n_samples_per_chunk_latent_recon,

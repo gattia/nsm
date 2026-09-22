@@ -571,12 +571,6 @@ def _normalized_choice(value, *, allowed, parameter):
     return normalized
 
 
-#: The only keyword ``reconstruct_latent`` takes without naming it, left over from the
-#: chunked forward removed in 4583246; it is warned about where it is read. Issue #75 is
-#: the capability that went with it, and its replacement is a named parameter.
-_DEPRECATED_KWARGS = frozenset({"max_batch_size"})
-
-
 @honour_verbose
 def reconstruct_latent(
     decoders,
@@ -652,7 +646,7 @@ def reconstruct_latent(
     Returns:
         (loss, latent): the final loss value and the fitted latent tensor.
     """
-    refuse_unknown_kwargs(kwargs, function_name="reconstruct_latent", deprecated=_DEPRECATED_KWARGS)
+    refuse_unknown_kwargs(kwargs, function_name="reconstruct_latent")
 
     # All three used to be `if`/`elif` chains with no `else`. Two left `optimizer` or
     # `loss_fn` unassigned and surfaced 100 lines later as an UnboundLocalError naming a
@@ -679,12 +673,6 @@ def reconstruct_latent(
 
     if log_wandb and wandb is None:
         raise ImportError("log_wandb=True requires wandb, which is not installed")
-
-    # Check for deprecated parameters
-    if "max_batch_size" in kwargs:
-        logger.warning(
-            "max_batch_size is deprecated and will be removed in future versions. Batch processing has been simplified and now processes all data at once for better performance."
-        )
 
     if eikonal_weight > 0:
         raise NotImplementedError(EIKONAL_UNSUPPORTED)
