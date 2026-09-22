@@ -23,16 +23,17 @@ under the same number.
 
 **Updated:** 2026-09-22 · **Status:** open
 
-- **Next:** validate §8.0.R against production once (step 0, the last item), then start
-  slice **P**. There are no open PRs.
+- **Next:** slice **P** — see the checklist there. Step 0 is closed.
 - **Blocked on:** nothing. Two maintainer decisions are open (§ Decisions) and neither
-  blocks step 0 or slice P.
+  blocks slice P.
 - **Done:** Phases 0–3 complete. Eighteen slices executed, A through R, each with its own
   PR. v0.2.0 (PR #36) and v0.3.0 (§8.0.O) shipped. Both post-v0.3.0 validation runs
   passed — §7.5a on the production box (PR #102), §7.5b on the maintainer's cluster
   (PR #105) — so nothing gates the remaining slices. **§8.0.R merged 2026-09-21 as
   `d9ae062` (PR #107):** suite 1180 → 1213 passed, net +61 lines in `NSM/`. Per-slice
-  detail is in the history file.
+  detail is in the history file. **Step 0 closed 2026-09-22:** its last item validated R
+  against production and passed — R moves the production BScore less than re-running the
+  same code does (numbers at the ticked box).
 - **Surprises:**
   - **A slice can close a finding in the same breath as deferring it.** All five
     `reconstruct_latent` sites §8.0.K deferred to R were already fixed by §8.0.K's own
@@ -44,6 +45,14 @@ under the same number.
     #20's delete-the-parameter remedy needs judging across every implementation. Every live
     instance is one frame up, at the config layer, in `models/loader.py`. That finding is
     what started `NSM_CONFIG_SECTIONS_AND_MODEL_REGISTRY.md`.
+  - **A validation A/B does not need the production tree checked out to the old ref.**
+    §7.5a checked out each ref in the working tree the production worker imports, and made
+    "restore `main`, verified" the last step of every session. Step 0's R validation ran
+    both versions from one tree instead: the old checkout sits in scratch and wins
+    `import NSM` through `PYTHONPATH` plus a `sitecustomize.py` that drops the editable
+    install's meta-path finder, which otherwise beats `PYTHONPATH`. The production tree is
+    never modified, so there is nothing to restore and no window where an arriving job
+    would run the wrong code.
   - **The test suite grew faster than the library it tests.** Slice T was scheduled at a
     1.02 test-to-source ratio and a 109-second suite; measured 2026-09-21 it is **1.10 and
     180 seconds**. Every slice since has added to what T was created to trim.
@@ -82,7 +91,45 @@ T is the one with judgment in it.
       now: the worker is idle, holding only its 102 MiB bare CUDA context with no step
       children. The durable fix belongs in the website repo — drop the cache, or key it on
       the tree's HEAD — and is worth an issue there.
-- [ ] **Validate §8.0.R against production, once.** R shipped without a §7.5a-style check,
+- [x] **Validate §8.0.R against production, once.** *(Executed 2026-09-22 on the production
+      box; **PASS**. Archived job `8ff02ee4` — §7.5a's job 1, the one production NSM
+      comparison point the archive holds — re-run through `steps.run_nsm`
+      (`nsm_type: "both"`) + `steps.compute_bscore` in the production env, three times:
+      current `main`, pre-R `main` (`b0b5d3f`, the R merge's first parent), then `main`
+      again as a same-code control.*
+
+      | | bone+cart | bone-only |
+      |---|---|---|
+      | **main vs pre-R — R's own contribution** | **1.15e-05** | **3.23e-05** |
+      | main vs main, same code — this box's noise today | 3.64e-05 | 5.99e-05 |
+      | main vs the archived production value | 3.78e-05 | archive has none |
+
+      *R's A/B difference is **smaller than the same-code repeat**, so its numerical
+      contribution is below the noise floor rather than merely inside it. Latent L2 across
+      the three runs is 7.4e-04–7.8e-04 (bone+cart) and 1.4e-03 (bone-only) on 512-dim
+      vectors of norm 7.3, with no pair standing out; ASSD agrees to 7e-05 mm. Nothing near
+      the 0.08 seed-ordering signature, and bone+cart's documented ~0.004 `fix_mesh` band is
+      100× away.*
+
+      ***Two premise corrections.*** *"Both BScore variants against the archived values"
+      cannot be done: every production job runs `nsm_type: bone_and_cart`, so every archived
+      `bscore_results.json` in the 343-job archive holds one key. Bone-only is validated by
+      the A/B instead, which is the stronger comparison anyway — it holds the meshes, the
+      environment and the box fixed and varies only the NSM tree. And the row's worry about
+      production having moved to mskt 0.1.21 since §7.5a does not reach this path: the
+      prepared meshes this run fed the fit came out **byte-identical to the 2026-08-17
+      archive**, because `generate_meshes` — the step PR #102 measured the upgrade moving —
+      is not re-run.*
+
+      ***The production tree was never checked out to an old ref.*** *Both NSM versions ran
+      from one working tree: the pre-R clone sat in scratch and won `import NSM` through
+      `PYTHONPATH` plus a scratch `sitecustomize.py` that drops the editable install's
+      meta-path finder. Verified in the fit subprocess itself, which is where it matters —
+      it resolved to the clone and `_takes_latent_and_xyz`, R's memoized dispatch, was
+      absent there. §7.5a's "`checkout main` is the last step of every session" is a rule
+      for a risk this arrangement does not take.*
+
+      R shipped without a §7.5a-style check,
       and those twenty jobs were its only production exposure. Re-run one archived job on
       `main` and compare both BScore variants against the archived values; the measured
       run-to-run band on that box is ~1e-04. This is cheap and it is the last unvalidated
