@@ -15,15 +15,19 @@ strict xfails name which one. The option values come from
 from, plus the values ``NSM/configs/default_config.json`` actually ships.
 """
 
+import inspect
+
 import pytest
 import torch
 
+from NSM.models.deep_sdf import DELETED_DECODER_ARGUMENTS, Decoder
 from NSM.models.loader import (
     _get_deepsdf_params,
     _get_implicit_params,
     _get_triplanar_params,
     get_model_config_template,
 )
+from NSM.models.triplanar import TriplanarDecoder
 
 #: Small enough that the whole matrix runs in about a second, large enough that the
 #: DeepSDF branch has the eight hidden layers ``PROGRESSIVE_PARAMS`` indexes (5, 6, 7).
@@ -409,3 +413,70 @@ def test_implicit_options_forward(block_type, modulation):
 def test_implicit_final_activations_forward(final_activation):
     forwarded = build_and_forward("implicit", final_activation=final_activation)
     assert forwarded.shape == (N_POINTS, 1)
+
+
+# --- what the two constructors do not name -----------------------------------
+
+
+class TestUnknownConstructorKeywordsAreRefused:
+    """
+    ``Decoder`` and ``TriplanarDecoder`` are the only two constructors in ``models/`` that
+    take ``**kwargs``, and until v0.4.0 both swallowed whatever they did not read. Among
+    dozens of prefixed near-synonyms that made a misspelling build a model at the
+    parameter's default and say nothing.
+
+    ``padding`` is the one where that is not merely untidy: it scales query coordinates
+    before they index the feature planes and is not a learned parameter, so a checkpoint
+    trained at 0.35 loads cleanly under a typo'd key at the default 0.1 and samples at the
+    wrong scale (#26, ``KNOWN_ISSUES`` § Open). That is the case the parametrization uses.
+
+    ``load_model`` cannot produce this: all three translators in ``models/loader.py`` build
+    an explicit ``params`` dict, and the one that copied a config block verbatim went with
+    ``two_stage`` in §8.0.P. Direct construction is the remaining path, and it is the one
+    the production consumer uses.
+    """
+
+    def test_deepsdf_refuses_a_misspelled_key(self):
+        with pytest.raises(TypeError, match="paddding"):
+            Decoder(latent_size=LATENT, dims=[16, 16], paddding=0.35)
+
+    def test_triplanar_refuses_a_misspelled_key(self):
+        with pytest.raises(TypeError, match="paddding"):
+            TriplanarDecoder(
+                latent_dim=LATENT, conv_hidden_dims=[16], sdf_hidden_dims=[16], paddding=0.35
+            )
+
+    @pytest.mark.parametrize("deleted", sorted(DELETED_DECODER_ARGUMENTS))
+    def test_the_four_deleted_arguments_keep_their_own_answers(self, deleted):
+        """
+        Each of the four is answered by name in ``Decoder.__init__`` with what it did and
+        what to do instead. The blanket refusal must not shadow those messages, so it
+        excludes them: passing one falsy is accepted, as every NSM-owned config ships it.
+        """
+        assert Decoder(latent_size=LATENT, dims=[16, 16], **{deleted: None}) is not None
+
+    def test_the_production_consumers_keys_are_all_named(self):
+        """
+        kneepipeline builds the decoder directly (``steps/run_nsm.py:112``), so the
+        refusal reaches it in a way ``load_model`` would not. These are the 15 keys it
+        passes; the assertion is that none of them lands in ``**kwargs``.
+        """
+        named = set(inspect.signature(TriplanarDecoder.__init__).parameters)
+        consumer_keys = {
+            "latent_dim",
+            "n_objects",
+            "conv_hidden_dims",
+            "conv_deep_image_size",
+            "conv_norm",
+            "conv_norm_type",
+            "conv_start_with_mlp",
+            "sdf_latent_size",
+            "sdf_hidden_dims",
+            "sdf_weight_norm",
+            "sdf_final_activation",
+            "sdf_activation",
+            "sdf_dropout_prob",
+            "sum_sdf_features",
+            "conv_pred_sdf",
+        }
+        assert consumer_keys - named == set()

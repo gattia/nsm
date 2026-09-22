@@ -48,6 +48,33 @@ PROGRESSIVE_PARAMS = {
 }
 
 
+#: The four arguments :class:`Decoder` once accepted and never read. Each is answered by
+#: name in ``__init__``, with what it did and what to do instead, so they are excluded
+#: from the blanket refusal below rather than folded into it.
+DELETED_DECODER_ARGUMENTS = frozenset(
+    {"xyz_in_all", "latent_noise_sigma", "norm_layers", "latent_dropout"}
+)
+
+
+def _refuse_unknown_kwargs(kwargs, *, class_name, deprecated=()):
+    """Raise on any keyword ``class_name.__init__`` neither names nor deprecates.
+
+    Both constructors here take a ``**kwargs`` that reads a few keys and swallowed the
+    rest, among dozens of prefixed near-synonyms (``conv_norm`` / ``conv_norm_type``,
+    ``sdf_activation`` / ``sdf_final_activation``). A misspelling built a model at the
+    parameter's default and said nothing -- and for ``padding`` that is a silent change
+    to where the decoder samples its feature planes (#26).
+    """
+    unknown = sorted(set(kwargs) - set(deprecated))
+    if unknown:
+        raise TypeError(
+            f"{class_name}() got unexpected keyword arguments: "
+            + ", ".join(repr(name) for name in unknown)
+            + ". A decoder's constructor is its architecture; it has no extension "
+            "keywords, so an unrecognised name is a parameter that did not get set."
+        )
+
+
 class Decoder(nn.Module):
     """MLP decoder: ``[latent, xyz] -> sdf`` per object, optionally with skips.
 
@@ -65,9 +92,9 @@ class Decoder(nn.Module):
     * ``progressive_add_depth`` phases later blocks in over training, which makes
       ``forward`` depend on ``epoch``; it raises if the epoch is not supplied.
 
-    ``**kwargs`` exists only to refuse or warn on parameters that were accepted and
-    never read (``xyz_in_all``, ``latent_noise_sigma``, ``norm_layers``,
-    ``latent_dropout``); it is not an extension point.
+    ``**kwargs`` exists only to answer the four parameters that were accepted and never
+    read (``xyz_in_all``, ``latent_noise_sigma``, ``norm_layers``, ``latent_dropout``),
+    each by name. It is not an extension point: since v0.4.0 every other keyword raises.
     """
 
     def __init__(
@@ -144,6 +171,8 @@ class Decoder(nn.Module):
                     "longer be built here -- pin NSM < 0.3.0 to load such a checkpoint. "
                     "Under weight_norm=True the key was always a no-op."
                 )
+
+        _refuse_unknown_kwargs(kwargs, class_name="Decoder", deprecated=DELETED_DECODER_ARGUMENTS)
 
         self._activation_ = activation
         self._final_activation_ = final_activation

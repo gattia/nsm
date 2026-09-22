@@ -21,7 +21,7 @@ from torch import nn
 from torch.nn.functional import grid_sample
 
 from .._verbose_deprecation import honour_verbose
-from .deep_sdf import Decoder, get_activation
+from .deep_sdf import Decoder, _refuse_unknown_kwargs, get_activation
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +265,9 @@ class TriplanarDecoder(nn.Module):
     - Previously attempted feature caching optimization, but it provided minimal
       speedup (~1.01-1.09x) due to low hit rates and wrong bottleneck targeting
     - Current optimization: FastUnique bypass for single-latent inference scenarios
+
+    ``**kwargs`` is not an extension point and takes no deprecated keys: since v0.4.0
+    every keyword this does not name raises.
     """
 
     def __init__(
@@ -295,6 +298,8 @@ class TriplanarDecoder(nn.Module):
         padding=0.1,
         **kwargs,
     ):
+        _refuse_unknown_kwargs(kwargs, class_name="TriplanarDecoder")
+
         super(TriplanarDecoder, self).__init__()
 
         self.latent_dim = latent_dim
