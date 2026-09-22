@@ -16,7 +16,6 @@ from NSM.models import (
     Decoder,
     ImplicitDecoder,
     TriplanarDecoder,
-    TwoStageDecoder,
     get_model_config_template,
     list_supported_models,
     load_model,
@@ -31,7 +30,7 @@ class TestModelLoader:
         models = list_supported_models()
         assert isinstance(models, list)
         assert len(models) > 0
-        expected_models = ["triplanar", "deepsdf", "two_stage", "implicit"]
+        expected_models = ["triplanar", "deepsdf", "implicit"]
         for model in expected_models:
             assert model in models
 
@@ -45,7 +44,7 @@ class TestModelLoader:
             assert len(config) > 0
 
             # Each config should have some required parameters
-            if model_type in ["triplanar", "deepsdf", "two_stage"]:
+            if model_type in ["triplanar", "deepsdf"]:
                 assert "latent_size" in config
             elif model_type == "implicit":
                 assert "latent_dim" in config
@@ -69,7 +68,6 @@ class TestModelLoader:
                 _get_deepsdf_params,
                 _get_implicit_params,
                 _get_triplanar_params,
-                _get_two_stage_params,
             )
 
             if model_type == "triplanar":
@@ -78,9 +76,6 @@ class TestModelLoader:
             elif model_type == "deepsdf":
                 model_class, params = _get_deepsdf_params(config)
                 assert model_class == Decoder
-            elif model_type == "two_stage":
-                model_class, params = _get_two_stage_params(config)
-                assert model_class == TwoStageDecoder
             elif model_type == "implicit":
                 model_class, params = _get_implicit_params(config)
                 assert model_class == ImplicitDecoder
@@ -175,18 +170,6 @@ def temp_model_files():
                 layer_split=config["layer_split"],
             )
 
-        elif model_type == "two_stage":
-            config["latent_size"] = 128  # Must be even
-            config["triplanar_params"]["sdf_hidden_dims"] = [64, 64]
-            config["triplanar_params"]["conv_hidden_dims"] = [64, 64]
-            config["mlp_params"]["dims"] = [64, 64, 64]
-            model = TwoStageDecoder(
-                latent_size=config["latent_size"],
-                n_objects=config["objects_per_decoder"],
-                triplanar_params=config["triplanar_params"],
-                mlp_params=config["mlp_params"],
-            )
-
         elif model_type == "implicit":
             config["latent_dim"] = 64
             config["hidden_dim"] = 128
@@ -243,7 +226,7 @@ class TestModelLoadingFullWorkflow:
             assert not loaded_model.training  # Should be in eval mode
 
             # Test that the model can perform inference
-            if model_type in ["triplanar", "deepsdf", "two_stage"]:
+            if model_type in ["triplanar", "deepsdf"]:
                 latent_size = config["latent_size"]
                 batch_size = 10
 
@@ -317,8 +300,8 @@ class TestConvNormTypeMustBeStated:
     """
     ``conv_norm_type`` decides the VAE's normalization, and until Aug 2026 four places
     defaulted it and disagreed: ``"batch"`` in ``VAEDecoder``, ``TriplanarDecoder``,
-    ``_get_triplanar_params`` and the triplanar template; ``"layer"`` in
-    ``_get_two_stage_params``, ``two_stage.default_triplanar_params`` and
+    ``_get_triplanar_params`` and the triplanar template; ``"layer"`` in the (since
+    removed, SCOPE.md section 2.9) two_stage loader branch and defaults, and in
     ``NSM/configs/default_config.json``.
 
     **The value nothing has ever trained was the one that won three of those.** Every
@@ -341,24 +324,12 @@ class TestConvNormTypeMustBeStated:
         with pytest.raises(KeyError, match="conv_norm_type"):
             load_model(stripped, "/nonexistent.pt", model_type="triplanar")
 
-    def test_a_two_stage_config_without_it_is_refused(self):
-        config = get_model_config_template("two_stage")
-        del config["triplanar_params"]
-        with pytest.raises(KeyError, match="conv_norm_type"):
-            load_model(config, "/nonexistent.pt", model_type="two_stage")
-
     def test_the_triplanar_template_advertises_the_value_that_was_trained(self):
         """
         A template is what a NEW config should look like, so it must not hand someone the
         configuration nothing has been trained with.
         """
         assert get_model_config_template("triplanar")["conv_norm_type"] == "layer"
-
-    def test_both_templates_agree(self):
-        """The divergence this pins was two templates disagreeing about the same class."""
-        triplanar = get_model_config_template("triplanar")["conv_norm_type"]
-        two_stage = get_model_config_template("two_stage")["triplanar_params"]["conv_norm_type"]
-        assert triplanar == two_stage == "layer"
 
     def test_a_triplanar_config_without_conv_activation_is_refused(self):
         """

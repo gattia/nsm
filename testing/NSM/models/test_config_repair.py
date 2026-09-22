@@ -7,9 +7,9 @@ carries -- ``padding``, ``conv_activation`` and ``conv_norm_type`` (§8.0.H, iss
 gets built or how it is sampled, and a checkpoint cannot contradict any of them.
 
 What is measured here is the *delivery*. The three live in three separate ``if``/``raise``
-blocks, so a caller repairs one key, re-runs, and is told about the next one. The same
-shape sits 100 lines away in the two_stage branch, which loops over two keys and raises
-inside the loop.
+blocks, so a caller repairs one key, re-runs, and is told about the next one. (The same
+shape recurred in the two_stage loader branch until that type was removed --
+SCOPE.md section 2.9.)
 
 This is not a hypothetical old config. **Both shipped production models** --
 ``647_nsm_femur_v0.0.1`` and ``551_nsm_femur_bone_v0.0.1``, the two ``kneepipeline``
@@ -17,9 +17,6 @@ ships -- omit ``padding`` and ``conv_activation``, so ``load_model`` on either t
 refusals before it loads. ``testing/NSM/regression/test_shipped_checkpoints.py`` runs that
 against the real weights when they are present; these tests reproduce it in miniature and
 need nothing on disk.
-
-The last class is the other half of §8.0.O: the two_stage branch does not merely default
-``padding``, it **drops a value the config states**.
 """
 
 import json
@@ -28,8 +25,7 @@ import re
 import pytest
 import torch
 
-from NSM.models.loader import _get_triplanar_params, _get_two_stage_params
-from NSM.models.two_stage import TwoStageDecoder
+from NSM.models.loader import _get_triplanar_params
 
 #: The values that reproduce a model trained before Aug 2026, taken from what each
 #: refusal message tells the caller to add.
@@ -47,10 +43,6 @@ TINY = {
 def old_triplanar_config():
     """A config as it was written before Aug 2026: none of the three keys present."""
     return dict(TINY, latent_size=8)
-
-
-def old_two_stage_config():
-    return dict(TINY, latent_size=16, layer_dimensions=[8, 8])
 
 
 def repair_loop(extractor, config, limit=6):
@@ -124,90 +116,16 @@ class TestRepairingAnOldTriplanarConfig:
         assert printed.count("\n") > 4
         assert json.loads(re.search(r"\{.*\}", printed, re.DOTALL).group(0))
 
-
-class TestRepairingAnOldTwoStageConfig:
-    """
-    The second instance of the same shape. ``_get_two_stage_params`` needs two of the
-    three keys and raises on the first one missing.
-    """
-
-    def test_one_refusal_names_both_keys(self):
-        """Was a strict xfail: the loop raised on the first key it found missing."""
-        attempts, named = repair_loop(_get_two_stage_params, old_two_stage_config())
-        assert attempts == 2, f"repaired in {attempts} attempts, naming {named}"
-
-
-class TestTwoStagePadding:
-    """
-    #26's defect in the branch §8.0.H did not open, and in its worse form.
-
-    #26 was "a ``padding`` the config did not state was silently defaulted". Here the
-    config *did* state it and the value never arrived: ``_get_two_stage_params`` built its
-    ``triplanar_params`` without a ``padding`` key at all, so ``TriplanarDecoder``'s
-    constructor default won. Measured before the fix: ``padding: 0.35`` in, ``0.1`` built.
-    ``padding`` scales query coordinates before they index the feature planes and is not a
-    learned parameter, so ``load_state_dict(strict=True)`` cannot contradict it -- the
-    model loads clean and samples at the wrong scale.
-
-    Nothing existing was affected, which is what made refusing it at the release boundary
-    cheap: both shipped models are ``model_type: "triplanar"``, the shipped
-    ``default_config.json`` is triplanar with ``padding: 0.1`` stated, and no two_stage
-    config exists in this repo or in either consumer.
-    """
-
-    @staticmethod
-    def config(**overrides):
-        return dict(
-            old_two_stage_config(), conv_norm_type="layer", conv_activation=None, **overrides
-        )
-
-    def test_the_triplanar_branch_forwards_a_stated_padding(self):
-        """The sibling path, for contrast: this is what two_stage now also does."""
+    def test_a_stated_padding_is_forwarded(self):
+        """
+        The other half of #26: ``padding`` must not merely be required, the stated value
+        has to arrive. (The two_stage branch once dropped a stated value entirely; that
+        branch is gone -- SCOPE.md section 2.9 -- and this pins the surviving path.)
+        """
         config = dict(old_triplanar_config(), **HISTORICAL)
         config["padding"] = 0.35
         _, params = _get_triplanar_params(config)
         assert params["padding"] == 0.35
-
-    def test_a_stated_padding_reaches_the_decoder(self):
-        """Was a strict xfail: the key was absent from ``triplanar_params`` entirely."""
-        cls, params = _get_two_stage_params(self.config(padding=0.35))
-        assert params["triplanar_params"]["padding"] == 0.35
-        assert cls(**params).triplanar.padding == 0.35
-
-    def test_a_two_stage_config_without_padding_is_refused(self):
-        """Was a strict xfail: it built at 0.1 and said nothing."""
-        with pytest.raises(KeyError, match="padding"):
-            _get_two_stage_params(self.config())
-
-    def test_the_nested_form_is_held_to_the_same_keys(self):
-        """
-        ``triplanar_params`` stated as a nested dict was passed through entirely
-        unchecked -- none of the three keys was required there, although it builds the
-        same decoder. The refusal names all three at once, as everywhere else.
-        """
-        nested = dict(TINY, conv_norm_type="layer", conv_activation=None)
-        with pytest.raises(KeyError, match="padding"):
-            _get_two_stage_params(dict(old_two_stage_config(), triplanar_params=nested))
-
-        nested["padding"] = 0.35
-        cls, params = _get_two_stage_params(dict(old_two_stage_config(), triplanar_params=nested))
-        assert cls(**params).triplanar.padding == 0.35
-
-    def test_the_module_level_default_states_it(self):
-        """
-        ``TwoStageDecoder()`` with no arguments builds from ``default_triplanar_params``,
-        which reaches ``TriplanarDecoder`` directly and never passes through the loader's
-        refusal. Stating the key there is what keeps the two routes agreeing.
-        """
-        from NSM.models.two_stage import default_triplanar_params
-
-        assert default_triplanar_params["padding"] == 0.1
-
-    def test_the_template_states_it(self):
-        """``get_model_config_template`` is what the README tells a reader to start from."""
-        from NSM.models.loader import get_model_config_template
-
-        assert get_model_config_template("two_stage")["triplanar_params"]["padding"] == 0.1
 
 
 class TestNormTypeConstructorDefault:

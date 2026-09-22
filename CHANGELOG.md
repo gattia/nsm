@@ -32,6 +32,17 @@ nsm @ git+https://github.com/gattia/nsm@v0.3.0
 
 ### Breaking
 
+- **The `two_stage` model type is removed** (plan §8.0.P). `NSM.models.TwoStageDecoder`,
+  `load_model(..., model_type="two_stage")`, its loader branch and its config template are
+  all gone, and `list_supported_models()` now returns `["triplanar", "deepsdf",
+  "implicit"]`. It had **zero training runs, ever** — no launcher script, no saved run
+  config, and neither measured consumer imports it — and until
+  [#46](https://github.com/gattia/nsm/issues/46) the class was not constructible at all,
+  so no checkpoint of it can exist outside this repo. `docs/SCOPE.md` §2.9 records the
+  ruling and the resurrection path; `v0.3.0` holds the last copy. The `implicit` type is
+  **not** removed — the maintainer ruled on 2026-09-04 that it stays, as the
+  ShapeMed-Knee paper's modulated-periodic-activations baseline.
+
 - **`roundtrip_distance` and `forward_backward_disagreement` are keyword-only**
   ([#56](https://github.com/gattia/nsm/issues/56), plan §8.0.N). The two take *the same two arrays in opposite order*, forty
   lines apart in `mesh/correspondence_metrics.py`, and neither swap was visible in what a
@@ -71,6 +82,31 @@ nsm @ git+https://github.com/gattia/nsm@v0.3.0
   whether it says why. Deleting the parameter is scheduled for v0.4.0 (plan §8.0.S).
 
 ### Changed
+
+- **The four `sample_difficulty_lx*` config keys are removed** (plan §8.0.P,
+  [#18](https://github.com/gattia/nsm/issues/18), closed won't-fix). `sample_difficulty_lx`,
+  `_schedule`, `_cooldown` and `_epsilon` have shipped in `default_config.json` since 2023
+  and have been read by nothing on a supported path since Feb 2024. **Removing them changes
+  no result** — a config that still carries them is not refused, and nothing reads them
+  either way.
+
+  #18 proposed porting the inverse-Lx weighting they configure out of `train/deprecated/`
+  instead. It was read rather than ported, and rejected: the form is NSM's own rather than
+  Curriculum DeepSDF's — the paper has two components, surface accuracy and sample
+  difficulty, and both are already implemented — it was switched off by its author in
+  Feb 2024 after four months, no shipped model was trained with it, and its weight was
+  built from the loss it multiplied without being detached, so the gradient inverted above
+  error 0.01 at the documented `lx=2`. `docs/SCOPE.md` §2.2 holds the ruling;
+  `docs/KNOWN_ISSUES.md` § History 31 holds the measurements and says which runs are
+  affected.
+
+- **`NSM/train/deprecated/` is deleted** (plan §8.0.P). 880 lines in two files,
+  quarantined since Aug 2025 with no importer, no `__init__.py` and so no place in the
+  coverage denominator. `train_deep_sdf_multi_surface_orig.py` was a strict subset of
+  `train_deep_sdf.py`; `train_deep_sdf_orig.py` held the only live copy of the inverse-Lx
+  sample weighting, which is removed rather than ported — see the entry below. Nothing
+  imported either file, so nothing that worked stops working; `v0.3.0` holds the last copy
+  of both.
 
 - **The shipped `default_config.json` sheds four keys nothing reads and renames a fifth**
   (plan §8.0.R). `entity`, `modulated`, `cache` and `n_val` are deleted — the spellings

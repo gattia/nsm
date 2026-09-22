@@ -28,14 +28,8 @@ import torch
 
 import NSM
 from NSM.datasets.sdf_dataset import MultiSurfaceSDFSamples, SDFSamples
-from NSM.models.loader import (
-    _get_deepsdf_params,
-    _get_implicit_params,
-    _get_triplanar_params,
-    _get_two_stage_params,
-)
+from NSM.models.loader import _get_deepsdf_params, _get_implicit_params
 from NSM.models.triplanar import TriplanarDecoder
-from NSM.models.two_stage import TwoStageDecoder, default_mlp_params, default_triplanar_params
 from NSM.reconstruct.latent_fit import _decode, reconstruct_latent
 from NSM.reconstruct.utils import refuse_unknown_kwargs
 from NSM.train.train_deep_sdf import _code_regularization_loss
@@ -259,134 +253,21 @@ class TestZeroAndMissingConfigValuesRefuse:
 
 
 # ---------------------------------------------------------------------------
-# The config layer: keys a sibling translator reads and this one drops
-# ---------------------------------------------------------------------------
-
-
-#: ``config key -> (which half of the two-stage model, the constructor's parameter name)``.
-#: Both sibling translators read all four and both constructors accept all four;
-#: ``_get_two_stage_params``' inline branch is a hand-copied subset and names none of them.
-TWO_STAGE_DROPPED = {
-    "layer_split": ("mlp_params", "layer_split", 2),
-    "progressive_add_depth": ("mlp_params", "progressive_add_depth", True),
-    "conv_pred_sdf": ("triplanar_params", "conv_pred_sdf", True),
-    "sum_conv_output_features": ("triplanar_params", "sum_sdf_features", False),
-}
-
-
-class TestTwoStageTranslatesWhatItsSiblingsRead:
-    """
-    `_get_two_stage_params`' inline branch builds `triplanar_params` and `mlp_params` by
-    hand rather than from `_get_triplanar_params` and `_get_deepsdf_params`, and has
-    drifted from both. Four keys that each sibling reads, and that each constructor
-    accepts, reach neither half of a two-stage model.
-
-    **Delegating to the siblings is the wrong fix, and the measurement below is why**:
-    the inline branch and `_get_deepsdf_params` disagree on two *defaults* as well, and
-    `concat_latent_input` changes the MLP's input width -- so delegating would rebuild
-    every existing two-stage model at a different architecture and stop its checkpoints
-    loading. The four keys are added with the defaults the branch produces today instead,
-    which is what `test_the_built_params_are_unchanged_when_the_key_is_absent` holds it to.
-    """
-
-    @pytest.mark.parametrize("key", sorted(TWO_STAGE_DROPPED))
-    def test_a_key_both_siblings_read_reaches_the_two_stage_model(self, key):
-        """Were four strict xfails: each key reached neither half of the model."""
-        half, parameter, value = TWO_STAGE_DROPPED[key]
-        config = dict(BOTH_MODEL_TYPES, **{key: value})
-
-        _, params = _get_two_stage_params(config)
-
-        assert params[half][parameter] == value
-
-    @pytest.mark.parametrize("key", sorted(TWO_STAGE_DROPPED))
-    def test_the_sibling_translator_reads_it_and_the_constructor_accepts_it(self, key):
-        """The half of the claim that says the key is real, not that two_stage is late."""
-        half, parameter, value = TWO_STAGE_DROPPED[key]
-        config = dict(BOTH_MODEL_TYPES, **{key: value})
-        sibling = _get_triplanar_params if half == "triplanar_params" else _get_deepsdf_params
-        constructor = TwoStageDecoder(
-            latent_size=16,
-            n_objects=1,
-            triplanar_params=dict(
-                default_triplanar_params,
-                conv_hidden_dims=[8],
-                sdf_hidden_dims=[8],
-                sdf_latent_size=8,
-            ),
-            mlp_params=dict(default_mlp_params, dims=(8, 8)),
-        )
-        target = constructor.triplanar if half == "triplanar_params" else constructor.mlp
-
-        assert sibling(config)[1][parameter] == value
-        assert parameter in inspect.signature(type(target).__init__).parameters
-
-    def test_the_built_params_are_unchanged_when_the_key_is_absent(self):
-        """
-        What says the fix moved no existing model. Every two-stage config that does not
-        set one of the four keys must build exactly the dicts it built before.
-        """
-        _, params = _get_two_stage_params(dict(BOTH_MODEL_TYPES))
-
-        assert params["mlp_params"]["dropout_prob"] == 0.0
-        assert params["mlp_params"]["concat_latent_input"] is True
-        assert params["mlp_params"].get("layer_split") is None
-        assert params["mlp_params"].get("progressive_add_depth") in (False, None)
-        assert params["triplanar_params"].get("conv_pred_sdf") in (False, None)
-        assert params["triplanar_params"].get("sum_sdf_features") in (True, None)
-
-    def test_delegating_to_the_siblings_would_change_two_defaults(self):
-        """
-        The measurement that rules out the obvious fix. `CLAUDE.md`: never inherit a
-        rationale along with the code -- and never inherit an implementation either
-        without running what it would change.
-        """
-        _, two_stage = _get_two_stage_params(dict(BOTH_MODEL_TYPES))
-        deepsdf = _get_deepsdf_params(dict(BOTH_MODEL_TYPES))[1]
-
-        assert two_stage["mlp_params"]["dropout_prob"] != deepsdf["dropout_prob"]
-        assert two_stage["mlp_params"]["concat_latent_input"] != deepsdf["concat_latent_input"]
-
-
-# ---------------------------------------------------------------------------
 # Sites this slice deliberately does not change, asserted so they cannot rot
 # ---------------------------------------------------------------------------
 
 
 class TestTheEvidenceForSlicesThatOwnTheFix:
     """
-    Two findings whose remedy belongs to another slice. Each is recorded as a passing
-    test rather than a sentence, because the sentence is what goes stale: §8.0.S item (4)
-    has wanted `Decoder`/`TriplanarDecoder` to refuse unknown `**kwargs` since it was
-    written, and what it never had was a *config* path reaching the swallow.
+    A finding whose remedy belongs to another slice, recorded as a passing test rather
+    than a sentence, because the sentence is what goes stale.
+
+    This class held a second one until §8.0.P: a `two_stage` config carried a misspelled
+    architecture key into `TriplanarDecoder`'s unread `**kwargs`, which was §8.0.S item
+    (4)'s only *config* path to the swallow. The `two_stage` model type is deleted, so
+    that path is gone -- and item (4) is back to having no config route, which is worth
+    knowing before S re-derives one.
     """
-
-    def test_a_two_stage_config_carries_a_typo_into_the_triplanar_constructor(self):
-        """
-        `_get_two_stage_params` copies `config["triplanar_params"]` verbatim, and
-        `TriplanarDecoder.__init__` has a `**kwargs` that reads nothing. A misspelled
-        architecture key therefore builds at the constructor default and says nothing --
-        `padding` at 0.1 where the config asked for 0.9, which is #26's silent-scale
-        hazard arriving by a second route.
-
-        Evidence for §8.0.S item (4). The refusal is Breaking and waits for v0.4.0.
-        """
-        triplanar_params = dict(
-            default_triplanar_params,
-            conv_hidden_dims=[8],
-            sdf_hidden_dims=[8],
-            sdf_latent_size=8,
-        )
-        triplanar_params["paddding"] = 0.9
-
-        model = TwoStageDecoder(
-            latent_size=16,
-            n_objects=1,
-            triplanar_params=triplanar_params,
-            mlp_params=dict(default_mlp_params, dims=(8, 8)),
-        )
-
-        assert model.triplanar.padding == 0.1
 
     def test_the_implicit_translator_ignores_the_activation_both_siblings_read(self):
         """
@@ -416,8 +297,8 @@ class TestTheEvidenceForSlicesThatOwnTheFix:
 class TestPolymorphicConformanceIsNotTheAcceptedAndIgnoredClass:
     """
     Four of the five parameters the sweep found accepted-and-never-read are the same
-    `epoch`, on three decoders and one schedule, and deleting any of them would break the
-    caller: `train_epoch` calls every decoder as `model(inputs, epoch=epoch)` and
+    `epoch`, on the decoders and on the schedules, and deleting any of them would break
+    the caller: `train_epoch` calls every decoder as `model(inputs, epoch=epoch)` and
     `adjust_learning_rate` calls every schedule as `get_learning_rate(epoch)`.
 
     **The discriminator is the sibling**, and it is what #20's standing remedy -- delete
@@ -428,9 +309,8 @@ class TestPolymorphicConformanceIsNotTheAcceptedAndIgnoredClass:
     def test_a_sibling_implementation_reads_the_epoch_the_others_ignore(self):
         from NSM.models.deep_sdf import Decoder
         from NSM.models.modulated_periodic_activations import ImplicitDecoder
-        from NSM.models.two_stage import TwoStageDecoder as _TwoStage
 
-        for cls in (Decoder, TriplanarDecoder, ImplicitDecoder, _TwoStage):
+        for cls in (Decoder, TriplanarDecoder, ImplicitDecoder):
             assert "epoch" in inspect.signature(cls.forward).parameters
 
         source = inspect.getsource(Decoder.forward)

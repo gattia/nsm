@@ -135,7 +135,8 @@ class TestTheConversionHolds:
     """
     Structural pins over ``NSM/`` itself: what the §8.0.G conversion established, so a
     later slice reintroducing a ``print`` or an f-string log line goes red rather than
-    unnoticed. ``train/deprecated/`` is out of scope until §8.0.P.
+    unnoticed. Every file under ``NSM/`` is in scope: ``train/deprecated/`` used to be
+    carved out and was deleted at §8.0.P.
     """
 
     #: A script's own output on its own stdout is not the library speaking.
@@ -185,9 +186,10 @@ class TestTheConversionHolds:
                     offenders.append(f"{path}:{node.lineno}")
         assert offenders == []
 
-    #: ``SCOPE`` rules these three out of the documented surface, so their gates go with
-    #: the modules rather than with this sweep: §2.4 (deferred research), §2.1
-    #: (unsupported until someone needs it), §2.2 (quarantined). §8.0.P and §8.0.R own them.
+    #: ``SCOPE`` rules these two out of the documented surface, so their gates go with
+    #: the modules rather than with this sweep: §2.4 (deferred research) and §2.1
+    #: (unsupported until someone needs it). §2.2 (quarantined) was a third until §8.0.P
+    #: deleted ``train/deprecated/``; the sweep covers every file under ``NSM/`` now.
     UNDOCUMENTED_SURFACE = (
         "NSM/reconstruct/reconstruct_latent_S3.py",
         "NSM/train/train_deep_sdf_multi_head.py",
@@ -262,10 +264,8 @@ class TestTheConversionHolds:
 
 
 def _library_modules():
-    """(repo-relative path, parsed module) for every ``NSM/`` file outside ``deprecated/``."""
+    """(repo-relative path, parsed module) for every ``NSM/`` file."""
     root = pathlib.Path(__file__).resolve().parents[2] / "NSM"
     for path in sorted(root.rglob("*.py")):
-        if "deprecated" in path.parts:
-            continue
         relative = path.relative_to(root.parent).as_posix()
         yield relative, ast.parse(path.read_text(encoding="utf-8"))

@@ -42,8 +42,10 @@ exists at all:
 - **Docstring coverage is the wrong metric.** 31 of the documented public symbols have
   docstrings that *contradict* the code. No coverage number detects that; it is what
   Phase 2 is for.
-- **Coverage understates the gap.** `train/deprecated/` (880 lines) has no `__init__.py`,
-  is never imported, and so does not appear in the denominator at all.
+- **Coverage understated the gap.** `train/deprecated/` (880 lines) had no `__init__.py`,
+  was never imported, and so did not appear in the denominator at all. Deleted Sep 2026
+  (`SCOPE.md` §2.2), which is the only way that gap closes: an untested module absent from
+  its own coverage denominator reads as covered.
 
 ---
 
@@ -85,7 +87,6 @@ flowchart LR
     MDload["loader"]
     MDmpa["modulated_periodic_activations"]
     MDtri["triplanar"]
-    MDtwo["two_stage"]
   end
 
   subgraph RC["NSM.reconstruct"]
@@ -105,8 +106,6 @@ flowchart LR
     TRtds["train_deep_sdf"]
     TRmh["train_deep_sdf_multi_head"]
     TRutils["utils"]
-    TRdep1["deprecated.train_deep_sdf_orig"]
-    TRdep2["deprecated.train_deep_sdf_multi_surface_orig"]
   end
 
   NSMpkg --> Uutils
@@ -126,15 +125,11 @@ flowchart LR
   MDpkg -->|star| MDdeep
   MDpkg --> MDmpa
   MDpkg --> MDtri
-  MDpkg --> MDtwo
   MDpkg --> MDload
   MDload --> MDdeep
   MDload --> MDtri
-  MDload --> MDtwo
   MDload --> MDmpa
   MDtri --> MDdeep
-  MDtwo --> MDtri
-  MDtwo --> MDdeep
 
   RCpkg -->|star| RCmain
   RCpkg --> RCs3
@@ -233,8 +228,6 @@ Modules with no inaccurate docstrings and an unremarkable status are omitted.
 | `losses.py` | 2 | research — gated behind `NotImplementedError` |
 | `reconstruct/reconstruct_latent_S3.py` | 2 | deferred research |
 | `train/train_deep_sdf_multi_head.py` | 0 | **unsupported until someone needs it** (SCOPE §2.1, ruling changed 2026-08-29) |
-| `train/deprecated/train_deep_sdf_multi_surface_orig.py` | 0 | **dead → quarantine** |
-| `train/deprecated/train_deep_sdf_orig.py` | 0 | **dead after a 12-line port** |
 | `datasets/utils.py` | 0 | prod — leaf helpers, received from `sdf_dataset.py` (§8.0, 2026-08-22) |
 | `datasets/mesh_sampling.py` | 0 | prod — the two reader pipelines, same move |
 | `_lr_migration.py` | 0 | prod (transitional — delete-when in its header) |
@@ -267,9 +260,10 @@ described (re-measured 2026-08-26: `python -c 'import NSM'` emits
 does for every *other* import-time print: `kneepipeline/steps/run_nsm.py:340-342` runs
 each NSM fit in a subprocess and parses **the last line of its stdout as JSON**, so
 NSM's stdout is a contract surface. §8.0.G settled that generally: every
-diagnostic in `NSM/` outside `train/deprecated/` goes through `logging`, and
-`test_observability.py` fails if a `print` reappears anywhere but the
-`configs/generate_sdf_default_config.py` generator script.
+diagnostic in `NSM/` goes through `logging`, and `test_observability.py` fails if a
+`print` reappears anywhere but the `configs/generate_sdf_default_config.py` generator
+script. It used to carve out `train/deprecated/`; that directory is gone (`SCOPE.md`
+§2.2), so the sweep now covers every file under `NSM/`.
 
 The rest: three separate `try/except` optional-dependency probes that log and set module
 globals (`recon_evaluation.py`, `sdf_dataset.py`, `correspondence_metrics.py` —
@@ -311,7 +305,7 @@ The plan flagged one. There are six.
 | Trap | Where | Why it bites |
 |---|---|---|
 | **Two `adjust_learning_rate`** | `utils.adjust_learning_rate` (target-keyed, per-epoch) and `reconstruct/utils.py` (step decay for latent fitting) | Unrelated signatures, same name, and the second is *leaked into `NSM.reconstruct`'s namespace* by the star-import — so `from NSM.reconstruct import adjust_learning_rate` silently gets the wrong one. |
-| **Four `loss_l1 = torch.nn.L1Loss(...)`** | module-level `loss_l1` in `train_deep_sdf.py`, `train_deep_sdf_multi_head.py`, and both `deprecated/` trainers | Four copies of a shared import-time module. |
+| **Two `loss_l1 = torch.nn.L1Loss(...)`** | module-level `loss_l1` in `train_deep_sdf.py` and `train_deep_sdf_multi_head.py` | Two copies of a shared import-time module. Was four; the two `deprecated/` trainers went with the directory (`SCOPE.md` §2.2). |
 | ~~**Two `Sine` classes**~~ | *Closed in §8.0.H.* The `deep_sdf` copy (w0 hardcoded, `__init__` misspelled as `__init` and so name-mangled to `_Sine__init`, never ran) is deleted; `deep_sdf` imports `modulated_periodic_activations.Sine` and `get_activation("sin")` returns `Sine(w0=30)`. Both computed `sin(30 * x)`, so no run's arithmetic changed. | Kept as an entry because *why* it was hard to see is the durable part: the star-import ordering, not the duplication. |
 | **Two edge-ratio implementations** | `correspondence_metrics.triangle_health` and `triangle_metrics.py` | Divergent results from the same-named statistic. |
 | ~~**Two mesh-building tails**~~ | *Closed in §8.0.I.* `create_mesh` and `create_mesh_adaptive` each carried the whole reshape → zero-crossing check → extract → rescale → save sequence; `_finish_meshes` is it once. | The durable part is *how* they had already drifted: the adaptive copy forwarded `verbose` to the extraction twins and the dense one did not. Nothing named the two copies, so nothing compared them — duplication behind a caller boundary has no name trap to notice. |
@@ -416,7 +410,8 @@ expressive class as the function being deployed.
 
 **`batch` was also the default in three of the four places that had one** — the `VAEDecoder`
 and `TriplanarDecoder` signatures, `_get_triplanar_params` and the triplanar template —
-against `layer` in `_get_two_stage_params`, `two_stage`'s default triplanar params and
+against `layer` in the two_stage loader branch and defaults (the type has since been
+removed, SCOPE.md §2.9) and in
 `NSM/configs/default_config.json`. The value that won three of them is the one **nothing has
 ever been trained with**: 647, 551, `ShapeMedKnee_2024_config.json` and the regenerated
 default all say `layer`, and the default only says `layer` at all because `651a810`
@@ -451,9 +446,10 @@ you write it" — and the same rule applies to an audit's own findings, not just
 Moved to [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) § Open § Tooling, which is where open defects
 live. One that is structural rather than a defect, and so stays here:
 
-**`NSM.configs` and `NSM.train.deprecated` are absent from the built distribution** — no
-`__init__.py`, no `package-data`. Editable installs mask it, which is why nobody has hit
-it. It is a packaging property of the layout above, not a bug with a line number.
+**`NSM.configs` is absent from the built distribution** — no `__init__.py`, no
+`package-data`. Editable installs mask it, which is why nobody has hit it. It is a
+packaging property of the layout above, not a bug with a line number. `NSM.train.deprecated`
+had the same property until it was deleted (`SCOPE.md` §2.2).
 
 **Phase 2's plan to enforce docstrings through `make lint` cannot work as written**: that
 job is `continue-on-error` with a large pre-existing backlog, so a new rule added to it

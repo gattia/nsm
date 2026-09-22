@@ -776,8 +776,6 @@ def train_epoch(
             # a training-dynamics knob, not the target transform its name suggests.
             if config["enforce_minmax"] is True:
                 pred_sdf = torch.clamp(pred_sdf, -config["clamp_dist"], config["clamp_dist"])
-            # elif config['hard_sample_difficulty_weight'] is not None:
-            #     pred_sdf = torch.clamp(pred_sdf, -1, 1)
 
             l1_loss, l1_losses = _surface_l1_loss(
                 pred_sdf=pred_sdf,
