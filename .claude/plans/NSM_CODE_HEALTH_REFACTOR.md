@@ -23,9 +23,10 @@ under the same number.
 
 **Updated:** 2026-09-22 · **Status:** open
 
-- **Next:** slice **P** — see the checklist there. Step 0 is closed.
-- **Blocked on:** nothing. Two maintainer decisions are open (§ Decisions) and neither
-  blocks slice P.
+- **Next:** **PR #110 (slice P) is open and needs review.** After it merges: pull this tree
+  and restart the celery worker, then start slice **S**.
+- **Blocked on:** nothing this session can do. Two maintainer decisions are open
+  (§ Decisions); neither blocked P and neither blocks S.
 - **Done:** Phases 0–3 complete. Eighteen slices executed, A through R, each with its own
   PR. v0.2.0 (PR #36) and v0.3.0 (§8.0.O) shipped. Both post-v0.3.0 validation runs
   passed — §7.5a on the production box (PR #102), §7.5b on the maintainer's cluster
@@ -33,7 +34,9 @@ under the same number.
   `d9ae062` (PR #107):** suite 1180 → 1213 passed, net +61 lines in `NSM/`. Per-slice
   detail is in the history file. **Step 0 closed 2026-09-22:** its last item validated R
   against production and passed — R moves the production BScore less than re-running the
-  same code does (numbers at the ticked box).
+  same code does (numbers at the ticked box). **Slice P executed 2026-09-22 as PR #110**,
+  unmerged at the time of writing: the inverse-Lx port (closing #18), the deletion of
+  `train/deprecated/`, and the `two_stage` removal carried out of the closed #108.
 - **Surprises:**
   - **A slice can close a finding in the same breath as deferring it.** All five
     `reconstruct_latent` sites §8.0.K deferred to R were already fixed by §8.0.K's own
@@ -53,6 +56,16 @@ under the same number.
     install's meta-path finder, which otherwise beats `PYTHONPATH`. The production tree is
     never modified, so there is nothing to restore and no window where an arriving job
     would run the wrong code.
+  - **A deletion slice is mostly a documentation slice.** P deleted 1,112 lines of `NSM/`
+    and touched 22 files to do it: every carve-out that existed only for the deleted code
+    (two test sweeps that skipped `train/deprecated/`), every ruling that assumed it
+    (`SCOPE.md` §1, §2.2, §2.6, §2.7, §2.9 and §5, plus the `ARCHITECTURE.md` coverage and
+    duplicate-name tables), and two `KNOWN_ISSUES` entries about code that no longer
+    exists. A History
+    entry outlives the code it describes on purpose — it answers a question about runs —
+    but a *dotted citation* in one does not: `test_docs_references` requires every
+    `module.symbol` in `docs/` to resolve in the current tree, which is a good rule that a
+    deletion slice will trip.
   - **The test suite grew faster than the library it tests.** Slice T was scheduled at a
     1.02 test-to-source ratio and a 109-second suite; measured 2026-09-21 it is **1.10 and
     180 seconds**. Every slice since has added to what T was created to trim.
@@ -154,7 +167,36 @@ T is the one with judgment in it.
       are scratch with a lifetime of days — `CLAUDE.md` names them as something this repo
       does not keep, and the plan's State block is the real handoff.
 
-### Step P — slice §8.0.P: quarantine and delete
+### Step P — slice §8.0.P: quarantine and delete — **executed, PR #110 open**
+
+*Three commits on `slice-p-quarantine-and-delete`, 361 lines added and 1,550 deleted
+(`NSM/` itself: 41 and 1,112). Suite 1048 → 1031 passed, `make lint` clean, and the
+production consumer verified by importing its two symbols in the kneepipeline environment,
+which imports this tree. Every bullet below was carried; what each one turned out to be:*
+
+- ***#18 was ruled port, not won't-fix***, *on the issue's own record that the maintainer
+  wants the weighting available. It is an `elif` after `sample_difficulty_weight` and is
+  read with `.get`, which is §2.2's "impossible to enable by accident" made concrete, and
+  the off-state has three tests to the algorithm's one. Both halves of the claim were run
+  rather than argued: disabling the branch reddens the algorithm test, and an `if` in place
+  of the `elif` reddens the precedence test.*
+- ***The port silently changes training for a config that set the key*** *— `lx` non-null
+  with `sample_difficulty_weight` null — so it took a `KNOWN_ISSUES.md` § History 31 entry.
+  No shipped or production config is in that position: both ShapeMedKnee configs set
+  `sample_difficulty_weight: 0.2` and carry no `lx` key at all.*
+- ***#108's §1 line was wrong in the other direction too.*** *The plan said its "`deepsdf`
+  cannot be reconstructed" was false. Measured 2026-09-22: **all three** advertised types —
+  `triplanar`, `deepsdf`, `implicit` — fit a latent through `reconstruct_latent` end to end,
+  so `SCOPE.md` §1's "only `TriplanarDecoder` survives the reconstruction path" is what
+  needed rewriting, not the count in it. What survives of that bullet is that `load_model`'s
+  type list is a hardcoded `if/elif` — the registration pathway, §8.1.*
+- ***§8.0.S item (4) loses its only config route.*** *The evidence test removed with
+  two_stage was the one config path reaching `TriplanarDecoder`'s unread `**kwargs`. S
+  should know it is back to having none before it re-derives one.*
+- ***#51 needed nothing***, *as predicted: `SCOPE.md` §2.1 already carries the downgrade.*
+
+*Left for the maintainer: reviewing and merging #110. The working tree is back on `main`,
+so production is not running branch code; after the merge, pull and restart the worker.*
 
 Ungated 2026-08-30: the 0b consumer survey is answered and measured, and `nsosim` is
 inference-only with a five-symbol NSM surface, none of it in `train/` (`docs/SCOPE.md` §5).
