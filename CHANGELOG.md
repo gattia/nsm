@@ -23,14 +23,86 @@ code still work?"* — that is about API. A change can warrant an entry in both.
 package), so pin the tag directly:
 
 ```
-nsm @ git+https://github.com/gattia/nsm@v0.3.0
+nsm @ git+https://github.com/gattia/nsm@v0.4.0
 ```
 
 ---
 
-## Unreleased
+## v0.4.0
+
+The release v0.3.0 scheduled. `NSM/_verbose_deprecation.py` promised one release of
+overlap for the `verbose=` parameter and named v0.4.0 as its delete-when; v0.3.0 existing
+is what made that due, and the public-signature changes earlier slices had deferred to a
+boundary ride with it, alongside the deletions of `train/deprecated/`, the `two_stage`
+model type and the multi-head trainer.
+
+**One thing to do before upgrading.** If you pass `verbose=` to anything in NSM, delete
+the argument and configure logging instead:
+`logging.getLogger("NSM").setLevel(logging.DEBUG)` with a handler on it, or
+`logging.basicConfig(level=logging.INFO)`. The flag now raises `TypeError`. A
+`DeprecationWarning` is invisible under Python's default filter outside `__main__`, so if
+you call NSM from inside a module you will not have seen the v0.3.0 notice.
+
+**What this release does not change.** `reconstruct_mesh` still takes 58 named parameters,
+`reconstruct_latent` 38, `create_mesh_adaptive` 25 and `create_mesh` 16. Shrinking those
+four as a set was deferred here and then ruled out of it (2026-09-22): the grouping they
+want is the one the configuration work is designing, and shrinking them now and regrouping
+them later is two breaking changes for one result.
 
 ### Breaking
+
+- **`verbose=` is deleted, on all 31 functions that took it** ([#58](https://github.com/gattia/nsm/issues/58), plan Step S).
+  `NSM/_verbose_deprecation.py` is gone with its 27 `@honour_verbose` decorators. The
+  replacement is the one the v0.3.0 deprecation named and has not changed:
+  `logging.getLogger("NSM").setLevel(logging.DEBUG)` with a handler, or
+  `logging.basicConfig(level=logging.INFO)`. Per-subpackage control comes free with the
+  `NSM.*` hierarchy. The four public signatures each lose one parameter:
+  `reconstruct_mesh` 59 → 58, `reconstruct_latent` 39 → 38, `create_mesh_adaptive`
+  26 → 25, `create_mesh` 17 → 16.
+
+  **`config["verbose"]` is now read by nothing.** It is not refused, so every
+  `model_params_config.json` on disk keeps working, but it selects nothing: the level the
+  host configures is the whole of the filtering. It is removed from
+  `NSM/configs/default_config.json` and from the generator that writes it. The three
+  places a flag still guards a log record are argument guards — a `sched_getaffinity`
+  probe, an extent computed for the record, two CUDA memory queries inside `forward` —
+  and each is now `logger.isEnabledFor(logging.DEBUG)`, which asks the host rather than
+  the caller.
+
+- **`reconstruct_latent(pts_surface=...)` is required** (plan Step S item 2). The
+  `pts_surface=None` default declared optional a parameter the type check has always
+  rejected — `None` is not one of the four types it accepts, so the default was never a
+  value the function took. It moves into the required block after `sdf_gt`, next to the
+  two arrays it labels. That shifts the positions after it, and every way of getting that
+  wrong is loud: a six-or-more-argument positional call now lands `loss_type` or `lr`
+  here, and neither a string nor a float is a list, tuple, `ndarray` or `Tensor`.
+
+- **`Decoder` and `TriplanarDecoder` refuse keywords they do not name** (plan Step S
+  item 4, [#26](https://github.com/gattia/nsm/issues/26)). Both took a `**kwargs` that
+  read a few keys and swallowed the rest, among dozens of prefixed near-synonyms, so a
+  misspelling built a model at the parameter's default and said nothing. For `padding`
+  that is a silent change to where the decoder samples its feature planes: it is not a
+  learned parameter, so a checkpoint trained at 0.35 loads cleanly under a typo'd key at
+  the default 0.1. `Decoder`'s four deleted arguments — `xyz_in_all`,
+  `latent_noise_sigma`, `norm_layers`, `latent_dropout` — keep their own messages and are
+  excluded from the refusal. `load_model` cannot reach this: all three translators build
+  an explicit parameter dict.
+
+- **`max_batch_size` is deleted from `reconstruct_latent`** (plan Step S item 5). It had
+  been accepted-and-warned since the chunked forward it configured was removed, and it
+  named a capability that no longer existed either way —
+  [#75](https://github.com/gattia/nsm/issues/75)'s replacement is `n_samples_per_chunk`, a
+  named parameter. It now raises like any other unknown key. `reconstruct_mesh`'s
+  `batch_size_latent_recon` is a different key and is **not** removed.
+
+- **`regions_label` is deleted from the five `compare_cart_thickness` functions** (plan
+  Step S). It was never a choice: the transfer honoured it and the read ignored it,
+  because pymskt's `BoneMesh.get_cart_thickness_mean` and `.get_cart_thickness_std` both
+  open `get_scalar("labels")` with the name hardcoded, so every value but `"labels"`
+  raised. A caller who passed one now gets the same failure from pymskt, whose message
+  names the array to rename. `orig_cart` was scheduled here with it and **stays**: it is
+  not a parameter but element 1 of a list whose length is the fixed-layout contract, and
+  `reconstruct_mesh` hands the same surface layout to both sides (`docs/SCOPE.md` §2.5).
 
 - **The `two_stage` model type is removed** (plan §8.0.P). `NSM.models.TwoStageDecoder`,
   `load_model(..., model_type="two_stage")`, its loader branch and its config template are
@@ -259,6 +331,15 @@ nsm @ git+https://github.com/gattia/nsm@v0.3.0
   subject 0, which contributes none when its reconstruction has no zero level set, so the
   next subject with results raised `KeyError`. It fired on the order of the validation
   set.
+
+### Added
+
+- **`NSM.mesh` exports its four submodules** — `correspondence_metrics`, `interpolate`,
+  `refine_mesh`, `triangle_metrics` (plan Step S item 6). They were reachable only by
+  naming the submodule, so 2,104 lines and 16% of the library were invisible from the
+  package that contains them (`docs/ARCHITECTURE.md` §2.1). Additive: it binds four names
+  and removes none, and every dependency the four have is one `NSM.mesh.main` already
+  imports, so `import NSM.mesh` costs 0.002 s more and loads no new top-level module.
 
 ---
 

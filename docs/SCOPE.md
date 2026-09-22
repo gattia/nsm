@@ -471,7 +471,7 @@ place so its removal happens in one reviewed pass over its module, not as a driv
 
 Two rows retired 2026-08-24: `tune_reconstruction` and
 `compute_correlation_coefficient` were deleted by their deferred-to pass — §8.0.E's
-work over `reconstruct/main.py` (branch `wandb-optional`; CHANGELOG Unreleased
+work over `reconstruct/main.py` (branch `wandb-optional`; CHANGELOG v0.4.0
 § Breaking), zero callers re-verified at deletion.
 
 **Ruled kept despite zero callers:**
@@ -540,7 +540,7 @@ Two things about that surface are load-bearing and undocumented:
    outright "it assumes the first surface is the bone / only of interest". Since §8.0.K it
    is no longer *silent*: that break and the `None`-ground-truth `continue` beside it log at
    `warning` to whatever the host configured, where before they were gated behind the
-   deprecated `verbose` flag.
+   `verbose` flag that v0.4.0 deleted.
    A deliberate, written-down design compromise, not a defect to file — it is recorded
    here because it is one more instance of the positional-surface-identity contract this
    section owns, and any surface-naming fix must cover it.

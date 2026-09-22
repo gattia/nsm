@@ -30,7 +30,7 @@ FROM_MAIN = [
     "adjust_learning_rate",
     "combine_meshes",
     # "compute_correlation_coefficient" and "tune_reconstruction" left deliberately:
-    # SCOPE §2's dead ruling, deleted 2026-08-24 (CHANGELOG Unreleased § Breaking).
+    # SCOPE §2's dead ruling, deleted 2026-08-24 (CHANGELOG v0.4.0 § Breaking).
     "compute_recon_loss",
     "create_mesh_adaptive",
     "eikonal_loss",
