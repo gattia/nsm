@@ -184,18 +184,22 @@ structured so the shim deletes in one line. **Not a refactor target.**
 **Hub:** `NSM.utils` has by far the highest in-degree — 8 importers. It is the module that
 held the LR bug and it is still the module every change radiates from.
 
-### 2.1 The disconnected mesh cluster
+### 2.1 The mesh cluster — **reachable since v0.4.0**
 
-`NSM/mesh/__init__.py` does `from .main import *` and nothing else. So
+`NSM/mesh/__init__.py` did `from .main import *` and nothing else, so
 `{refine_mesh, correspondence_metrics, triangle_metrics, interpolate}` — **2,104 lines,
-16% of the library** — are unreachable from any other subpackage. Their only importers are
-tests, which reach past the package into `NSM.mesh.<submodule>`. Since §8.0.I all three of
-the others import `triangle_metrics.get_faces`, so the cluster is internally
-connected; what it is not is reachable *from* `NSM.mesh`.
+16% of the library** — were unreachable from any other subpackage. Their only importers
+were tests, which reached past the package into `NSM.mesh.<submodule>`. Since §8.0.I all
+three of the others import `triangle_metrics.get_faces`, so the cluster was internally
+connected; what it was not was reachable *from* `NSM.mesh`.
 
-This is not dead code (see `SCOPE.md` §2.3), but it does mean the repo's two best-tested
-modules (`correspondence_metrics` at 94%, `interpolate` at 62%) are structurally invisible
-to the library that contains them.
+It was never dead code (`SCOPE.md` §2.3), but it did mean the repo's two best-tested
+modules (`correspondence_metrics` at 94%, `interpolate` at 62%) were structurally
+invisible to the library that contains them. Plan Step S added the four submodule imports
+and put the names in `__all__`. That is additive and needed no release boundary — it binds
+four names, removes none, and every dependency the four have is one `main` already
+imports, so `import NSM.mesh` costs 0.002 s more and loads no new top-level module. It
+rode the v0.4.0 release because the alternative was a deferral with no carrier left.
 
 ---
 
