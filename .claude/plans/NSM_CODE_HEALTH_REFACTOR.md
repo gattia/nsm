@@ -23,17 +23,10 @@ under the same number.
 
 **Updated:** 2026-09-22 · **Status:** open
 
-- **Next:** **PRs #110 and #111 are open and need review.** #111 is stacked on #110, so
-  merge #110 first **and delete its branch in the same action** — GitHub only retargets a
-  stacked PR to `main` when the base branch is deleted, which #78 learned the hard way.
-  After both merge: pull this tree and restart the celery worker, then start slice **S**.
-  - **#110** (slice P, four commits, +284/−1608): delete `train/deprecated/`, remove
-    `two_stage`, sweep the six references the first pass left behind, delete the
-    `sample_difficulty_lx` config keys. **#18 closed won't-fix**, not ported.
-  - **#111** (two commits, +126/−612): remove the multi-head trainer (**#51 closed**), and
-    close the `grad_clip` entry as working by design.
-- **Blocked on:** nothing this session can do. Two maintainer decisions are open
-  (§ Decisions); neither blocked P and neither blocks S.
+- **Next:** **Slice S.** Steps 0 and P are closed and nothing gates S. Start by re-reading
+  Step S's item table below — item (1) is no longer in it (ruled 2026-09-22), so S is six
+  items and a tag.
+- **Blocked on:** nothing. Both maintainer decisions are ruled (§ Decisions).
 - **Done:** Phases 0–3 complete. Eighteen slices executed, A through R, each with its own
   PR. v0.2.0 (PR #36) and v0.3.0 (§8.0.O) shipped. Both post-v0.3.0 validation runs
   passed — §7.5a on the production box (PR #102), §7.5b on the maintainer's cluster
@@ -41,11 +34,14 @@ under the same number.
   `d9ae062` (PR #107):** suite 1180 → 1213 passed, net +61 lines in `NSM/`. Per-slice
   detail is in the history file. **Step 0 closed 2026-09-22:** its last item validated R
   against production and passed — R moves the production BScore less than re-running the
-  same code does (numbers at the ticked box). **Slice P executed 2026-09-22 as PR #110**,
-  unmerged at the time of writing: the deletion of `train/deprecated/`, the `two_stage`
-  removal carried out of the closed #108, the six references the first sweep left behind,
-  and the `sample_difficulty_lx` config keys — #18 closes won't-fix rather than porting,
-  on the maintainer's reading of the branch (Step P).
+  same code does (numbers at the ticked box). **Slice P closed 2026-09-22**, as two merged PRs.
+  **#110** (`2c0a9cf`): delete `train/deprecated/`, remove `two_stage`, sweep six stale
+  references, delete the `sample_difficulty_lx` keys — **#18 closed won't-fix** rather than
+  ported. **#111** (`a7b3351`, stacked): remove the multi-head trainer (**#51 closed**) and
+  close the `grad_clip` entry as working by design. Together **+397 / −2207 across 30
+  files**; `NSM/` 15,106 → 13,555 lines. Suite 1213 → 1180 passed, all removals.
+  Tree pulled and the celery worker restarted 2026-09-22 (PID 986906, stamp now
+  `v0.3.0-84-ga7b3351`).
 - **Surprises:**
   - **A slice can close a finding in the same breath as deferring it.** All five
     `reconstruct_latent` sites §8.0.K deferred to R were already fixed by §8.0.K's own
@@ -298,11 +294,19 @@ EOF
 python -m pytest testing -q --durations=15
 ```
 
-| | Scheduled (2026-08-29) | Now (2026-09-21) |
-|---|---|---|
-| `testing/` vs `NSM/` lines | 14,770 / 14,460 | **16,685 / 15,104** |
-| ratio | 1.02 | **1.10** |
-| suite wall clock | 109 s | **180 s** |
+| | Scheduled (2026-08-29) | 2026-09-21 | After slice P (2026-09-22) |
+|---|---|---|---|
+| `testing/` vs `NSM/` lines | 14,770 / 14,460 | 16,685 / 15,104 | **16,316 / 13,555** |
+| ratio | 1.02 | 1.10 | **1.20** |
+| suite wall clock | 109 s | 180 s | **110 s** |
+
+**Slice P moved the ratio the wrong way and the clock the right way.** It cut 1,549 source
+lines against 369 test lines, so the ratio T was created to attack is now its worst ever;
+the clock halved because the deletions took slow tests with them. Ten tests are ~50 s of
+the 110; `--durations` names them, and the top three are
+`test_dataset_cache.py::TestSeedDerivation::test_multiprocessing_does_not_change_the_data`
+(10.4 s), `test_train_epoch_internals.py::...test_a_mismatched_weighting_is_still_refused_under_O`
+(7.5 s) and four `test_observability.py` subprocess tests at ~6.3 s each.
 
 **Target the wall clock, not a line count.** Rule 3 makes a docstring carrying a
 measurement load-bearing, and a quarter of `testing/` is docstrings, so lines removed is
