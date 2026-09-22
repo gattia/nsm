@@ -83,6 +83,23 @@ nsm @ git+https://github.com/gattia/nsm@v0.3.0
 
 ### Changed
 
+- **The four `sample_difficulty_lx*` config keys are removed** (plan §8.0.P,
+  [#18](https://github.com/gattia/nsm/issues/18), closed won't-fix). `sample_difficulty_lx`,
+  `_schedule`, `_cooldown` and `_epsilon` have shipped in `default_config.json` since 2023
+  and have been read by nothing on a supported path since Feb 2024. **Removing them changes
+  no result** — a config that still carries them is not refused, and nothing reads them
+  either way.
+
+  #18 proposed porting the inverse-Lx weighting they configure out of `train/deprecated/`
+  instead. It was read rather than ported, and rejected: the form is NSM's own rather than
+  Curriculum DeepSDF's — the paper has two components, surface accuracy and sample
+  difficulty, and both are already implemented — it was switched off by its author in
+  Feb 2024 after four months, no shipped model was trained with it, and its weight was
+  built from the loss it multiplied without being detached, so the gradient inverted above
+  error 0.01 at the documented `lx=2`. `docs/SCOPE.md` §2.2 holds the ruling;
+  `docs/KNOWN_ISSUES.md` § History 31 holds the measurements and says which runs are
+  affected.
+
 - **`NSM/train/deprecated/` is deleted** (plan §8.0.P). 880 lines in two files,
   quarantined since Aug 2025 with no importer, no `__init__.py` and so no place in the
   coverage denominator. `train_deep_sdf_multi_surface_orig.py` was a strict subset of

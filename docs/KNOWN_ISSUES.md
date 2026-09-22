@@ -48,7 +48,6 @@ more than that.
 | [`center_pts` and `norm_pts` do not select which normalization happens](#center_pts-and-norm_pts-do-not-select-which-normalization-happens) | Medium — silent, and the shipped config asks for the half it does not get | [#20](https://github.com/gattia/nsm/issues/20) |
 | [Shipped model configs predate the `Target` requirement](#shipped-model-configs-predate-the-target-requirement-and-cannot-be-trained-from) | Medium — refused at train, inference unaffected | *none — the migration message is the fix, see below* |
 | [Shipped model configs omit two required architecture keys](#shipped-model-configs-omit-two-keys-load_model-requires-so-it-refuses-them) | Medium — refused at load, not silent | [#26](https://github.com/gattia/nsm/issues/26), [#45](https://github.com/gattia/nsm/issues/45) |
-| [`sample_difficulty_lx` is shipped and read by nothing supported](#sample_difficulty_lx-is-shipped-and-read-by-nothing-supported) | Medium — four config keys that do nothing | [#18](https://github.com/gattia/nsm/issues/18) |
 | [Hybrid / LBFGS reconstruction is unvalidated](#hybrid--lbfgs-reconstruction-is-unvalidated-on-current-nsm) | Medium — runs, unmeasured; production uses Adam | *none — see below* |
 | [`F401` is project-ignored, so unused imports never appear](#f401-is-project-ignored-so-unused-imports-do-not-appear-in-make-lint) | Low — tooling, not behaviour | *none — a judgement call, see below* |
 | [Latent gradients are summed over query points](#latent-gradients-are-summed-over-query-points-so-the-reg-balance-depends-on-n) | Medium — the reg balance moves with N | *none — a convention change, see below* |
@@ -205,31 +204,6 @@ fifteen config keys and never calls `load_model`. What does not work unrepaired 
 260 MB and do not belong in CI. Run against both, it asserts the message names every
 missing key, that the repaired config loads strictly, and that `load_model`'s model is
 bitwise-identical to the consumer's own construction.
-
-### `sample_difficulty_lx` is shipped and read by nothing supported
-
-`NSM/configs/default_config.json` carries four keys — `sample_difficulty_lx`,
-`sample_difficulty_lx_schedule`, `sample_difficulty_lx_cooldown`,
-`sample_difficulty_lx_epsilon` — and the only code that reads them is
-`train/train_deep_sdf_multi_head.py`, which `SCOPE.md` §2.1 rules unsupported and which
-[#51](https://github.com/gattia/nsm/issues/51) says trains only its last decoder, and
-`train/deprecated/train_deep_sdf_orig.py`, which §2.2 quarantines.
-
-`train_deep_sdf` — the trainer `SCOPE` supports — reads `sample_difficulty_weight` and
-stops. So setting any of the four in a config for a supported run changes nothing and
-reports nothing: the inverse-Lx loss weighting they configure is in a file that is not the
-trainer.
-
-**How to tell whether it affects you:** it does not affect a *result* — nothing silently
-changed, the feature simply never ran. It affects you if you set one of these keys and
-believed it did something. Grep your config for `sample_difficulty_lx`; if it is there and
-non-null, the run you got is the run you would have got without it.
-
-*Fix:* [#18](https://github.com/gattia/nsm/issues/18) — port the ~12-line inverse-Lx branch out of the quarantined trainer,
-under the two conditions `SCOPE.md` §2.2 sets (impossible to enable by accident, documented
-at the config key). Scheduled at plan §8.0.P. *Pinned by:*
-`test_default_config_sync.test_the_sample_difficulty_lx_keys_are_read_by_nothing_supported`,
-which goes red the day the port lands.
 
 ### `F401` is project-ignored, so unused imports do not appear in `make lint`
 
@@ -1867,3 +1841,51 @@ whose `test_the_built_params_are_unchanged_when_the_key_is_absent` was the half 
 no existing model moved. The class went with the model type at §8.0.P; nothing pins this
 entry on `main`, because there is no longer anything to pin.
 
+## 31. `sample_difficulty_lx` weighted the loss with a gradient that pointed the wrong way
+
+| | |
+|---|---|
+| **Affected** | a run whose config set `sample_difficulty_lx` to a number **and** left `sample_difficulty_weight` null, trained between `5188417` (31 Aug 2023) and `e173adc` (14 Feb 2024) on either `train_deep_sdf.py` or `train_deep_sdf_multi_surface.py`. Such a run trained against a partly inverted objective: the gradient pushed error **up** on every sample worse than `(epsilon / (lx - 1)) ** (1 / lx)`, which is 0.01 at `lx=2, epsilon=1e-4` |
+| **Unaffected** | every run after 14 Feb 2024, when the branch was commented out — the keys did nothing and the run is the run you would have got without them; every config that sets `sample_difficulty_weight`, since the two were alternatives and equation 6 won; every run of equation 6 itself, whose weight is built from `torch.sign` and passes no gradient. **No shipped or production model is affected**: both ShapeMedKnee configs set `sample_difficulty_weight: 0.2` and carry no `sample_difficulty_lx` key |
+| **Severity** | Silent. The run completed and reported a falling loss while part of its objective was inverted |
+| **Changed in** | `slice-p-quarantine-and-delete`, Sep 2026 (plan §8.0.P, [#18](https://github.com/gattia/nsm/issues/18) closed won't-fix) |
+
+### What was wrong
+
+`difficulty_weight` was built from the very loss it multiplied and was never detached, so
+autograd differentiated `l1 / (l1 ** lx + eps)` whole instead of treating the weight as a
+constant for the step. That function rises to a maximum and falls away above it. Measured
+at `lx=2, eps=1e-4`: gradient `+4800` at error 0.005, then `-1200` at 0.02, `-355` at 0.05
+and `-4.0` at 0.5. Errors above 0.01 are most samples for most of training. Combined with
+`surface_accuracy_e` and `lx < 1` it produced a NaN gradient instead, because equation 5
+clamps errors to exactly 0 and `0 ** 0.5` has an infinite derivative.
+
+This is specific to the inverse-Lx form, **which is NSM's own and is not in Curriculum
+DeepSDF** ([arXiv:2003.08593](https://arxiv.org/abs/2003.08593)). The paper has exactly two
+components, both implemented here and both correct: equation 5, surface accuracy, and
+equation 6, sample difficulty, whose weight `(1 + λ·sgn(s̄)·sgn(s̄ − f̄))` is built from
+`sgn` and therefore passes no gradient at all.
+
+Commit `e173adc`, "Remove some hard sample difficulty weight", commented out this branch
+and `hard_sample_difficulty_power` — the two whose weights leaked gradient — and kept
+equation 6. The Dec 2024 trainer merge took the commented-out file as its base, so `main`
+carried no live copy after that, while the four `sample_difficulty_lx*` keys went on
+shipping in `default_config.json` until this release deleted them.
+
+### How to tell whether one of your runs is affected
+
+Read the config the run trained from, and note its date. Only `sample_difficulty_lx`
+non-null **and** `sample_difficulty_weight` null is affected, and only before 14 Feb 2024:
+
+```
+python -c "import json,sys; c=json.load(open(sys.argv[1])); \
+print('lx:', c.get('sample_difficulty_lx'), ' weight:', c.get('sample_difficulty_weight'))" your_config.json
+```
+
+If that describes a run of yours from before Feb 2024, the model is not what the config
+says it is and there is no repair short of retraining. After that date, nothing happened.
+Removing the keys now changes no result, because nothing has read them since.
+
+**If you want this weighting**, it is `git show
+v0.3.0:NSM/train/deprecated/train_deep_sdf_orig.py` plus a `.detach()` on the weight —
+`SCOPE.md` §2.2 records why it was not carried forward.

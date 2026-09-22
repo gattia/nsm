@@ -270,10 +270,14 @@ may simply be spelled differently one frame down.
 
 **`NSM/train/`** — training pipelines:
 - `train_deep_sdf.py`: `train_deep_sdf` (orchestrator) and `train_epoch` (the batch loop).
-  `_surface_l1_loss` holds both curriculum-SDF sample weightings, and they are
-  alternatives rather than a stack: `sample_difficulty_lx` (inverse-Lx, ported out of the
-  deleted `train/deprecated/` at #18) is an `elif` after `sample_difficulty_weight`, which
-  every shipped config sets — so no shipped config can reach it.
+  `_surface_l1_loss` implements **both** of Curriculum DeepSDF's components and nothing
+  else: equation 5, surface accuracy (`surface_accuracy_e`), and equation 6, sample
+  difficulty (`sample_difficulty_weight`). The paper has no third. NSM's own inverse-Lx
+  variant was deleted at #18 — tried in 2023, switched off in Feb 2024, and wrong:
+  **a weight built from the prediction or the loss has to be detached**, or autograd
+  differentiates the product and the gradient inverts. Equation 6 gets that free from
+  `torch.sign`; the two branches that did not have it are the two that went
+  (`docs/KNOWN_ISSUES.md` § History 31).
 - `train_deep_sdf_multi_head.py`: Multi-head training (N independent decoders, one shared
   latent) — **broken, do not use**: only the last decoder trains. `docs/SCOPE.md` §2.1
   ruled it *supported, fix it* in Aug 2026 and **downgraded that to unsupported-until-

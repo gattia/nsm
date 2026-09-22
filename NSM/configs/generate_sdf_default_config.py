@@ -130,10 +130,6 @@ config = {
     "surface_accuracy_e": None,
     "surface_accuracy_schedule": "linear",
     "surface_accuracy_cooldown": None,
-    "sample_difficulty_lx": None,
-    "sample_difficulty_lx_schedule": "linear",
-    "sample_difficulty_lx_cooldown": None,
-    "sample_difficulty_lx_epsilon": 1e-4,
     # code regularization
     "code_regularization": True,
     "code_regularization_weight": 1e-4,
