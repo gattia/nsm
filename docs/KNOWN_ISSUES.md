@@ -546,6 +546,13 @@ current production models before assuming either is better. Not yet done.
 
 ## 2. `train_deep_sdf_multi_head` optimizes only the last model
 
+> **The module was deleted in Sep 2026** (`SCOPE.md` §2.1, plan §8.0.P), so this entry
+> describes code that is no longer in the tree. It is kept because it answers a question
+> about runs rather than about the current code: if you trained with the multi-head trainer
+> before Sep 2026, only your last decoder was ever optimized.
+> `git show v0.3.0:NSM/train/train_deep_sdf_multi_head.py` is the last shipped copy, and
+> [#51](https://github.com/gattia/nsm/issues/51) holds the two-identifier repair.
+
 | | |
 |---|---|
 | **Affects** | All runs through this entry point |

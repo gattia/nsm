@@ -147,52 +147,43 @@ the downstream consumer, all branches, and git history before ruling.
 The plan's Phase 1 checkpoint expects "~1,800 lines quarantined." The defensible number is
 **564** — and 12 of those lines must be ported out first.
 
-### 2.1 `train/train_deep_sdf_multi_head.py` (443 lines) — **unsupported until someone needs it**
+### 2.1 `train/train_deep_sdf_multi_head.py` (443 lines) — **deleted, Sep 2026 (plan §8.0.P)**
 
-> **Ruling changed 2026-08-29** from *supported, broken, fix it*. The repair below is
-> still correct and still unscheduled — it was ruled in Aug 2026 and no slice ever
-> carried it, which made the old ruling a promise the plan could not keep. The maintainer
-> is not using multi-head, so the repair is not worth the time. **What changes is the
-> promise, not the code:** the module stays, the `DeprecationWarning` stays, the
-> capability is not deleted, and #51's checklist stays on file as the repair anyone who
-> needs it should start from. What stops is the claim that we intend to do it.
->
-> Reopening the ruling costs nothing: everything under it is verified and unchanged.
-> The plan's row is `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §8.0.P.
+`v0.3.0` holds the last copy. [#51](https://github.com/gattia/nsm/issues/51) is closed,
+and its repair checklist stays readable on the issue — the module is one `git show` away,
+so copying the checklist here would duplicate a thing rather than preserve it.
 
-The original ruling and its evidence follow, unedited.
+The ruling moved twice before this. Aug 2026: *supported, broken, fix it*. 2026-08-29:
+*unsupported until someone needs it* — the repair was never scheduled, so the old ruling
+was a promise the plan could not keep, and what changed then was the promise rather than
+the code. 2026-09-22: **delete**, on four facts rather than on taste.
 
+- **It is not a model type.** It defines no class. It is a training loop taking
+  `models: tuple` — N ordinary decoders against one shared latent embedding. Nothing else
+  in the library knows it exists.
+- **It is substantially a stale copy.** 156 of its 335 non-comment lines (**47%**) appear
+  verbatim in `train_deep_sdf.py`. That is the failure mode `87c5e88` named when it merged
+  the single- and multi-surface trainers in Dec 2024: *"maintaining two separate ones led
+  to the one not being used falling behind"*. This is the third one, and it fell behind.
+- **It has been broken since 2023 and nobody fixed it.** `train_deep_sdf` builds its
+  optimizer from a leaked loop variable, so only the last decoder ever trains
+  (`KNOWN_ISSUES.md` § History 2). Two identifiers would repair it. Three years passed.
+- **Nobody is working on it.** Last feature work `408e78b`, 27 Jan 2025 (device
+  compatibility). Every 2026 commit touching it is a refactor sweep that touched every
+  file in the package.
 
-Proposed: *deprecate; superseded by `train_deep_sdf` with `objects_per_decoder > 1`.*
+**What is lost, stated plainly:** the multi-network-per-latent capability. Since only the
+last network ever trained, no run has ever exercised it, so nothing on disk depends on it.
+Reviving it means `git show v0.3.0:NSM/train/train_deep_sdf_multi_head.py` plus #51's
+two-identifier fix.
 
-**Not superseded.** The two trainers are different architectures, not two spellings of one:
-
-- `train_deep_sdf(config, model, ...)` takes **one** decoder emitting N channels from
-  shared hidden layers (`train_deep_sdf.train_epoch`).
-- `train_deep_sdf(config, models: tuple, ...)` in multi_head takes **N independent
-  decoder networks** against a single shared latent embedding, with per-surface loss
-  weighting (`train_deep_sdf_multi_head.train_epoch`).
-
-Deleting it removes the multi-network-per-latent capability from the library entirely.
-The defect is real — the optimizer is built from a leaked loop variable in `train_deep_sdf`,
-so only
-the last decoder is trained — but it is a two-identifier repair (`model` → `models`)
-against a `get_optimizer` that already normalizes list input and emits one `model_{idx}`
-group per decoder (`utils.get_optimizer`).
-
-**Ruling (superseded 2026-08-29, see the banner above): supported. Fix the optimizer,
-keep the `DeprecationWarning` until it is fixed.** The plan's §3 text on this module is
-wrong and should be corrected.
-
-Two qualifications from the maintainer:
-
-- **Its current warning text is actively wrong and must be rewritten.** It says "Use
-  `NSM.train.train_deep_sdf` with `'objects_per_decoder' > 1` instead"
-  (its `DeprecationWarning`) — advice that silently hands the user a different
-  architecture. It should say broken-and-unfixed, and name no replacement.
-- **Do not advertise it as a supported training path.** Its hyperparameters have never been
-  tuned and it has effectively never been used. Keep the capability, keep it out of the
-  documented surface until someone runs it.
+**One thing went with it that is not about multi-head at all.** Its `train_epoch` was the
+only function under `NSM/train/` that took `verbose=`, and carried the package's only
+`@honour_verbose`, so **the deprecation bridge no longer reaches `NSM/train/`**.
+`train_deep_sdf` and its `train_epoch` never took the parameter — both raise `TypeError`
+on it and did so before this change, so nothing that worked stops working. Plan Step S
+item (7) deletes the bridge at v0.4.0 and should count its remaining sites then rather
+than trust a number written here.
 
 ### 2.2 `train/deprecated/` (880 lines) — **deleted, Sep 2026 (plan §8.0.P)**
 

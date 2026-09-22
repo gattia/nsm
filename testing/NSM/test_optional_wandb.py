@@ -144,23 +144,6 @@ class TestExplicitRequestsRaiseWithoutWandb:
         with pytest.raises(ImportError, match="wandb"):
             trainer.train_deep_sdf(config={}, model=None, sdf_dataset=None, use_wandb=True)
 
-    def test_train_deep_sdf_multi_head_use_wandb(self, monkeypatch):
-        import NSM.train.train_deep_sdf_multi_head as multi_head
-
-        monkeypatch.setattr(multi_head, "wandb", None)
-        with pytest.warns(DeprecationWarning):
-            with pytest.raises(ImportError, match="wandb"):
-                multi_head.train_deep_sdf(config={}, models=(), sdf_dataset=None, use_wandb=True)
-
-
-class TestValidationSurvivesWithoutWandb:
-    """
-    The one wandb use with *no* explicit request — ``get_mean_errors``' histogram
-    tail — skips instead of raising when wandb is absent: a training run's validation
-    epochs (which never ask for wandb) must complete in a wandb-less environment. The
-    metric scalars are unaffected; the ``*_hist`` values become ``None``.
-    """
-
     def test_hist_none_metrics_intact(self, monkeypatch):
         monkeypatch.setattr(sys.modules[recon_main.get_mean_errors.__module__], "wandb", None)
 

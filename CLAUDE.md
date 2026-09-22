@@ -278,12 +278,10 @@ may simply be spelled differently one frame down.
   differentiates the product and the gradient inverts. Equation 6 gets that free from
   `torch.sign`; the two branches that did not have it are the two that went
   (`docs/KNOWN_ISSUES.md` § History 31).
-- `train_deep_sdf_multi_head.py`: Multi-head training (N independent decoders, one shared
-  latent) — **broken, do not use**: only the last decoder trains. `docs/SCOPE.md` §2.1
-  ruled it *supported, fix it* in Aug 2026 and **downgraded that to unsupported-until-
-  needed on 2026-08-29**: the repair was never scheduled, so the ruling was a promise the
-  plan could not keep. The module and its warning stay, and #51 keeps the verified repair
-  checklist for whoever needs it — what stopped is the intent to do it
+- The multi-head trainer (N independent decoders, one shared latent) was **deleted
+  Sep 2026** (`docs/SCOPE.md` §2.1). Only its last decoder ever trained, so no run
+  depended on it; 47% of its lines were a verbatim copy of `train_deep_sdf.py`. #51 keeps
+  the two-identifier repair for whoever needs it, against the `v0.3.0` copy.
 - `utils.py`: Weight scheduling (linear, exponential, exponential_plateau, constant), KLD
   loss, and the profiler the trainer opens.
 
