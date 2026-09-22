@@ -120,6 +120,7 @@ class TestExplicitRequestsRaiseWithoutWandb:
                 latent_size=2,
                 xyz=None,
                 sdf_gt=None,
+                pts_surface=[0],
                 log_wandb=True,
             )
 

@@ -179,6 +179,42 @@ class TestUnknownKeywordsAreRefused:
 
 
 # ---------------------------------------------------------------------------
+# 1b. pts_surface is required (v0.4.0, plan Step S item 2)
+# ---------------------------------------------------------------------------
+
+
+class TestPtsSurfaceIsRequired:
+    """
+    ``pts_surface=None`` was the default until v0.4.0 and was never a value the function
+    accepted: ``reconstruct_latent_pts_surface_type_check`` has rejected ``None`` for as
+    long as it has existed. The default said optional and the type check said required,
+    and the type check won, about twenty lines into the body.
+
+    The parameter now sits in the required block after ``sdf_gt``, which is where the two
+    arrays it labels are. That moves the positions of everything after it, and every way
+    of getting that wrong is loud: a caller who passed six or more arguments positionally
+    lands ``loss_type`` or ``lr`` here, and neither a string nor a float is one of the four
+    types the check takes.
+    """
+
+    def test_omitting_it_is_a_typeerror_at_the_call(self):
+        kwargs = fit_kwargs()
+        del kwargs["pts_surface"]
+        with pytest.raises(TypeError, match="pts_surface"):
+            reconstruct_latent(decoders=LinearDecoder(), **kwargs)
+
+    def test_none_is_still_refused_by_name(self):
+        with pytest.raises(ValueError, match="pts_surface"):
+            reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(pts_surface=None))
+
+    @pytest.mark.parametrize("shifted", ["l1", 5e-4])
+    def test_a_positional_shift_lands_on_a_type_the_check_refuses(self, shifted):
+        """The two values a six-argument positional call would put here, before and after."""
+        with pytest.raises(ValueError, match="pts_surface"):
+            reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(pts_surface=shifted))
+
+
+# ---------------------------------------------------------------------------
 # 2 & 3. Values accepted where they are named, consulted somewhere else
 # ---------------------------------------------------------------------------
 

@@ -109,9 +109,9 @@ def reconstruct_latent_pts_surface_type_check(pts_surface, verbose=False, device
     """Return ``pts_surface`` as a tensor on ``device``.
 
     Unlike the ``sdf_gt`` check above, this one raises ``ValueError`` rather than a
-    bare ``Exception``, and it rejects ``None`` -- so ``reconstruct_latent``'s
-    ``pts_surface=None`` default declares optional a parameter that has never been
-    (a signature correction deferred to the next release boundary).
+    bare ``Exception``, and it rejects ``None``. ``reconstruct_latent`` carried a
+    ``pts_surface=None`` default against that until v0.4.0, which declared optional a
+    parameter this has always rejected; the parameter is required there now.
     """
     if isinstance(pts_surface, (list, tuple)):
         pts_surface = torch.tensor(pts_surface).to(device)
@@ -584,6 +584,7 @@ def reconstruct_latent(
     latent_size,
     xyz,  # Nx3
     sdf_gt,  # Nx1 or list of Nx1
+    pts_surface,  # N, the surface each xyz/sdf_gt row belongs to
     loss_type="l1",
     lr=5e-4,
     loss_weight=1.0,
@@ -605,7 +606,6 @@ def reconstruct_latent(
     n_steps_sample_ramp=None,  # 200,
     n_samples_per_chunk=None,  # #75: split the step's forward+backward into chunks
     difficulty_weight=None,
-    pts_surface=None,
     latent_norm=None,
     device="cuda",
     eikonal_weight=0.0,  # Weight for eikonal loss (0 to disable)
