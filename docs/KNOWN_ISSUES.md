@@ -1549,7 +1549,7 @@ by the ratio between them. Re-run if the imbalance was large — with four surfa
 every vertex of each (228,958 points, ratio 2.3:1 largest to smallest) where the new one
 takes 35,808 from each.
 
-*Pinned by:* `test_reconstruct_latent_internals.TestTheMultiSurfaceDrawIsBalanced`.
+*Pinned by:* `test_reconstruct_latent_internals.TestTheDrawIsPerEvaluation`.
 
 ---
 
@@ -1828,10 +1828,8 @@ Anything it prints was ignored when the model was built. To reproduce the old be
 delete those keys from the config; the model then builds at the constructor defaults, which
 is what it was doing all along.
 
-*Pinned by:* `test_parameter_surface.TestTwoStageTranslatesWhatItsSiblingsRead` in v0.3.0,
-whose `test_the_built_params_are_unchanged_when_the_key_is_absent` was the half that said
-no existing model moved. The class went with the model type at §8.0.P; nothing pins this
-entry on `main`, because there is no longer anything to pin.
+*Pinned by:* nothing on `main`. A v0.3.0 test pinned it; it was deleted with the
+`two_stage` model type at §8.0.P, because there is no longer anything to pin.
 
 ## 31. `sample_difficulty_lx` weighted the loss with a gradient that pointed the wrong way
 

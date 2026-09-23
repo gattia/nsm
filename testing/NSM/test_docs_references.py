@@ -1,84 +1,63 @@
 """
-The docs cite code by symbol, not by line number, and this asserts the symbols exist.
+Names that prose cites must exist in the code: NSM symbols in ``docs/``, test names in
+``docs/`` and ``NSM/``, and parameters in a docstring's ``Args:`` block.
 
-Line numbers were tried and did not survive: a seven-line portability fix in
-``sdf_dataset.py`` moved every citation below it, and a ``black`` pass over
-``triplanar.py`` and ``reconstruct/main.py`` moves them again. A checker that verified
-line numbers would have gone red on every reformat and produced recurring transcription
-work; the numbers were removed instead, and this checks what replaced them.
-
-Scope, deliberately narrow: only **dotted** references are checked -- ``Class.method`` or
-``module.function`` -- and only when the leading component names something in ``NSM/``.
-Those are the cross-file citations that rot when code is renamed or moved. A bare
-single-word reference in backticks is indistinguishable from a parameter name in prose
-(``padding``, ``subsample``) and is not checked; keep cross-file citations dotted so this
-test can see them.
+Citations are by name, not line number. Line numbers moved on every reformat, so they
+were removed and these checks replaced them.
 """
 
 import ast
 import re
 from pathlib import Path
 
-import pytest
-
 REPO = Path(__file__).resolve().parents[2]
 NSM = REPO / "NSM"
+TESTING = REPO / "testing"
 DOCS = [REPO / "docs" / n for n in ("KNOWN_ISSUES.md", "SCOPE.md", "ARCHITECTURE.md")]
 
-# Backticked token that is a dotted identifier and nothing else: no call parens, no
-# subscripts, no path separators, no file extension.
+# encoding="utf-8" on every read is required: something in the suite resets the locale to
+# ASCII, so a bare read_text() fails on the first non-ASCII character under the full suite.
+
+
+def _read(path):
+    return path.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# NSM symbols cited in docs/
+# ---------------------------------------------------------------------------
+
+#: A backticked dotted identifier: no call parens, subscripts or path separators.
 TOKEN = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+)`")
 
-# `sdf_dataset.py` is a filename, not a symbol, and parses as a dotted identifier.
+#: ``sdf_dataset.py`` is a filename, not a symbol.
 FILE_SUFFIXES = {"py", "toml", "yml", "yaml", "json", "md", "cfg", "txt", "in"}
 
-# A CamelCase head is a class reference and must resolve -- otherwise renaming a class
-# makes its citations vanish from this check instead of failing it, which is the hole a
-# line-number checker would also have had. These are the CamelCase names the docs may
-# legitimately mention that are not NSM classes; adding to this set is a deliberate act.
-NOT_NSM_CLASSES = {
-    "NSM",  # the package itself: `NSM.datasets`, `NSM.__version__` are paths, not symbols
-    "Mesh",  # pymskt
-}
+#: CamelCase heads that are not NSM classes. A CamelCase head must otherwise resolve, so
+#: renaming a class fails its citations instead of silently dropping them from the check.
+NOT_NSM_CLASSES = {"NSM", "Mesh"}
 CAMEL = re.compile(r"^[A-Z][A-Za-z0-9]*$")
 
 
 def _from_nsm(node):
-    """Is this ``from ... import ...`` pulling from inside NSM?"""
     return node.level > 0 or (node.module or "").split(".")[0] == "NSM"
 
 
 def _qualnames(path):
     """
-    Every def/class in a file as a dotted qualname, plus instance attributes and
-    names the module re-exports.
+    Every def and class in a file as a dotted qualname, plus ``self.x`` attributes and the
+    names the module imports from inside NSM.
 
-    ``self.padding = padding`` inside a class body registers ``Class.padding``: the docs
-    cite attributes as well as methods, and an attribute that is renamed is exactly the
-    kind of drift worth catching.
-
-    ``from .triangle_metrics import get_faces`` registers ``get_faces`` too, because
-    ``NSM.mesh.refine_mesh.get_faces`` **is** a working reference -- Python binds the
-    name in the importing module. Without this the check under-approximates a module's
-    surface and rejects citations that resolve: ``refine_mesh.get_faces`` (§8.0.I, where
-    the function moved but the import path was kept deliberately) and ``deep_sdf.Sine``
-    (§8.0.H, same shape) were both false negatives until this was added. A ``def`` that
-    is *deleted* rather than moved still fails, which is the drift being caught.
-
-    **NSM-internal imports only**, and the narrowing is load-bearing: registering every
-    ``from x import y`` puts third-party names into the module index, and since
-    ``TOP_LEVEL`` is what decides whether a citation is even ours, ``from torch import
-    nn`` made the docs' ``nn.Sequential`` / ``nn.Embedding`` / ``nn.ModuleList`` look
-    like NSM symbols and fail. Measured: three failures.
+    Imports count because ``refine_mesh.get_faces`` is a working reference: Python binds
+    the name in the importing module. Only NSM-internal imports count. Registering
+    ``from torch import nn`` made ``nn.Sequential`` look like an NSM symbol.
     """
     out = set()
 
     def attrs(classnode, prefix):
         for node in ast.walk(classnode):
-            targets = []
-            if isinstance(node, ast.Assign):
-                targets = node.targets
-            elif isinstance(node, ast.AnnAssign):
+            targets = node.targets if isinstance(node, ast.Assign) else []
+            if isinstance(node, ast.AnnAssign):
                 targets = [node.target]
             for t in targets:
                 if (
@@ -99,116 +78,165 @@ def _qualnames(path):
                     attrs(child, qual + ".")
                 walk(child, qual + ".")
 
-    walk(ast.parse(path.read_text(encoding="utf-8")), "")
+    walk(ast.parse(_read(path)), "")
     return out
 
 
 def _index():
-    """{module_stem: {qualnames}} plus the set of class names defined anywhere."""
-    by_module, classes = {}, set()
+    """``{module_stem: {qualnames}}`` and the set of top-level names."""
+    by_module, top_level = {}, set()
     for py in NSM.rglob("*.py"):
-        try:
-            quals = _qualnames(py)
-        except SyntaxError:  # pragma: no cover - a broken file is not this test's problem
-            continue
+        quals = _qualnames(py)
         by_module[py.stem] = by_module.get(py.stem, set()) | quals
-        classes |= {q for q in quals if "." not in q}
-    return by_module, classes
+        top_level |= {q for q in quals if "." not in q}
+    return by_module, top_level
 
 
-INDEX, TOP_LEVEL = _index()
-ALL_QUALS = {q for quals in INDEX.values() for q in quals}
+def test_every_nsm_symbol_the_docs_cite_exists():
+    index, top_level = _index()
+    all_quals = {q for quals in index.values() for q in quals}
 
-
-def _citations():
+    checked, missing = 0, []
     for doc in DOCS:
-        if not doc.exists():
-            continue
-        for token in TOKEN.findall(doc.read_text(encoding="utf-8")):
-            if token.rsplit(".", 1)[-1] in FILE_SUFFIXES:
+        for token in sorted(set(TOKEN.findall(_read(doc)))):
+            head, rest = token.split(".", 1)
+            if token.rsplit(".", 1)[-1] in FILE_SUFFIXES or head in NOT_NSM_CLASSES:
                 continue
-            head = token.split(".")[0]
-            if head in NOT_NSM_CLASSES:
-                continue
-            # Ours if the head names an NSM module or top-level symbol -- or if it simply
-            # looks like a class, so that a renamed class fails rather than disappearing.
-            if head in INDEX or head in TOP_LEVEL or CAMEL.match(head):
-                yield doc.name, token
+            if head in index:
+                checked += 1
+                if rest not in index[head]:
+                    missing.append(f"{doc.name}: `{token}`")
+            elif head in top_level or CAMEL.match(head):
+                checked += 1
+                if token not in all_quals:
+                    missing.append(f"{doc.name}: `{token}`")
 
-
-CITATIONS = sorted(set(_citations()))
-
-
-def test_the_docs_cite_at_least_a_handful_of_symbols():
-    """Guards against the regex silently matching nothing and the suite reading green."""
-    assert len(CITATIONS) >= 15, f"only found {len(CITATIONS)} dotted citations: {CITATIONS}"
-
-
-@pytest.mark.parametrize("doc,token", CITATIONS, ids=[f"{d}:{t}" for d, t in CITATIONS])
-def test_a_cited_symbol_exists(doc, token):
-    head, rest = token.split(".", 1)
-    if head in INDEX:  # module.symbol
-        assert rest in INDEX[head], f"{doc} cites `{token}`, but {head}.py has no {rest}"
-    else:  # Class.method, module not named
-        assert token in ALL_QUALS, f"{doc} cites `{token}`, which is defined nowhere in NSM/"
+    assert checked >= 15, f"only {checked} citations matched; the regex has stopped working"
+    assert missing == []
 
 
 # ---------------------------------------------------------------------------
-# KNOWN_ISSUES.md § Open — the summary table against the entries it summarizes
+# Test names cited in docs/ and NSM/
 # ---------------------------------------------------------------------------
 
-KNOWN_ISSUES = REPO / "docs" / "KNOWN_ISSUES.md"
+#: Where a citation of a test is a claim that the test exists today. CHANGELOG.md is left
+#: out: it records what was true at each release.
+CITING = [
+    *DOCS,
+    REPO / "README.md",
+    REPO / "DEVELOPMENT.md",
+    TESTING / "NSM" / "regression" / "README.md",
+    *NSM.rglob("*.py"),
+]
+
+INLINE_CODE = re.compile(r"`+([^`\n]+)`+")
+TEST_NAME = re.compile(r"\b(Test[A-Z]\w*|test_\w+)\b")
 
 
-def _open_section():
-    """The text between ``# Open`` and ``# History``."""
-    text = KNOWN_ISSUES.read_text(encoding="utf-8")
-    start = text.index("\n# Open\n")
-    return text[start : text.index("\n# History\n")]
+def test_every_test_name_cited_in_prose_exists():
+    """
+    ``TestX``, ``test_x`` and ``test_x.py`` inside inline code must name a test class, a
+    test function or a test module. Renaming or merging a test otherwise leaves a
+    "Pinned by" line that points nowhere.
+    """
+    defined = set()
+    for path in TESTING.rglob("*.py"):
+        defined.add(path.stem)
+        for node in ast.walk(ast.parse(_read(path))):
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef)):
+                defined.add(node.name)
+    # NSM has its own identifiers that start with test_, such as `test_load_times`.
+    for path in NSM.rglob("*.py"):
+        for node in ast.walk(ast.parse(_read(path))):
+            if isinstance(node, (ast.FunctionDef, ast.arg)):
+                defined.add(getattr(node, "name", None) or node.arg)
+
+    cited, missing = 0, []
+    for path in CITING:
+        for span in INLINE_CODE.findall(_read(path)):
+            for name in TEST_NAME.findall(span.replace(".py", "")):
+                cited += 1
+                if name not in defined:
+                    missing.append(f"{path.relative_to(REPO)}: {name}")
+
+    assert cited >= 20, f"only {cited} test citations matched; the regex has stopped working"
+    assert sorted(set(missing)) == []
 
 
-def _github_anchor(heading):
-    """GitHub's slug: lowercase, drop everything but word chars, spaces and hyphens."""
-    slug = re.sub(r"[^\w\- ]", "", heading.lower())
-    return "#" + slug.strip().replace(" ", "-")
+# ---------------------------------------------------------------------------
+# Docstring Args blocks
+# ---------------------------------------------------------------------------
+
+SECTIONS = re.compile(
+    r"^(Args|Arguments|Parameters|Returns?|Raises?|Yields?|Notes?|Examples?|References|"
+    r"Attributes|See Also|Warns?|Warnings?|Todo)\s*:?\s*$"
+)
+ARGS_START = re.compile(r"^(Args|Arguments|Parameters)\s*:?\s*$")
+PARAM_LINE = re.compile(r"^(\*{0,2}\w+)\s*(\([^)]*\))?\s*:")
 
 
-def _table_anchors():
-    """The ``#anchor`` each summary row's Defect cell links to."""
-    for line in _open_section().splitlines():
-        if not line.startswith("|") or line.startswith("|---") or "| Severity |" in line:
-            continue
-        cell = line.split("|")[1].strip()
-        for anchor in re.findall(r"\]\((#[^)]+)\)", cell):
-            yield anchor
+def documented_parameters(docstring):
+    """Names in the ``Args:`` block of a Google-style docstring."""
+    found, in_args = set(), False
+    for raw in (docstring or "").split("\n"):
+        line = raw.strip()
+        if ARGS_START.match(line):
+            in_args = True
+        elif in_args and SECTIONS.match(line):
+            in_args = False
+        elif in_args and PARAM_LINE.match(line):
+            found.add(PARAM_LINE.match(line).group(1).lstrip("*"))
+    return found
 
 
-def _entry_anchors():
-    return [
-        _github_anchor(line[4:].strip())
-        for line in _open_section().splitlines()
-        if line.startswith("### ")
-    ]
+def test_no_docstring_documents_a_parameter_its_function_lacks():
+    """
+    A name in ``Args:`` that is not in the signature is left behind when a parameter is
+    renamed or removed. Both instances found when this was written were live defects.
+    An undocumented parameter is not checked: many functions document only some.
+    """
+    parsed, phantoms = 0, []
+    for path in sorted(NSM.rglob("*.py")):
+        for node in ast.walk(ast.parse(_read(path))):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            documented = documented_parameters(ast.get_docstring(node))
+            if not documented:
+                continue
+            parsed += 1
+            args = node.args
+            real = {a.arg for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]}
+            real |= {a.arg for a in (args.vararg, args.kwarg) if a}
+            real -= {"self", "cls"}
+            extra = documented - real
+            if extra:
+                phantoms.append(f"{path.relative_to(REPO)}:{node.lineno} {node.name} {extra}")
+
+    assert parsed >= 40, f"only {parsed} Args blocks parsed; the parser has stopped working"
+    assert phantoms == []
+
+
+# ---------------------------------------------------------------------------
+# KNOWN_ISSUES.md § Open: the summary table against its entries
+# ---------------------------------------------------------------------------
 
 
 def test_the_open_summary_table_and_its_entries_are_the_same_set():
     """
-    § Open opens with a summary table and continues with one ``###`` entry per defect,
-    and until plan §8.0.N nothing tied the two together. Measured on ``main`` at
-    ``09c3834``: 9 rows, 12 entries, **and neither a subset of the other** — 3 rows had no
-    entry (``Parameters accepted and never read``, ``xyz_in_all``, ``sample_difficulty_lx``)
-    and 6 entries had no row (``center_pts``/``norm_pts``, the configs predating
-    ``Target``, ``F401``, hybrid/LBFGS, triplanar's summed latent gradients, ``grad_clip``).
-    An earlier drift in the same table was found by hand during §8.0.O — the ``padding``
-    row pointing at an entry § History had replaced.
-
-    A hand-maintained index of a file whose whole promise is "answerable years later" is
-    the same defect class as a hand-transcribed number, and gets the same remedy: the
-    rows link to their entries, and this goes red when one gains a partner the other
-    lacks.
+    § Open has a summary table and one ``###`` entry per defect. Each row links to its
+    entry. When this was added, 3 rows had no entry and 6 entries had no row.
     """
-    table, entries = sorted(_table_anchors()), sorted(_entry_anchors())
-    assert table == entries, (
-        f"rows with no entry: {sorted(set(table) - set(entries))}; "
-        f"entries with no row: {sorted(set(entries) - set(table))}"
-    )
+    text = _read(REPO / "docs" / "KNOWN_ISSUES.md")
+    section = text[text.index("\n# Open\n") : text.index("\n# History\n")]
+
+    def anchor(heading):
+        return "#" + re.sub(r"[^\w\- ]", "", heading.lower()).strip().replace(" ", "-")
+
+    rows = [
+        link
+        for line in section.splitlines()
+        if line.startswith("|") and not line.startswith("|---") and "| Severity |" not in line
+        for link in re.findall(r"\]\((#[^)]+)\)", line.split("|")[1])
+    ]
+    entries = [anchor(line[4:]) for line in section.splitlines() if line.startswith("### ")]
+    assert sorted(rows) == sorted(entries)
