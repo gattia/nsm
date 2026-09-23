@@ -1,10 +1,9 @@
 """
-Issue #55: functions that mutated a caller's object and also returned it.
+Functions that take a caller's object and return one: which of them mutate it (#55).
 
-The fix differs by site, as #55 says it may. The ``sdf_gt`` preprocess and
-``compute_recon_loss`` had no reason to mutate, so they stopped. ``interpolate_mesh``
-mutates by design, since it carries a mesh along the level set, and says so in its
-docstring.
+The ``sdf_gt`` preprocess and ``compute_recon_loss`` leave the caller's objects alone.
+``interpolate_mesh`` mutates by design, since it carries a mesh along the level set, and
+its docstring says so.
 """
 
 import numpy as np
@@ -29,9 +28,12 @@ def _plain(radius):
 
 def test_the_sdf_gt_preprocess_leaves_the_callers_list_alone():
     """
-    It clamped the caller's list in place and returned it. The tensors were always safe;
-    the list's slots were rebound. A tuple, which the type check names as supported,
-    raised ``TypeError`` on the in-place assignment and now works.
+    Fails if ``reconstruct_latent_sdf_gt_type_check`` or
+    ``reconstruct_latent_preprocess_sdf_gt`` returns the caller's list or rebinds its slots
+    to the clamped tensors, or a tuple ``sdf_gt`` raises (#55).
+
+    ``torch.clamp`` returns a new tensor, so the risk is to the list's slots, not the
+    tensors.
     """
     caller = [torch.tensor([[-5.0], [0.5], [5.0]]), torch.tensor([[-9.0], [9.0]])]
     checked = reconstruct_latent_sdf_gt_type_check(caller)
@@ -47,16 +49,20 @@ def test_the_sdf_gt_preprocess_leaves_the_callers_list_alone():
 
 class TestSite2TheAssdDowncast:
     """
-    ``compute_recon_loss(calc_assd=True)`` used to cast both of the caller's meshes to
-    float32, and only on the ASSD path. mskt 0.1.21's ``pcu_sdf`` casts to float64 itself,
-    so the cast could only lose precision (7.2e-09 on float64 input, § History 28).
+    ``compute_recon_loss(calc_assd=True)`` must not cast the caller's meshes to float32
+    (``KNOWN_ISSUES.md`` § History 28). mskt 0.1.21's ``pcu_sdf`` casts to float64 itself,
+    so a float32 cast can only lose precision: 7.2e-09 on float64 input.
     """
 
     def test_neither_metric_changes_the_callers_dtypes_or_the_value(self):
         """
-        The emulated old cast is lossless on these meshes, whose points originate as float32
-        in VTK, so the ASSD must match exactly. The bound is a sanity check. A transcribed
-        ASSD went red on macOS: it encoded Linux's sphere tessellation.
+        Fails if ``compute_recon_loss`` changes the dtype of the caller's float64 meshes on
+        the chamfer or ASSD path, or scores their float32 copies differently
+        (KNOWN_ISSUES History 28).
+
+        The points originate as float32 in VTK, so the float32 copies are exact and the two
+        ASSDs must match. The 0.05-0.15 bound is a sanity check, not a transcribed value:
+        the exact ASSD differs between Linux's and macOS's sphere tessellations.
         """
         recon, orig = _plain(1.0), _plain(1.1)
         compute_recon_loss([recon], [orig], calc_symmetric_chamfer=True, n_samples_chamfer=64)
@@ -72,16 +78,24 @@ class TestSite2TheAssdDowncast:
 
 class TestSite2TheMixedDtypePair:
     """
-    The cast had a reason after all. mskt 0.1.19, which production ran, passes both sides
-    straight to ``point_cloud_utils``, which refuses a mixed pair: ``ValueError: Invalid
-    type (double, Row Major) for argument 'v'``. Production always has one: float64 meshes
-    on disk against a float32 reconstruction. Deleting the cast crashed every fit.
+    mskt 0.1.19 passes both sides straight to ``point_cloud_utils``, which refuses a mixed
+    pair: ``ValueError: Invalid type (double, Row Major) for argument 'v'``. Production
+    always has one: float64 meshes on disk against a float32 reconstruction.
+    ``compute_recon_loss`` aligns a mixed pair on float64 copies.
 
-    The fix aligns a mixed pair on copies. This suite's mskt would forgive a mixed pair, so
-    what is pinned is the pair that reaches ``get_assd_mesh``.
+    This suite's mskt accepts a mixed pair, so what is pinned is the pair that reaches
+    ``get_assd_mesh``.
     """
 
     def test_the_pair_is_aligned_on_copies_and_scores_the_matched_value(self, monkeypatch):
+        """
+        Fails if ``compute_recon_loss(calc_assd=True)`` hands ``Mesh.get_assd_mesh`` a mixed
+        float32/float64 pair, casts the caller's float32 mesh in place, or scores the mixed
+        pair differently from an all-float64 pair.
+
+        The spy is on pymskt's ``Mesh.get_assd_mesh``, so this breaks if ASSD moves to
+        another pymskt call.
+        """
         seen = []
         unpatched = Mesh.get_assd_mesh
 
@@ -117,6 +131,10 @@ class TestSite3TheInterpolationMesh:
             return (xyz.norm(dim=1, keepdim=True) - (1.0 + latent)) + 0.0 * self.p
 
     def test_the_mesh_moves_in_place(self):
+        """
+        Fails if ``interpolate_mesh`` returns a new mesh or leaves the caller's mesh unmoved,
+        or its docstring stops saying it works "in place".
+        """
         mesh = Mesh(pv.Sphere(radius=1.0, theta_resolution=10, phi_resolution=10))
         before = mesh.point_coords.copy()
         out = interpolate_mesh(
@@ -127,6 +145,10 @@ class TestSite3TheInterpolationMesh:
         assert "in place" in interpolate_mesh.__doc__
 
     def test_the_points_are_not_modified(self):
+        """
+        Fails if ``interpolate_points`` modifies the caller's ndarray or tensor, returns the
+        caller's array, or its docstring stops saying the input is "not modified".
+        """
         model = self._SphereSDF()
         array = np.random.default_rng(0).normal(size=(20, 3))
         before = array.copy()

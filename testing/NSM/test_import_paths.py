@@ -1,15 +1,14 @@
 """
 Every public name stays importable from every path it has been importable from.
 
-The slice-A, C and D splits moved definitions into new modules and left re-import blocks
-behind, so ``NSM.datasets.sdf_dataset``, ``NSM.reconstruct.main`` and
-``NSM.train.train_deep_sdf`` still bind the names they bound before. Those blocks are
-public API. Removing a name from this table is a deliberate, changelogged decision.
+``NSM.datasets.sdf_dataset``, ``NSM.reconstruct.main`` and ``NSM.train.train_deep_sdf``
+re-import names whose definitions moved to other modules. Those re-import blocks are public
+API. Removing a name from this table is a deliberate, changelogged decision.
 
-Some names are listed although they are not endorsed: ``reconstruct.main``'s
-``adjust_learning_rate`` is the step-decay one, a trap (``docs/ARCHITECTURE.md`` §6). They
-are listed because callers can import them today. Imported modules (``np``, ``torch``,
-``os``) and ``logger`` are not listed: they are not API.
+Some listed names are not endorsed: ``reconstruct.main``'s ``adjust_learning_rate`` is the
+step-decay one, a trap (``docs/ARCHITECTURE.md`` §6). They are listed because callers can
+import them today. Imported modules (``np``, ``torch``, ``os``) and ``logger`` are not
+listed: they are not API.
 """
 
 import importlib
@@ -146,6 +145,10 @@ PATHS = {
 
 
 def test_every_public_name_is_importable_from_every_path():
+    """
+    Fails if a module in ``PATHS`` stops binding a name listed for it, such as a re-import
+    block in ``reconstruct.main``, ``sdf_dataset`` or ``train_deep_sdf`` losing a name.
+    """
     missing = [
         f"{path}.{name}"
         for path, names in PATHS.items()

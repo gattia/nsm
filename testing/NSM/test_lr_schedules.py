@@ -1,11 +1,8 @@
 """
 Learning-rate schedules reach optimizer param groups by ``Target``, never by position.
 
-The bug this pins: ``get_optimizer`` ordered groups ``[latent, model...]`` and
-``adjust_learning_rate`` gave ``lr_schedules[i]`` to ``param_groups[i]``, so every Adam and
-AdamW run from May 2023 to Aug 2026 trained with the two schedules swapped
-(``docs/KNOWN_ISSUES.md`` § History 1). Reported by Dr. Katherine Wolcott (Florida Museum
-of Natural History), 2026-07-10.
+``get_optimizer`` orders groups ``[latent, model...]``, so giving ``lr_schedules[i]`` to
+``param_groups[i]`` swaps the two schedules (``docs/KNOWN_ISSUES.md`` § History 1).
 """
 
 import copy
@@ -69,6 +66,13 @@ def lrs_by_name(optimizer):
 
 class TestParamGroups:
     def test_groups_are_named_and_targeted(self):
+        """
+        Fails if ``get_optimizer`` changes the ``[latent, model_0, model_1]`` group order,
+        drops a group's ``target``, or seeds a group's initial rate from the other schedule.
+
+        The order is kept because ``load_state_dict`` matches a checkpoint's groups by
+        position.
+        """
         _, optimizer = build(make_config(), models=[torch.nn.Linear(4, 1) for _ in range(2)])
         groups = optimizer.param_groups
         assert [g["name"] for g in groups] == ["latent", "model_0", "model_1"]
@@ -81,7 +85,7 @@ class TestParamGroups:
 
     @pytest.mark.parametrize("name", ["Adam", "AdamW"])
     def test_weight_decay_reaches_every_group(self, name):
-        """#47: the Adam branch dropped ``weight_decay``; AdamW passed it."""
+        """Fails if ``get_optimizer``'s Adam or AdamW branch drops ``weight_decay`` (#47)."""
         _, optimizer = build(make_config(optimizer=name), weight_decay=0.123)
         assert [g["weight_decay"] for g in optimizer.param_groups] == [0.123, 0.123]
 
@@ -90,8 +94,12 @@ class TestScheduleMapping:
     @pytest.mark.parametrize("targets", [("model", "latent"), ("latent", "model")])
     def test_each_group_follows_its_targets_schedule(self, targets):
         """
-        Entry order, group order and group name are all ignored. A group added later with
-        a ``target`` gets that target's schedule.
+        Fails if ``adjust_learning_rate`` picks a group's schedule by position or name, or
+        ``get_learning_rate_schedules`` keys schedules by entry position, instead of by
+        ``target`` (KNOWN_ISSUES History 1).
+
+        Both entry orders run. The groups are reversed, one is renamed, and an extra
+        ``model`` group is added, so only ``target`` identifies a group's schedule.
         """
         schedules, optimizer = build(
             make_config(targets), models=[torch.nn.Linear(4, 1) for _ in range(2)]
@@ -114,6 +122,10 @@ class TestScheduleMapping:
         assert by_target == {LR_TARGET_MODEL: {MODEL_LR * 0.5}, LR_TARGET_LATENT: {LATENT_LR * 0.5}}
 
     def test_a_group_without_a_target_raises(self):
+        """
+        Fails if ``adjust_learning_rate`` skips or defaults a param group that has no
+        ``target`` instead of raising ``KeyError``.
+        """
         schedules, optimizer = build(make_config())
         del optimizer.param_groups[0]["target"]
         with pytest.raises(KeyError, match="no known 'target'"):
@@ -134,10 +146,22 @@ class TestMigrationGuard:
         ],
     )
     def test_an_unmigrated_config_raises(self, targets, optimizer, match):
+        """
+        Fails if ``get_learning_rate_schedules`` infers a target from entry position for an
+        unannotated or half-annotated config, or accepts an unknown or repeated ``Target``,
+        instead of raising ``ValueError``.
+
+        The ``must declare`` and ``not migrated`` matches come from the migration message.
+        Update them when ``NSM/_lr_migration.py`` is deleted.
+        """
         with pytest.raises(ValueError, match=match):
             get_learning_rate_schedules(make_config(targets, optimizer))
 
     def test_one_entry_raises(self):
+        """
+        Fails if ``get_learning_rate_schedules`` accepts a one-entry ``LearningRateSchedule``,
+        or refuses it without saying that exactly 2 entries are expected.
+        """
         config = make_config()
         config["LearningRateSchedule"] = config["LearningRateSchedule"][:1]
         with pytest.raises(ValueError, match="exactly 2 LearningRateSchedule"):
@@ -145,9 +169,13 @@ class TestMigrationGuard:
 
     def test_the_message_prints_each_optimizers_historical_mapping(self):
         """
-        The two optimizer families migrate to opposite annotations. schedule_free configs
-        were usually tuned under Adam, so the message warns that reproducing one may
-        reproduce the mismatch.
+        Fails if ``migration_error`` gives AdamW and schedule_free configs the same historical
+        mapping, omits the paste-ready annotated entries, or puts the ``CAUTION`` on the
+        wrong family.
+
+        The ``CAUTION`` is for schedule_free alone: those configs were usually tuned under
+        Adam, so reproducing one may reproduce the mismatch. Delete this test with
+        ``NSM/_lr_migration.py``.
         """
         messages = {}
         for optimizer in ("AdamW", "schedule_free_AdamW"):
@@ -182,6 +210,12 @@ class TestHistoricalEquivalence:
     """
 
     def test_the_historical_annotation_reproduces_the_pre_fix_rates(self):
+        """
+        Fails if annotating ShapeMedKnee_2024's schedules entry 0 -> latent, entry 1 -> model
+        gives a group a different rate from the pre-fix positional code at any epoch from 1
+        to 2000 (KNOWN_ISSUES History 1).
+        """
+
         def pre_fix(index, epoch):
             spec = SHAPEMEDKNEE_2024_SPECS[index]
             return spec["Initial"] * spec["Factor"] ** (epoch // spec["Interval"])
@@ -209,7 +243,13 @@ class TestHistoricalEquivalence:
 
 class TestCheckpoints:
     def test_a_saved_optimizer_resumes_with_its_names_and_targets(self, tmp_path):
-        """``state_dict()`` keeps custom group keys, so no separate names key is saved."""
+        """
+        Fails if the optimizer state ``save_model`` writes loses a group's ``name`` or
+        ``target``, so ``adjust_learning_rate`` cannot schedule the optimizer it restores.
+
+        The checkpoint relies on torch's ``state_dict()`` keeping custom group keys, and
+        saves no separate names key.
+        """
         schedules, optimizer = build(make_config())
         save_model(
             {"experiment_directory": str(tmp_path)},
@@ -225,6 +265,10 @@ class TestCheckpoints:
         assert lrs_by_name(resumed) == {"latent": LATENT_LR, "model_0": MODEL_LR}
 
     def test_save_model_refuses_an_untargeted_group(self, tmp_path):
+        """
+        Fails if ``save_model`` writes a checkpoint from an optimizer whose param group has
+        no ``target``, instead of raising ``ValueError``.
+        """
         _, optimizer = build(make_config())
         del optimizer.param_groups[0]["target"]
         with pytest.raises(ValueError, match="must declare a 'target'"):
@@ -236,7 +280,12 @@ class TestCheckpoints:
             )
 
     def test_no_optimizer_is_saved_as_none(self, tmp_path):
-        """The string ``"None"`` is truthy, so ``if checkpoint["optimizer"]:`` would pass."""
+        """
+        Fails if ``save_model(optimizer=None)`` stores anything but ``None`` under
+        ``"optimizer"``.
+
+        The string ``"None"`` is truthy, so ``if checkpoint["optimizer"]:`` would pass.
+        """
         save_model(
             {"experiment_directory": str(tmp_path)},
             epoch=1,
@@ -251,6 +300,10 @@ class TestLoggedLearningRates:
 
     @pytest.mark.parametrize("targets", [("model", "latent"), ("latent", "model")])
     def test_labels_follow_target_and_match_the_applied_rates(self, targets):
+        """
+        Fails if ``add_plain_lr_to_config`` labels the ``model_lr_*`` and ``latent_lr_*`` keys
+        by entry position instead of ``Target``, so a logged rate is the other group's.
+        """
         raw = make_config(targets)
         logged = add_plain_lr_to_config(copy.deepcopy(raw))
         schedules, optimizer = build(raw)
@@ -263,7 +316,10 @@ class TestLoggedLearningRates:
         assert logged["model_lr_update_factor"] == pytest.approx(0.5)
 
     def test_constant_entries_are_logged(self):
-        """#48: the helper read ``Initial`` unconditionally, a ``KeyError`` on Constant."""
+        """
+        Fails if ``add_plain_lr_to_config`` raises ``KeyError`` on a Constant entry, or does
+        not log its ``Value`` as ``*_lr_initial`` (#48).
+        """
         config = add_plain_lr_to_config(
             {
                 "LearningRateSchedule": [
@@ -279,8 +335,9 @@ class TestLoggedLearningRates:
 class TestScheduleTypes:
     def test_non_positive_intervals_and_lengths_refuse_by_name(self):
         """
-        They used to divide by zero, and the message named no config key. The refusal
-        names the value to use instead.
+        Fails if ``StepLearningRateSchedule`` or ``WarmupLearningRateSchedule`` accepts a
+        non-positive ``interval`` or ``length`` instead of raising a ``ValueError`` that names
+        the replacement (``Factor`` or ``Constant``), or computes a wrong decay or ramp.
         """
         for interval in (0, -1):
             with pytest.raises(ValueError, match="Factor"):
@@ -298,9 +355,12 @@ class TestScheduleTypes:
 
 def test_the_shipped_default_config_declares_both_targets():
     """
-    It puts the larger LR on the latents. That looks backwards and is deliberate: the
-    shipped models trained under AdamW's historical mapping, and their values were tuned
-    for it (§ History 1).
+    Fails if ``default_config.json`` or ``generate_sdf_default_config.config`` lacks a valid
+    ``Target`` on either entry, or the shipped file stops giving the latents the larger
+    initial LR (KNOWN_ISSUES History 1).
+
+    The larger latent LR looks backwards and is deliberate: the shipped models trained under
+    AdamW's historical mapping, and their values were tuned for it.
     """
     import NSM
     from NSM.configs.generate_sdf_default_config import config as generated

@@ -27,6 +27,11 @@ class _MLP(torch.nn.Module):
 
 
 def test_reconstruct_latent_refuses_a_positive_weight():
+    """
+    Fails if ``reconstruct_latent`` accepts ``eikonal_weight > 0`` instead of raising
+    ``NotImplementedError``, or stops fitting at weight 0.
+    """
+
     def fit(weight):
         return reconstruct_latent(
             decoders=[_MLP()],
@@ -45,12 +50,23 @@ def test_reconstruct_latent_refuses_a_positive_weight():
 
 
 def test_train_deep_sdf_refuses_before_anything_is_built():
-    """The rest of the config is empty: the refusal comes first."""
+    """
+    Fails if ``train_deep_sdf`` accepts ``eikonal_weight > 0``, or refuses it only after
+    reading the rest of the config.
+
+    The rest of the config is empty, so a gate placed after the first config lookup fails
+    with a different error.
+    """
     with pytest.raises(NotImplementedError, match="eikonal"):
         train_deep_sdf({"eikonal_weight": 1e-9}, model=MagicMock(), sdf_dataset=MagicMock())
 
 
 def test_train_epoch_refuses_a_positive_weight():
+    """
+    Fails if ``train_epoch``, called directly, accepts ``eikonal_weight > 0`` instead of
+    raising ``NotImplementedError``, or reports an ``eikonal_loss`` at weight 0.
+    """
+
     def epoch(weight):
         config = {
             "optimizer": "Adam",

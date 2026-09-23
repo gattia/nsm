@@ -2,8 +2,7 @@
 Names that prose cites must exist in the code: NSM symbols in ``docs/``, test names in
 ``docs/`` and ``NSM/``, and parameters in a docstring's ``Args:`` block.
 
-Citations are by name, not line number. Line numbers moved on every reformat, so they
-were removed and these checks replaced them.
+Citations are by name, not line number, because line numbers move on every reformat.
 """
 
 import ast
@@ -93,6 +92,10 @@ def _index():
 
 
 def test_every_nsm_symbol_the_docs_cite_exists():
+    """
+    Fails if ``KNOWN_ISSUES.md``, ``SCOPE.md`` or ``ARCHITECTURE.md`` cites a backticked
+    dotted name, such as ``module.function`` or ``Class.method``, that no NSM file defines.
+    """
     index, top_level = _index()
     all_quals = {q for quals in index.values() for q in quals}
 
@@ -135,9 +138,11 @@ TEST_NAME = re.compile(r"\b(Test[A-Z]\w*|test_\w+)\b")
 
 def test_every_test_name_cited_in_prose_exists():
     """
-    ``TestX``, ``test_x`` and ``test_x.py`` inside inline code must name a test class, a
-    test function or a test module. Renaming or merging a test otherwise leaves a
-    "Pinned by" line that points nowhere.
+    Fails if inline code in the three ``docs/`` files, ``README.md``, ``DEVELOPMENT.md``, the
+    regression README or an ``NSM/`` source file names a ``TestX``, ``test_x`` or
+    ``test_x.py`` that ``testing/`` does not define.
+
+    Renaming or merging a test otherwise leaves a "Pinned by" line that points nowhere.
     """
     defined = set()
     for path in TESTING.rglob("*.py"):
@@ -191,8 +196,9 @@ def documented_parameters(docstring):
 
 def test_no_docstring_documents_a_parameter_its_function_lacks():
     """
-    A name in ``Args:`` that is not in the signature is left behind when a parameter is
-    renamed or removed. Both instances found when this was written were live defects.
+    Fails if an ``NSM/`` function's ``Args:`` or ``Parameters`` block documents a name its
+    signature lacks, as a renamed or removed parameter leaves behind.
+
     An undocumented parameter is not checked: many functions document only some.
     """
     parsed, phantoms = 0, []
@@ -223,8 +229,8 @@ def test_no_docstring_documents_a_parameter_its_function_lacks():
 
 def test_the_open_summary_table_and_its_entries_are_the_same_set():
     """
-    § Open has a summary table and one ``###`` entry per defect. Each row links to its
-    entry. When this was added, 3 rows had no entry and 6 entries had no row.
+    Fails if a row of the summary table in ``KNOWN_ISSUES.md`` § Open links to no ``###``
+    entry in that section, or an entry has no row linking to it.
     """
     text = _read(REPO / "docs" / "KNOWN_ISSUES.md")
     section = text[text.index("\n# Open\n") : text.index("\n# History\n")]

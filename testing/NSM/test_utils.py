@@ -56,11 +56,16 @@ def saved_record(config):
 
 class TestTheRecordNamesItsSubjects:
     """
-    ``save_model_params``' ``list_mesh_paths`` argument is the live dataset's paths. A
-    config key of the same name used to overwrite it (``KNOWN_ISSUES.md`` § History 26).
+    ``save_model_params``' ``list_mesh_paths`` argument is the live dataset's paths. It wins
+    over a config key of the same name (``KNOWN_ISSUES.md`` § History 26).
     """
 
     def test_the_argument_wins_over_the_shipped_null(self, shipped_config):
+        """
+        Fails if ``save_model_params`` records the config's ``list_mesh_paths`` (``null`` in
+        ``default_config.json``) over its argument, or drops the argument when the config
+        lacks the key (KNOWN_ISSUES History 26).
+        """
         assert shipped_config["list_mesh_paths"] is None, "the shipped default changed"
         save_model_params(config=shipped_config, list_mesh_paths=SUBJECTS)
         assert saved_record(shipped_config)["list_mesh_paths"] == SUBJECTS
@@ -70,7 +75,12 @@ class TestTheRecordNamesItsSubjects:
         assert saved_record(bare)["list_mesh_paths"] == SUBJECTS
 
     def test_a_previous_runs_list_is_replaced_and_reported(self, shipped_config, caplog):
-        """Re-training from a saved config used to record the previous run's subjects."""
+        """
+        Fails if ``save_model_params`` records a previous run's ``list_mesh_paths`` from the
+        config over its argument, or replaces it without a warning (KNOWN_ISSUES History 26).
+
+        The warning is matched by the substring ``model_params_config.json`` in its text.
+        """
         shipped_config["list_mesh_paths"] = ["/data/PREVIOUS_RUN.vtk"]
         with caplog.at_level(logging.WARNING, logger="NSM.utils"):
             save_model_params(config=shipped_config, list_mesh_paths=SUBJECTS)
@@ -87,6 +97,10 @@ class TestWriteOnce:
     def test_a_diverging_second_call_names_exactly_the_keys_that_differ(
         self, running_config, caplog
     ):
+        """
+        Fails if ``save_model_params`` rewrites an existing record, or its divergence warning
+        omits a changed key or names an unchanged one (#50).
+        """
         save_model_params(config=running_config, list_mesh_paths=SUBJECTS)
         caplog.clear()
 
@@ -107,8 +121,9 @@ class TestWriteOnce:
 
     def test_later_checkpoints_of_a_healthy_run_say_nothing(self, running_config, caplog):
         """
-        The first write reports the dropped ``lr_schedules`` once. Every later checkpoint
-        writes the same config and must stay quiet.
+        Fails if ``save_model_params`` warns when a later checkpoint writes an unchanged
+        config (as it would if it compared the config before dropping ``lr_schedules``), or
+        stops naming the dropped ``lr_schedules`` at the first write (#50).
         """
         save_model_params(config=running_config, list_mesh_paths=SUBJECTS)
         assert "lr_schedules" in caplog.text
@@ -121,13 +136,22 @@ class TestWriteOnce:
 
 class TestNonSerialisableValues:
     def test_a_real_run_drops_only_the_schedule_objects(self, running_config):
-        """A dropped key is absent from the record, not ``null``."""
+        """
+        Fails if ``save_model_params`` writes an unencodable value as ``null`` instead of
+        omitting it, or the trainer's config gains a non-JSON value besides ``lr_schedules``.
+        """
         assert {k for k, v in running_config.items() if not is_jsonable(v)} == {"lr_schedules"}
         save_model_params(config=running_config, list_mesh_paths=SUBJECTS)
         assert "lr_schedules" not in saved_record(running_config)
 
     def test_the_filter_is_shallow_and_a_cycle_is_not_jsonable(self):
-        """One bad leaf drops the whole nested value. A cycle answers False, not raises."""
+        """
+        Fails if ``filter_non_jsonable`` keeps part of a nested dict that holds one
+        unencodable leaf, or ``is_jsonable`` raises on a cycle instead of returning False.
+
+        The shallow drop is pinned because ``save_model_params``' warning tells the user the
+        filter is shallow.
+        """
         nested = {"keep": 1, "drop": {"fine": 2, "not_fine": object()}}
         assert filter_non_jsonable(nested) == {"keep": 1}
 
@@ -138,7 +162,11 @@ class TestNonSerialisableValues:
 
 class TestScheduleClasses:
     def test_a_subclass_that_forgets_to_override_refuses(self):
-        """The base body was ``pass``, so the ``None`` failed later inside ``torch.optim``."""
+        """
+        Fails if ``LearningRateSchedule.get_learning_rate`` returns ``None`` instead of raising
+        ``NotImplementedError`` naming the subclass, or one of the four concrete schedules
+        stops overriding it.
+        """
 
         class Forgot(LearningRateSchedule):
             pass
@@ -156,8 +184,9 @@ class TestScheduleClasses:
 
     def test_two_entry_keys_that_do_not_match_their_parameter(self):
         """
-        Warmup's ``Final`` feeds a parameter called ``warmed_up``. LogAnneal ignores any
-        ``Length`` on its entry and takes its horizon from the top-level ``n_epochs``.
+        Fails if ``get_learning_rate_schedules`` stops passing a Warmup entry's ``Final`` as
+        ``warmed_up``, or takes LogAnneal's horizon from the entry's ``Length`` instead of the
+        top-level ``n_epochs``.
         """
         config = {
             "n_epochs": 100,
@@ -179,7 +208,12 @@ class TestScheduleClasses:
 
 
 def test_clear_gpu_cache_accepts_a_string_or_a_device():
-    """Configs hold ``"cpu"``; a Python caller holds ``torch.device``, which used to raise."""
+    """
+    Fails if ``clear_gpu_cache`` raises ``TypeError`` on a ``torch.device``, or stops warning
+    that it did nothing on CPU.
+
+    A config holds the string ``"cpu"``; a Python caller holds a ``torch.device``.
+    """
     for device in ("cpu", torch.device("cpu")):
         with pytest.warns(UserWarning, match="Not clearing cache"):
             clear_gpu_cache(device)
@@ -188,6 +222,9 @@ def test_clear_gpu_cache_accepts_a_string_or_a_device():
 class TestCheckpointList:
     def test_a_repeated_checkpoint_is_listed_twice_and_changes_nothing(self):
         """
+        Fails if ``get_checkpoints`` removes the duplicate, stops sorting
+        ``additional_checkpoints`` into the regular cadence, or leaves out ``n_epochs``.
+
         Both trainer reads are membership tests, so the duplicate cannot save a checkpoint
         twice. Deduplicating would change a value recorded in ``model_params_config.json``.
         """
@@ -196,5 +233,9 @@ class TestCheckpointList:
         assert checkpoints == [10, 10, 20, 25, 30]
 
     def test_a_missing_additional_checkpoints_names_the_remedy(self):
+        """
+        Fails if ``get_checkpoints`` defaults a missing ``additional_checkpoints``, or its
+        ``KeyError`` stops naming the key and the ``[]`` remedy.
+        """
         with pytest.raises(KeyError, match=r"additional_checkpoints.*\[\]"):
             get_checkpoints({"checkpoint_epochs": 10, "n_epochs": 30})

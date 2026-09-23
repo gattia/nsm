@@ -78,10 +78,12 @@ def wheel(tmp_path_factory):
 class TestWhatShips:
     def test_the_wheel_carries_every_subpackage_and_the_default_config(self, wheel):
         """
-        ``default_config.json`` is package data and shipped in no wheel until it was
-        declared. It is byte-compared, since a stale copy would pass a listing check.
+        Fails if the built wheel is not named ``nsm``, lacks a subpackage or
+        ``generate_sdf_default_config.py``, ships a ``default_config.json`` that differs from
+        the repo's, or ships ``NSM/dependencies``.
 
-        The name check is the readable failure for a build backend that cannot read
+        ``default_config.json`` is byte-compared because a stale copy would pass a listing
+        check. The name check is the readable failure for a build backend that cannot read
         ``pyproject.toml``: setuptools below 61 ignores ``[project]`` and produces
         ``UNKNOWN-0.0.0`` with none of ``NSM/`` inside (measured against 58.1.0).
         """
@@ -100,9 +102,12 @@ class TestWhatShips:
 class TestWhereTheVersionComesFrom:
     def test_the_version_is_derived_and_not_written_down(self, wheel):
         """
+        Fails if the wheel's version is not ``pyproject.toml``'s ``fallback_version`` (a
+        static version replaced the derived one), or ``NSM/__init__.py`` assigns a literal
+        ``__version__``.
+
         The wheel is built with no ``.git``, so a derived version can only be the declared
-        fallback. A version written into a source file would come through instead:
-        ``NSM.__version__`` said ``0.2.0`` for 269 commits.
+        fallback.
         """
         fallback = re.search(
             r'^fallback_version\s*=\s*"([^"]+)"',
@@ -117,13 +122,16 @@ class TestWhereTheVersionComesFrom:
 
     def test_one_nsm_distribution_is_discoverable_and_it_is_the_one_imported(self):
         """
+        Fails if the environment holds NSM distributions with different versions, or
+        ``NSM.__version__`` disagrees with the installed metadata.
+
         ``importlib.metadata`` scans ``sys.path``, and an editable install puts the source
-        tree on it, so a stale ``NSM.egg-info`` in the repo root wins over site-packages.
-        Measured: it reported ``0.3.1.dev2`` while site-packages held ``0.3.1.dev3``, and
-        ``pip install -e . --force-reinstall`` did not clear it. ``make clean`` does.
+        tree on it, so a stale ``NSM.egg-info`` in the repo root wins over site-packages: it
+        reported ``0.3.1.dev2`` while site-packages held ``0.3.1.dev3``.
+        ``pip install -e . --force-reinstall`` does not clear it; ``make clean`` does.
 
         Asserted on the set of distributions: comparing ``version("NSM")`` with the
-        egg-info could not fail, because ``version()`` reads the shadow too.
+        egg-info cannot fail, because ``version()`` reads the shadow too.
         """
         from importlib.metadata import distributions, version
 
@@ -144,8 +152,10 @@ class TestWhereTheVersionComesFrom:
 
 def test_requires_python_admits_no_version_a_dependency_refuses():
     """
-    ``requires-python`` said ``>=3.7`` until v0.3.0, and every runtime dependency needs
-    3.9. Computed from the installed metadata, so a dependency raising its floor fails here.
+    Fails if the lowest Python that ``pyproject.toml``'s ``requires-python`` admits is one
+    that an installed ``requirements.txt`` dependency's ``Requires-Python`` refuses.
+
+    Computed from the installed metadata, so a dependency raising its floor fails here.
     """
     from importlib.metadata import PackageNotFoundError, distribution
 
@@ -188,8 +198,11 @@ class TestPublicApiDeclaration:
 
     def test_each_subpackage_declares_exactly_what_a_star_import_binds(self):
         """
-        Every declared name resolves and is NSM's own. Python's ``from X import *`` then
-        binds exactly the declaration. ``__all__`` does not unbind ``NSM.datasets.torch``.
+        Fails if one of the five subpackages declares no ``__all__``, or its ``__all__``
+        names an attribute that is missing or defined outside NSM.
+
+        A star import binds exactly ``__all__``, so this check is the whole star-import
+        contract.
         """
         problems = []
         for name in ["NSM.datasets", "NSM.mesh", "NSM.models", "NSM.reconstruct", "NSM.train"]:

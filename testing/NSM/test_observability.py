@@ -38,6 +38,11 @@ print(json.dumps({"loss": 0.5}))
 
 
 def test_nsm_writes_nothing_to_stdout_and_leaves_host_logging_alone():
+    """
+    Fails if importing ``NSM.reconstruct`` or calling ``reconstruct_mesh`` prints to stdout,
+    if an NSM warning reaches an unconfigured host's stderr (the ``"NSM"`` ``NullHandler`` is
+    gone), or if the import changes the root logger (#58).
+    """
     completed = subprocess.run(
         [sys.executable, "-c", _PROBE], capture_output=True, text=True, timeout=300
     )
@@ -83,8 +88,12 @@ def _log_calls(tree):
 
 def test_the_library_speaks_only_through_lazily_formatted_log_calls():
     """
-    No ``print``. And no f-string, ``%`` or ``.format`` message: a suppressed record must
-    cost no formatting, and several sit in per-batch loops.
+    Fails if an ``NSM/`` module other than ``generate_sdf_default_config.py`` calls
+    ``print``, or a ``logger`` call builds its message with an f-string, ``%``, ``+`` or
+    ``.format`` (#58).
+
+    A suppressed record must cost no formatting, and several log calls sit in per-batch
+    loops.
     """
     offenders = []
     for path, tree in _library_modules():
@@ -112,11 +121,13 @@ def test_the_library_speaks_only_through_lazily_formatted_log_calls():
 
 def test_every_record_reaches_a_host_that_asks_for_it():
     """
-    Each module that logs has its own ``logger``, so a host can silence ``NSM.datasets``
-    alone. No log call sits inside ``if flag:`` where ``flag`` is a parameter of the same
-    function: that was the ``verbose=`` pattern, removed at v0.4.0. It is checked under any
-    parameter name, and was confirmed by adding such a gate and seeing it fail.
-    ``logger.isEnabledFor`` guards are allowed: they read the host's level.
+    Fails if a module that logs has no module-level ``logger =``, or a log call sits under
+    ``if <parameter>:``, a ``verbose=``-style switch that the host's logging level cannot
+    reach (#58).
+
+    A module's own ``logger`` lets a host silence ``NSM.datasets`` alone. The gate is
+    detected under any parameter name. ``logger.isEnabledFor`` guards are allowed: they read
+    the host's level.
     """
 
     def gating_name(test):

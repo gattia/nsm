@@ -43,6 +43,11 @@ assert NSM.train.train_deep_sdf.wandb is None
 
 
 def test_both_packages_import_without_wandb():
+    """
+    Fails if importing ``NSM.reconstruct`` or ``NSM.train`` needs wandb, or
+    ``reconstruct.main``, ``latent_fit`` or ``train_deep_sdf`` does not bind ``wandb = None``
+    when it is absent (#5).
+    """
     result = subprocess.run(
         [sys.executable, "-c", _PROBE],
         capture_output=True,
@@ -54,6 +59,14 @@ def test_both_packages_import_without_wandb():
 
 
 def test_every_explicit_request_raises_without_wandb(monkeypatch):
+    """
+    Fails if ``reconstruct_mesh``, ``get_mean_errors``, ``reconstruct_latent``,
+    ``prepare_results_for_wandb``, ``reconstruct_latent_S3`` or ``train_deep_sdf``, asked for
+    wandb logging with wandb absent, does not raise ``ImportError`` at entry (#5).
+
+    The other arguments are ``None``, so a check placed later fails with a different error.
+    ``train_epoch``'s ``log_latent`` is not covered: it raises only after the epoch has run.
+    """
     requests = {
         recon_main.reconstruct_mesh: dict(path=None, decoders=None, latent_size=4, log_wandb=True),
         recon_main.get_mean_errors: dict(
@@ -82,9 +95,11 @@ def test_every_explicit_request_raises_without_wandb(monkeypatch):
 
 def test_metric_histograms_follow_wandb(monkeypatch):
     """
-    ``get_mean_errors`` builds a ``wandb.Histogram`` per metric whenever wandb is
-    importable, with no ``log_wandb`` gate. Without wandb the histogram is ``None`` and
-    the metric is intact.
+    Fails if ``get_mean_errors`` stops adding ``<metric>_hist`` (a ``wandb.Histogram`` with
+    wandb, ``None`` without), or loses the metric value when wandb is absent (#5).
+
+    The histogram has no ``log_wandb`` gate: training validation reaches it with no wandb
+    request, so an absent wandb must skip it, not raise. ``reconstruct_mesh`` is stubbed.
     """
     monkeypatch.setattr(
         recon_main,
