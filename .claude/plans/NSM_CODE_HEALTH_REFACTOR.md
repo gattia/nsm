@@ -25,9 +25,7 @@ under the same number.
 
 - **Next:** **Slice T**, the test-suite trim, the last slice before Step Close. Re-measure
   the Step T table first; slice S changed it.
-- **Blocked on:** nothing. **Before pulling v0.4.0 into production**, delete
-  `verbose=True` from `kneepipeline/steps/run_nsm.py:211`. Otherwise the next NSM fit
-  raises `TypeError`. That line can be removed now; it is harmless on `main`.
+- **Blocked on:** nothing.
 - **Done:**
   - Phases 0–3, and slices A–R, each with its own PR. v0.2.0 (PR #36) and v0.3.0 shipped.
   - Both post-v0.3.0 validation runs passed: §7.5a on the production box (PR #102), §7.5b
@@ -39,8 +37,10 @@ under the same number.
     `two_stage` and the multi-head trainer deleted; #18 closed won't-fix; #51 closed.
     `NSM/` 15,106 → 13,555 lines. Production tree pulled and worker restarted (stamp
     `v0.3.0-84-ga7b3351`).
-  - Slice S done 2026-09-22 on `slice-s-v0-4-0-signatures` (PR #113). See Step S.
-    `NSM/` 13,555 → 13,326 lines; suite 1180 → 1177 passed. v0.4.0 is tagged after merge.
+  - Slice S merged 2026-09-23 (PR #113) and tagged **v0.4.0**. See Step S.
+    `NSM/` 13,555 → 13,326 lines; suite 1180 → 1177 passed. Production is on v0.4.0: the
+    consumer no longer passes `verbose=`, and a real fit on archived job `8ff02ee4`
+    matches its archived BScore to 1.3e-05 (same-code noise is 3.6e-05).
 - **Surprises:**
   - **Deferred items get lost or are already done.** Five `reconstruct_latent` sites
     deferred to R had already been fixed. In S, one item was already closed by R, and two
