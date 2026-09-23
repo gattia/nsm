@@ -192,3 +192,23 @@ class TestRepairingAnOldTriplanarConfig:
         assert repair == self.HISTORICAL
         config.update(repair)
         loader._get_triplanar_params(config)
+
+    def test_direct_construction_gets_the_historical_values(self):
+        """
+        Fails if ``TriplanarDecoder`` built without the three keys computes differently from
+        one built with ``HISTORICAL``. kneepipeline builds both shipped models that way.
+
+        Compared on a forward pass, because ``padding`` is not a parameter: a wrong default
+        still loads a checkpoint strictly, then samples the planes at the wrong scale.
+        ``test_shipped_checkpoints`` checks the real models, outside CI.
+        """
+        tiny = dict(latent_dim=16, conv_hidden_dims=[8, 8], sdf_hidden_dims=[8], sdf_latent_size=8)
+        torch.manual_seed(0)
+        bare = TriplanarDecoder(**tiny).eval()
+        torch.manual_seed(0)
+        historical = TriplanarDecoder(**tiny, **self.HISTORICAL).eval()
+
+        torch.manual_seed(1)
+        query = torch.cat([torch.randn(1, 16).repeat(64, 1), torch.rand(64, 3) * 2 - 1], dim=1)
+        with torch.no_grad():
+            assert torch.equal(bare(query), historical(query))
