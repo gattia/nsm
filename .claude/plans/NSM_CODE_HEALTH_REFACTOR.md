@@ -23,7 +23,7 @@ under the same number.
 
 **Updated:** 2026-09-23 · **Status:** open
 
-- **Next:** Merge slice T's PR (branch `slice-t-test-trim`). Then Step Close.
+- **Next:** Merge slice T's PR #114 (branch `slice-t-test-trim`). Then Step Close.
 - **Blocked on:** nothing.
 - **Done:**
   - Phases 0–3, and slices A–R, each with its own PR. v0.2.0 (PR #36) and v0.3.0 shipped.
@@ -40,7 +40,7 @@ under the same number.
     `NSM/` 13,555 → 13,326 lines; suite 1180 → 1177 passed. Production is on v0.4.0: the
     consumer no longer passes `verbose=`, and a real fit on archived job `8ff02ee4`
     matches its archived BScore to 1.3e-05 (same-code noise is 3.6e-05).
-  - Slice T done 2026-09-23 on branch `slice-t-test-trim`: 1,184 tests to 268, `testing/`
+  - Slice T done 2026-09-23, PR #114 open: 1,184 tests to 268, `testing/`
     16,143 lines to 8,014, 110 s to 72 s, coverage kept. See Step T's Result.
 - **Surprises:**
   - **Deferred items get lost or are already done.** Five `reconstruct_latent` sites
