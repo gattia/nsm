@@ -45,155 +45,76 @@ HISTORICAL_CONFIG = {
 }
 
 
-class TestMigratingAHistoricalConfig:
-    def test_every_remaining_key_is_a_real_parameter(self):
-        """The property that matters: the migrated config gets past the refusal."""
-        cleaned, _ = migrate_reconstruct_config(HISTORICAL_CONFIG)
-        named = set(inspect.signature(reconstruct_mesh).parameters)
-        assert sorted(set(cleaned) - named) == []
+NAMED = set(inspect.signature(reconstruct_mesh).parameters)
 
-    def test_the_six_removed_keys_are_the_inert_ones(self):
-        cleaned, _ = migrate_reconstruct_config(HISTORICAL_CONFIG)
-        removed = set(HISTORICAL_CONFIG) - set(cleaned)
-        assert removed == {
-            "min_rel_improve",
-            "grad_tol",
-            "param_change_tol",
-            "recon_tol",
-            "log_wandb_step",
-            "latent_optimizer_name",
-        }
-
-    def test_nothing_that_changes_a_result_is_touched(self):
-        """
-        The safety property. Every key that reaches the optimizer -- the optimizer's own
-        settings, the loss, the sampling, the norm constraint -- survives untouched, so
-        migrating cannot move a number.
-        """
-        cleaned, _ = migrate_reconstruct_config(HISTORICAL_CONFIG)
-        for key in (
-            "num_iterations",
-            "lr",
-            "loss_type",
-            "convergence",
-            "convergence_patience",
-            "hybrid_optimizer",
-            "adam_iterations",
-            "lbfgs_iterations",
-            "lbfgs_lr",
-            "lbfgs_max_iter",
-            "lbfgs_history_size",
-            "n_samples_latent_recon",
-            "latent_norm",
-            "norm_penalty_weight",
-        ):
-            assert cleaned[key] == HISTORICAL_CONFIG[key], key
-
-    def test_every_removal_is_explained(self):
-        cleaned, notes = migrate_reconstruct_config(HISTORICAL_CONFIG)
-        removed = set(HISTORICAL_CONFIG) - set(cleaned)
-        for key in removed:
-            assert any(f"removed {key!r}" in note for note in notes), key
-
-    def test_batch_size_is_kept_and_flagged(self):
-        """
-        It works, so removing it would change a result. It is flagged because a
-        ``batch_size`` in an optimization block reads as a fit knob and is the
-        marching-cubes decode batch.
-        """
-        cleaned, notes = migrate_reconstruct_config(HISTORICAL_CONFIG)
-        assert cleaned["batch_size"] == HISTORICAL_CONFIG["batch_size"]
-        assert any("marching-cubes" in note for note in notes)
-
-    def test_a_current_config_is_returned_unchanged(self):
-        current = {"num_iterations": 100, "lr": 0.01, "loss_type": "l1"}
-        cleaned, notes = migrate_reconstruct_config(current)
-        assert cleaned == current
-        assert notes == []
-
-    def test_the_input_is_not_mutated(self):
-        before = dict(HISTORICAL_CONFIG)
-        migrate_reconstruct_config(HISTORICAL_CONFIG)
-        assert HISTORICAL_CONFIG == before
-
-    def test_latent_optimizer_name_survives_without_hybrid(self):
-        """It is only inert under hybrid; on its own it selects the optimizer."""
-        config = dict(HISTORICAL_CONFIG, hybrid_optimizer=False)
-        cleaned, _ = migrate_reconstruct_config(config)
-        assert cleaned["latent_optimizer_name"] == "lbfgs"
+#: A real harness passed these on every run, whatever its config said. Five name nothing.
+HARNESS_KEYWORDS = [
+    "latent_norm",
+    "use_soft_norm_constraint",
+    "norm_penalty_weight",
+    "norm_penalty_type",
+    "hybrid_optimizer",
+    "adam_iterations",
+    "lbfgs_iterations",
+    "lbfgs_lr",
+    "lbfgs_max_iter",
+    "lbfgs_history_size",
+    "min_rel_improve",
+    "grad_tol",
+    "param_change_tol",
+    "recon_tol",
+    "log_wandb_step",
+    "return_registration_params",
+    "max_n_samples_latent_recon",
+    "n_steps_sample_ramp_latent_recon",
+]
 
 
-class TestAHarnessThatPassesAFixedKeywordSet:
+def test_a_historical_config_loses_exactly_the_inert_keys():
     """
-    The sharper case than a stale config file. A harness script that builds an explicit
-    keyword dict and passes it on every run -- rather than splatting the config -- fails
-    on *every* run once one of its fixed keys is refused, including runs whose config
-    never mentioned the key. Five of the eighteen non-core keywords one such harness
-    passes unconditionally name nothing in NSM.
+    What survives is a real parameter, and everything that reaches the optimizer survives
+    unchanged, so migrating cannot move a number. Each removal is explained.
+    ``batch_size`` is kept and flagged: in an optimization block it reads as a fit knob and
+    is the marching-cubes decode batch.
     """
+    before = dict(HISTORICAL_CONFIG)
+    cleaned, notes = migrate_reconstruct_config(HISTORICAL_CONFIG)
+    assert HISTORICAL_CONFIG == before, "the input was mutated"
 
-    #: Passed unconditionally by a real harness, regardless of what its config says.
-    HARNESS_KEYWORDS = [
-        "latent_norm",
-        "use_soft_norm_constraint",
-        "norm_penalty_weight",
-        "norm_penalty_type",
-        "hybrid_optimizer",
-        "adam_iterations",
-        "lbfgs_iterations",
-        "lbfgs_lr",
-        "lbfgs_max_iter",
-        "lbfgs_history_size",
+    removed = set(HISTORICAL_CONFIG) - set(cleaned)
+    assert removed == {
         "min_rel_improve",
         "grad_tol",
         "param_change_tol",
         "recon_tol",
         "log_wandb_step",
-        "return_registration_params",
-        "max_n_samples_latent_recon",
-        "n_steps_sample_ramp_latent_recon",
-    ]
+        "latent_optimizer_name",
+    }
+    assert set(cleaned) <= NAMED
+    assert all(cleaned[key] == HISTORICAL_CONFIG[key] for key in cleaned)
+    assert all(any(f"removed {key!r}" in note for note in notes) for key in removed)
+    assert any("marching-cubes" in note for note in notes)
 
-    def test_migrating_the_keyword_set_leaves_only_real_parameters(self):
-        cleaned, _ = migrate_reconstruct_config({k: None for k in self.HARNESS_KEYWORDS})
-        named = set(inspect.signature(reconstruct_mesh).parameters)
-        assert sorted(set(cleaned) - named) == []
-
-    def test_the_thirteen_real_ones_survive(self):
-        """Nothing that reaches the optimizer is dropped, so the harness keeps working."""
-        cleaned, _ = migrate_reconstruct_config({k: None for k in self.HARNESS_KEYWORDS})
-        assert len(cleaned) == 13
+    harness, _ = migrate_reconstruct_config({k: None for k in HARNESS_KEYWORDS})
+    assert set(harness) <= NAMED and len(harness) == 13
 
 
-class TestTheRefusalPointsAtTheMigrator:
-    def test_a_known_stale_key_earns_the_hint(self):
-        with pytest.raises(TypeError, match="migrate_reconstruct_config"):
-            reconstruct_latent(
-                decoders=None,
-                num_iterations=1,
-                latent_size=8,
-                xyz=None,
-                sdf_gt=None,
-                pts_surface=[0],
-                grad_tol=1e-5,
-            )
+def test_a_current_config_and_a_non_hybrid_optimizer_name_are_left_alone():
+    """``latent_optimizer_name`` is inert only under hybrid; alone it picks the optimizer."""
+    current = {"num_iterations": 100, "lr": 0.01, "loss_type": "l1"}
+    assert migrate_reconstruct_config(current) == (current, [])
+    cleaned, _ = migrate_reconstruct_config(dict(HISTORICAL_CONFIG, hybrid_optimizer=False))
+    assert cleaned["latent_optimizer_name"] == "lbfgs"
 
-    def test_an_unrecognised_key_gets_no_hint(self):
-        """
-        A typo is not a stale config, and pointing a typo at a migration helper would send
-        the reader somewhere with no answer for them.
-        """
-        with pytest.raises(TypeError) as excinfo:
-            reconstruct_latent(
-                decoders=None,
-                num_iterations=1,
-                latent_size=8,
-                xyz=None,
-                sdf_gt=None,
-                pts_surface=[0],
-                num_iteration=1,
-            )
-        assert "migrate_reconstruct_config" not in str(excinfo.value)
 
-    def test_the_hint_is_empty_for_unknown_keys(self):
-        assert migration_hint(["definitely_not_a_key"]) == ""
+def test_only_a_known_stale_key_earns_the_migration_hint():
+    """A typo is not a stale config, and the migrator has no answer for it."""
+    call = dict(
+        decoders=None, num_iterations=1, latent_size=8, xyz=None, sdf_gt=None, pts_surface=[0]
+    )
+    with pytest.raises(TypeError, match="migrate_reconstruct_config"):
+        reconstruct_latent(grad_tol=1e-5, **call)
+    with pytest.raises(TypeError) as excinfo:
+        reconstruct_latent(num_iteration=1, **call)
+    assert "migrate_reconstruct_config" not in str(excinfo.value)
+    assert migration_hint(["definitely_not_a_key"]) == ""

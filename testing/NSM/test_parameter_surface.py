@@ -79,60 +79,6 @@ def _fit_kwargs(**overrides):
 # ---------------------------------------------------------------------------
 
 
-class TestTheDeferredSitesAreClosed:
-    """
-    §8.0.K measured five `reconstruct_latent` parameters that were named on one path and
-    read on another, deferred all five to this slice, and then closed four of them in its
-    own review round 2 (`5f1dbf7`) and the fifth through §8.0.J's kwargs refusal
-    (`63209df`). The row kept the deferral and lost the fix, so R was scheduled to
-    rediscover three numbers that had already moved -- `(0.005, 10, 100)` against a
-    requested `(1.0, 3, 7)`, the "200x step size".
-
-    These pins are the slice's product for carrier (a): a closed site that no test
-    describes is indistinguishable from an open one at the next sweep.
-    """
-
-    def test_hybrid_optimizer_refuses_an_optimizer_name_it_will_not_consult(self):
-        with pytest.raises(ValueError, match="optimizer_name is not consulted"):
-            reconstruct_latent(**_fit_kwargs(hybrid_optimizer=True, optimizer_name="lbfgs"))
-
-    def test_the_lbfgs_triple_is_read_on_the_non_hybrid_path(self, monkeypatch):
-        """`lr` stood in for `lbfgs_lr` here, at a config's usual 0.005 -- a 200x step."""
-        seen = {}
-        real = torch.optim.LBFGS
-
-        def spy(params, **kwargs):
-            seen.update(kwargs)
-            return real(params, **kwargs)
-
-        monkeypatch.setattr(torch.optim, "LBFGS", spy)
-        reconstruct_latent(
-            **_fit_kwargs(
-                optimizer_name="lbfgs",
-                lr=0.005,
-                lbfgs_lr=1.0,
-                lbfgs_max_iter=3,
-                lbfgs_history_size=7,
-            )
-        )
-
-        assert (seen["lr"], seen["max_iter"], seen["history_size"]) == (1.0, 3, 7)
-
-    def test_reconstruct_mesh_refuses_log_wandb_step_by_name(self):
-        """
-        `reconstruct_latent` names it and `reconstruct_mesh` has never forwarded it. The
-        refusal names the parameter rather than reporting an anonymous unknown key,
-        because "it never reached the fit even when accepted" is the part a caller who
-        set it needs to read.
-        """
-        with pytest.raises(TypeError, match="log_wandb_step"):
-            refuse_unknown_kwargs(
-                {"log_wandb_step": 5},
-                function_name="reconstruct_mesh",
-                deprecated=frozenset({"batch_size_latent_recon"}),
-            )
-
-
 class TestGradClipReachesTheModelOnly:
     """
     Carrier (b), unchanged by this slice and re-verified rather than transcribed.
@@ -237,37 +183,3 @@ class TestUpgradeCachedLayoutKeepsItsCachePath:
 
         assert "cache_path" not in base.split('"""')[-1]
         assert "cache_path" in override.split('"""')[-1]
-
-
-class TestDecodeDispatchesOnTheForwardInterface:
-    """
-    Carrier (d). `_decode` inspects the decoder's signature on every call, inside
-    `_recon_loss`'s optimization loop -- 20.5 us against 5.00 ms for one decode+backward
-    at 10,000 points and 56.79 ms at 100,000, both CPU, so it is loop-invariant overhead
-    rather than a defect.
-
-    No wall-clock assertion: §7.4 ruled that a timing bound inside the suite it measures
-    is self-referential and goes red on a shared runner for reasons unrelated to the code.
-    What is pinned is the behaviour the hoist must not change -- both interfaces still
-    dispatch, and to the same numbers.
-    """
-
-    def test_both_forward_interfaces_produce_the_same_values(self):
-        torch.manual_seed(0)
-        keyword = _TinyTriplanarInterface()
-        positional = _TinyMlpInterface()
-        positional.net.load_state_dict(keyword.net.state_dict())
-        latent = torch.randn(1, 4)
-        xyz = torch.rand(16, 3)
-
-        assert torch.allclose(_decode(keyword, latent, xyz), _decode(positional, latent, xyz))
-
-    def test_the_positional_interface_is_reached_at_all(self):
-        """
-        The MLP arm raised `TypeError: forward() got an unexpected keyword argument
-        'latent'` on every subject before #105, on `main` and on the pre-refactor ref
-        alike; production ships only triplanar, so nothing noticed.
-        """
-        result = _decode(_TinyMlpInterface(), torch.randn(1, 4), torch.rand(16, 3))
-
-        assert result.shape == (16, 1)

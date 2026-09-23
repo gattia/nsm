@@ -1,189 +1,571 @@
-import os
+"""
+``reconstruct_latent``: the parameters it takes, the values it accepts, the loss it
+returns, and the helpers it is built from (``NSM/reconstruct/latent_fit.py``).
+"""
 
-os.environ["LOC_SDF_CACHE"] = ""
+import ast
+import inspect
+import logging
+
+import numpy as np
 import pytest
 import torch
 
+import NSM.reconstruct.latent_fit as latent_fit
+import NSM.reconstruct.main as recon_main
 from NSM.reconstruct import reconstruct_latent
-from NSM.reconstruct.main import latent_norm_penalty
+from NSM.reconstruct.main import (
+    latent_norm_penalty,
+    project_latent,
+    reconstruct_latent_decoders_type_check,
+    reconstruct_latent_get_lr_update_freq,
+    reconstruct_latent_preprocess_sdf_gt,
+    reconstruct_latent_pts_surface_type_check,
+    reconstruct_latent_sdf_gt_type_check,
+)
 
 
-# Mock decoder class. Accept either the legacy concatenated-positional
-# interface (forward(x)) or the named-kwarg form (forward(latent=, xyz=))
-# that the production decoders (TriplanarDecoder etc.) now support for
-# fast inference paths. reconstruct_latent calls the latter.
-#
-# The output must depend on ``latent`` so the autograd graph remains intact
-# when reconstruct_latent backprops through this mock (xyz has no grad).
-class MockDecoder(torch.nn.Module):
-    def forward(self, x=None, latent=None, xyz=None, epoch=None):
-        if x is not None:
-            return x[:, :1]
-        # Kwargs path: ensure the output depends on ``latent`` so grad flows
-        # back through it. ``latent.sum()`` is shape-agnostic (works for 1-D
-        # (D,) or 2-D (N, D)) and broadcasts cleanly into xyz[:, :1].
-        if latent is not None and xyz is not None:
-            return xyz[:, :1] + latent.sum()
-        if xyz is not None:
-            return xyz[:, :1]
-        return latent.sum().expand(1, 1)
+class LinearDecoder(torch.nn.Module):
+    """``pts[:, 0] + latent.sum()`` per surface: differentiable in the latent, no parameters."""
 
-
-@pytest.fixture
-def setup_data(n_pts=100):
-    # Create mock decoders
-    decoders = [MockDecoder()]
-
-    # Create sample input data
-    xyz = torch.rand(n_pts, 3)  # 100 points in 3D space
-    sdf_gt = torch.rand(n_pts, 1)  # Corresponding SDF values
-    # needs to tell what surface each point is associated with:
-    pts_surface = [0] * n_pts
-
-    return decoders, xyz, sdf_gt, pts_surface
-
-
-def test_reconstruct_latent_basic(setup_data):
-    decoders, xyz, sdf_gt, pts_surface = setup_data
-
-    print(type(xyz))
-    print(type(sdf_gt))
-
-    # Call the function with basic parameters
-    loss, latent = reconstruct_latent(
-        decoders=decoders,
-        num_iterations=10,
-        latent_size=8,
-        xyz=xyz,
-        sdf_gt=sdf_gt,
-        pts_surface=pts_surface,
-        device="cpu",
-    )
-
-    # Check the output types
-    assert isinstance(loss, torch.Tensor), "Loss should be a tensor"
-    assert isinstance(latent, torch.Tensor), "Latent should be a tensor"
-
-
-def test_reconstruct_latent_convergence(setup_data):
-    decoders, xyz, sdf_gt, pts_surface = setup_data
-
-    # Call the function with convergence criteria
-    loss, latent = reconstruct_latent(
-        decoders=decoders,
-        num_iterations=100,
-        latent_size=8,
-        xyz=xyz,
-        sdf_gt=sdf_gt,
-        pts_surface=pts_surface,
-        convergence="overall_loss",
-        convergence_patience=5,
-        device="cpu",
-    )
-
-    # Check if the function converged
-    assert loss < 100, "Loss should be less than initial value indicating convergence"
-
-
-def test_reconstruct_latent_invalid_input(n_pts=100):
-    decoders = [MockDecoder()]
-    xyz = torch.rand(n_pts, 3)
-    sdf_gt = "invalid_input"  # Invalid SDF input
-    pts_surface = [0] * n_pts
-
-    # Matches the intended message: before the (str,) fix this branch was unreachable
-    # (`in (str)` iterates the type object) and the bare Exception assertion passed via
-    # an accidental TypeError instead.
-    with pytest.raises(Exception, match="reconstruct_mesh instead"):
-        reconstruct_latent(
-            decoders=decoders,
-            num_iterations=10,
-            latent_size=8,
-            xyz=xyz,
-            sdf_gt=sdf_gt,
-            pts_surface=pts_surface,
-            device="cpu",
-        )
-
-
-class TwoSurfaceDecoder(torch.nn.Module):
-    """Kwarg-form decoder with two output columns; output depends on ``latent``."""
-
-    def __init__(self, scale):
+    def __init__(self, surfaces=1):
         super().__init__()
-        self.scale = scale
+        self.surfaces = surfaces
 
     def forward(self, x=None, latent=None, xyz=None, epoch=None):
-        base = xyz[:, :1] * 0.01 + latent.sum() * self.scale
-        return torch.cat([base, 2.0 * base], dim=1)
+        pts = xyz if xyz is not None else x[:, -3:]
+        return (pts[:, :1] + latent.sum()).repeat(1, self.surfaces)
 
 
-def _two_decoder_fit_loss(gt_values, n_pts=50):
-    torch.manual_seed(0)
-    decoders = [TwoSurfaceDecoder(1.0), TwoSurfaceDecoder(-1.0)]
-    xyz = torch.rand(n_pts, 3)
-    sdf_gt = [torch.full((n_pts, 1), v) for v in gt_values]
-    loss, _ = reconstruct_latent(
-        decoders=decoders,
+class RecordingDecoder(LinearDecoder):
+    """Records a fingerprint of every point set it is evaluated on."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.draws = []
+
+    def forward(self, x=None, latent=None, xyz=None, epoch=None):
+        self.draws.append(round(float((xyz if xyz is not None else x[:, -3:]).sum()), 9))
+        return super().forward(x=x, latent=latent, xyz=xyz, epoch=epoch)
+
+
+class LegacyInterfaceDecoder(torch.nn.Module):
+    """``deep_sdf.Decoder``'s interface: one concatenated tensor. Same function as above."""
+
+    def __init__(self, latent_size=8):
+        super().__init__()
+        self.latent_size = latent_size
+
+    def forward(self, input_, epoch=None):
+        latent, pts = input_[:, : self.latent_size], input_[:, self.latent_size :]
+        return pts[:, :1] + latent[0].sum()
+
+
+def fit_kwargs(n_pts=64, **overrides):
+    """A three-step CPU fit, seeded."""
+    torch.manual_seed(7)
+    kwargs = dict(
         num_iterations=3,
         latent_size=8,
-        xyz=xyz,
-        sdf_gt=sdf_gt,
+        xyz=torch.rand(n_pts, 3),
+        sdf_gt=torch.rand(n_pts, 1),
         pts_surface=[0] * n_pts,
         device="cpu",
     )
-    return float(loss)
+    kwargs.update(overrides)
+    return kwargs
 
 
-def test_second_decoder_reads_its_own_ground_truth():
-    """Each decoder is scored against its own slice of the flat ``sdf_gt``.
+def fit(decoder=None, **overrides):
+    return reconstruct_latent(decoders=decoder or LinearDecoder(), **fit_kwargs(**overrides))
 
-    With the decoder-local indexing this replaces, the ground truth for surfaces 2 and
-    3 could be replaced wholesale without changing the loss — the second decoder
-    silently re-read surfaces 0 and 1 (demonstrated by execution during the Aug 2026
-    audit: all-NaN surfaces 2/3 left the loss bit-identical).
+
+class TestUnknownKeywordsAreRefused:
     """
-    base = _two_decoder_fit_loss((0.1, 0.2, 0.3, 0.4))
-    surfaces_2_3_changed = _two_decoder_fit_loss((0.1, 0.2, 5.0, -5.0))
-    assert base != surfaces_2_3_changed
-
-
-class TestBarrierNormPenalty:
-    """#48: ``norm_penalty_type='barrier'`` returned NaN for any latent norm outside
-    ``[min, max]`` — the state at initialization for typical ranges (std 0.01 puts a
-    256-dim latent at norm ~0.16) — while its gradient stayed finite and pushed the
-    norm *away* from the range (below it, d/dnorm of -log(norm - min + eps) is
-    positive for a negative argument). Outside the range it now raises by name.
+    ``**kwargs`` used to swallow every key, so a misspelled parameter ran at its default
+    with no warning and no log record. That is why it raises rather than warns.
     """
 
-    def test_raises_below_range(self):
-        latent = torch.ones(1, 256) * 0.01  # norm ~0.16: the initialization state
-        with pytest.raises(ValueError, match="barrier"):
-            latent_norm_penalty(latent, (0.5, 1.0), penalty_type="barrier")
+    def test_a_misspelled_parameter_raises(self):
+        for wrong in (
+            "num_iteration",
+            "latent_reg_wieght",
+            "clamp_distance",
+            "lattent_size",
+            "optimiser_name",
+            "n_iterations",
+            "lr_",
+            "max_batch_size",  # removed in v0.4.0; use n_samples_per_chunk (#75)
+        ):
+            with pytest.raises(TypeError, match=wrong):
+                fit(**{wrong: 999})
 
-    def test_raises_above_range(self):
-        latent = torch.ones(1, 16)  # norm 4.0
-        with pytest.raises(ValueError, match="barrier"):
-            latent_norm_penalty(latent, (0.5, 1.0), penalty_type="barrier")
+    def test_reconstruct_mesh_passes_only_parameters_this_signature_names(self):
+        """Read from the dict ``reconstruct_mesh`` builds, so a new key is checked too."""
+        tree = ast.parse(open(recon_main.__file__, encoding="utf-8").read())
+        dict_node = next(
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and getattr(node.targets[0], "id", None) == "reconstruct_inputs"
+        )
+        passed = {key.value for key in dict_node.keys}
+        assert passed and passed <= set(inspect.signature(reconstruct_latent).parameters)
 
-    def test_finite_inside_range(self):
-        latent = torch.ones(1, 16) * (0.75 / 4.0)  # norm 0.75
-        penalty = latent_norm_penalty(latent, (0.5, 1.0), penalty_type="barrier")
-        assert torch.isfinite(penalty)
 
-    def test_reconstruct_latent_surfaces_the_error(self, setup_data):
-        """The default init (std 0.01) starts below any plausible range, so an
-        enabled barrier fails at step 0 with the named error, not a NaN loss."""
-        decoders, xyz, sdf_gt, pts_surface = setup_data
-        with pytest.raises(ValueError, match="barrier"):
+def test_pts_surface_is_required_and_a_positional_shift_is_refused():
+    """
+    It follows ``sdf_gt`` since v0.4.0. An old six-argument positional call puts ``loss_type``
+    or ``lr`` here, which the type check refuses.
+    """
+    kwargs = fit_kwargs()
+    del kwargs["pts_surface"]
+    with pytest.raises(TypeError, match="pts_surface"):
+        reconstruct_latent(decoders=LinearDecoder(), **kwargs)
+    for value in (None, "l1", 5e-4):
+        with pytest.raises(ValueError, match="pts_surface"):
+            fit(pts_surface=value)
+
+
+class TestUnknownValuesAreRefusedWhereTheyAreNamed:
+    """
+    Three ``if``/``elif`` chains had no ``else``. ``optimizer_name`` and ``loss_type`` failed
+    much later as an ``UnboundLocalError`` or ``NameError`` naming a local.
+    ``convergence``'s missing ``else`` was the default branch, so ``"Recon_Loss"`` silently
+    meant ``"num_iterations"``. Case is folded, and NSM's trainer spells ``"Adam"``.
+    """
+
+    def test_an_unknown_value_names_its_parameter_and_case_is_folded(self):
+        for parameter, value in (
+            ("optimizer_name", "sgd"),
+            ("loss_type", "l1_smooth"),
+            ("convergence", "banana"),
+            ("convergence", None),
+        ):
+            with pytest.raises(ValueError, match=parameter):
+                fit(**{parameter: value})
+        for parameter, value in (
+            ("optimizer_name", "Adam"),
+            ("optimizer_name", "LBFGS"),
+            ("loss_type", "L1"),
+            ("loss_type", "L1_LOG"),
+        ):
+            assert isinstance(fit(**{parameter: value})[1], torch.Tensor)
+
+        lower, upper = fit(convergence="recon_loss"), fit(convergence="Recon_Loss")
+        assert torch.equal(lower[1], upper[1]) and float(lower[0]) == float(upper[0])
+
+    def test_hybrid_mode_refuses_an_optimizer_name_it_will_not_consult(self):
+        """Hybrid mode is Adam then LBFGS; ``optimizer_name`` is read nowhere in it."""
+        with pytest.raises(ValueError, match="optimizer_name is not consulted"):
+            fit(hybrid_optimizer=True, optimizer_name="lbfgs", adam_iterations=2)
+
+
+class TestTheReturnedLossIsALoss:
+    """
+    ``loss`` started at the literal ``100``, a sentinel. Under ``convergence="recon_loss"``,
+    the shipped default, it was never updated, so the function returned ``100``. A fit
+    whose losses never went below 100 raised ``UnboundLocalError`` after every iteration.
+    """
+
+    def test_each_convergence_mode_returns_a_real_loss(self):
+        for convergence in ("recon_loss", "overall_loss", "num_iterations"):
+            loss, latent = fit(convergence=convergence)
+            assert isinstance(loss, torch.Tensor) and float(loss) != 100
+            loss, latent = fit(convergence=convergence, sdf_gt=torch.rand(64, 1) * 1000)
+            assert torch.isfinite(latent).all()
+
+        loss, latent = fit(num_iterations=0)
+        assert loss == float("inf") and latent.shape == (1, 8)
+
+        # Patience runs out long before 100 steps on this problem.
+        patient = RecordingDecoder()
+        fit(patient, num_iterations=100, convergence="overall_loss", convergence_patience=5)
+        assert len(patient.draws) < 100
+
+
+_ADJUST_LEARNING_RATE = latent_fit.adjust_learning_rate
+
+
+def _learning_rates_seen(monkeypatch, **overrides):
+    seen = []
+
+    def spy(**kwargs):
+        _ADJUST_LEARNING_RATE(**kwargs)
+        seen.append(round(kwargs["optimizer"].param_groups[0]["lr"], 12))
+
+    monkeypatch.setattr(latent_fit, "adjust_learning_rate", spy)
+    fit(lr=1e-2, n_lr_updates=2, lr_update_factor=10, **overrides)
+    return seen
+
+
+class TestTheLearningRateScheduleSpansThePhaseItSteps:
+    def test_hybrid_mode_applies_the_updates_asked_for(self, monkeypatch):
+        """
+        The step interval came from ``num_iterations``, which hybrid mode does not run.
+        Measured before the fix: 11 decays over 100 Adam steps, ending at exactly 0.0.
+        """
+        expected = _learning_rates_seen(monkeypatch, num_iterations=100)
+        hybrid = _learning_rates_seen(
+            monkeypatch,
+            num_iterations=10,
+            hybrid_optimizer=True,
+            adam_iterations=100,
+            lbfgs_iterations=0,
+        )
+        assert len(hybrid) == len(expected) == 100
+        assert sorted(set(hybrid), reverse=True) == sorted(set(expected), reverse=True)
+        assert sorted(set(hybrid), reverse=True) == [1e-2, 1e-3]
+
+
+class TestTheDeferredSitesAreClosed:
+    def test_the_lbfgs_triple_is_read_on_the_non_hybrid_path(self, monkeypatch):
+        """``lr`` stood in for ``lbfgs_lr`` here: at a config's usual 0.005, a 200x step."""
+        seen = {}
+        real = torch.optim.LBFGS
+
+        def spy(params, **kwargs):
+            seen.update(kwargs)
+            return real(params, **kwargs)
+
+        monkeypatch.setattr(torch.optim, "LBFGS", spy)
+        fit(
+            num_iterations=1,
+            optimizer_name="lbfgs",
+            lr=0.005,
+            lbfgs_lr=1.0,
+            lbfgs_max_iter=3,
+            lbfgs_history_size=7,
+        )
+        assert (seen["lr"], seen["max_iter"], seen["history_size"]) == (1.0, 3, 7)
+
+
+class TestTheDrawIsPerEvaluation:
+    """
+    The sample draw runs on every loss evaluation, not once per step. Adam evaluates once
+    per step; LBFGS evaluates several times, and each evaluation redraws.
+
+    Hoisting the draw to once per step was proposed and measured, and it lost. L-BFGS
+    assumes a fixed objective, but the redraw is also how the fit covers the cloud. Over 20
+    problems at 12,000 decoder evaluations, LBFGS, median held-out error:
+
+    | sampling ratio | per evaluation | per step | cloud seen |
+    |---|---|---|---|
+    | 1.6% | 0.034 | 0.202 | 96% vs 82% |
+    | 5%   | 0.007 | 0.029 | 95% vs 41% |
+    | 20%  | 0.0049 | 0.0054 | 99% vs 37% |
+    | 50%  | 0.0042 | 0.0045 | 100% vs 50% |
+
+    The gap tracks coverage. Resetting LBFGS's curvature history at each draw made it worse
+    (13/20 diverged against 7/20). A deterministic draw with good coverage would answer the
+    line-search objection; that is a sampling-strategy change.
+
+    The full cloud measured best of all, and ``n_samples_per_chunk`` (#75) makes it
+    affordable:
+
+    | regime | median | diverged | cloud seen |
+    |---|---|---|---|
+    | full cloud | 0.0038 | 0/20 | 100% |
+    | per-evaluation redraw, 5% | 0.0066 | 2/20 | 95% |
+    | per-step redraw, 5% | 0.115 | 12/20 | 47% |
+    | per-step without replacement, 5% | 0.056 | 11/20 | 54% |
+    """
+
+    def test_lbfgs_redraws_within_a_step_and_adam_draws_once(self):
+        lbfgs = RecordingDecoder()
+        fit(lbfgs, n_pts=100, num_iterations=1, optimizer_name="lbfgs", n_samples=50)
+        assert len(lbfgs.draws) > 1 and len(set(lbfgs.draws)) == len(lbfgs.draws)
+
+        adam = RecordingDecoder()
+        fit(adam, n_pts=100, num_iterations=4, optimizer_name="adam", n_samples=50)
+        assert len(adam.draws) == len(set(adam.draws)) == 4
+
+        full = RecordingDecoder()
+        fit(full, n_pts=60, num_iterations=1, optimizer_name="lbfgs", n_samples=60)
+        assert len(set(full.draws)) == 1
+
+    def test_a_subsampled_lbfgs_fit_says_so(self, caplog):
+        """``"LBFGS"`` is here because the first guard read the name before the case fold."""
+        for options in (
+            {"optimizer_name": "lbfgs"},
+            {"optimizer_name": "LBFGS"},
+            {"hybrid_optimizer": True, "adam_iterations": 1},
+        ):
+            caplog.clear()
+            with caplog.at_level(logging.WARNING, logger="NSM"):
+                fit(n_pts=100, num_iterations=1, n_samples=50, **options)
+            assert "n_samples_per_chunk" in caplog.text, options
+
+    def test_a_multi_surface_draw_is_balanced_and_the_guard_says_what_it_draws(self, caplog):
+        """
+        Every surface contributes the same count, held to the smallest (``KNOWN_ISSUES``
+        #24). On 300 and 90 points the draw is 90 each, whatever ``n_samples`` is, so the
+        warning names the draw and the reachable maximum, not the budget or the cloud.
+        """
+        pts_surface = torch.tensor([0] * 300 + [1] * 90)
+        assert latent_fit._samples_per_surface(
+            n_samples=390, pts_surface=pts_surface, n_surfaces=2
+        ) == [90, 90]
+
+        sdf = torch.rand(390, 1)
+        with caplog.at_level(logging.WARNING, logger="NSM"):
             reconstruct_latent(
-                decoders=decoders,
-                num_iterations=5,
+                decoders=LinearDecoder(surfaces=2),
+                num_iterations=1,
+                latent_size=8,
+                xyz=torch.rand(390, 3),
+                sdf_gt=[sdf, sdf.clone()],
+                pts_surface=pts_surface,
+                n_samples=100,
+                optimizer_name="lbfgs",
+                device="cpu",
+            )
+        assert "draws 100 points" in caplog.text
+        assert "180 of 390 points" in caplog.text
+
+
+def test_the_lbfgs_closure_does_not_retain_its_graph():
+    """
+    Each closure call builds its own graph, so none is backwarded twice. Retaining kept a
+    dead graph resident: on a T4 at 60,000 points, 2265 MiB retained against 1240 MiB not,
+    for a bit-identical latent. Checked as a call keyword, since a comment names the flag.
+    """
+    tree = ast.parse(open(latent_fit.__file__, encoding="utf-8").read())
+    assert not [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        for kw in node.keywords
+        if kw.arg == "retain_graph"
+    ]
+    loss, latent = fit(n_pts=80, num_iterations=2, optimizer_name="lbfgs")
+    assert torch.isfinite(latent).all() and np.isfinite(float(loss))
+
+
+class TestChunkedForwardAndBackward:
+    """
+    #75: ``n_samples_per_chunk`` splits one step's forward and backward and accumulates the
+    gradient on the latent. On a T4 at 200,000 points (latent 256, 8x512 decoder), through
+    ``reconstruct_latent``: 4128 MiB at the default, 623 MiB at 30,000 per chunk, with the
+    loss agreeing to 1.2e-07. A backward per chunk is the design because retaining every
+    chunk's graph saved 17% and freeing each saved 85%. Measuring that needs a GPU; the
+    gradient and the default are what is asserted.
+    """
+
+    def test_the_accumulated_gradient_matches_the_unchunked_one(self):
+        """97 points, so some chunk sizes leave a ragged last chunk. It must not be over-counted."""
+
+        def gradient(chunk):
+            torch.manual_seed(5)
+            latent = torch.zeros(1, 8, requires_grad=True)
+            xyz = torch.rand(97, 3)
+            sdf_gt = [torch.rand(97, 1) for _ in range(2)]
+            for start in range(0, 97, chunk):
+                stop = min(start + chunk, 97)
+                latent_fit._recon_loss(
+                    decoders=[LinearDecoder(surfaces=2)],
+                    latent=latent,
+                    xyz_input=xyz[start:stop],
+                    sdf_gt_=[gt[start:stop] for gt in sdf_gt],
+                    loss_fn=torch.nn.L1Loss(reduction="none"),
+                    loss_weight=1.0,
+                    clamp_dist=0.1,
+                    difficulty_weight=None,
+                ).mul((stop - start) / 97).backward()
+            return latent.grad
+
+        unchunked = gradient(97)
+        for chunk in (10, 32, 200):
+            assert float((unchunked - gradient(chunk)).abs().max() / unchunked.abs().max()) < 1e-6
+
+    def test_the_default_is_the_unchunked_path_and_a_chunked_fit_lands_close(self):
+        """
+        ``None`` must reproduce the code before this parameter, bit for bit. Chunking changes
+        the summation order, so a chunked fit is close, not identical.
+        """
+
+        def run(**overrides):
+            torch.manual_seed(3)
+            xyz, sdf_gt = torch.rand(97, 3), [torch.rand(97, 1) for _ in range(2)]
+            return reconstruct_latent(
+                decoders=LinearDecoder(surfaces=2),
+                num_iterations=4,
                 latent_size=8,
                 xyz=xyz,
                 sdf_gt=sdf_gt,
-                pts_surface=pts_surface,
+                pts_surface=[i % 2 for i in range(97)],
+                n_samples=60,
+                clamp_dist=0.1,
                 device="cpu",
-                latent_norm=(0.5, 1.0),
-                norm_penalty_type="barrier",
+                **overrides,
             )
+
+        default, explicit, chunked = (
+            run(),
+            run(n_samples_per_chunk=None),
+            run(n_samples_per_chunk=25),
+        )
+        assert torch.equal(default[1], explicit[1]) and float(default[0]) == float(explicit[0])
+        assert torch.allclose(default[1], chunked[1], atol=1e-6)
+        named = inspect.signature(recon_main.reconstruct_mesh).parameters
+        assert named["n_samples_per_chunk_latent_recon"].default is None
+
+
+def test_both_decoder_forward_interfaces_fit_the_same_latent():
+    """
+    ``reconstruct_latent`` called ``decoder(latent=..., xyz=...)`` unconditionally, so every
+    MLP model raised ``TypeError`` on its first batch. Production ships only triplanar, so
+    nothing noticed until plan §7.5b. The keyword interface must still receive keywords, and
+    the concatenation order ``[latent, xyz]`` must match: a wrong order lands elsewhere.
+    """
+    seen = []
+
+    class Recording(LinearDecoder):
+        def forward(self, x=None, latent=None, xyz=None, epoch=None):
+            seen.append(x is None and latent is not None and xyz is not None)
+            return super().forward(x=x, latent=latent, xyz=xyz)
+
+    keyword = fit(Recording())
+    legacy = fit(LegacyInterfaceDecoder(latent_size=8))
+    assert seen and all(seen)
+    assert float(keyword[0]) == float(legacy[0]) and torch.equal(keyword[1], legacy[1])
+
+
+def test_each_decoder_reads_its_own_slice_of_the_ground_truth():
+    """
+    With decoder-local indexing, the second decoder silently re-read surfaces 0 and 1: all-NaN
+    surfaces 2 and 3 left the loss bit-identical.
+    """
+
+    class TwoSurfaces(torch.nn.Module):
+        def __init__(self, scale):
+            super().__init__()
+            self.scale = scale
+
+        def forward(self, x=None, latent=None, xyz=None, epoch=None):
+            base = xyz[:, :1] * 0.01 + latent.sum() * self.scale
+            return torch.cat([base, 2.0 * base], dim=1)
+
+    def loss(values):
+        torch.manual_seed(0)
+        return float(
+            reconstruct_latent(
+                decoders=[TwoSurfaces(1.0), TwoSurfaces(-1.0)],
+                num_iterations=3,
+                latent_size=8,
+                xyz=torch.rand(50, 3),
+                sdf_gt=[torch.full((50, 1), v) for v in values],
+                pts_surface=[0] * 50,
+                device="cpu",
+            )[0]
+        )
+
+    assert loss((0.1, 0.2, 0.3, 0.4)) != loss((0.1, 0.2, 5.0, -5.0))
+
+
+class TestTheHelpers:
+    def test_the_type_checks(self):
+        """
+        ``sdf_gt`` refuses a string by pointing at ``reconstruct_mesh``, and other types with
+        a bare ``Exception``. A list comes back as a new list holding the caller's tensors.
+        """
+        sdf = torch.zeros(5, 1)
+        assert reconstruct_latent_sdf_gt_type_check(sdf) == [sdf]
+        array = np.zeros((5, 1))
+        assert reconstruct_latent_sdf_gt_type_check(array)[0] is array
+        caller = [sdf, None]
+        checked = reconstruct_latent_sdf_gt_type_check(caller)
+        assert checked == caller and checked is not caller and checked[0] is sdf
+        with pytest.raises(Exception, match="Invalid sdf_gt type") as excinfo:
+            reconstruct_latent_sdf_gt_type_check(42)
+        assert type(excinfo.value) is Exception
+        with pytest.raises(Exception, match="reconstruct_mesh instead"):
+            fit(sdf_gt="a path")
+
+        for value in ([0, 0, 1], np.array([0, 0, 1])):
+            assert reconstruct_latent_pts_surface_type_check(value, "cpu").tolist() == [0, 0, 1]
+        tensor = torch.tensor([0, 1])
+        assert reconstruct_latent_pts_surface_type_check(tensor, "cpu") is tensor
+        with pytest.raises(ValueError, match="pts_surface must be"):
+            reconstruct_latent_pts_surface_type_check(42, "cpu")
+
+        decoder = torch.nn.Linear(2, 1)
+        assert reconstruct_latent_decoders_type_check(decoder) == [decoder]
+        assert reconstruct_latent_decoders_type_check([decoder]) == [decoder]
+        for bad, match in (([decoder, 42], "list of torch.nn.Module"), (42, "torch.nn.Module")):
+            with pytest.raises(ValueError, match=match):
+                reconstruct_latent_decoders_type_check(bad)
+
+    def test_the_lr_update_frequency_and_the_sdf_preprocess(self):
+        """0 or ``None`` updates means never: the frequency overshoots the loop bound."""
+        assert [reconstruct_latent_get_lr_update_freq(n, 100) for n in (0, None, 4, 7, 200)] == [
+            101,
+            101,
+            25,
+            14,
+            1,
+        ]
+
+        clamped = reconstruct_latent_preprocess_sdf_gt(
+            [torch.tensor([-2.0, -0.05, 0.05, 2.0]), None], clamp_dist=0.1, device="cpu"
+        )
+        assert clamped[0].tolist() == pytest.approx([-0.1, -0.05, 0.05, 0.1])
+        assert clamped[1] is None
+        untouched = reconstruct_latent_preprocess_sdf_gt([torch.tensor([-2.0])], None, "cpu")
+        assert untouched[0].tolist() == [-2.0]
+
+    def test_project_latent_clamps_the_norm_in_place(self):
+        def norm_after(start, spec):
+            latent = torch.zeros(1, 4)
+            latent[0, 0] = start
+            assert project_latent(latent, spec) is None
+            return latent.norm().item()
+
+        assert norm_after(5.0, (1.0, 2.0)) == pytest.approx(2.0)
+        assert norm_after(0.5, (1.0, 2.0)) == pytest.approx(1.0)
+        assert norm_after(1.5, (1.0, 2.0)) == pytest.approx(1.5)
+        assert norm_after(5.0, 3.0) == pytest.approx(3.0)
+        for bad in ((1.0, 2.0, 3.0), "1.0"):
+            with pytest.raises(ValueError, match="latent_norm must be"):
+                norm_after(1.5, bad)
+
+    def test_latent_norm_penalty(self):
+        """
+        A single target with ``"barrier"`` computes the quadratic penalty, as its docstring
+        says. Huber's delta is 10% of the range.
+        """
+
+        def penalty(norm, target, **kwargs):
+            latent = torch.zeros(1, 4)
+            latent[0, 0] = norm
+            return float(latent_norm_penalty(latent, target, **kwargs))
+
+        assert penalty(1.5, (1.0, 2.0)) == 0.0
+        assert penalty(0.5, (1.0, 2.0)) == pytest.approx(0.25)
+        assert penalty(3.0, (1.0, 2.0)) == pytest.approx(1.0)
+        assert penalty(3.0, (1.0, 2.0), penalty_weight=0.5) == pytest.approx(0.5)
+        assert penalty(1.5, (1.0, 2.0), penalty_type="huber") == 0.0
+        assert penalty(2.05, (1.0, 2.0), penalty_type="huber") == pytest.approx(0.00125, rel=1e-5)
+        assert penalty(2.5, (1.0, 2.0), penalty_type="huber") == pytest.approx(0.045, rel=1e-5)
+        assert penalty(3.0, 2.0) == pytest.approx(1.0)
+        assert penalty(3.0, 2.0, penalty_type="barrier") == penalty(3.0, 2.0)
+        for target in (2.0, (1.0, 2.0)):
+            with pytest.raises(ValueError, match="Unknown penalty_type"):
+                penalty(1.5, target, penalty_type="cubic")
+
+
+class TestBarrierNormPenalty:
+    """
+    #48: ``"barrier"`` returned NaN outside ``[min, max]``, which is where a latent starts
+    (std 0.01 puts a 256-dim latent at norm ~0.16), while its gradient pushed the norm away
+    from the range. It now raises by name there, and the fit fails at step 0.
+    """
+
+    def test_outside_the_range_raises_and_inside_is_finite(self):
+        for latent in (torch.ones(1, 256) * 0.01, torch.ones(1, 16)):
+            with pytest.raises(ValueError, match="barrier"):
+                latent_norm_penalty(latent, (0.5, 1.0), penalty_type="barrier")
+        inside = torch.ones(1, 16) * (0.75 / 4.0)
+        assert torch.isfinite(latent_norm_penalty(inside, (0.5, 1.0), penalty_type="barrier"))
+        with pytest.raises(ValueError, match="barrier"):
+            fit(latent_norm=(0.5, 1.0), norm_penalty_type="barrier")

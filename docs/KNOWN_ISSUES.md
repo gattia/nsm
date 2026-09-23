@@ -248,8 +248,8 @@ reproduced as measured.
 *Fix:* not filed. The measurements, the validated configuration and what it would take to
 resurrect are in `.claude/plans/HYBRID_OPTIMIZER_REPORT.md`.
 
-*Pinned by:* `test_reconstruct_latent_internals.TestTheDrawIsPerEvaluation` and
-`test_parameter_surface.TestTheDeferredSitesAreClosed::test_the_lbfgs_triple_is_read_on_the_non_hybrid_path`.
+*Pinned by:* `test_reconstruct_latent.TestTheDrawIsPerEvaluation` and
+`test_reconstruct_latent.TestTheDeferredSitesAreClosed::test_the_lbfgs_triple_is_read_on_the_non_hybrid_path`.
 
 ## `reconstruct/cartilage_func.py`
 
@@ -921,8 +921,8 @@ Every such pre-fix run drew 200,000 points per surface regardless of its
 
 Pass `n_pts_random=200000` explicitly.
 
-*Pinned by:* `test_reconstruct_mesh_options.TestNPtsRandomReachesTheReaders` (both
-branches), and the end-to-end `TestSingleObjectSampledBranch`.
+*Pinned by:* `test_reconstruct_mesh.TestNPtsRandomReachesTheReaders` (both
+branches). Every end-to-end run in that file takes the single-object sampled branch.
 
 ## 10. A decoder with no mean surface returned fake success instead of raising
 
@@ -956,7 +956,7 @@ No compatibility switch. The old result carried no information a caller could us
 catch `NoZeroLevelSetError` instead.
 
 *Pinned by:* `test_reconstruction_regression.TestDecoderWithNoZeroLevelSet` (the raise)
-and `test_reconstruct_mesh_options.TestGetMeanErrorsSurvivesADegenerateModel` (the NaN
+and `test_reconstruct_mesh.TestGetMeanErrorsSurvivesADegenerateModel` (the NaN
 seam).
 
 ## 11. `resume_epoch=1` trained a fresh model while claiming to resume
@@ -1394,8 +1394,8 @@ set. The two that change a result rather than a diagnostic are the grid
 not configured as recorded and should be re-run. For `reconstruct_latent` the fit
 parameters are the whole list — there is no grid.
 
-*Pinned by:* `test_reconstruct_mesh_contracts.TestUnknownKeywordsAreRefused` and
-`test_reconstruct_latent_internals.TestUnknownKeywordsAreRefused`.
+*Pinned by:* `test_reconstruct_mesh.TestUnknownKeywordsAreRefused` and
+`test_reconstruct_latent.TestUnknownKeywordsAreRefused`.
 
 
 ## 21. `reconstruct_latent` returned the number 100 instead of a loss
@@ -1429,7 +1429,7 @@ Only a number you logged is affected, never a latent or a mesh. If you have a
 cohort — that is this, and the fit itself was fine. Re-running is not necessary; the
 recorded loss is simply not a loss.
 
-*Pinned by:* `test_reconstruct_latent_internals.TestTheReturnedLossIsALoss`.
+*Pinned by:* `test_reconstruct_latent.TestTheReturnedLossIsALoss`.
 
 
 ## 22. `hybrid_optimizer` decayed its learning rate to zero, and ignored `optimizer_name`
@@ -1464,7 +1464,7 @@ nothing and the latent is whatever the last non-zero-LR step produced. Re-run af
 fits — the fitted latent is not the one the configuration describes.
 
 *Pinned by:*
-`test_reconstruct_latent_internals.TestTheLearningRateScheduleSpansThePhaseItSteps`.
+`test_reconstruct_latent.TestTheLearningRateScheduleSpansThePhaseItSteps`.
 
 
 ## 23. An unrecognised `convergence` silently meant "num_iterations"
@@ -1501,7 +1501,7 @@ meant to be doing something — compare the recorded step count against `num_ite
 affected run used all of them.
 
 *Pinned by:*
-`test_reconstruct_latent_internals.TestUnknownValuesAreRefusedWhereTheyAreNamed`.
+`test_reconstruct_latent.TestUnknownValuesAreRefusedWhereTheyAreNamed`.
 
 
 ## 24. A multi-surface draw was weighted towards whichever surface had the most vertices
@@ -1548,7 +1548,7 @@ by the ratio between them. Re-run if the imbalance was large — with four surfa
 every vertex of each (228,958 points, ratio 2.3:1 largest to smallest) where the new one
 takes 35,808 from each.
 
-*Pinned by:* `test_reconstruct_latent_internals.TestTheDrawIsPerEvaluation`.
+*Pinned by:* `test_reconstruct_latent.TestTheDrawIsPerEvaluation::test_a_multi_surface_draw_is_balanced_and_the_guard_says_what_it_draws`.
 
 ---
 
@@ -1778,7 +1778,7 @@ Two conditions, both required: you called `reconstruct_mesh` (not `get_mean_erro
 moved. If both are true, your off-surface points were drawn at a tenth of the width they
 will be drawn at now; pass `sigma_rand_pts=0.001` to reproduce the old draw.
 
-*Pinned by:* `test_reconstruct_mesh_contracts.TestTheKnobsThatDifferByLayer`, which reads
+*Pinned by:* `test_reconstruct_mesh.TestTheKnobsThatDifferByLayer`, which reads
 the defaults off the signatures rather than restating them.
 
 ## 30. A `two_stage` config's `layer_split`, `progressive_add_depth`, `conv_pred_sdf` and `sum_conv_output_features` reached neither half of the model

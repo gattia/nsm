@@ -214,7 +214,7 @@ def get_mean_errors(
     # Call-time import, not module-level: main.py imports this module at top for
     # compute_recon_loss, so importing .main at module scope here would be a cycle.
     # Call-time lookup also preserves the monkeypatch seam —
-    # test_predictive_validation patches NSM.reconstruct.main.reconstruct_mesh.
+    # test_reconstruct_mesh patches NSM.reconstruct.main.reconstruct_mesh.
     from .main import NoZeroLevelSetError, reconstruct_mesh
 
     if log_wandb and wandb is None:

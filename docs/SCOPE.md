@@ -342,7 +342,7 @@ it in the per-surface loss, and slices around it when chunking. This is the half
 > passed by `get_mean_errors`, the only production caller. The supported half was
 > unreachable from the production entry point until plan §8.0.N′ fixed it. It is now
 > pinned end to end by
-> `test_reconstruct_mesh_contracts.TestASubjectMissingASurface`, which is the test this
+> `test_reconstruct_mesh.TestASubjectMissingASurface`, which is the test this
 > ruling should have had.
 
 **Not supported: building a dataset from subjects that are missing a surface.**
