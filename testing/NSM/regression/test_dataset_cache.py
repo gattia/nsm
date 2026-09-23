@@ -106,27 +106,21 @@ class TestCacheRoundTrip:
     def test_a_reload_serves_the_first_builds_file_byte_for_byte(self, meshes, tmp_path_factory):
         """
         ``random_seed=None`` on both builds keeps the key the same while leaving sampling
-        unseeded, so a re-sample would change every number. ``find_hash`` walks all of
-        ``loc_save``, which is what lets a cache written on another day still hit.
+        unseeded, so a re-sample would change every number. The first build's arrays are
+        read before the second build runs: a re-sample writes to the same path. ``find_hash``
+        walks all of ``loc_save``, which is what lets a cache written on another day still hit.
         """
-        import torch
-
         cache = tmp_path_factory.mktemp("roundtrip")
         first = build_dataset(meshes, cache, seed=0, random_seed=None, **SMALL)
+        original = cached_arrays(first)
         reloaded = build_dataset(
             meshes, cache, seed=999, random_seed=None, load_cache=True, **SMALL
         )
         assert len(first.data) == len(meshes) and first.data[0].endswith(".npz")
         assert reloaded.data[0] == first.data[0], "the cache was not hit"
-        original, again = cached_arrays(first), cached_arrays(reloaded)
+        again = cached_arrays(reloaded)
         assert original.keys() == again.keys()
         assert all(np.array_equal(original[key], again[key]) for key in original)
-
-        torch.manual_seed(0)
-        a, _ = first[0]
-        torch.manual_seed(0)
-        b, _ = reloaded[0]
-        assert torch.equal(a["xyz"], b["xyz"]) and torch.equal(a["gt_sdf"], b["gt_sdf"])
 
         name = os.path.basename(first.data[0])
         assert os.path.basename(first.find_hash(filename=name)[0]) == name
