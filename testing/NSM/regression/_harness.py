@@ -1,20 +1,7 @@
 """
-Shared machinery for the numerical regression harness: baselines, the synthetic config,
-and the three entry points (build a dataset, train, reconstruct).
-
-Fixtures live in ``conftest.py``; everything importable lives here so test modules never
-have to import ``conftest`` itself.
-
-Determinism
------------
-``SDFSamples(random_seed=...)`` seeds every draw, on both sampling paths, so the fixtures
-run on the near-surface path production uses. ``build_dataset`` passes its ``seed`` there.
-
-It also still calls ``np.random.seed``, because ``random_seed=None`` deliberately leaves
-sampling on the legacy global stream -- that is what keeps an unseeded call drawing the
-numbers it always did, and ``test_dataset_cache.TestSeeding`` pins it.
-
-``torch`` is seeded globally at each entry point for the model and optimizer.
+The regression harness's machinery: baselines, tolerances, the synthetic subjects and
+config, and the three entry points (build a dataset, train, reconstruct). Fixtures are in
+``conftest.py``. ``README.md`` explains the design.
 """
 
 import contextlib
@@ -39,14 +26,8 @@ REGENERATE_ENV = "NSM_REGENERATE_BASELINES"
 
 REGENERATE_CMD = f"{REGENERATE_ENV}=1 pytest testing/NSM/regression/"
 
-#: Set this to retrain and rewrite the committed reconstruction decoder,
-#: :data:`RECON_DECODER_ASSET`.
-#:
-#: A SECOND switch rather than a mode of :data:`REGENERATE_ENV`, because the two do
-#: opposite things. Regenerating a baseline records what the code now produces.
-#: Regenerating the decoder changes what the code is asked to produce -- every
-#: reconstruction baseline is fitted to these weights, so they all have to be regenerated
-#: after it, in a separate run. One variable driving both would hide that second step.
+#: Set this to retrain and rewrite :data:`RECON_DECODER_ASSET`. A separate switch, because
+#: every reconstruction baseline is fitted to those weights and must be regenerated after.
 REGENERATE_DECODER_ENV = "NSM_REGENERATE_RECON_DECODER"
 
 REGENERATE_DECODER_CMD = f"{REGENERATE_DECODER_ENV}=1 pytest testing/NSM/regression/"
@@ -78,21 +59,8 @@ def provenance():
 
 def platform_matches(generated_on):
     """
-    Whether the numeric baselines apply on the machine running them.
-
-    Only ``platform`` gates, and the asymmetry is deliberate:
-
-    * **A different OS/architecture skips.** These baselines are pinned to Linux-x86_64,
-      which is where the work happens. The CI matrix also runs ``macos-latest``; there is
-      no macOS baseline, and inventing one by loosening tolerances until both platforms fit
-      would leave a harness that detects nothing. Skipping says so out loud.
-    * **A different torch or numpy goes RED.** A dependency bump that moves training output
-      is exactly what this harness exists to report, so it is never skipped -- the failure
-      message names the version difference (see ``BaselineStore._provenance_note``).
-
-    Structural assertions -- learning rates, result keys, mesh ordering, cache keys,
-    checkpoint round-trip -- are exact arithmetic or identity, so they run everywhere and
-    are unaffected by this.
+    Whether the numeric baselines apply here. A different OS or architecture skips them; a
+    different torch or numpy does not, because that is what the harness exists to report.
     """
     return not generated_on or generated_on.get("platform") == provenance()["platform"]
 
@@ -112,12 +80,7 @@ def _jsonable(value):
 
 
 class BaselineStore:
-    """
-    One JSON file of recorded numbers, compared with per-key tolerances.
-
-    A missing key is a failure, never a silent pass: a harness that quietly accepts
-    whatever it is given is not a regression harness.
-    """
+    """One JSON file of recorded numbers, compared with per-key tolerances. A missing key fails."""
 
     def __init__(self, path):
         self.path = path
@@ -143,11 +106,8 @@ class BaselineStore:
 
     def check(self, key, value, rtol=0.0, atol=0.0, portable=False):
         """
-        Assert ``value`` matches the stored baseline for ``key``; return the baseline.
-
-        ``portable=True`` marks a value produced by exact arithmetic -- integer or Python
-        float, no accumulation -- which is identical on any machine and is therefore
-        checked even where the numeric baselines do not apply. See :func:`platform_matches`.
+        Assert ``value`` matches the baseline for ``key``. ``portable=True`` marks exact
+        arithmetic, identical on any machine, so it is checked on every platform.
         """
         value = _jsonable(value)
         if self.regenerate:
@@ -251,15 +211,8 @@ def assert_matches(key, expected, actual, rtol=0.0, atol=0.0, context=""):
 # Tolerances
 # ---------------------------------------------------------------------------
 #
-# Every numeric tolerance the harness compares against, in one block, because they are
-# cross-referenced and copies drift: ``test_gpu`` compares GPU divergence against the
-# reconstruction tolerances and used to carry its own 1e-4 copies of both, which had never
-# matched the real 5e-4 and 3e-4.
-#
-# Each is sized from a deliberate break rather than by taste, and that margin is now
-# asserted on every run rather than transcribed into a table -- see :data:`MIN_HEADROOM`.
-# The two latent tolerances are separate constants because they are separate quantities: a
-# training latent NORM and a component of a fitted latent VECTOR.
+# Every tolerance, in one block, because copies drift. Each is sized from a deliberate break,
+# and the margin is asserted on every run (:data:`MIN_HEADROOM`).
 
 #: Training: the loss trajectory and its components.
 LOSS_RTOL = 1e-3
@@ -282,10 +235,8 @@ METRIC_RTOL = 2e-3
 #: Reconstruction: mesh point counts, which marching cubes can move by a vertex or two.
 COUNT_RTOL = 0.03
 
-#: The floor on :func:`headroom`: how many times its tolerance a deliberate break must move
-#: a baseline for that tolerance to count as sized rather than coincidental. Asserted by
-#: both ``TestDeliberateBreak`` classes, so a fixture change that weakens a break goes red
-#: on the run that weakens it.
+#: How many times its tolerance a deliberate break must move a baseline. Asserted by both
+#: ``TestDeliberateBreak`` classes.
 MIN_HEADROOM = 10
 
 
@@ -306,18 +257,9 @@ def _leaf_pairs(expected, actual, key):
 
 def headroom(store, key, observed, rtol=0.0, atol=0.0):
     """
-    How many times the tolerance ``observed`` actually deviates from the baseline.
-
-    Same arguments as :meth:`BaselineStore.check`, and meant to be read beside it: ``check``
-    asserts the deviation is under 1x the tolerance, ``headroom`` says what it is. The
-    baseline is taken from the store rather than from ``check``'s return value because the
-    callers are the deliberate-break tests, where ``check`` raises instead of returning.
-
-    * ``atol``: ``max|observed - baseline| / atol``
-    * ``rtol``: ``max(|observed - baseline| / |baseline|) / rtol``
-
-    Exactly one of the two, because a margin against ``np.allclose``'s combined
-    ``atol + rtol * |baseline|`` has no single meaning.
+    How many times its tolerance ``observed`` deviates from the baseline:
+    ``max|observed - baseline| / atol``, or the relative deviation over ``rtol``. Exactly one
+    of the two, since ``np.allclose``'s combined bound has no single meaning.
     """
     if (atol > 0) == (rtol > 0):
         raise ValueError("headroom takes exactly one of rtol= or atol=")
@@ -336,16 +278,9 @@ def headroom(store, key, observed, rtol=0.0, atol=0.0):
 # Synthetic anatomy
 # ---------------------------------------------------------------------------
 
-#: Three "subjects", each a bone plus a cartilage surface. The two surfaces are disjoint
-#: solids -- a sphere, and a small oblate ellipsoid sitting above it -- rather than nested
-#: shells, because ``MultiSurfaceSDFSamples.remove_overlapping_points`` drops every point
-#: interior to two objects: a nested inner surface loses all its negative samples, which
-#: ``sdf_pos_neg_idx`` refuses with a ValueError naming the surface (#41; asserted by
-#: ``test_dataset_cache.TestEmptySignedSamples``).
-#:
-#: The offset also makes the surfaces individually identifiable by centroid, which is what
-#: lets ``test_reconstruction_regression`` assert the result ``mesh`` list ORDER rather
-#: than merely its length.
+#: Three subjects, each a bone sphere and a small cartilage ellipsoid above it. Disjoint,
+#: because a nested surface loses its interior to ``remove_overlapping_points``. The offset
+#: makes the surfaces identifiable by centroid, which is how the ``mesh`` ORDER is asserted.
 SUBJECTS = (
     {"bone_radius": 1.00, "cart_radius": 0.70, "cart_z": 1.45},
     {"bone_radius": 0.90, "cart_radius": 0.65, "cart_z": 1.35},
@@ -388,10 +323,7 @@ N_PTS_PER_SURFACE = 2000
 SUBSAMPLE = 256
 N_EPOCHS = 8
 
-#: The architecture keys ``load_model``'s triplanar branch reads. Tiny, but the same shape
-#: as the shipped models: ``conv_norm_type="layer"`` is what both 647 and 551 use, and it
-#: is NOT the constructor default (ARCHITECTURE.md section 7.1 -- the two behave
-#: differently, and only the "layer" variant is nonlinear).
+#: Tiny, but the shape of the shipped models: ``conv_norm_type="layer"``, as 647 and 551 use.
 ARCHITECTURE = {
     "latent_size": LATENT_SIZE,
     "objects_per_decoder": 2,
@@ -401,10 +333,7 @@ ARCHITECTURE = {
     "conv_norm": True,
     "conv_norm_type": "layer",
     "conv_start_with_mlp": True,
-    #: None is the historical architecture: no pointwise activation in the conv stack,
-    #: which is what every shipped model is. Stated rather than defaulted because
-    #: ``loader`` requires it -- and stating the historical value keeps every baseline in
-    #: this directory measuring the same network it always did.
+    #: The historical architecture, which every shipped model and baseline uses.
     "conv_activation": None,
     "sdf_latent_size": 16,
     "sdf_hidden_dims": [32, 32],
@@ -417,8 +346,8 @@ ARCHITECTURE = {
     "padding": 0.1,
 }
 
-#: The two entries differ in Interval AND Factor, not just Initial, so transposing their
-#: targets inverts the run rather than perturbing it. Both decay inside the 8 epochs.
+#: The entries differ in Interval and Factor, so swapping targets inverts the run. Both
+#: decay within the 8 epochs.
 LR_SCHEDULE = [
     {"Target": "model", "Type": "Step", "Initial": 0.005, "Interval": 3, "Factor": 0.5},
     {"Target": "latent", "Type": "Step", "Initial": 0.001, "Interval": 2, "Factor": 0.9},
@@ -444,11 +373,8 @@ def training_config(experiment_directory):
             "batch_split": 1,
             "samples_per_object_per_batch": SUBSAMPLE,
             "enforce_minmax": True,
-            # 1.0 is what both shipped ShapeMedKnee configs (647, 551) use; the shipped
-            # default_config.json's 0.1 is the DeepSDF value. The choice is not neutral:
-            # `enforce_minmax` clamps the PREDICTION as well as the target, so every
-            # sample predicted outside +/-clamp_dist contributes exactly zero gradient.
-            # See test_training_regression.TestClampedPredictionGradients.
+            # The shipped ShapeMedKnee value. Not neutral: see
+            # test_training_regression.TestClampedPredictionGradients.
             "clamp_dist": 1.0,
             "surface_accuracy_e": None,
             "surface_accuracy_schedule": "linear",
@@ -485,30 +411,17 @@ def quiet():
         yield
 
 
-#: Near- and far-surface perturbation widths, in the harness's normalized coordinates.
-#:
-#: Scaled from the shipped ShapeMedKnee configs rather than picked: ``647_nsm_femur_v0.0.1``
-#: and ``551_nsm_femur_bone_v0.0.1`` use ``sigma_near`` ~= 0.743 and ``sigma_far`` = 2.35 in
-#: millimetres, with ``scale_jointly: True``, against a femur roughly 80 mm across. The
-#: harness normalizes each subject to ``max_rad`` 1 (``scale_jointly=False``), so the same
-#: widths relative to the object are ~0.009 and ~0.029.
+#: The shipped widths (0.743 mm and 2.35 mm on an ~80 mm femur), in max-radius-1 units.
 SIGMA_NEAR = 0.01
 SIGMA_FAR = 0.03
 
 
 def build_dataset(mesh_paths, cache_dir, seed=0, **overrides):
     """
-    A ``MultiSurfaceSDFSamples`` on the near-surface sampling path production uses.
-
-    ``seed`` reaches sampling two ways, and both are deliberate: as ``random_seed``, which
-    seeds every draw, and as ``np.random.seed``, which still governs the legacy global
-    stream an unseeded (``random_seed=None``) call draws from.
-
-    ``loc_save`` is always an explicit temporary directory, so no test here depends on
-    the developer's environment or writes into their real cache. (``loc_save=None``
-    resolves ``LOC_SDF_CACHE`` when the dataset is constructed -- #24 fixed the old
-    import-time read -- and ``TestCacheLocationDefault`` covers that path deliberately,
-    under a monkeypatched variable.)
+    A ``MultiSurfaceSDFSamples`` on the near-surface path production uses. ``seed`` is
+    passed as ``random_seed`` and also to ``np.random.seed``, which an unseeded
+    (``random_seed=None``) call still draws from. ``loc_save`` is always explicit, so no
+    test writes into the developer's real cache.
     """
     from NSM.datasets.sdf_dataset import MultiSurfaceSDFSamples
 
@@ -544,21 +457,8 @@ def build_dataset(mesh_paths, cache_dir, seed=0, **overrides):
 
 def build_single_surface_dataset(mesh_paths, cache_dir, seed=0, **overrides):
     """
-    An ``SDFSamples`` -- the single-surface PARENT class -- on the same near-surface path.
-
-    Same conventions as :func:`build_dataset`, for the same reasons: explicit ``loc_save``,
-    ``multiprocessing=False``, and ``seed`` used both as ``random_seed`` and through
-    ``np.random.seed``.
-
-    What differs is the shape of the arguments, not their meaning. ``SDFSamples`` takes
-    SCALARS where the subclass takes one entry per surface -- ``n_pts`` is an int, the two
-    sigmas and the two probabilities are floats -- and ``mesh_paths`` is a list of single
-    paths rather than a list of lists. The multi-surface arguments (``mesh_to_scale``,
-    ``scale_all_meshes``) do not exist on the parent at all.
-
-    ``SDFSamples.get_sample_data_dict``, ``get_pt_sample_combos`` and ``__getitem__`` are
-    each separate code from the subclass's overrides, so nothing the subclass's tests
-    establish carries over to them.
+    An ``SDFSamples``, the single-surface parent class, under :func:`build_dataset`'s
+    conventions. It takes scalars where the subclass takes one entry per surface.
     """
     from NSM.datasets.sdf_dataset import SDFSamples
 
@@ -591,14 +491,8 @@ def build_single_surface_dataset(mesh_paths, cache_dir, seed=0, **overrides):
 
 def build_model(config, seed=42):
     """
-    Construct the decoder ``config`` describes, exactly as ``load_model`` would.
-
-    NSM offers no public "build the model this config describes" call: ``load_model``
-    needs a checkpoint, which a fresh model does not have, and the downstream consumer
-    works around that by hand-rolling the mapping and dropping ``padding`` (SCOPE.md
-    section 3.1). Going through ``loader._get_triplanar_params`` keeps the model this
-    harness trains identical to the model ``load_model`` builds. When the decoder registry
-    of plan section 8.1 lands, this import is what should fail loudly.
+    The decoder ``config`` describes, built as ``load_model`` builds it. NSM has no public
+    call for this, so it uses ``loader._get_triplanar_params``.
     """
     from NSM.models.loader import _get_triplanar_params
 
@@ -609,12 +503,8 @@ def build_model(config, seed=42):
 
 def run_training(config, model, dataset, seed=42):
     """
-    Run ``train_deep_sdf`` and return ``(records, history)``.
-
-    One record per epoch: loss, its components, every param group's learning rate, and
-    the latent norms — all read from the history ``train_deep_sdf`` returns (#28),
-    mapped into the record shape the baselines pin. ``history`` is the trainer's return
-    value, untouched.
+    Run ``train_deep_sdf``. Returns ``(records, history)``: one record per epoch in the
+    shape the baselines pin, and the history the trainer returned (#28).
     """
     from NSM.train.train_deep_sdf import train_deep_sdf
 
@@ -641,35 +531,20 @@ def run_training(config, model, dataset, seed=42):
 # The reconstruction decoder, as a committed asset
 # ---------------------------------------------------------------------------
 #
-# Every reconstruction test runs on ONE decoder, and until Aug 2026 the harness retrained
-# it in-session on every run. That made ``baselines/reconstruction.json`` a pin on a
-# 60-epoch gradient-descent trajectory rather than on ``reconstruct_mesh``, and gradient
-# descent amplifies a last-bit arithmetic difference exponentially. Measured between torch
-# 2.8.0+cu128 and 2.7.1+cu126 on identical inputs: weights diverge 6.3e-07 by epoch 10,
-# 1.7e-05 by 20, 1.4e-02 by 30, saturating near 3.9e-02 -- past epoch 30 the two stacks
-# hold different models. The geometry baselines moved 763x GEOMETRY_ATOL across that bump;
-# ``reconstruct_mesh`` run on FIXED weights moved 0.005x. Absorbing the difference would
-# have meant a tolerance 12x wider than the deliberate break it exists to detect.
-#
-# Training output is pinned directly, and better, by ``baselines/training.json``. So the
-# decoder is generated once and committed, and what the reconstruction baselines pin is
-# reconstruction. README.md has the full decomposition and the regeneration procedure.
+# Every reconstruction test runs on one committed decoder. Retraining it each run pinned a
+# 60-epoch gradient-descent trajectory instead of ``reconstruct_mesh``, and a torch bump
+# moved the geometry baselines 763x their tolerance. README.md has the measurements.
 
 RECON_DECODER_ASSET = os.path.join(os.path.dirname(__file__), "assets", "reconstruction_decoder.pt")
 
-#: Epochs the committed decoder was trained for. A decoder that has not learnt a sign
-#: change has no zero level set, and every reconstruction returns ``mesh=[None, None]``.
-#: See ``test_reconstruction_regression.TestDecoderWithNoZeroLevelSet``.
+#: Epochs the committed decoder was trained for. Fewer, and it may have no zero level set.
 RECON_TRAINING_EPOCHS = 60
 
 
 def train_reconstruction_decoder(dataset, experiment_directory):
     """
-    Train the decoder :data:`RECON_DECODER_ASSET` holds. The only producer of those weights.
-
-    Also run on every suite invocation by
-    ``test_reconstruction_regression.TestAFreshlyTrainedDecoder``, so the regeneration path
-    cannot rot between the rare occasions anyone needs it.
+    Train the decoder :data:`RECON_DECODER_ASSET` holds. ``TestAFreshlyTrainedDecoder`` runs
+    it every time, so the regeneration path cannot rot.
     """
     config = training_config(experiment_directory)
     config.update(
@@ -698,18 +573,9 @@ def train_reconstruction_decoder(dataset, experiment_directory):
 
 def save_reconstruction_decoder(model, path=RECON_DECODER_ASSET):
     """
-    Write the asset, provenance included.
-
-    ``generated_on`` goes INSIDE the checkpoint rather than in a sidecar file, for the same
-    reason ``baselines/*.json`` carry theirs inside: it cannot then be separated from, or
-    left stale against, the weights it describes. Its values are coerced to ``str`` because
-    ``torch.__version__`` is a ``TorchVersion``, which ``weights_only=True`` refuses to
-    unpickle -- so an uncoerced dict would write an asset :func:`load_reconstruction_decoder`
-    cannot read.
-
-    Refuses to overwrite an asset from another platform, mirroring ``BaselineStore.flush``
-    and for a stronger reason: the committed reconstruction baselines are fitted to these
-    exact weights, so replacing them from a different machine moves every one of them.
+    Write the asset with its provenance inside, so the two cannot separate. Values are
+    strings because ``weights_only=True`` refuses to unpickle a ``TorchVersion``. Refuses to
+    overwrite an asset from another platform.
     """
     if os.path.exists(path):
         existing = torch.load(path, weights_only=True).get("generated_on", {})
@@ -733,15 +599,8 @@ def save_reconstruction_decoder(model, path=RECON_DECODER_ASSET):
 
 def load_reconstruction_decoder(path=RECON_DECODER_ASSET):
     """
-    The committed decoder, in eval mode.
-
-    A missing or unloadable asset is an ERROR that says how to rebuild it, never a skip: a
-    reconstruction suite that quietly stops running is indistinguishable from one that
-    passes.
-
-    The model is built through :func:`build_model`, so the architecture stays stated in one
-    place, and loaded with ``strict=True`` on purpose -- an architecture change must fail
-    here, loudly, rather than half-load a checkpoint into a model it no longer fits.
+    The committed decoder, in eval mode, loaded strictly. A missing or unloadable asset is
+    an error naming the regeneration command, never a skip.
     """
     if not os.path.exists(path):
         raise AssertionError(
@@ -764,9 +623,7 @@ def load_reconstruction_decoder(path=RECON_DECODER_ASSET):
     return model
 
 
-#: Reconstruction settings. Small enough for CPU, large enough to resolve both surfaces.
-#: ``create_mesh_adaptive``'s coarse pass is fixed at 64^3 and is not reachable through
-#: ``reconstruct_mesh``'s signature, so ``n_pts_per_axis`` is not the whole cost.
+#: Small enough for CPU, large enough to resolve both surfaces.
 RECON_KWARGS = dict(
     latent_size=LATENT_SIZE,
     num_iterations=25,
@@ -799,26 +656,12 @@ RECON_KWARGS = dict(
 
 def run_reconstruction(mesh_paths, model, seed=42, sample_seed=None, **overrides):
     """
-    Call ``reconstruct_mesh`` the way ``kneepipeline/steps/run_nsm.py:170`` does: a *list*
-    of mesh paths, every argument by name.
+    Call ``reconstruct_mesh`` as kneepipeline does: a list of paths, every argument by name.
 
-    Two different seeds meet here and they are not interchangeable:
-
-    * ``seed`` is this harness's own. It seeds ``torch`` and ``numpy`` globally before the
-      call, which covers the latent initialization and the latent optimizer.
-    * ``sample_seed`` is ``reconstruct_mesh``'s ``seed`` argument, which seeds the POINT
-      DRAW. It does nothing at all unless ``get_rand_pts=True``, and ``RECON_KWARGS``
-      leaves that False.
-
-    They need separate names because a parameter this function declares can never reach
-    ``overrides``: ``run_reconstruction(..., seed=7)`` reseeds torch and numpy and leaves
-    ``reconstruct_mesh`` on its default ``seed=None``. That shadowing is silent -- the
-    reconstruction still runs and still looks seeded -- so it is stated here rather than
-    left to be rediscovered.
-
-    ``sample_seed=None`` is the default and is what ``reconstruct_mesh`` would have used
-    anyway, so passing it explicitly leaves every existing caller, and every committed
-    baseline, bit-for-bit unchanged.
+    ``seed`` seeds torch and numpy globally, for the latent's initialization and optimizer.
+    ``sample_seed`` is ``reconstruct_mesh``'s own ``seed``, for the point draw, which only
+    happens with ``get_rand_pts=True``. It has its own name because ``seed=`` here can never
+    reach ``reconstruct_mesh``, and that shadowing would be silent.
     """
     from NSM.reconstruct import reconstruct_mesh
 
@@ -830,11 +673,8 @@ def run_reconstruction(mesh_paths, model, seed=42, sample_seed=None, **overrides
         return reconstruct_mesh(path=list(mesh_paths), decoders=model, seed=sample_seed, **kwargs)
 
 
-#: Deciles of each coordinate axis. Compared instead of the raw vertex array because
-#: marching cubes can add or drop a vertex near the level set from a last-bit difference
-#: in the SDF, and a raw array pinned to an exact length is not a portable baseline. These
-#: are still vertex positions -- an order-independent summary of all of them -- and they
-#: move far more than float noise when the surface genuinely changes.
+#: Deciles of each axis stand in for the vertex array: marching cubes can add or drop a
+#: vertex on a last-bit difference, so an exact-length array is not a portable baseline.
 DECILES = [i / 10 for i in range(11)]
 
 

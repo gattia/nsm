@@ -67,7 +67,7 @@ fix rather than limitations to document:
   default whatever the config asks for — the same key both sibling translators honour.
   Fold any fix into the registration-pathway work; no half is worth patching in
   isolation. Pinned by
-  `test_parameter_surface.TestTheEvidenceForSlicesThatOwnTheFix`.
+  `test_model_options.TestTheEvidenceForSlicesThatOwnTheFix`.
 - **The shipped `default_config.json` describes only the triplanar production model.**
   PR #64 (issue #48) replaced the old 61-key DeepSDF-shaped default — which could not
   drive `train_deep_sdf` at all — with a sanitized snapshot of the ShapeMedKnee
@@ -90,7 +90,7 @@ fix rather than limitations to document:
   latents also already carry their own L2 regularization with warmup and their own LR
   schedule, so they are not unregularized; and the knob is `null` in the shipped default
   and in both production model configs, so nothing has ever set it. Pinned by
-  `test_parameter_surface.TestGradClipReachesTheModelOnly`. Clipping the latents too would
+  `test_train_epoch.TestGradClipReachesTheModelOnly`. Clipping the latents too would
   change the numerics of every run that sets `grad_clip`, which makes it a training
   experiment rather than a defect.
 
@@ -342,7 +342,7 @@ it in the per-surface loss, and slices around it when chunking. This is the half
 > passed by `get_mean_errors`, the only production caller. The supported half was
 > unreachable from the production entry point until plan §8.0.N′ fixed it. It is now
 > pinned end to end by
-> `test_reconstruct_mesh_contracts.TestASubjectMissingASurface`, which is the test this
+> `test_reconstruct_mesh.TestASubjectMissingASurface`, which is the test this
 > ruling should have had.
 
 **Not supported: building a dataset from subjects that are missing a surface.**
@@ -497,8 +497,7 @@ only-TriplanarDecoder reconstruction limit is already §1's first bullet.
 
 **Resurrection:** `git show v0.3.0:NSM/models/two_stage.py` is the complete module as last
 shipped; its loader branch (`_get_two_stage_params`), config template and tests live in the
-same tag under `NSM/models/loader.py`, `testing/NSM/models/` and
-`testing/NSM/test_parameter_surface.py`. Reviving it means re-adding those plus the Phase-4
+same tag under `NSM/models/loader.py` and `testing/NSM/`. Reviving it means re-adding those plus the Phase-4
 registration pathway (§1) that removal pre-empted.
 
 ---
@@ -622,8 +621,8 @@ re-exports themselves.
 is defined in them, submodules included. The rule is mechanical, so nothing is on a list by
 opinion; the stability tiering of §3.2 is a separate ruling and has not been applied to
 them. Pinned by `testing/NSM/test_packaging.py::TestPublicApiDeclaration`, which asserts
-that every declared name resolves, that none of them is foreign, and that
-`from <pkg> import *` binds exactly the declaration.
+that every declared name resolves and that none of them is foreign. Python then makes
+`from <pkg> import *` bind exactly the declaration.
 
 The plan's Phase 0 deliverable said "an `__all__` in `NSM/__init__.py`". As specified that
 could not be done, and the reason is why it went per-subpackage instead.

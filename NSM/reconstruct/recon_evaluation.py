@@ -6,7 +6,7 @@ point.
 pass deleted ``tune_reconstruction`` and ``compute_correlation_coefficient`` — SCOPE
 §2's dead ruling). ``main.py`` re-imports it, so ``NSM.reconstruct`` and
 ``NSM.reconstruct.main`` both still serve it — that re-import block is public API,
-pinned by ``test_reconstruct_import_compat``.
+pinned by ``test_import_paths``.
 """
 
 import logging
@@ -214,7 +214,7 @@ def get_mean_errors(
     # Call-time import, not module-level: main.py imports this module at top for
     # compute_recon_loss, so importing .main at module scope here would be a cycle.
     # Call-time lookup also preserves the monkeypatch seam —
-    # test_predictive_validation patches NSM.reconstruct.main.reconstruct_mesh.
+    # test_reconstruct_mesh patches NSM.reconstruct.main.reconstruct_mesh.
     from .main import NoZeroLevelSetError, reconstruct_mesh
 
     if log_wandb and wandb is None:

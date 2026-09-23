@@ -135,6 +135,7 @@ The trigger is narrower than "a second dataset", and the distinction matters bec
 |---|---|
 | `multiprocessing=True` → `multiprocessing=True` | **Fine.** Measured 2.6 s then 0.4 s |
 | `multiprocessing=False` → `multiprocessing=True` | **Hangs.** First build 5.7 s, second never returns |
+| `multiprocessing=True` → `multiprocessing=False` | **Fine.** Measured 2.7 s then 0.6 s, 3 runs of 3 |
 
 So a script that builds a train split in-process and then a val split on the default path
 deadlocks, with no message, on the second one. Long-standing rather than new.
@@ -147,7 +148,7 @@ user meets it — this entry is what they find afterwards. [#25](https://github.
 stays open as the queue entry.
 
 *Worked around in:* `test_dataset_cache.TestSeedDerivation`, which builds its two datasets
-in separate subprocesses.
+in one fresh subprocess, the pooled one first.
 
 ## Packaging and configuration
 
@@ -248,8 +249,8 @@ reproduced as measured.
 *Fix:* not filed. The measurements, the validated configuration and what it would take to
 resurrect are in `.claude/plans/HYBRID_OPTIMIZER_REPORT.md`.
 
-*Pinned by:* `test_reconstruct_latent_internals.TestTheDrawIsPerEvaluation` and
-`test_parameter_surface.TestTheDeferredSitesAreClosed::test_the_lbfgs_triple_is_read_on_the_non_hybrid_path`.
+*Pinned by:* `test_reconstruct_latent.TestTheDrawIsPerEvaluation` and
+`test_reconstruct_latent.TestTheDeferredSitesAreClosed::test_the_lbfgs_triple_is_read_on_the_non_hybrid_path`.
 
 ## `reconstruct/cartilage_func.py`
 
@@ -857,9 +858,8 @@ surface's vertex count)` instead of `n_random + Σ(each surface's vertex count)`
 No compatibility switch — a leaked loop variable, not a semantic option. Check out a
 pre-fix commit if an affected fit must be reproduced exactly.
 
-*Pinned by:* `test_sampled_pts_readers.TestMultiMeshReader::test_include_surf_in_pts_appends_each_surfaces_own_vertices`
-(and its uniform-cube sibling), strict-xfail pins of the correct behaviour until the
-fix, plain assertions since.
+*Pinned by:* `test_sampled_pts_readers.TestMultiMeshReader::test_include_surf_in_pts_appends_each_surfaces_own_vertices`,
+on the near-surface and the uniform-cube path.
 
 ---
 
@@ -922,8 +922,8 @@ Every such pre-fix run drew 200,000 points per surface regardless of its
 
 Pass `n_pts_random=200000` explicitly.
 
-*Pinned by:* `test_reconstruct_mesh_options.TestNPtsRandomReachesTheReaders` (both
-branches), and the end-to-end `TestSingleObjectSampledBranch`.
+*Pinned by:* `test_reconstruct_mesh.TestNPtsRandomReachesTheReaders` (both
+branches). Every end-to-end run in that file takes the single-object sampled branch.
 
 ## 10. A decoder with no mean surface returned fake success instead of raising
 
@@ -957,7 +957,7 @@ No compatibility switch. The old result carried no information a caller could us
 catch `NoZeroLevelSetError` instead.
 
 *Pinned by:* `test_reconstruction_regression.TestDecoderWithNoZeroLevelSet` (the raise)
-and `test_reconstruct_mesh_options.TestGetMeanErrorsSurvivesADegenerateModel` (the NaN
+and `test_reconstruct_mesh.TestGetMeanErrorsSurvivesADegenerateModel` (the NaN
 seam).
 
 ## 11. `resume_epoch=1` trained a fresh model while claiming to resume
@@ -1007,8 +1007,8 @@ proxy, not garbage: within a run with a fixed batch count, multiplying by
 value, not the epoch mean). Do not compare the metric across runs with different batch
 counts.
 
-*Pinned by:* `test_training_regression.TestLatentNormLogging` (latent LR 0 makes the
-true epoch mean exact).
+*Pinned by:* `test_train_epoch.TestTheLatentNormStatsAreTheEpochMean` (latent LR 0
+makes the true epoch mean exact).
 
 ---
 
@@ -1139,7 +1139,7 @@ reproduces the original architecture exactly**. `"progressive_add_depth": true` 
 everything else in the run is unchanged.
 
 *Pinned by:* `test_model_options.test_layer_split_false_is_the_same_model_as_no_layer_split`,
-`test_model_options.test_layer_split_zero_still_splits_at_layer_zero`,
+which also checks that `layer_split: 0` still splits, and
 `test_model_options.test_a_block_phases_in_continuously_across_its_start_epoch`.
 
 ## 15. `sum_conv_output_features: false` trained on one plane of three
@@ -1189,8 +1189,8 @@ the reason this entry exists.
 comparison drawn against a summed model is meaningful — retrain rather than re-evaluate,
 since the checkpoint loads either way.
 
-*Pinned by:* `test_model_options.test_concatenation_uses_all_three_planes`,
-`test_model_options.test_the_concatenating_vae_keeps_the_width_it_always_had`,
+*Pinned by:* `test_model_options.test_concatenation_uses_all_three_planes`, which also
+checks that the VAE keeps its width, and
 `test_model_options.test_triplanar_feature_combination_works_or_refuses`.
 
 ## 16. A `padding` a config did not state was silently defaulted, at any trained value
@@ -1291,7 +1291,7 @@ Two questions, and both have to be "no":
 Under the fix every one of those calls raises a `ValueError` naming what to pass instead,
 so a re-run cannot silently repeat the mistake.
 
-*Pinned by:* `testing/NSM/mesh/test_mesh_contracts.py`, §1.
+*Pinned by:* `test_mesh_contracts.test_face_array_sites_accept_triangles_and_refuse_everything_else`.
 
 ---
 
@@ -1353,8 +1353,8 @@ Did you pass a non-default `search_bounds` (or a `recon_grid_origin` other than 
 `"Coarse pass found no surface. Falling back."` are affected — the two-pass path never
 used the parameter. Those reconstructions should be re-run.
 
-*Pinned by:* `test_mesh_contracts.test_fallback_grid_covers_search_bounds` and
-`test_default_search_bounds_keep_the_historical_fallback_origin`.
+*Pinned by:* `test_mesh_contracts.test_the_fallback_grid_spans_the_search_bounds`, which
+also checks that the default bounds keep the historical origin.
 
 ## 20. `reconstruct_mesh` accepted a misspelled parameter and used the default instead
 
@@ -1395,8 +1395,8 @@ set. The two that change a result rather than a diagnostic are the grid
 not configured as recorded and should be re-run. For `reconstruct_latent` the fit
 parameters are the whole list — there is no grid.
 
-*Pinned by:* `test_reconstruct_mesh_contracts.TestUnknownKeywordsAreRefused` and
-`test_reconstruct_latent_internals.TestUnknownKeywordsAreRefused`.
+*Pinned by:* `test_reconstruct_mesh.TestUnknownKeywordsAreRefused` and
+`test_reconstruct_latent.TestUnknownKeywordsAreRefused`.
 
 
 ## 21. `reconstruct_latent` returned the number 100 instead of a loss
@@ -1430,7 +1430,7 @@ Only a number you logged is affected, never a latent or a mesh. If you have a
 cohort — that is this, and the fit itself was fine. Re-running is not necessary; the
 recorded loss is simply not a loss.
 
-*Pinned by:* `test_reconstruct_latent_internals.TestTheReturnedLossIsALoss`.
+*Pinned by:* `test_reconstruct_latent.TestTheReturnedLossIsALoss`.
 
 
 ## 22. `hybrid_optimizer` decayed its learning rate to zero, and ignored `optimizer_name`
@@ -1465,7 +1465,7 @@ nothing and the latent is whatever the last non-zero-LR step produced. Re-run af
 fits — the fitted latent is not the one the configuration describes.
 
 *Pinned by:*
-`test_reconstruct_latent_internals.TestTheLearningRateScheduleSpansThePhaseItSteps`.
+`test_reconstruct_latent.TestTheLearningRateScheduleSpansThePhaseItSteps`.
 
 
 ## 23. An unrecognised `convergence` silently meant "num_iterations"
@@ -1502,7 +1502,7 @@ meant to be doing something — compare the recorded step count against `num_ite
 affected run used all of them.
 
 *Pinned by:*
-`test_reconstruct_latent_internals.TestUnknownValuesAreRefusedWhereTheyAreNamed`.
+`test_reconstruct_latent.TestUnknownValuesAreRefusedWhereTheyAreNamed`.
 
 
 ## 24. A multi-surface draw was weighted towards whichever surface had the most vertices
@@ -1549,7 +1549,7 @@ by the ratio between them. Re-run if the imbalance was large — with four surfa
 every vertex of each (228,958 points, ratio 2.3:1 largest to smallest) where the new one
 takes 35,808 from each.
 
-*Pinned by:* `test_reconstruct_latent_internals.TestTheMultiSurfaceDrawIsBalanced`.
+*Pinned by:* `test_reconstruct_latent.TestTheDrawIsPerEvaluation::test_a_multi_surface_draw_is_balanced_and_the_guard_says_what_it_draws`.
 
 ---
 
@@ -1599,8 +1599,9 @@ series means some batch's final chunk held one row. Nothing else about the run i
 — re-training buys only the metric.
 
 *Pinned by:*
-`test_train_epoch_internals.TestTheLatentNormStatsAreTheEpochMean` (independence from
-`batch_split`, the epoch mean computed from the embedding at latent LR 0, and the `NaN`).
+`test_train_epoch.TestTheLatentNormStatsAreTheEpochMean` (the epoch mean computed from
+the embedding at latent LR 0) and `test_train_epoch.test_batch_split_changes_no_reported_number`
+(independence from `batch_split`, and no `NaN`).
 
 ## 26. `model_params_config.json` recorded no subject list, or a previous run's
 
@@ -1648,8 +1649,8 @@ nothing about the weights is: the entry is provenance, not an input to training 
 reconstruction, and no NSM code path reads it back.
 
 *Pinned by:*
-`test_utils.TestTheRecordNamesItsSubjects` (the shipped default, the round trip, the
-control with no config key, and the fact that no regression test read the value).
+`test_utils.TestTheRecordNamesItsSubjects` (the shipped default, a previous run's list,
+and the control with no config key).
 
 ## 27. A single-joint cartilage validation function scored the femur's meshes
 
@@ -1779,7 +1780,7 @@ Two conditions, both required: you called `reconstruct_mesh` (not `get_mean_erro
 moved. If both are true, your off-surface points were drawn at a tenth of the width they
 will be drawn at now; pass `sigma_rand_pts=0.001` to reproduce the old draw.
 
-*Pinned by:* `test_reconstruct_mesh_contracts.TestTheKnobsThatDifferByLayer`, which reads
+*Pinned by:* `test_reconstruct_mesh.TestTheKnobsThatDifferByLayer`, which reads
 the defaults off the signatures rather than restating them.
 
 ## 30. A `two_stage` config's `layer_split`, `progressive_add_depth`, `conv_pred_sdf` and `sum_conv_output_features` reached neither half of the model
@@ -1828,10 +1829,8 @@ Anything it prints was ignored when the model was built. To reproduce the old be
 delete those keys from the config; the model then builds at the constructor defaults, which
 is what it was doing all along.
 
-*Pinned by:* `test_parameter_surface.TestTwoStageTranslatesWhatItsSiblingsRead` in v0.3.0,
-whose `test_the_built_params_are_unchanged_when_the_key_is_absent` was the half that said
-no existing model moved. The class went with the model type at §8.0.P; nothing pins this
-entry on `main`, because there is no longer anything to pin.
+*Pinned by:* nothing on `main`. A v0.3.0 test pinned it; it was deleted with the
+`two_stage` model type at §8.0.P, because there is no longer anything to pin.
 
 ## 31. `sample_difficulty_lx` weighted the loss with a gradient that pointed the wrong way
 

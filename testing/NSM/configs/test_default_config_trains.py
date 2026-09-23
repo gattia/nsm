@@ -1,15 +1,6 @@
-"""The shipped ``default_config.json`` can actually drive ``train_deep_sdf``.
-
-Its predecessor could not: five unconditionally-read keys were missing, fatal in
-sequence starting with ``KeyError('prefetch_factor')`` (#48). The config is now a
-sanitized snapshot of the ShapeMedKnee ``647`` run (see
-``generate_sdf_default_config.py``); this test runs the real trainer from the shipped
-file on the regression harness's synthetic CPU setup.
-
-The override rule is what lets this test fail: overrides may change a shipped value
-(tiny architecture, two epochs, CPU) but may never *introduce* a key, so any
-trainer-read key missing from the shipped file still raises ``KeyError`` in the run
-below rather than being quietly supplied by the test.
+"""
+The shipped ``default_config.json`` drives ``train_deep_sdf`` (#48). Overrides may change a
+shipped value but never add a key, so a key missing from the file still raises here.
 """
 
 import json
@@ -32,6 +23,10 @@ from NSM.configs.generate_sdf_default_config import DEFAULT_CONFIG_PATH  # noqa:
 
 
 def test_the_shipped_default_config_drives_train_deep_sdf(tmp_path):
+    """
+    Fails if ``train_deep_sdf`` reads a key the shipped ``default_config.json`` lacks, or two
+    CPU epochs from it give a non-finite loss or write no ``.pth`` checkpoint (#48).
+    """
     with open(DEFAULT_CONFIG_PATH, encoding="utf-8") as f:
         config = json.load(f)
 

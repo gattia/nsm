@@ -1,16 +1,6 @@
 """
-End-to-end reconstruction regression through ``reconstruct_mesh``.
-
-``reconstruct_mesh`` is what the downstream consumer actually calls, and before this
-module it had one executed line in the whole suite: its ``def``. Everything here goes
-through it the way ``kneepipeline/steps/run_nsm.py:170`` does -- a *list* of mesh paths,
-every argument by name -- and asserts the eight result keys that consumer reads:
-``mesh[0]``, ``mesh[1]``, ``latent``, ``icp_transform``, ``center``, ``scale``,
-``assd_0``, ``assd_1``.
-
-The load-bearing, undocumented part of that contract is the ORDER of the ``mesh`` list.
-``TestSurfaceOrderContract`` asserts it by geometry rather than by index, so it fails if
-the surfaces are ever transposed.
+End-to-end reconstruction regression through ``reconstruct_mesh``, called the way
+``kneepipeline/steps/run_nsm.py`` calls it: a list of mesh paths, every argument by name.
 """
 
 import numpy as np
@@ -43,11 +33,9 @@ BONE, CART = 0, 1
 #: vertex moved a quarter of the radius is the smallest geometry change this fixture can
 #: express -- and the harness catches it with 34.8x ``FITTED_LATENT_ATOL`` to spare.
 #:
-#: Keep it at 1. A wider dent is easier to detect and therefore proves less: the measured
-#: headroom rises to 69x at 5 vertices and 119x at 10, so raising this number can only
-#: make a failing break pass, which is the same mistake as loosening a tolerance wearing a
-#: different hat. If this ever drops under ``MIN_HEADROOM``, the fixture or the tolerance
-#: is what changed, and that is what wants investigating.
+#: Keep it at 1. A wider dent proves less: the headroom measured 69x at 5 vertices and 119x
+#: at 10, so raising this can only make a failing break pass. If the headroom drops under
+#: ``MIN_HEADROOM``, investigate the fixture or the tolerance.
 PERTURBATION = 0.25
 PERTURBED_VERTICES = 1
 
@@ -57,9 +45,20 @@ def summaries(result):
 
 
 class TestConsumerContract:
-    """Every key ``steps/run_nsm.py`` reads off the result must be present and usable."""
+    """
+    Every key ``steps/run_nsm.py`` reads, and the ORDER of ``mesh``: index 0 is bone and 1 is
+    cartilage, hardcoded by the consumer and declared nowhere in NSM. The synthetic surfaces
+    are separated along z, so the order is asserted by geometry and fails if transposed.
+    """
 
-    def test_result_is_a_dict_with_the_expected_keys(self, reconstruction):
+    def test_the_result_has_the_keys_and_types_the_consumer_reads(self, reconstruction):
+        """
+        Fails if ``reconstruct_mesh`` under kneepipeline's flags drops a key ``run_nsm.py``
+        reads, returns other than two non-empty (n, 3) meshes, or changes the type of
+        ``icp_transform`` or the shape of ``latent``, ``center`` or ``scale``.
+        """
+        from _harness import LATENT_SIZE
+
         assert set(reconstruction) >= {
             "mesh",
             "latent",
@@ -69,82 +68,41 @@ class TestConsumerContract:
             "assd_0",
             "assd_1",
         }
-
-    def test_mesh_is_a_list_of_one_surface_per_object(self, reconstruction):
-        assert isinstance(reconstruction["mesh"], list)
-        assert len(reconstruction["mesh"]) == 2
-        assert all(m is not None for m in reconstruction["mesh"])
-
-    def test_latent_has_the_configured_shape(self, reconstruction):
-        from _harness import LATENT_SIZE
-
+        assert isinstance(reconstruction["mesh"], list) and len(reconstruction["mesh"]) == 2
+        for mesh in reconstruction["mesh"]:
+            points = np.asarray(mesh.point_coords)
+            assert points.ndim == 2 and points.shape[1] == 3 and points.shape[0] > 0
         assert reconstruction["latent"].shape == (1, LATENT_SIZE)
-
-    def test_registration_params_are_the_types_the_consumer_converts(self, reconstruction):
-        """
-        ``_convert_icp_transform`` accepts vtkTransform, vtkMatrix4x4, ndarray or None. Which
-        one arrives here is part of the contract, and nothing in the signature says so.
-        """
+        # _convert_icp_transform takes vtkTransform, vtkMatrix4x4, ndarray or None.
         assert isinstance(
             reconstruction["icp_transform"],
             (vtk.vtkIterativeClosestPointTransform, vtk.vtkTransform, vtk.vtkMatrix4x4),
         )
         assert np.asarray(reconstruction["center"]).shape == (3,)
-        assert np.isscalar(reconstruction["scale"]) or np.asarray(reconstruction["scale"]).ndim == 0
+        assert np.asarray(reconstruction["scale"]).ndim == 0
 
-    def test_meshes_expose_point_coords(self, reconstruction):
-        for mesh in reconstruction["mesh"]:
-            points = np.asarray(mesh.point_coords)
-            assert points.ndim == 2 and points.shape[1] == 3 and points.shape[0] > 0
+    def test_each_index_is_its_own_surface(self, reconstruction, synthetic_meshes):
+        """
+        Fails if ``reconstruct_mesh`` returns ``mesh`` or ``assd_i`` in a different order from
+        the input paths.
 
-
-class TestSurfaceOrderContract:
-    """
-    ``result["mesh"]`` is ordered and the order IS the surface identity. Index 0 = bone,
-    index 1 = cartilage is hardcoded at ``steps/run_nsm.py:216,220,232,235`` and stated
-    nowhere in the signature, the docstring, or the returned dict -- the same
-    undocumented-positional shape as the learning-rate bug.
-
-    The synthetic subjects are built so the two surfaces are separated along z, so these
-    assertions are geometric and would fail if the list were ever transposed.
-    """
-
-    @staticmethod
-    def _centroid_distances(reconstruction, synthetic_meshes):
-        """``[i][j]`` = distance from reconstructed surface *i* to input surface *j*."""
+        Each output must be 3x nearer its own input than the other, and ``assd_i`` 3x below
+        its distance to the other input.
+        """
         import pyvista as pv
 
         inputs = [pv.read(path).points.mean(axis=0) for path in synthetic_meshes[0]]
         outputs = [np.asarray(m.point_coords).mean(axis=0) for m in reconstruction["mesh"]]
-        return np.array([[float(np.linalg.norm(out - inp)) for inp in inputs] for out in outputs])
+        distance = np.array([[np.linalg.norm(o - i) for i in inputs] for o in outputs])
+        assert distance[BONE][CART] > 3 * distance[BONE][BONE], distance
+        assert distance[CART][BONE] > 3 * distance[CART][CART], distance
 
-    def test_each_result_index_matches_its_input_index(self, reconstruction, synthetic_meshes):
-        """
-        Scale-free form of the contract: surface *i* of the result must be nearer to
-        surface *i* of ``path`` than to the other one. Transposing the list fails this.
-        """
-        distances = self._centroid_distances(reconstruction, synthetic_meshes)
-        assert distances[BONE][BONE] < distances[BONE][CART], distances
-        assert distances[CART][CART] < distances[CART][BONE], distances
-
-    def test_the_two_surfaces_are_not_interchangeable(self, reconstruction, synthetic_meshes):
-        """The guard: if the inputs were indistinguishable the test above would be empty."""
-        distances = self._centroid_distances(reconstruction, synthetic_meshes)
-        assert distances[BONE][CART] > 3 * distances[BONE][BONE], distances
-        assert distances[CART][BONE] > 3 * distances[CART][CART], distances
-
-    def test_assd_indices_follow_the_same_order(self, reconstruction, synthetic_meshes):
-        """
-        ``assd_0``/``assd_1`` carry the same positional convention -- the consumer labels
-        them ``assd_bone_mm`` / ``assd_cartilage_mm`` on that basis. Each reported value
-        must be far below what it would be if measured against the other surface.
-        """
         crossed = [
             surface_distance(reconstruction["mesh"][BONE], synthetic_meshes[0][CART]),
             surface_distance(reconstruction["mesh"][CART], synthetic_meshes[0][BONE]),
         ]
-        assert reconstruction["assd_0"] * 3 < crossed[0], (reconstruction["assd_0"], crossed[0])
-        assert reconstruction["assd_1"] * 3 < crossed[1], (reconstruction["assd_1"], crossed[1])
+        assert reconstruction["assd_0"] * 3 < crossed[0]
+        assert reconstruction["assd_1"] * 3 < crossed[1]
 
 
 def surface_distance(reconstructed, original_path):
@@ -161,247 +119,130 @@ def surface_distance(reconstructed, original_path):
 
 
 class TestNumericalBaselines:
-    def test_fitted_latent_matches_baseline(self, reconstruction, reconstruction_baseline):
+    def test_the_reconstruction_matches_baseline(self, reconstruction, reconstruction_baseline):
+        """
+        Fails if ``reconstruct_mesh`` on the committed decoder moves the fitted latent, mesh
+        geometry, point counts, ASSD, ``scale`` or ``center`` past their tolerances from the
+        committed baseline.
+        """
         latent = reconstruction["latent"].detach().cpu().numpy().ravel()
         reconstruction_baseline.check("fitted_latent", latent, atol=FITTED_LATENT_ATOL)
-
-    def test_mesh_geometry_matches_baseline(self, reconstruction, reconstruction_baseline):
         reconstruction_baseline.check(
             "mesh_geometry", summaries(reconstruction), atol=GEOMETRY_ATOL
         )
-
-    def test_mesh_point_counts_match_baseline(self, reconstruction, reconstruction_baseline):
         counts = [len(np.asarray(m.point_coords)) for m in reconstruction["mesh"]]
         reconstruction_baseline.check("mesh_point_counts", counts, rtol=COUNT_RTOL)
-
-    def test_surface_metrics_match_baseline(self, reconstruction, reconstruction_baseline):
-        reconstruction_baseline.check(
-            "assd", [reconstruction["assd_0"], reconstruction["assd_1"]], rtol=METRIC_RTOL
-        )
-
-    def test_registration_params_match_baseline(self, reconstruction, reconstruction_baseline):
+        assd = [reconstruction["assd_0"], reconstruction["assd_1"]]
+        reconstruction_baseline.check("assd", assd, rtol=METRIC_RTOL)
         reconstruction_baseline.check("scale", float(reconstruction["scale"]), rtol=METRIC_RTOL)
-        reconstruction_baseline.check(
-            "center", np.asarray(reconstruction["center"], dtype=float), atol=GEOMETRY_ATOL
-        )
+        center = np.asarray(reconstruction["center"], dtype=float)
+        reconstruction_baseline.check("center", center, atol=GEOMETRY_ATOL)
 
-    def test_reconstruction_is_reproducible_within_a_process(
+    def test_the_same_inputs_give_the_same_answer_exactly(
         self, synthetic_meshes, reconstruction_model, reconstruction
     ):
         """
-        The baselines above only mean something if the same inputs give the same answer.
-        Re-runs the whole reconstruction under the same seed and compares.
+        Fails if two identically seeded ``reconstruct_mesh`` calls on the vertex path
+        (``get_rand_pts=False``) return a different latent or ``assd_0``.
         """
         again = run_reconstruction(synthetic_meshes[0], reconstruction_model)
-        assert np.allclose(
-            again["latent"].detach().cpu().numpy(),
-            reconstruction["latent"].detach().cpu().numpy(),
-            atol=0,
-            rtol=0,
-        )
+        assert torch.equal(again["latent"], reconstruction["latent"])
         assert again["assd_0"] == reconstruction["assd_0"]
 
 
 class TestDeliberateBreak:
     """
-    The second half of "a harness nobody has seen fail is not evidence of anything":
-    dent the input bone mesh and confirm the baselines reject the result.
-
-    Each rejection is paired with a ``MIN_HEADROOM`` assertion, so "the break is comfortably
-    outside the tolerance" is measured on every run rather than transcribed once. The
-    transcribed version was wrong by 4x when it was replaced, in the direction that made the
-    break look weaker than it was -- which is the argument for computing it.
-
-    If one of these fails, the break is not the thing to change. Making a deliberate break
-    bigger until it is detected proves only that a bigger break is detectable; see
-    ``PERTURBED_VERTICES``.
+    Dent the input bone and confirm the baselines reject the result by at least
+    ``MIN_HEADROOM`` times their tolerance. If this fails, do not enlarge the dent: a bigger
+    break is easier to detect and proves less (see ``PERTURBED_VERTICES``).
     """
 
     @pytest.fixture(scope="class")
     def perturbed_reconstruction(self, synthetic_meshes, reconstruction_model, tmp_path_factory):
         import pyvista as pv
 
-        directory = tmp_path_factory.mktemp("perturbed")
         bone = pv.read(synthetic_meshes[0][BONE])
         points = bone.points.copy()
         patch = np.argsort(np.linalg.norm(points - points[0], axis=1))[:PERTURBED_VERTICES]
         points[patch] += np.array([PERTURBATION, 0.0, 0.0], dtype=points.dtype)
         bone.points = points
-        bone_path = str(directory / "perturbed_bone.vtk")
+        bone_path = str(tmp_path_factory.mktemp("perturbed") / "perturbed_bone.vtk")
         bone.save(bone_path)
         return run_reconstruction([bone_path, synthetic_meshes[0][CART]], reconstruction_model)
 
-    def test_denting_the_bone_changes_the_fitted_latent(
-        self, reconstruction, perturbed_reconstruction
-    ):
-        original = reconstruction["latent"].detach().cpu().numpy().ravel()
-        perturbed = perturbed_reconstruction["latent"].detach().cpu().numpy().ravel()
-        assert not np.allclose(original, perturbed, atol=FITTED_LATENT_ATOL), (
-            f"moving {PERTURBED_VERTICES} bone vertices by {PERTURBATION} left the fitted "
-            f"latent inside the harness's tolerance -- the latent baseline would not catch "
-            f"a geometry change"
-        )
-
-    def test_denting_the_bone_fails_the_latent_baseline(
+    def test_denting_the_bone_fails_the_latent_and_geometry_baselines(
         self, perturbed_reconstruction, reconstruction_baseline
     ):
+        """
+        Fails if ``FITTED_LATENT_ATOL`` or ``GEOMETRY_ATOL`` is loosened, or the baseline
+        check weakened, so far that a one-vertex dent in the input bone no longer clears
+        ``MIN_HEADROOM`` times the tolerance.
+        """
         if regenerating():
             pytest.skip("baselines are being rewritten")
         latent = perturbed_reconstruction["latent"].detach().cpu().numpy().ravel()
-        with pytest.raises(AssertionError, match="differs from baseline"):
-            reconstruction_baseline.check("fitted_latent", latent, atol=FITTED_LATENT_ATOL)
-
-        measured = headroom(
-            reconstruction_baseline, "fitted_latent", latent, atol=FITTED_LATENT_ATOL
-        )
-        assert measured >= MIN_HEADROOM, (
-            f"the dent moves the fitted latent only {measured:.1f}x FITTED_LATENT_ATOL "
-            f"({FITTED_LATENT_ATOL}), under the MIN_HEADROOM of {MIN_HEADROOM}x. Widen the "
-            f"break -- more vertices, not a deeper dent -- never the tolerance."
-        )
-
-    def test_denting_the_bone_fails_the_geometry_baseline(
-        self, perturbed_reconstruction, reconstruction_baseline
-    ):
-        if regenerating():
-            pytest.skip("baselines are being rewritten")
-        summary = summaries(perturbed_reconstruction)
-        with pytest.raises(AssertionError, match="differs from baseline"):
-            reconstruction_baseline.check("mesh_geometry", summary, atol=GEOMETRY_ATOL)
-
-        measured = headroom(reconstruction_baseline, "mesh_geometry", summary, atol=GEOMETRY_ATOL)
-        assert measured >= MIN_HEADROOM, (
-            f"the dent moves the mesh geometry only {measured:.1f}x GEOMETRY_ATOL "
-            f"({GEOMETRY_ATOL}), under the MIN_HEADROOM of {MIN_HEADROOM}x. Widen the "
-            f"break -- more vertices, not a deeper dent -- never the tolerance."
-        )
+        for key, observed, atol in (
+            ("fitted_latent", latent, FITTED_LATENT_ATOL),
+            ("mesh_geometry", summaries(perturbed_reconstruction), GEOMETRY_ATOL),
+        ):
+            with pytest.raises(AssertionError, match="differs from baseline"):
+                reconstruction_baseline.check(key, observed, atol=atol)
+            measured = headroom(reconstruction_baseline, key, observed, atol=atol)
+            assert measured >= MIN_HEADROOM, (
+                f"the dent moves {key} only {measured:.1f}x its tolerance, under the "
+                f"MIN_HEADROOM of {MIN_HEADROOM}x. Widen the break (more vertices), never the "
+                f"tolerance."
+            )
 
 
-#: Turns ``reconstruct_mesh``'s point draw on. ``RECON_KWARGS`` keeps ``get_rand_pts=False``
-#: -- every baselined number above is fitted to the mesh VERTICES -- and with it False the
-#: samplers return early and ``reconstruct_mesh``'s ``seed`` argument reaches nothing at
-#: all. These tests are the only ones in the suite where that argument does any work.
-#:
-#: ``n_pts_random`` is honoured since the #16 fix: 200 points per surface, plus the
-#: surface vertices ``include_surf_in_pts`` appends. Before it the value was swallowed
-#: by the readers' ``**kwargs`` and the 200,000-point default ran — the whole reason
-#: each of these reconstructions cost ~4s and there were only five of them.
+#: Turns ``reconstruct_mesh``'s point draw on. The baselines above are fitted to the mesh
+#: vertices, and with ``get_rand_pts=False`` its ``seed`` argument reaches nothing at all.
 SAMPLED = dict(get_rand_pts=True, n_pts_random=200)
-
 SAMPLE_SEED = 7
 
 
-class TestSampledReconstructionIsSeeded:
+def test_the_sampled_reconstruction_is_seeded(
+    synthetic_meshes, reconstruction_model, reconstruction
+):
     """
-    ``reconstruct_mesh(seed=...)`` on the multi-object branch, which is the one the
-    downstream consumer takes.
+    Fails if ``reconstruct_mesh``'s ``seed`` stops seeding the multi-surface point draw under
+    ``get_rand_pts=True``: the same seed differs, another seed agrees, or ``seed=None``
+    repeats under a fixed global seed.
 
-    Two things about this path are worth knowing before reading the assertions.
+    kneepipeline's model configs set ``get_rand_pts_recon`` false, so production fits draw no
+    points and ``seed`` reaches nothing there.
 
-    **The seed has to be handed over under a different name.** ``run_reconstruction``
-    declares its own ``seed`` -- the global torch/numpy one -- so it swallows the keyword
-    and ``reconstruct_mesh`` keeps its default of ``None``. The harness spells the
-    sampling seed ``sample_seed`` for that reason; passing ``seed=`` here would reseed
-    torch, leave the draw unseeded, and these tests would still pass three times out of
-    four while asserting nothing.
-
-    **``n_pts_random`` reaches the sampler since the #16 fix** — 200 points per surface
-    here, plus each surface's own vertices from ``include_surf_in_pts`` (its
-    wrong-surface append was #17, fixed in the same era). Before the fix it landed in
-    the readers' ``**kwargs`` and the 200,000-per-surface default ran — measured then
-    as 400,688 points from a request for 200 — which is why this class was documented
-    as expensive. The assertions below never depended on the draw size; only their
-    cost did.
-
-    The single-object branch is not covered here: it needs a one-output decoder, which
-    this fixture's model is not. (Until #15 unified the sampler keys it was unreachable
-    outright -- the sampler returned the draw under ``xyz`` while ``reconstruct_mesh``
-    read ``result_["pts"]``.)
+    The harness passes the seed as ``sample_seed``: its own ``seed`` would swallow the keyword,
+    reseed torch, leave the draw unseeded, and still pass three times in four. The first
+    assert checks that the draw happens at all: the fit must move from the vertex-only one.
     """
 
-    @pytest.fixture(scope="class")
-    def seeded_pair(self, synthetic_meshes, reconstruction_model):
-        return [
-            run_reconstruction(
-                synthetic_meshes[0], reconstruction_model, sample_seed=SAMPLE_SEED, **SAMPLED
-            )
-            for _ in range(2)
-        ]
-
-    @pytest.fixture(scope="class")
-    def other_seed(self, synthetic_meshes, reconstruction_model):
+    def fit(sample_seed):
         return run_reconstruction(
-            synthetic_meshes[0], reconstruction_model, sample_seed=SAMPLE_SEED + 1, **SAMPLED
+            synthetic_meshes[0], reconstruction_model, sample_seed=sample_seed, **SAMPLED
         )
 
-    @pytest.fixture(scope="class")
-    def unseeded_pair(self, synthetic_meshes, reconstruction_model):
-        return [
-            run_reconstruction(
-                synthetic_meshes[0], reconstruction_model, sample_seed=None, **SAMPLED
-            )
-            for _ in range(2)
-        ]
-
-    @staticmethod
-    def _latent(result):
+    def latent(result):
         return result["latent"].detach().cpu().numpy().ravel()
 
-    def test_the_draw_actually_happened(self, seeded_pair, reconstruction):
-        """
-        The premise. ``reconstruction`` is the same subject and the same model with
-        ``get_rand_pts=False``, so if turning the draw on left the fit unchanged, every
-        assertion below would be about a code path that never ran.
-        """
-        assert not np.allclose(
-            self._latent(seeded_pair[0]), self._latent(reconstruction), atol=FITTED_LATENT_ATOL
+    first, again = fit(SAMPLE_SEED), fit(SAMPLE_SEED)
+    assert not np.allclose(latent(first), latent(reconstruction), atol=FITTED_LATENT_ATOL)
+    assert np.array_equal(latent(first), latent(again))
+    for index in (BONE, CART):
+        np.testing.assert_array_equal(
+            first["mesh"][index].point_coords, again["mesh"][index].point_coords
         )
-
-    def test_the_same_seed_fits_the_same_latent(self, seeded_pair):
-        first, second = (self._latent(result) for result in seeded_pair)
-        assert np.array_equal(first, second), f"max difference {np.abs(first - second).max():.3e}"
-
-    def test_the_same_seed_reconstructs_the_same_geometry(self, seeded_pair):
-        """
-        Exact vertex equality, not the decile summary the baselines use: this is one
-        process reconstructing one subject twice, so anything short of identical means the
-        draw moved.
-        """
-        first, second = seeded_pair
-        for index in (BONE, CART):
-            assert np.array_equal(
-                np.asarray(first["mesh"][index].point_coords),
-                np.asarray(second["mesh"][index].point_coords),
-            ), f"surface {index} differs between two runs at the same seed"
-
-    def test_a_different_seed_fits_a_different_latent(self, seeded_pair, other_seed):
-        """The guard: without it, "reproducible" would also be satisfied by a dead argument."""
-        assert not np.allclose(
-            self._latent(seeded_pair[0]), self._latent(other_seed), atol=FITTED_LATENT_ATOL
-        )
-
-    def test_an_unseeded_draw_is_not_reproducible(self, unseeded_pair):
-        """
-        ``sample_seed=None`` is the default and must stay unseeded. Both runs get the same
-        global torch and numpy seed from ``run_reconstruction`` and still diverge, which is
-        what shows the sampling seed -- not the global state -- is what makes the seeded
-        pair above agree.
-        """
-        first, second = (self._latent(result) for result in unseeded_pair)
-        assert not np.allclose(first, second, atol=FITTED_LATENT_ATOL)
+    assert not np.allclose(latent(first), latent(fit(SAMPLE_SEED + 1)), atol=FITTED_LATENT_ATOL)
+    assert not np.allclose(latent(fit(None)), latent(fit(None)), atol=FITTED_LATENT_ATOL)
 
 
 class TestTheCommittedDecoder:
-    """
-    Every assertion above runs on one frozen decoder, loaded from
-    ``assets/reconstruction_decoder.pt``. This is the part of that arrangement a reader
-    years from now needs: which stack produced the weights the baselines are fitted to.
-    """
+    """Every test above runs on ``assets/reconstruction_decoder.pt``, loaded, not retrained."""
 
     def test_it_records_the_stack_it_was_generated_on(self, reconstruction_model):
         """
-        ``reconstruction_model`` is requested so the asset is known to exist -- that fixture
-        is what loads it, or what writes it on a regeneration run.
+        Fails if the committed decoder records fields other than ``provenance()`` returns,
+        or was generated on a platform other than Linux-x86_64.
         """
         recorded = torch.load(RECON_DECODER_ASSET, weights_only=True)["generated_on"]
         assert set(recorded) == set(provenance()), recorded
@@ -410,126 +251,60 @@ class TestTheCommittedDecoder:
 
 class TestAFreshlyTrainedDecoder:
     """
-    The one thing freezing the decoder took away: with the fixture loading a checkpoint,
-    nothing else here checks that a model straight out of ``train_deep_sdf`` can be
-    reconstructed from at all.
-
-    **Pins no value, and is still training-dependent.** The numbers a fresh run produces are
-    the chaotic ones -- 60 epochs of gradient descent is what moved the reconstruction
-    baselines 763x their tolerance under a torch bump -- so nothing here is compared against
-    a stored number. What makes it more than a smoke test is the untrained control: the
-    trained decoder's surface error has to be materially below a decoder that skipped
-    training, which is a comparison both sides of a torch bump move together (#34).
-    ``baselines/training.json`` is what pins training output, directly and at 8 epochs where
-    it has not yet diverged.
-
-    Costs about 3.7 s on a warm process: ~1.3 s to train the ``RECON_TRAINING_EPOCHS``
-    epochs the asset was generated from, ~1.2 s to reconstruct, and ~1.2 s for the control's
-    reconstruction. Training through ``_harness.train_reconstruction_decoder`` rather than
-    inline is deliberate -- it keeps the asset's regeneration path executed on every run,
-    instead of only when someone sets ``NSM_REGENERATE_RECON_DECODER``.
+    With the decoder frozen, nothing else checks that a model straight out of
+    ``train_deep_sdf`` can be reconstructed from. No number here is pinned: 60 epochs of
+    gradient descent is what moved the baselines 763x their tolerance under a torch bump.
+    Instead the trained decoder's ASSD must beat an untrained control of the same
+    architecture and seed, which both sides of a torch bump move together (#34). Training
+    goes through ``_harness.train_reconstruction_decoder``, so the asset's regeneration path
+    runs every time.
     """
 
-    #: How much better than an untrained control the trained decoder has to fit.
-    #:
-    #: Measured 2026-08-26 on this fixture: trained ``assd_0``/``assd_1`` 0.224/0.172
-    #: against untrained 2.197/3.014 -- ratios of 9.8x and 17.5x. The threshold is set at
-    #: 3x, so the tighter of the two has 3.3x of headroom, and the test reports the
-    #: observed ratio when it fails. Deliberately far below the measurement: this is a
-    #: floor on "training did something", not a pin on how much, and a pin is exactly what
-    #: could not be made to hold across environments (see the module header and #34).
+    #: Measured 2026-08-26: trained 0.224 / 0.172 against untrained 2.197 / 3.014, ratios of
+    #: 9.8x and 17.5x. A floor on "training did something", not a pin on how much.
     MIN_IMPROVEMENT = 3.0
 
-    @pytest.fixture(scope="class")
-    def fresh_reconstruction(self, synthetic_meshes, training_dataset, tmp_path_factory):
-        model = train_reconstruction_decoder(
-            training_dataset, tmp_path_factory.mktemp("fresh_recon_train")
-        )
-        return run_reconstruction(synthetic_meshes[0], model)
-
-    @pytest.fixture(scope="class")
-    def untrained_reconstruction(self, synthetic_meshes, tmp_path_factory):
-        """
-        The same architecture, the same seed, the same reconstruction -- no training.
-
-        ``build_model`` seeds itself, so this control is deterministic; it costs one extra
-        reconstruction (~1.2 s) and nothing else.
-        """
-        from _harness import build_model, training_config
-
-        model = build_model(training_config(tmp_path_factory.mktemp("untrained_recon")))
-        model.eval()
-        return run_reconstruction(synthetic_meshes[0], model)
-
-    def test_a_surface_comes_back_for_every_object(self, fresh_reconstruction):
-        """``[None, None]`` is what a decoder with no zero level set returns -- see below."""
-        meshes = fresh_reconstruction["mesh"]
-        assert meshes != [None, None]
-        assert all(mesh is not None for mesh in meshes), meshes
-
-    def test_the_fitted_latent_has_the_configured_shape(self, fresh_reconstruction):
-        from _harness import LATENT_SIZE
-
-        assert fresh_reconstruction["latent"].shape == (1, LATENT_SIZE)
-
-    @pytest.mark.parametrize("key", ["assd_0", "assd_1"])
     def test_training_is_what_makes_the_surfaces_fit(
-        self, fresh_reconstruction, untrained_reconstruction, key
+        self, synthetic_meshes, training_dataset, tmp_path_factory
     ):
         """
-        The assertion this class was missing (#34): one that goes red if training stops
-        learning.
-
-        The two above do not. An untrained decoder still has *a* zero level set somewhere
-        in the sampling volume, so marching cubes returns a surface and ``mesh`` is not
-        ``[None, None]``; and the latent's shape comes from the config, not from training.
-        Both were verified to pass against an untrained control before this test existed --
-        which is what made the class weaker than its own docstring claimed.
-
-        Relative, against a control that shares the architecture, the seed and the
-        reconstruction path, so a torch bump moves both sides together. The alternative --
-        pinning the fresh run's numbers -- is the thing that forced the decoder to be
-        frozen in the first place (763x the tolerance across a torch bump; module header).
+        Fails if ``reconstruct_mesh`` cannot run on a decoder fresh from ``train_deep_sdf``,
+        or that decoder's ASSD is not ``MIN_IMPROVEMENT`` times better than an untrained one's.
         """
-        untrained = untrained_reconstruction[key]
-        trained = fresh_reconstruction[key]
-        ratio = untrained / trained
-        assert ratio > self.MIN_IMPROVEMENT, (
-            f"{key}: trained {trained:.4f} vs untrained {untrained:.4f} is only "
-            f"{ratio:.2f}x better, under the {self.MIN_IMPROVEMENT}x floor"
+        from _harness import LATENT_SIZE, build_model, training_config
+
+        trained = train_reconstruction_decoder(
+            training_dataset, tmp_path_factory.mktemp("fresh_recon_train")
         )
+        fresh = run_reconstruction(synthetic_meshes[0], trained)
+        assert all(mesh is not None for mesh in fresh["mesh"])
+        assert fresh["latent"].shape == (1, LATENT_SIZE)
+
+        untrained = build_model(training_config(tmp_path_factory.mktemp("untrained_recon")))
+        control = run_reconstruction(synthetic_meshes[0], untrained.eval())
+        for key in ("assd_0", "assd_1"):
+            ratio = control[key] / fresh[key]
+            assert ratio > self.MIN_IMPROVEMENT, f"{key}: only {ratio:.2f}x better than untrained"
 
 
 class NoZeroLevelSetDecoder(torch.nn.Module):
-    """
-    A decoder whose SDF is +1 everywhere, so its mean shape has no surface.
-
-    Deliberately a test double rather than a real under-trained model: the precondition
-    for the early return below is "the zero-latent SDF never changes sign", and whether a
-    real model reaches that state depends on its config. This states the precondition
-    directly. It matches the calling convention ``mesh/main.decode_sdf`` inspects for --
-    keyword ``latent``/``xyz``, with the legacy concatenated form as a fallback.
-    """
+    """SDF +1 everywhere, so the mean shape has no surface: the state before training."""
 
     def forward(self, x=None, latent=None, xyz=None, epoch=None):
-        n_points = xyz.shape[0] if xyz is not None else x.shape[0]
-        return torch.ones(n_points, 2)
+        return torch.ones((xyz if xyz is not None else x).shape[0], 2)
 
 
 class TestDecoderWithNoZeroLevelSet:
     """
-    What ``reconstruct_mesh`` does when the mean shape has no surface: raises by name
-    (#29). The state every model is in before it has learnt a sign change, and the
-    first thing anyone wiring up a new architecture will hit.
-
-    Until Aug 2026 it returned a plausible-looking result dict instead -- ``mesh`` of
-    Nones, NaN metrics, the untouched zero ``mean_latent`` under ``"latent"`` -- whose
-    shape also dropped every key the caller asked for (this class pinned that dict, with
-    a strict xfail on the dropped keys, until the fix landed; History §10).
-    ``get_mean_errors`` catches the error and scores NaN so a validation epoch survives;
-    that seam is pinned in ``test_reconstruct_mesh_options``.
+    ``get_mean_errors`` catches the error and scores NaN; that half is pinned in
+    ``test_reconstruct_mesh``.
     """
 
     def test_it_raises_by_name(self, synthetic_meshes):
+        """
+        Fails if ``reconstruct_mesh(register_similarity=True)`` returns a result instead of
+        raising ``NoZeroLevelSetError`` when the mean shape has no surface
+        (KNOWN_ISSUES History 10).
+        """
         with pytest.raises(NoZeroLevelSetError, match="no zero level set"):
             run_reconstruction(synthetic_meshes[0], NoZeroLevelSetDecoder())

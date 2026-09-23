@@ -1,24 +1,10 @@
 """
-Characterization tests for what NSM writes and where, written immediately before the
-§8.0.G conversion from ``print`` to ``logging`` (#58).
+What NSM writes and where (#58).
 
-Two things are pinned, and they pull in opposite directions:
-
-* **stdout is a contract surface.** ``kneepipeline/steps/run_nsm.py`` runs each NSM fit
-  in a subprocess with ``capture_output=True`` and then parses ``json.loads`` of the
-  *last line* of stdout. Anything NSM prints after that line breaks the consumer. The
-  parse must keep working across this slice.
-* **stdout is not NSM's to write to.** A library's diagnostics belong on the host's
-  logging handlers, which default to stderr. That one is a ``strict`` xfail here: today
-  NSM prints an import-time notice and its deprecated-kwarg notices to stdout.
-
-The third pin is the ``logging.basicConfig`` at ``NSM/reconstruct/main.py`` module
-scope, which reconfigures the *host process's root logger* on any
-``import NSM.reconstruct`` (``reconstruct/__init__.py`` star-imports ``.main``). Also a
-strict xfail: it fires today, invisibly, in the consumer's process.
-
-Every check runs in a subprocess, because all three are properties of a fresh
-interpreter: once ``NSM`` is imported, the import-time effects cannot be observed again.
+* **stdout belongs to the caller.** ``kneepipeline/steps/run_nsm.py`` runs each fit in a
+  subprocess and parses the *last line* of stdout as JSON, so NSM must print nothing.
+* **Logging is the host's to configure.** NSM logs through ``logging.getLogger(__name__)``
+  with a ``NullHandler`` on ``"NSM"``, and never reconfigures the root logger.
 """
 
 import ast
@@ -26,255 +12,161 @@ import json
 import pathlib
 import subprocess
 import sys
-import textwrap
 
-import pytest
+#: One interpreter start costs about 6 s of imports, so every runtime property is
+#: checked in the same one. ``reconstruct_mesh`` logs the ``batch_size_latent_recon``
+#: deprecation first, then refuses the invalid ``path``: a diagnostic with no real work.
+_PROBE = """
+import json, logging, sys
+root = logging.getLogger()
+before = {"level": root.level, "handlers": [type(h).__name__ for h in root.handlers]}
 
-#: Emits an NSM diagnostic and nothing else, then raises before any real work: the
-#: ``batch_size_latent_recon`` deprecation notice fires at the top of ``reconstruct_mesh``
-#: and the invalid ``path`` aborts on the next check. No model, no meshes, no GPU.
-_EMIT_A_DIAGNOSTIC = """
+import NSM.reconstruct
+from NSM.reconstruct import recon_evaluation
 from NSM.reconstruct.main import reconstruct_mesh
+
+after = {"level": root.level, "handlers": [type(h).__name__ for h in root.handlers]}
 try:
     reconstruct_mesh(path=42, decoders=None, latent_size=8, batch_size_latent_recon=1)
 except ValueError:
     pass
+recon_evaluation.logger.info("an info record")
+recon_evaluation.logger.warning("a warning record")
+print(json.dumps({"before": before, "after": after}), file=sys.stderr)
+print(json.dumps({"loss": 0.5}))
 """
 
 
-def _run(*bodies):
-    """Run ``bodies`` in a fresh interpreter; return its CompletedProcess.
-
-    Each fragment is dedented on its own, so a module-level constant and an
-    indented literal can be concatenated without the second losing its indentation.
+def test_nsm_writes_nothing_to_stdout_and_leaves_host_logging_alone():
     """
-    script = "\n".join(textwrap.dedent(body) for body in bodies)
+    Fails if importing ``NSM.reconstruct`` or calling ``reconstruct_mesh`` prints to stdout,
+    if an NSM warning reaches an unconfigured host's stderr (the ``"NSM"`` ``NullHandler`` is
+    gone), or if the import changes the root logger (#58).
+    """
     completed = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
-        timeout=300,
+        [sys.executable, "-c", _PROBE], capture_output=True, text=True, timeout=300
     )
     assert completed.returncode == 0, completed.stderr[-2000:]
-    return completed
+
+    # The consumer's JSON is the only thing on stdout.
+    assert completed.stdout.strip().split("\n") == ['{"loss": 0.5}']
+    # An unconfigured host sees no NSM record, not even a warning.
+    assert "an info record" not in completed.stderr
+    assert "a warning record" not in completed.stderr
+    # Importing NSM did not reconfigure the root logger.
+    roots = json.loads(completed.stderr.strip().split("\n")[-1])
+    assert roots["after"] == roots["before"]
 
 
-class TestTheConsumerStdoutContract:
-    """
-    The shape ``_fit_nsm_subprocess`` uses: NSM does its talking, the caller's own
-    ``print(json.dumps(...))`` goes last, and the parent reads that last line back.
-    """
-
-    def test_the_last_stdout_line_still_parses_as_json(self):
-        completed = _run(
-            _EMIT_A_DIAGNOSTIC,
-            """
-            import json
-            print(json.dumps({"loss": 0.5, "latent": [0.0, 1.0]}, default=str))
-            """,
-        )
-        last_line = completed.stdout.strip().split("\n")[-1]
-        assert json.loads(last_line) == {"loss": 0.5, "latent": [0.0, 1.0]}
-
-
-class TestNSMOwnsNoStream:
-    """
-    The target state of the slice. Both are ``strict`` xfails: they fail today, and the
-    conversion commits unmark them.
-    """
-
-    def test_importing_and_calling_writes_nothing_to_stdout(self):
-        completed = _run("import NSM.reconstruct", _EMIT_A_DIAGNOSTIC)
-        assert completed.stdout == ""
-
-    def test_an_unconfigured_host_sees_no_log_records(self):
-        """
-        What the ``NullHandler`` on the ``"NSM"`` logger buys: records from ``NSM.*``
-        find a handler, so ``logging.lastResort`` never fires and even a ``warning``
-        stays silent until the host asks for it. That is the stdlib idiom's known
-        consequence: the host decides where NSM's output goes.
-        """
-        completed = _run(
-            """
-            import logging
-            import NSM.reconstruct.recon_evaluation as recon_evaluation
-            recon_evaluation.logger.info("an info record")
-            recon_evaluation.logger.warning("a warning record")
-            """
-        )
-        assert "an info record" not in completed.stderr
-        assert "a warning record" not in completed.stderr
-
-    def test_importing_does_not_reconfigure_the_host_root_logger(self):
-        """
-        Recorded before and after the import in one process, so the comparison is
-        against *that* interpreter's defaults rather than a hard-coded level.
-        """
-        completed = _run(
-            """
-            import json, logging, sys
-            root = logging.getLogger()
-            def snapshot():
-                return {"level": root.level, "handlers": [type(h).__name__ for h in root.handlers]}
-            before = snapshot()
-            import NSM.reconstruct
-            print(json.dumps({"before": before, "after": snapshot()}), file=sys.stderr)
-            """
-        )
-        recorded = json.loads(completed.stderr.strip().split("\n")[-1])
-        assert recorded["after"] == recorded["before"]
-
-
-#: The Logger methods that emit a record. ``addHandler`` and friends are configuration,
-#: which is left to the host.
+#: ``Logger`` methods that emit a record.
 EMIT_METHODS = {"debug", "info", "warning", "error", "exception", "critical", "log"}
 
+#: A script's own output on its own stdout is not the library speaking.
+ALLOWED_PRINTS = {"NSM/configs/generate_sdf_default_config.py"}
 
-class TestTheConversionHolds:
-    """
-    Structural pins over ``NSM/`` itself: what the §8.0.G conversion established, so a
-    later slice reintroducing a ``print`` or an f-string log line goes red rather than
-    unnoticed. Every file under ``NSM/`` is in scope: ``train/deprecated/`` used to be
-    carved out and was deleted at §8.0.P.
-    """
-
-    #: A script's own output on its own stdout is not the library speaking.
-    ALLOWED_PRINTS = {"NSM/configs/generate_sdf_default_config.py"}
-
-    def test_no_print_survives_outside_the_generator_script(self):
-        offenders = [
-            f"{path}:{node.lineno}"
-            for path, tree in _library_modules()
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "print"
-            and path not in self.ALLOWED_PRINTS
-        ]
-        assert offenders == []
-
-    def test_every_log_call_defers_its_formatting(self):
-        """
-        ``%``-style, not an f-string or a pre-built string: a suppressed record must
-        cost no formatting. The hot ones sit in per-batch and per-step loops, and this
-        is the only thing standing between them and a silent per-iteration cost.
-
-        Note what this does *not* buy: the *arguments* are still evaluated eagerly. A
-        log line whose argument is expensive to compute belongs behind a guard, which
-        is where the remaining comprehension-valued ones already sit.
-        """
-        offenders = []
-        for path, tree in _library_modules():
-            for node in ast.walk(tree):
-                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
-                    continue
-                if not (isinstance(node.func.value, ast.Name) and node.func.value.id == "logger"):
-                    continue
-                if node.func.attr not in EMIT_METHODS:
-                    continue
-                first = node.args[0] if node.args else None
-                built = isinstance(first, ast.JoinedStr) or (
-                    isinstance(first, ast.BinOp) and isinstance(first.op, (ast.Mod, ast.Add))
-                )
-                built = built or (
-                    isinstance(first, ast.Call)
-                    and isinstance(first.func, ast.Attribute)
-                    and first.func.attr == "format"
-                )
-                if built:
-                    offenders.append(f"{path}:{node.lineno}")
-        assert offenders == []
-
-    #: ``SCOPE`` §2.4 rules this one out of the documented surface as deferred
-    #: research, so its gate goes with the module rather than with this sweep. It had two
-    #: companions until §8.0.P: ``train/deprecated/`` (§2.2) and
-    #: ``train_deep_sdf_multi_head`` (§2.1), both deleted. The sweep now covers every file
-    #: under ``NSM/`` but this one.
-    UNDOCUMENTED_SURFACE = ("NSM/reconstruct/reconstruct_latent_S3.py",)
-
-    def test_no_log_record_is_gated_behind_a_flag(self):
-        """
-        A log call inside ``if flag:``, where ``flag`` is a parameter of the same function,
-        is hidden twice: by the host's logging level and by a flag the host may not know
-        about. This was the ``verbose=`` pattern (86 such gates at ``09c3834``), removed
-        in §8.0.N and v0.4.0.
-
-        The check looks for the pattern under any parameter name, not just ``verbose``, so
-        it can still fail now that ``verbose`` is gone. Verified by adding such a gate and
-        seeing it fail. The three ``logger.isEnabledFor(logging.DEBUG)`` guards are not
-        flagged: they check the host's level, and only exist so that values computed just
-        for logging are skipped when DEBUG is off.
-        """
-
-        def gating_parameter(test):
-            """The parameter name ``test`` gates on, for ``flag`` and ``flag is True``."""
-            if isinstance(test, ast.Name):
-                return test.id
-            if (
-                isinstance(test, ast.Compare)
-                and isinstance(test.left, ast.Name)
-                and len(test.ops) == 1
-                and isinstance(test.ops[0], ast.Is)
-                and isinstance(test.comparators[0], ast.Constant)
-            ):
-                return test.left.id
-            return None
-
-        offenders = []
-        for path, tree in _library_modules():
-            if path in self.UNDOCUMENTED_SURFACE:
-                continue
-            for function in ast.walk(tree):
-                if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    continue
-                parameters = {
-                    argument.arg
-                    for argument in function.args.args
-                    + function.args.posonlyargs
-                    + function.args.kwonlyargs
-                }
-                for node in ast.walk(function):
-                    if not isinstance(node, ast.If) or node.orelse or not node.body:
-                        continue
-                    if gating_parameter(node.test) not in parameters:
-                        continue
-                    if all(
-                        isinstance(statement, ast.Expr)
-                        and isinstance(statement.value, ast.Call)
-                        and ast.unparse(statement.value.func).startswith("logger.")
-                        for statement in node.body
-                    ):
-                        offenders.append(f"{path}:{node.lineno}")
-        assert offenders == []
-
-    def test_every_module_that_speaks_has_its_own_logger(self):
-        """
-        One ``getLogger(__name__)`` per speaking module, so the ``NSM.*`` hierarchy is
-        real: a host can silence ``NSM.datasets`` without silencing reconstruction.
-        """
-        missing = []
-        for path, tree in _library_modules():
-            speaks = any(
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "logger"
-                and node.func.attr in EMIT_METHODS
-                for node in ast.walk(tree)
-            )
-            defines = any(
-                isinstance(node, ast.Assign)
-                and any(getattr(t, "id", None) == "logger" for t in node.targets)
-                for node in tree.body
-            )
-            if speaks and not defines:
-                missing.append(path)
-        assert missing == []
+#: Outside the documented surface (``SCOPE`` §2.4), so not held to the gate rule.
+UNDOCUMENTED_SURFACE = {"NSM/reconstruct/reconstruct_latent_S3.py"}
 
 
 def _library_modules():
-    """(repo-relative path, parsed module) for every ``NSM/`` file."""
     root = pathlib.Path(__file__).resolve().parents[2] / "NSM"
     for path in sorted(root.rglob("*.py")):
-        relative = path.relative_to(root.parent).as_posix()
-        yield relative, ast.parse(path.read_text(encoding="utf-8"))
+        yield path.relative_to(root.parent).as_posix(), ast.parse(path.read_text(encoding="utf-8"))
+
+
+def _log_calls(tree):
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "logger"
+            and node.func.attr in EMIT_METHODS
+        ):
+            yield node
+
+
+def test_the_library_speaks_only_through_lazily_formatted_log_calls():
+    """
+    Fails if an ``NSM/`` module other than ``generate_sdf_default_config.py`` calls
+    ``print``, or a ``logger`` call builds its message with an f-string, ``%``, ``+`` or
+    ``.format`` (#58).
+
+    A suppressed record must cost no formatting, and several log calls sit in per-batch
+    loops.
+    """
+    offenders = []
+    for path, tree in _library_modules():
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "print"
+                and path not in ALLOWED_PRINTS
+            ):
+                offenders.append(f"print at {path}:{node.lineno}")
+        for node in _log_calls(tree):
+            first = node.args[0] if node.args else None
+            built = isinstance(first, ast.JoinedStr)
+            built |= isinstance(first, ast.BinOp) and isinstance(first.op, (ast.Mod, ast.Add))
+            built |= (
+                isinstance(first, ast.Call)
+                and isinstance(first.func, ast.Attribute)
+                and first.func.attr == "format"
+            )
+            if built:
+                offenders.append(f"eager format at {path}:{node.lineno}")
+    assert offenders == []
+
+
+def test_every_record_reaches_a_host_that_asks_for_it():
+    """
+    Fails if a module that logs has no module-level ``logger =``, or a log call sits under
+    ``if <parameter>:``, a ``verbose=``-style switch that the host's logging level cannot
+    reach (#58).
+
+    A module's own ``logger`` lets a host silence ``NSM.datasets`` alone. The gate is
+    detected under any parameter name. ``logger.isEnabledFor`` guards are allowed: they read
+    the host's level.
+    """
+
+    def gating_name(test):
+        if isinstance(test, ast.Name):
+            return test.id
+        if (
+            isinstance(test, ast.Compare)
+            and isinstance(test.left, ast.Name)
+            and len(test.ops) == 1
+            and isinstance(test.ops[0], ast.Is)
+            and isinstance(test.comparators[0], ast.Constant)
+        ):
+            return test.left.id
+        return None
+
+    offenders = []
+    for path, tree in _library_modules():
+        defines_logger = any(
+            isinstance(node, ast.Assign)
+            and any(getattr(t, "id", None) == "logger" for t in node.targets)
+            for node in tree.body
+        )
+        if any(_log_calls(tree)) and not defines_logger:
+            offenders.append(f"no module logger in {path}")
+        if path in UNDOCUMENTED_SURFACE:
+            continue
+        for function in ast.walk(tree):
+            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            args = function.args
+            parameters = {a.arg for a in args.args + args.posonlyargs + args.kwonlyargs}
+            for node in ast.walk(function):
+                if not isinstance(node, ast.If) or node.orelse or not node.body:
+                    continue
+                if gating_name(node.test) in parameters and all(
+                    isinstance(s, ast.Expr)
+                    and isinstance(s.value, ast.Call)
+                    and ast.unparse(s.value.func).startswith("logger.")
+                    for s in node.body
+                ):
+                    offenders.append(f"gated log call at {path}:{node.lineno}")
+    assert offenders == []

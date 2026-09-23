@@ -155,7 +155,7 @@ def _refuse_missing_architecture_keys(config, keys, model_type):
     One message rather than one per key, because these used to be separate ``raise``
     statements and repairing a pre-Aug-2026 config cost one round-trip per key. The
     message ends with a JSON object that repairs the config in a single edit;
-    ``testing/NSM/models/test_config_repair.py`` parses that object and applies it, so it
+    ``testing/NSM/models/test_loader.py`` parses that object and applies it, so it
     cannot drift from what the code requires.
     """
     missing = [key for key in keys if key not in config]

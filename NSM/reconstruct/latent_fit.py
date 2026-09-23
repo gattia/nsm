@@ -3,7 +3,7 @@ Latent-code optimization: fit a latent so the decoder(s) reproduce observed SDF 
 
 Moved verbatim from ``main.py`` in the §8.0.C split. ``main.py`` re-imports every name
 here, so ``NSM.reconstruct`` and ``NSM.reconstruct.main`` both still serve them — that
-re-import block is public API, pinned by ``test_reconstruct_import_compat``.
+re-import block is public API, pinned by ``test_import_paths``.
 """
 
 import functools

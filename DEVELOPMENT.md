@@ -72,8 +72,8 @@ pytest --cov=NSM --cov-report=html
 # Test model loader
 pytest testing/NSM/models/test_loader.py -v
 
-# Test triplanar model
-pytest testing/NSM/models/test_triplanar.py -v
+# Test every model option
+pytest testing/NSM/models/test_model_options.py -v
 ```
 
 ### Run tests in parallel (faster)
@@ -204,10 +204,5 @@ class TestYourNewModel(unittest.TestCase):
 For performance-critical changes:
 
 ```bash
-# Timing scripts live in testing/testing_sdf_calculation_times/ (scratch scripts,
-# run directly rather than through pytest)
-python testing/testing_sdf_calculation_times/time.py
-
-# Profile code
 python -m cProfile -s cumtime your_script.py
 ```
