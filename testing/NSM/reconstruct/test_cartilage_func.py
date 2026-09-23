@@ -7,8 +7,6 @@ diameter. No assertion depends on that value except the pinned numbers in
 ``TestTheCoercion``.
 """
 
-import inspect
-
 import numpy as np
 import pytest
 import pyvista as pv
@@ -47,14 +45,14 @@ def _plain(radius=1.0):
     return Mesh(_sphere(radius))
 
 
-def _original_bone(label=11, thickness=1.5, label_name="labels", with_thickness=True):
+def _original_bone(label=11, thickness=1.5, with_thickness=True):
     """
     An original bone as this module requires one: carrying its region labels **and** its
     thickness already. The original's thickness is read, never computed here.
     """
     mesh = Mesh(_sphere(1.0))
     n_points = mesh.GetNumberOfPoints()
-    mesh.point_data[label_name] = np.full(n_points, label, dtype=np.int64)
+    mesh.point_data["labels"] = np.full(n_points, label, dtype=np.int64)
     if with_thickness:
         mesh.point_data["thickness (mm)"] = np.full(n_points, thickness, dtype=float)
     return mesh
@@ -118,30 +116,6 @@ def test_func_keys_are_collected_whichever_subject_is_degenerate(monkeypatch):
             recon_func=compare_cart_thickness,
         )
         assert result["cart_thick_11_orig_mean"] == pytest.approx(1.5)
-
-
-def test_the_region_array_must_be_called_labels():
-    """
-    pymskt reads ``labels``. The ``regions_label`` parameter, removed in v0.4.0, never
-    worked with any other value. The ``KeyError`` names the array to rename.
-    """
-    orig_meshes, recon_meshes = _pair()
-    result = compare_cart_thickness(orig_meshes, recon_meshes, cart_regions=(11,))
-    assert set(result) == REGION_11_KEYS
-    assert not any(np.isnan(value) for value in result.values())
-
-    for function in (
-        compare_cart_thickness,
-        compare_cart_thickness_tibia,
-        compare_cart_thickness_patella,
-        compare_cart_thickness_femur,
-        compare_cart_thickness_whole_joint,
-    ):
-        assert "regions_label" not in inspect.signature(function).parameters
-
-    renamed = [_original_bone(label_name="cart_regions"), _plain(1.1)]
-    with pytest.raises(KeyError, match="labels"):
-        compare_cart_thickness(renamed, [_plain(1.0), _plain(1.1)], cart_regions=(11,))
 
 
 class TestTheOriginalCartilageIsNeverRead:

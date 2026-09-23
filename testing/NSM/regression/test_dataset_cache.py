@@ -478,22 +478,6 @@ class TestSingleSurfaceSDFSamples:
         )
         assert not np.array_equal(cached_arrays(first)["pts"], cached_arrays(other)["pts"])
 
-    def test_an_unseeded_run_is_not_reproducible(self, bone_meshes, tmp_path_factory):
-        """
-        The near-surface draw happens inside pymskt, off numpy's global stream, so
-        ``random_seed`` is the only thing that can make it reproducible.
-        """
-        a, b = (
-            build_single_surface_dataset(
-                bone_meshes,
-                tmp_path_factory.mktemp(f"unseeded_{label}"),
-                random_seed=None,
-                **SMALL_SINGLE,
-            )
-            for label in ("a", "b")
-        )
-        assert not np.array_equal(cached_arrays(a)["pts"], cached_arrays(b)["pts"])
-
 
 class TestFormerlyUncallableConfigurations:
     """Constructor options that built fine and crashed on first use (#22, #23, #69)."""

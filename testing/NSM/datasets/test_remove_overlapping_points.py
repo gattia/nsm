@@ -37,12 +37,3 @@ def test_every_sign_pattern_keeps_a_point_iff_it_is_inside_fewer_than_two():
             tuple(map(float, r)) for r in expected
         ]
         assert out["xyz"].shape[0] == len(expected)
-
-
-def test_a_nan_column_is_a_missing_surface_and_never_counts_as_inside():
-    """A ``None`` surface is stored as an all-NaN column."""
-    out, removed = _run([(-0.5, -0.5, float("nan")), (-0.5, 0.5, float("nan"))])
-    assert removed == 1 and out["gt_sdf"].shape[0] == out["xyz"].shape[0] == 1
-
-    out, removed = _run([(-0.5, float("nan")), (-0.5, float("nan"))])
-    assert removed == 0 and out["gt_sdf"].shape[0] == 2

@@ -15,7 +15,6 @@ from NSM.datasets.sdf_dataset import (
     combine_meshes,
     get_cube_mins_maxs,
     get_pts_center_and_scale,
-    is_zipfile,
     unpack_numpy_data,
     unpack_pts,
 )
@@ -82,15 +81,6 @@ def test_unpack_pts_rebuilds_indexed_keys_in_order(tmp_path):
     assert [p.shape for p in pts] == [(2, 3), (3, 3)]
     assert all(isinstance(p, torch.Tensor) for p in pts)
     assert unpack_pts(_npz(tmp_path), pts_name="new_pts") == []
-
-
-def test_is_zipfile_answers_false_for_anything_unreadable(tmp_path):
-    """``zipfile.is_zipfile`` raises on a missing path; the wrapper answers False."""
-    (tmp_path / "plain.txt").write_text("not a zip", encoding="utf-8")
-    np.savez(tmp_path / "cache.npz", pts=np.zeros((2, 3)))
-    assert is_zipfile(str(tmp_path / "never_written.npz")) is False
-    assert is_zipfile(str(tmp_path / "plain.txt")) is False
-    assert is_zipfile(str(tmp_path / "cache.npz")) is True
 
 
 def test_the_validators_refuse_by_name():

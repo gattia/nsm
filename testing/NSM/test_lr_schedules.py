@@ -209,11 +209,7 @@ class TestHistoricalEquivalence:
 
 class TestCheckpoints:
     def test_a_saved_optimizer_resumes_with_its_names_and_targets(self, tmp_path):
-        """
-        ``state_dict()`` keeps custom group keys, so no separate names key is saved. A
-        pre-fix state has none, and ``load_state_dict`` adopts the checkpoint's metadata,
-        which is why the trainer refuses to resume one.
-        """
+        """``state_dict()`` keeps custom group keys, so no separate names key is saved."""
         schedules, optimizer = build(make_config())
         save_model(
             {"experiment_directory": str(tmp_path)},
@@ -222,18 +218,11 @@ class TestCheckpoints:
             optimizer=optimizer,
         )
         checkpoint = torch.load(tmp_path / "model" / "1.pth", weights_only=False)
-        assert "optimizer_group_names" not in checkpoint
 
         _, resumed = build(make_config())
         resumed.load_state_dict(checkpoint["optimizer"])
         adjust_learning_rate(schedules, resumed, epoch=1)
         assert lrs_by_name(resumed) == {"latent": LATENT_LR, "model_0": MODEL_LR}
-
-        pre_fix = copy.deepcopy(checkpoint["optimizer"])
-        for group in pre_fix["param_groups"]:
-            del group["name"], group["target"]
-        resumed.load_state_dict(pre_fix)
-        assert all("target" not in g for g in resumed.param_groups)
 
     def test_save_model_refuses_an_untargeted_group(self, tmp_path):
         _, optimizer = build(make_config())

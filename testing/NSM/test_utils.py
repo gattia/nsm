@@ -194,7 +194,6 @@ class TestCheckpointList:
         config = {"checkpoint_epochs": 10, "n_epochs": 30, "additional_checkpoints": [10, 25]}
         checkpoints = get_checkpoints(config)
         assert checkpoints == [10, 10, 20, 25, 30]
-        assert all((e in checkpoints) == (e in set(checkpoints)) for e in range(32))
 
     def test_a_missing_additional_checkpoints_names_the_remedy(self):
         with pytest.raises(KeyError, match=r"additional_checkpoints.*\[\]"):

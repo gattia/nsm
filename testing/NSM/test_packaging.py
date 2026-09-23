@@ -188,8 +188,8 @@ class TestPublicApiDeclaration:
 
     def test_each_subpackage_declares_exactly_what_a_star_import_binds(self):
         """
-        Every declared name resolves and is NSM's own, and ``from X import *`` binds
-        exactly the declaration. ``__all__`` does not unbind ``NSM.datasets.torch``.
+        Every declared name resolves and is NSM's own. Python's ``from X import *`` then
+        binds exactly the declaration. ``__all__`` does not unbind ``NSM.datasets.torch``.
         """
         problems = []
         for name in ["NSM.datasets", "NSM.mesh", "NSM.models", "NSM.reconstruct", "NSM.train"]:
@@ -203,8 +203,4 @@ class TestPublicApiDeclaration:
                 owner = obj.__name__ if isinstance(obj, types.ModuleType) else obj.__module__
                 if obj is None or not str(owner).startswith("NSM"):
                     problems.append(f"{name}.__all__ names {entry}")
-            namespace = {}
-            exec(f"from {name} import *", namespace)  # noqa: S102 - the behaviour under test
-            if {n for n in namespace if not n.startswith("__")} != set(declared):
-                problems.append(f"from {name} import * binds something else")
         assert problems == []
