@@ -1,17 +1,8 @@
 """
-The SDF dataset cache: round-trip, cache-key coverage, and the seeding story.
+The SDF dataset cache: round trip, what reaches the cache key, and what the seed does.
 
-``datasets/sdf_dataset.py`` is the largest module in NSM and the least covered, and it is
-the layer an in-memory harness never touches. Everything here is behaviour as it stands
-today, bugs included -- several of these tests assert that something *wrong* happens,
-because pinning it is what makes a later fix visible.
-
-The cache is keyed by ``md5(json.dumps({name: value}, sort_keys=True))`` -- a named,
-canonical mapping in which every mesh path contributes a content-stable
-``(path, size, mtime)`` identity and a loaded ``Mesh`` contributes a geometry digest
-(#19, fixed Aug 2026). ``TestFormerlyCollidingParameters`` pins the parameters that used
-to change cached content while absent from the key; ``TestReferenceMeshHashing`` pins the
-``Mesh``-valued reference that used to hash by memory address.
+The key is ``md5(json.dumps({name: value}, sort_keys=True))``. Each mesh path contributes
+``(path, size, mtime)`` and a loaded ``Mesh`` a digest of its geometry (#19).
 """
 
 import inspect
@@ -74,500 +65,11 @@ def rehash(dataset, mesh_paths, **attributes):
         dataset.hash_params = original_params
 
 
-class TestCacheRoundTrip:
-    def test_a_cache_file_is_written_per_subject(self, dataset, meshes):
-        assert len(dataset.data) == len(meshes)
-        for path in dataset.data:
-            assert os.path.exists(path) and path.endswith(".npz")
-
-    def test_reload_returns_identical_samples(self, meshes, tmp_path_factory):
-        """
-        Build once, then build again against the same cache with ``load_cache=True``. The
-        second build must reuse the first's file byte for byte.
-
-        Both runs pass ``random_seed=None`` on purpose. That keeps the cache key identical
-        -- the seed is part of it -- while leaving sampling unseeded, so a re-sample would
-        move every number here rather than reproducing them.
-        """
-        cache = tmp_path_factory.mktemp("roundtrip")
-        first = build_dataset(meshes, cache, seed=0, random_seed=None, **SMALL)
-        reloaded = build_dataset(
-            meshes, cache, seed=999, random_seed=None, load_cache=True, **SMALL
-        )
-
-        assert reloaded.data[0] == first.data[0], "cache was not hit"
-        original, again = cached_arrays(first), cached_arrays(reloaded)
-        assert set(original) == set(again)
-        for key in original:
-            assert np.array_equal(original[key], again[key]), key
-
-    def test_reloaded_items_match_the_freshly_built_ones(self, meshes, tmp_path_factory):
-        """The round trip has to survive ``__getitem__``, not just the file."""
-        import torch
-
-        cache = tmp_path_factory.mktemp("roundtrip_items")
-        first = build_dataset(meshes, cache, **SMALL)
-        reloaded = build_dataset(meshes, cache, load_cache=True, **SMALL)
-
-        torch.manual_seed(0)
-        a, _ = first[0]
-        torch.manual_seed(0)
-        b, _ = reloaded[0]
-        assert torch.equal(a["xyz"], b["xyz"])
-        assert torch.equal(a["gt_sdf"], b["gt_sdf"])
-
-    def test_the_cache_is_searched_recursively(self, dataset):
-        """
-        ``find_hash`` walks all of ``loc_save``, not just today's folder -- which is what
-        lets a cache written on another day still hit, and also what makes two datasets
-        sharing a ``loc_save`` root able to collide across subdirectories.
-        """
-        cache_file = os.path.basename(dataset.data[0])
-        found = dataset.find_hash(filename=cache_file)
-        assert found and os.path.basename(found[0]) == cache_file
-
-
-class TestCacheHitMachinery:
-    """
-    What the cache-hit path does beyond loading: repair, upgrade, and refuse.
-
-    ``get_sample_data_dict`` in both classes wraps the same shell around a hit --
-    delete unreadable files, upgrade old layouts in place, coerce to the storage mode
-    in force -- and none of it was pinned before the section 8.0.F class-side work
-    restructures exactly this code. Each test here is one branch of that shell.
-    """
-
-    def test_a_corrupt_cache_file_is_deleted_and_rebuilt(self, meshes, tmp_path_factory):
-        """
-        ``is_zipfile`` guards the hit before ``np.load`` touches it: a truncated or
-        garbage ``.npz`` (a crash mid-write) is deleted and the subject rebuilt, not
-        crashed on and not dropped.
-        """
-        cache = tmp_path_factory.mktemp("badzip")
-        first = build_dataset(meshes, cache, **SMALL)
-        path = first.data[0]
-        with open(path, "wb") as f:
-            f.write(b"not a zipfile")
-
-        second = build_dataset(meshes, cache, load_cache=True, **SMALL)
-
-        assert len(second) == len(meshes), "the subject was dropped instead of rebuilt"
-        assert second.data[0] == path, "the rebuild landed at a different path"
-        rebuilt = cached_arrays(second)
-        assert rebuilt["pts"].shape == (sum(SMALL["n_pts"]), 3)
-
-    def test_the_single_surface_class_also_deletes_corrupt_files(
-        self, bone_meshes, tmp_path_factory
-    ):
-        """``SDFSamples.get_sample_data_dict`` is a separate copy of the same shell."""
-        cache = tmp_path_factory.mktemp("badzip_single")
-        first = build_single_surface_dataset(bone_meshes[:1], cache, **SMALL_SINGLE)
-        path = first.data[0]
-        with open(path, "wb") as f:
-            f.write(b"junk")
-
-        second = build_single_surface_dataset(
-            bone_meshes[:1], cache, load_cache=True, **SMALL_SINGLE
-        )
-        assert len(second) == 1 and second.data[0] == path
-        assert cached_arrays(second)["pts"].shape == (SMALL_SINGLE["n_pts"], 3)
-
-    def test_a_pre_overlap_pass_cache_is_upgraded_and_resaved(self, meshes, tmp_path_factory):
-        """
-        ``remove_overlapping_points`` runs on every hit, so a cache written before the
-        overlap pass existed is shrunk and resaved in place. The index lists are NOT
-        recomputed on this path: the resave condition that would recompute them compares
-        ``len(data["pos_idx"])`` against the number of surfaces, which overlap removal
-        does not change. The poisoned row here is the last one, pruned from every index
-        list first, precisely so the in-range guard below stays out of the way and the
-        resave branch is what this test exercises.
-        """
-        cache = tmp_path_factory.mktemp("overlap_upgrade")
-        first = build_dataset(meshes, cache, **SMALL)
-        path = first.data[0]
-        arrays = dict(np.load(path))
-        n = arrays["sdfs"].shape[0]
-        arrays["sdfs"] = arrays["sdfs"].copy()
-        arrays["sdfs"][-1, :] = -0.05  # inside BOTH surfaces: anatomically impossible
-        for key in [k for k in arrays if k.startswith(("pos_idx", "neg_idx", "surf_idx"))]:
-            arrays[key] = arrays[key][arrays[key] != n - 1]
-        np.savez(path, **arrays)
-
-        second = build_dataset(meshes, cache, load_cache=True, **SMALL)
-
-        assert second.data[0] == path, "the upgrade should hit, not rebuild"
-        upgraded = dict(np.load(path))
-        assert upgraded["sdfs"].shape[0] == n - 1, "the overlapping row was not removed on disk"
-        assert np.array_equal(upgraded["pos_idx_0"], arrays["pos_idx_0"]), (
-            "the index lists were recomputed -- the length-based resave condition "
-            "must have changed"
-        )
-
-    def test_out_of_range_cached_indices_delete_and_rebuild(self, meshes, tmp_path_factory):
-        """
-        ``test_if_idx_in_range`` guards against index lists that outlived their point
-        set (an overlap pass shrank ``xyz`` after they were computed). Such a file is
-        deleted and the subject rebuilt from the meshes -- served as-is, those indices
-        would read the wrong rows or step off the end of the array.
-        """
-        cache = tmp_path_factory.mktemp("out_of_range")
-        first = build_dataset(meshes, cache, **SMALL)
-        path = first.data[0]
-        arrays = dict(np.load(path))
-        poisoned = arrays["pos_idx_0"].copy()
-        poisoned[0] = arrays["pts"].shape[0] + 100
-        arrays["pos_idx_0"] = poisoned
-        np.savez(path, **arrays)
-
-        second = build_dataset(meshes, cache, load_cache=True, **SMALL)
-
-        assert len(second) == len(meshes)
-        rebuilt = cached_arrays(second)
-        assert rebuilt["pos_idx_0"].max() < rebuilt["pts"].shape[0], "the poison survived"
-
-    def test_a_pre_index_layout_cache_is_upgraded_on_the_single_surface_class(
-        self, bone_meshes, tmp_path_factory
-    ):
-        """
-        The upgrade ``SDFSamples.get_sample_data_dict`` documents -- "caches from before
-        the ``pos_idx`` layout are upgraded in place" -- never fired until Aug 2026: its
-        condition was ``"pos_idx" not in data``, and ``unpack_numpy_data`` puts the key
-        there unconditionally, as an EMPTY list when the group is absent from the file
-        (``unpack_pts``). A pre-index-layout cache was served untouched and
-        ``__getitem__`` died on it with ``IndexError: list index out of range`` (verified
-        by execution, 2026-08-24) -- always a crash, never wrong results, so no History
-        entry. The condition now checks the unpacked length, the same idea as the multi
-        class's ``n_meshes`` length check, which never had the defect.
-        """
-        cache = tmp_path_factory.mktemp("backfill_single")
-        first = build_single_surface_dataset(bone_meshes[:1], cache, **SMALL_SINGLE)
-        path = first.data[0]
-        arrays = dict(np.load(path))
-        stripped = {
-            k: v for k, v in arrays.items() if not k.startswith(("pos_idx", "neg_idx", "surf_idx"))
-        }
-        np.savez(path, **stripped)
-
-        second = build_single_surface_dataset(
-            bone_meshes[:1], cache, load_cache=True, **SMALL_SINGLE
-        )
-
-        upgraded = dict(np.load(path))
-        assert np.array_equal(upgraded["pts"], arrays["pts"]), "the subject was resampled"
-        assert np.array_equal(
-            upgraded["pos_idx_0"], arrays["pos_idx_0"]
-        ), "the backfilled indices differ from the originally computed ones"
-        item, _ = second[0]
-        assert {"xyz", "gt_sdf"} <= set(item)
-
-    def test_the_multi_class_backfills_missing_index_lists(self, meshes, tmp_path_factory):
-        """The working counterpart of the xfail above, pinned so it stays working."""
-        cache = tmp_path_factory.mktemp("backfill_multi")
-        first = build_dataset(meshes, cache, **SMALL)
-        path = first.data[0]
-        arrays = dict(np.load(path))
-        stripped = {
-            k: v for k, v in arrays.items() if not k.startswith(("pos_idx", "neg_idx", "surf_idx"))
-        }
-        np.savez(path, **stripped)
-
-        second = build_dataset(meshes, cache, load_cache=True, **SMALL)
-
-        upgraded = dict(np.load(path))
-        assert np.array_equal(upgraded["pts"], arrays["pts"]), "the subject was resampled"
-        for key in ("pos_idx_0", "pos_idx_1", "neg_idx_0", "neg_idx_1"):
-            assert np.array_equal(upgraded[key], arrays[key]), key
-        item, _ = second[0]
-        assert {"xyz", "gt_sdf"} <= set(item)
-
-    def test_a_disk_built_cache_reloads_into_either_storage_mode(self, meshes, tmp_path_factory):
-        """
-        ``store_data_in_memory`` is a serving choice, not a property of the cache: the
-        same ``.npz`` serves a disk-backed dataset (``data`` holds the path) and an
-        in-memory one (``data`` holds the unpacked dict), and the batches drawn from
-        the two are identical.
-        """
-        import torch
-
-        cache = tmp_path_factory.mktemp("store_modes")
-        disk = build_dataset(meshes, cache, **SMALL)
-        memory = build_dataset(meshes, cache, load_cache=True, store_data_in_memory=True, **SMALL)
-
-        assert isinstance(disk.data[0], str)
-        assert isinstance(memory.data[0], dict)
-
-        torch.manual_seed(0)
-        from_disk, _ = disk[0]
-        torch.manual_seed(0)
-        from_memory, _ = memory[0]
-        assert torch.equal(from_disk["xyz"], from_memory["xyz"])
-        assert torch.equal(from_disk["gt_sdf"], from_memory["gt_sdf"])
-
-    def test_every_subject_started_is_logged(self, tmp_path_factory):
-        """
-        ``MultiSurfaceSDFSamples.get_sample_data_dict`` appends each subject to
-        ``list_meshes_started_loading.log`` in ``loc_save`` before doing anything else,
-        so a crash mid-build names its subject. The log appends across builds, cache
-        hits included.
-        """
-        subjects = write_synthetic_meshes(tmp_path_factory.mktemp("logged_meshes"))[:2]
-        cache = tmp_path_factory.mktemp("logged")
-        build_dataset(subjects, cache, **SMALL)
-
-        log = os.path.join(str(cache), "list_meshes_started_loading.log")
-        assert os.path.exists(log)
-        with open(log, encoding="utf-8") as f:
-            lines = f.read().splitlines()
-        assert lines == [str(subject) for subject in subjects]
-
-        build_dataset(subjects, cache, load_cache=True, **SMALL)
-        with open(log, encoding="utf-8") as f:
-            assert len(f.read().splitlines()) == 2 * len(subjects)
-
-
-class TestHashedParametersChangeTheKey:
-    """The parameters that are correctly part of the cache key."""
-
-    @pytest.mark.parametrize(
-        "attribute,value",
-        [
-            ("center_pts", False),
-            ("norm_pts", False),
-            ("fix_mesh", True),
-            ("scale_jointly", True),
-            ("scale_all_meshes", False),
-            ("center_all_meshes", True),
-            ("reference_object", 1),
-            ("reference_mesh", "some/other/mesh.vtk"),
-            ("n_pts", [500, 600]),
-            ("p_near_surface", [0.3, 0.4]),
-            ("p_further_from_surface", [0.3, 0.4]),
-            ("sigma_near", [0.01, None]),
-            ("sigma_far", [0.2, None]),
-            ("rand_function", "laplace"),
-        ],
-    )
-    def test_changing_it_changes_the_key(self, dataset, meshes, attribute, value):
-        baseline = dataset.create_hash(meshes[0])
-        assert rehash(dataset, meshes[0], **{attribute: value}) != baseline
-
-    def test_the_mesh_paths_are_part_of_the_key(self, dataset, meshes):
-        assert dataset.create_hash(meshes[0]) != dataset.create_hash([meshes[0][1], meshes[0][0]])
-
-    def test_random_seed_is_part_of_the_key(self, dataset, meshes):
-        """
-        The seed changes the samples, so it has to change the key -- otherwise two seeds
-        would share one cached file. See ``TestSeeding``.
-        """
-        assert rehash(dataset, meshes[0], random_seed=7) != dataset.create_hash(meshes[0])
-
-
-class TestFormerlyCollidingParameters:
-    """
-    ``mesh_to_scale`` and ``uniform_pts_buffer`` change what is written into the cache
-    and were absent from ``get_hash_params`` until Aug 2026 (#19 (a)): two runs
-    differing only in one of them shared a key, and with ``load_cache=True`` -- the
-    production setting -- the second silently trained on the first's data. Each test
-    still shows the cached content genuinely differs before asserting the keys do, so
-    a parameter that stops mattering shows up as a dead premise rather than a vacuous
-    pass. ``subsample`` is the deliberate exception: it stays OUT of the key, and its
-    one cached-content effect -- the index padding -- was removed instead (Aug 2026):
-    the cache stores raw index sets and the padding happens at draw time, sized by the
-    subsample then in force. Batch size is a serving parameter; forcing a full
-    resample when it changes would have been wrong in the other direction.
-    """
-
-    @staticmethod
-    def _content_differs(meshes, tmp_path_factory, label, **override):
-        a = build_dataset(meshes, tmp_path_factory.mktemp(f"{label}_a"), **SMALL)
-        b = build_dataset(meshes, tmp_path_factory.mktemp(f"{label}_b"), **dict(SMALL, **override))
-        first, second = cached_arrays(a), cached_arrays(b)
-        differing = {
-            key
-            for key in set(first) & set(second)
-            if first[key].shape != second[key].shape or not np.array_equal(first[key], second[key])
-        }
-        return a.create_hash(meshes[0]), b.create_hash(meshes[0]), differing
-
-    def test_mesh_to_scale_must_change_the_cache_key(self, meshes, tmp_path_factory):
-        """
-        The worst of them: ``mesh_to_scale`` decides which surface drives centering
-        and normalization, so the two runs' cached points and SDFs are in different
-        coordinate frames entirely.
-        """
-        key_a, key_b, differing = self._content_differs(
-            meshes, tmp_path_factory, "mts", mesh_to_scale=1
-        )
-        assert {
-            "pts",
-            "sdfs",
-        } <= differing, f"premise gone: content no longer differs ({differing})"
-        assert key_a != key_b, "the cached content differs but the cache key does not"
-
-    def test_uniform_pts_buffer_must_change_the_cache_key(self, meshes, tmp_path_factory):
-        """It sets the bounds the uniform points are drawn from, so the samples move."""
-        key_a, key_b, differing = self._content_differs(
-            meshes, tmp_path_factory, "upb", uniform_pts_buffer=0.5
-        )
-        assert {
-            "pts",
-            "sdfs",
-        } <= differing, f"premise gone: content no longer differs ({differing})"
-        assert key_a != key_b, "the cached content differs but the cache key does not"
-
-    def test_cached_bytes_do_not_depend_on_subsample(self, meshes, tmp_path_factory):
-        """
-        The old xfail's premise, inverted into the contract. This test used to assert
-        that ``subsample`` must change the key, premised on the cached index arrays
-        differing -- ``sdf_pos_neg_idx`` repeated them far enough for the build-time
-        ``subsample`` and cached the result. The premise dissolved rather than the key
-        growing: index sets are cached raw and the padding happens at draw, so two
-        builds differing only in ``subsample`` share both the key and every cached
-        byte. If index arrays start differing again, some build-time parameter has
-        leaked back into cached content.
-        """
-        key_a, key_b, differing = self._content_differs(
-            meshes, tmp_path_factory, "sub", subsample=2048
-        )
-        assert key_a == key_b, "subsample must not move the cache key"
-        assert differing == set(), f"cached content depends on subsample again: {differing}"
-
-    def test_a_changed_parameter_must_not_reuse_the_previous_runs_cache(
-        self, meshes, tmp_path_factory
-    ):
-        """End to end: same cache directory, ``load_cache=True``, only ``mesh_to_scale`` changed."""
-        cache = tmp_path_factory.mktemp("collision")
-        first = build_dataset(meshes, cache, **SMALL)
-        second = build_dataset(meshes, cache, load_cache=True, mesh_to_scale=1, **SMALL)
-
-        assert second.data[0] != first.data[0], "the second run was handed the first run's file"
-
-    def test_equal_pos_neg_must_hold_after_a_subsample_change(self, meshes, tmp_path_factory):
-        """
-        What the stale padding used to cost, kept as the guard on the decoupling.
-
-        Until Aug 2026 ``sdf_pos_neg_idx`` repeated the index arrays just far enough
-        for the ``subsample`` in force when the cache was written, and cached the
-        result. Reloading with a larger one found too few entries:
-        ``MultiSurfaceSDFSamples.__getitem__`` took what there was and topped the
-        batch up with uniform random points, so ``equal_pos_neg=True`` quietly stopped
-        holding -- measured at 1.6x interior under-representation on the small surface
-        (0.20 against a fresh 0.32), and worst exactly where it matters, since in a
-        real dataset the small surface is the cartilage. Now the cache stores raw
-        index sets and ``_draw_sign_share`` pads at draw for the subsample in force,
-        so the reused cache and the fresh build draw identically-balanced batches.
-        """
-        import torch
-
-        base = {k: v for k, v in SMALL.items() if k != "subsample"}
-        cache = tmp_path_factory.mktemp("subsample_collision")
-        build_dataset(meshes, cache, subsample=64, **base)
-        reused = build_dataset(meshes, cache, load_cache=True, subsample=4096, **base)
-        fresh = build_dataset(
-            meshes, tmp_path_factory.mktemp("subsample_fresh"), subsample=4096, **base
-        )
-
-        def interior_fraction(dataset, surface):
-            torch.manual_seed(0)
-            item, _ = dataset[0]
-            return (item["gt_sdf"][:, surface] < 0).float().mean().item()
-
-        # Surface 1 is the small ellipsoid: fewest interior points, so it is hit hardest.
-        assert interior_fraction(reused, 1) == pytest.approx(interior_fraction(fresh, 1), rel=0.25)
-
-
-class TestMeshContentInTheKey:
-    """
-    The cache key notices when a mesh file's *content* changes, not only its path
-    (#19 (b), fixed Aug 2026): each path contributes ``(path, size, mtime)``, so an
-    in-place edit moves the key without any file being read.
-    """
-
-    def test_an_in_place_mesh_edit_must_change_the_key(self, tmp_path_factory):
-        """
-        Overwrite a subject's mesh at the same path with different geometry: the stale
-        cached samples must not be served, so the key has to move. Until Aug 2026 the
-        key hashed the path string alone and stood still through any edit.
-        """
-        import pyvista as pv
-
-        subject = write_synthetic_meshes(tmp_path_factory.mktemp("editable"))[:1]
-        dataset = build_dataset(subject, tmp_path_factory.mktemp("edit_cache"), **SMALL)
-        key_before = dataset.create_hash(subject[0])
-
-        edited = pv.Sphere(radius=0.5, theta_resolution=30, phi_resolution=30).triangulate()
-        edited.save(subject[0][0])
-
-        assert dataset.create_hash(subject[0]) != key_before
-
-
-class TestReferenceMeshHashing:
-    """
-    A ``reference_mesh`` passed as a ``Mesh`` object contributes a digest of its
-    geometry to the key (#19 (c), fixed Aug 2026). Until then it was stringified, and
-    ``Mesh.__str__`` includes the memory address -- the key was per-object, so a
-    dataset with a ``Mesh`` reference could never hit its own cache.
-    """
-
-    def test_two_equal_mesh_objects_must_hash_the_same(self, dataset, meshes):
-        """Same geometry, same file, two objects -- the cache key must not care."""
-        from pymskt.mesh import Mesh
-
-        one, two = Mesh(meshes[0][0]), Mesh(meshes[0][0])
-        assert rehash(dataset, meshes[0], reference_mesh=one) == rehash(
-            dataset, meshes[0], reference_mesh=two
-        )
-
-    def test_a_path_string_hashes_stably(self, dataset, meshes):
-        """The same reference given as a path is stable -- formerly the only workaround."""
-        assert rehash(dataset, meshes[0], reference_mesh=meshes[0][0]) == rehash(
-            dataset, meshes[0], reference_mesh=meshes[0][0]
-        )
-
-
-class TestSeeding:
-    """
-    What ``SDFSamples(random_seed=...)`` reproduces, and what it deliberately does not.
-
-    A seed makes both sampling paths reproducible from cold, which is what the rest of this
-    harness is built on -- every baselined number comes from a seeded near-surface dataset.
-    ``random_seed=None`` is the other half of the contract: it leaves sampling on the legacy
-    global numpy stream, so old callers keep getting old numbers.
-    """
-
-    def test_the_uniform_path_is_reproducible_under_a_numpy_seed(self, meshes, tmp_path_factory):
-        """
-        The compatibility contract, not a leftover: with ``random_seed=None`` the uniform
-        path still draws through ``np.random.uniform``, i.e. the legacy global stream, so a
-        caller who seeds numpy and passes no ``random_seed`` gets exactly the numbers they
-        always did. Routing the unseeded path through ``default_rng`` instead would be a
-        different stream and would silently change every such caller's data.
-        """
-        uniform = dict(SMALL, sigma_near=[None, None], sigma_far=[None, None], random_seed=None)
-        a = build_dataset(meshes, tmp_path_factory.mktemp("seed_u_a"), seed=7, **uniform)
-        b = build_dataset(meshes, tmp_path_factory.mktemp("seed_u_b"), seed=7, **uniform)
-        assert np.array_equal(cached_arrays(a)["pts"], cached_arrays(b)["pts"])
-
-    def test_the_near_surface_path_must_be_reproducible(self, meshes, tmp_path_factory):
-        """
-        The path production uses. It goes through ``pymskt.Mesh.rand_pts_around_surface``,
-        which has two independent draws -- the base surface points from
-        ``pcu.sample_mesh_random`` and the perturbation offsets from a ``default_rng`` --
-        and both take the seed NSM derives for that surface. Neither was reachable from
-        NSM before pymskt 0.1.21, which is why this used to be an ``xfail``.
-        """
-        near = dict(SMALL, sigma_near=[0.05, 0.05], sigma_far=[0.2, 0.2])
-        a = build_dataset(meshes, tmp_path_factory.mktemp("seed_n_a"), seed=7, **near)
-        b = build_dataset(meshes, tmp_path_factory.mktemp("seed_n_b"), seed=7, **near)
-        assert np.array_equal(cached_arrays(a)["pts"], cached_arrays(b)["pts"])
-
-    def test_random_seed_must_make_a_cold_run_reproducible(self, meshes, tmp_path_factory):
-        """The same seed against two *cold* caches gives the same samples."""
-        near = dict(SMALL, sigma_near=[0.05, 0.05], sigma_far=[0.2, 0.2], random_seed=1234)
-        a = build_dataset(meshes, tmp_path_factory.mktemp("seed_cold_a"), **near)
-        b = build_dataset(meshes, tmp_path_factory.mktemp("seed_cold_b"), **near)
-
-        assert np.array_equal(cached_arrays(a)["pts"], cached_arrays(b)["pts"])
+@pytest.fixture(scope="module")
+def bone_meshes(tmp_path_factory):
+    """``[bone, bone]`` -- single paths, not pairs, which is what ``SDFSamples`` takes."""
+    pairs = write_synthetic_meshes(tmp_path_factory.mktemp("single_meshes"))[:2]
+    return [pair[0] for pair in pairs]
 
 
 #: Builds one dataset in a fresh interpreter: ``sys.argv[1]`` is the cache directory,
@@ -605,35 +107,300 @@ def _cached_by_name(cache_dir):
     return found
 
 
+class TestCacheRoundTrip:
+    def test_a_reload_serves_the_first_builds_file_byte_for_byte(self, meshes, tmp_path_factory):
+        """
+        ``random_seed=None`` on both builds keeps the key the same while leaving sampling
+        unseeded, so a re-sample would change every number. ``find_hash`` walks all of
+        ``loc_save``, which is what lets a cache written on another day still hit.
+        """
+        import torch
+
+        cache = tmp_path_factory.mktemp("roundtrip")
+        first = build_dataset(meshes, cache, seed=0, random_seed=None, **SMALL)
+        reloaded = build_dataset(
+            meshes, cache, seed=999, random_seed=None, load_cache=True, **SMALL
+        )
+        assert len(first.data) == len(meshes) and first.data[0].endswith(".npz")
+        assert reloaded.data[0] == first.data[0], "the cache was not hit"
+        original, again = cached_arrays(first), cached_arrays(reloaded)
+        assert original.keys() == again.keys()
+        assert all(np.array_equal(original[key], again[key]) for key in original)
+
+        torch.manual_seed(0)
+        a, _ = first[0]
+        torch.manual_seed(0)
+        b, _ = reloaded[0]
+        assert torch.equal(a["xyz"], b["xyz"]) and torch.equal(a["gt_sdf"], b["gt_sdf"])
+
+        name = os.path.basename(first.data[0])
+        assert os.path.basename(first.find_hash(filename=name)[0]) == name
+
+    def test_a_disk_cache_serves_either_storage_mode(self, meshes, tmp_path_factory):
+        import torch
+
+        cache = tmp_path_factory.mktemp("store_modes")
+        disk = build_dataset(meshes, cache, **SMALL)
+        memory = build_dataset(meshes, cache, load_cache=True, store_data_in_memory=True, **SMALL)
+        assert isinstance(disk.data[0], str) and isinstance(memory.data[0], dict)
+        torch.manual_seed(0)
+        from_disk, _ = disk[0]
+        torch.manual_seed(0)
+        from_memory, _ = memory[0]
+        assert torch.equal(from_disk["xyz"], from_memory["xyz"])
+
+    def test_every_subject_started_is_logged(self, tmp_path_factory):
+        """So a crash mid-build names its subject. The log appends across builds."""
+        subjects = write_synthetic_meshes(tmp_path_factory.mktemp("logged_meshes"))[:2]
+        cache = tmp_path_factory.mktemp("logged")
+        log = os.path.join(str(cache), "list_meshes_started_loading.log")
+        build_dataset(subjects, cache, **SMALL)
+        with open(log, encoding="utf-8") as f:
+            assert f.read().splitlines() == [str(subject) for subject in subjects]
+        build_dataset(subjects, cache, load_cache=True, **SMALL)
+        with open(log, encoding="utf-8") as f:
+            assert len(f.read().splitlines()) == 4
+
+
+class TestCacheHitRepair:
+    """What a cache hit does besides loading: delete, rebuild, or upgrade in place."""
+
+    def test_an_unreadable_file_is_rebuilt_in_both_classes(
+        self, meshes, bone_meshes, tmp_path_factory
+    ):
+        """
+        A truncated ``.npz`` (a crash mid-write) is deleted and the subject rebuilt at the
+        same path. So is one whose index lists point past its points: served as-is they
+        would read the wrong rows.
+        """
+        for label, build, subjects, n_pts in (
+            ("multi", build_dataset, meshes, sum(SMALL["n_pts"])),
+            ("single", build_single_surface_dataset, bone_meshes[:1], SMALL_SINGLE["n_pts"]),
+        ):
+            small = SMALL if label == "multi" else SMALL_SINGLE
+            cache = tmp_path_factory.mktemp(f"badzip_{label}")
+            path = build(subjects, cache, **small).data[0]
+            with open(path, "wb") as f:
+                f.write(b"not a zipfile")
+            again = build(subjects, cache, load_cache=True, **small)
+            assert len(again) == len(subjects) and again.data[0] == path
+            assert cached_arrays(again)["pts"].shape == (n_pts, 3)
+
+        cache = tmp_path_factory.mktemp("out_of_range")
+        path = build_dataset(meshes, cache, **SMALL).data[0]
+        arrays = dict(np.load(path))
+        arrays["pos_idx_0"] = arrays["pos_idx_0"].copy()
+        arrays["pos_idx_0"][0] = arrays["pts"].shape[0] + 100
+        np.savez(path, **arrays)
+        rebuilt = cached_arrays(build_dataset(meshes, cache, load_cache=True, **SMALL))
+        assert rebuilt["pos_idx_0"].max() < rebuilt["pts"].shape[0]
+
+    def test_a_pre_overlap_pass_cache_is_shrunk_and_resaved(self, meshes, tmp_path_factory):
+        """
+        ``remove_overlapping_points`` runs on every hit. The index lists are not recomputed
+        on this path, so the poisoned row is pruned from them first, keeping the in-range
+        guard out of the way.
+        """
+        cache = tmp_path_factory.mktemp("overlap_upgrade")
+        path = build_dataset(meshes, cache, **SMALL).data[0]
+        arrays = dict(np.load(path))
+        n = arrays["sdfs"].shape[0]
+        arrays["sdfs"] = arrays["sdfs"].copy()
+        arrays["sdfs"][-1, :] = -0.05  # inside both surfaces
+        for key in [k for k in arrays if k.startswith(("pos_idx", "neg_idx", "surf_idx"))]:
+            arrays[key] = arrays[key][arrays[key] != n - 1]
+        np.savez(path, **arrays)
+
+        assert build_dataset(meshes, cache, load_cache=True, **SMALL).data[0] == path
+        upgraded = dict(np.load(path))
+        assert upgraded["sdfs"].shape[0] == n - 1
+        assert np.array_equal(upgraded["pos_idx_0"], arrays["pos_idx_0"])
+
+    def test_missing_index_lists_are_backfilled_in_both_classes(
+        self, meshes, bone_meshes, tmp_path_factory
+    ):
+        """
+        The single-surface upgrade never fired until Aug 2026: ``unpack_numpy_data`` always
+        sets ``pos_idx``, as an empty list when absent, so the ``not in`` test was always
+        false and ``__getitem__`` raised ``IndexError``. It now checks the length.
+        """
+        for label, build, subjects, small in (
+            ("multi", build_dataset, meshes, SMALL),
+            ("single", build_single_surface_dataset, bone_meshes[:1], SMALL_SINGLE),
+        ):
+            cache = tmp_path_factory.mktemp(f"backfill_{label}")
+            path = build(subjects, cache, **small).data[0]
+            arrays = dict(np.load(path))
+            prefixes = ("pos_idx", "neg_idx", "surf_idx")
+            np.savez(path, **{k: v for k, v in arrays.items() if not k.startswith(prefixes)})
+
+            again = build(subjects, cache, load_cache=True, **small)
+            upgraded = dict(np.load(path))
+            assert np.array_equal(upgraded["pts"], arrays["pts"]), "the subject was resampled"
+            for key in [k for k in arrays if k.startswith(("pos_idx", "neg_idx"))]:
+                assert np.array_equal(upgraded[key], arrays[key]), (label, key)
+            assert {"xyz", "gt_sdf"} <= set(again[0][0])
+
+
+class TestHashedParametersChangeTheKey:
+    def test_every_hashed_parameter_changes_the_key(self, dataset, meshes):
+        """The seed changes the samples, so it is in the key, as are the mesh paths."""
+        baseline = dataset.create_hash(meshes[0])
+        for attribute, value in (
+            ("center_pts", False),
+            ("norm_pts", False),
+            ("fix_mesh", True),
+            ("scale_jointly", True),
+            ("scale_all_meshes", False),
+            ("center_all_meshes", True),
+            ("reference_object", 1),
+            ("reference_mesh", "some/other/mesh.vtk"),
+            ("n_pts", [500, 600]),
+            ("p_near_surface", [0.3, 0.4]),
+            ("p_further_from_surface", [0.3, 0.4]),
+            ("sigma_near", [0.01, None]),
+            ("sigma_far", [0.2, None]),
+            ("rand_function", "laplace"),
+            ("random_seed", 7),
+        ):
+            assert rehash(dataset, meshes[0], **{attribute: value}) != baseline, attribute
+        assert dataset.create_hash([meshes[0][1], meshes[0][0]]) != baseline
+
+
+class TestFormerlyCollidingParameters:
+    """
+    ``mesh_to_scale`` and ``uniform_pts_buffer`` change the cached content and were missing
+    from the key (#19a), so with ``load_cache=True`` a second run silently trained on the
+    first's data. The premise, that the content differs, is asserted first.
+
+    ``subsample`` is deliberately not in the key. Its one effect on cached content, the
+    index padding, moved to draw time, sized by the ``subsample`` then in force.
+    """
+
+    @staticmethod
+    def _keys_and_differing_content(meshes, tmp_path_factory, label, **override):
+        a = build_dataset(meshes, tmp_path_factory.mktemp(f"{label}_a"), **SMALL)
+        b = build_dataset(meshes, tmp_path_factory.mktemp(f"{label}_b"), **dict(SMALL, **override))
+        first, second = cached_arrays(a), cached_arrays(b)
+        differing = {
+            key
+            for key in set(first) & set(second)
+            if first[key].shape != second[key].shape or not np.array_equal(first[key], second[key])
+        }
+        return a.create_hash(meshes[0]), b.create_hash(meshes[0]), differing
+
+    def test_what_changes_the_content_changes_the_key_and_subsample_does_neither(
+        self, meshes, tmp_path_factory
+    ):
+        for label, override in (
+            ("mts", {"mesh_to_scale": 1}),
+            ("upb", {"uniform_pts_buffer": 0.5}),
+        ):
+            key_a, key_b, differing = self._keys_and_differing_content(
+                meshes, tmp_path_factory, label, **override
+            )
+            assert {"pts", "sdfs"} <= differing, f"premise gone: {label} no longer changes content"
+            assert key_a != key_b, label
+
+        key_a, key_b, differing = self._keys_and_differing_content(
+            meshes, tmp_path_factory, "sub", subsample=2048
+        )
+        assert key_a == key_b and differing == set()
+
+        cache = tmp_path_factory.mktemp("collision")
+        first = build_dataset(meshes, cache, **SMALL)
+        second = build_dataset(meshes, cache, load_cache=True, mesh_to_scale=1, **SMALL)
+        assert second.data[0] != first.data[0], "the second run was handed the first run's file"
+
+    def test_equal_pos_neg_holds_after_a_subsample_change(self, meshes, tmp_path_factory):
+        """
+        The padding used to be cached for the build's ``subsample``, so a larger one topped
+        batches up with uniform points and ``equal_pos_neg`` stopped holding: 1.6x
+        under-representation of the small surface's interior (0.20 against 0.32).
+        """
+        import torch
+
+        base = {k: v for k, v in SMALL.items() if k != "subsample"}
+        cache = tmp_path_factory.mktemp("subsample_collision")
+        build_dataset(meshes, cache, subsample=64, **base)
+        reused = build_dataset(meshes, cache, load_cache=True, subsample=4096, **base)
+        fresh = build_dataset(meshes, tmp_path_factory.mktemp("sub_fresh"), subsample=4096, **base)
+
+        def interior_fraction(dataset):
+            torch.manual_seed(0)
+            return (dataset[0][0]["gt_sdf"][:, 1] < 0).float().mean().item()
+
+        assert interior_fraction(reused) == pytest.approx(interior_fraction(fresh), rel=0.25)
+
+
+class TestMeshContentInTheKey:
+    def test_an_in_place_mesh_edit_changes_the_key(self, tmp_path_factory):
+        """#19b: the key hashed the path alone, so stale samples outlived an edit."""
+        import pyvista as pv
+
+        subject = write_synthetic_meshes(tmp_path_factory.mktemp("editable"))[:1]
+        dataset = build_dataset(subject, tmp_path_factory.mktemp("edit_cache"), **SMALL)
+        before = dataset.create_hash(subject[0])
+        pv.Sphere(radius=0.5, theta_resolution=30, phi_resolution=30).triangulate().save(
+            subject[0][0]
+        )
+        assert dataset.create_hash(subject[0]) != before
+
+
+class TestReferenceMeshHashing:
+    def test_equal_meshes_hash_the_same(self, dataset, meshes):
+        """
+        #19c: a ``Mesh`` reference was stringified, and its ``__str__`` includes a memory
+        address, so such a dataset never hit its own cache.
+        """
+        from pymskt.mesh import Mesh
+
+        one, two = Mesh(meshes[0][0]), Mesh(meshes[0][0])
+        assert rehash(dataset, meshes[0], reference_mesh=one) == rehash(
+            dataset, meshes[0], reference_mesh=two
+        )
+
+
+class TestSeeding:
+    """
+    A seed makes both sampling paths reproducible from a cold cache. ``random_seed=None``
+    leaves the uniform path on numpy's global stream, so an old caller that seeds numpy
+    still gets the numbers it always did.
+    """
+
+    def test_seeded_builds_reproduce_on_both_paths(self, meshes, tmp_path_factory):
+        for label, options in (
+            ("uniform", dict(sigma_near=[None, None], sigma_far=[None, None], random_seed=None)),
+            ("near", dict(sigma_near=[0.05, 0.05], sigma_far=[0.2, 0.2])),
+            ("cold", dict(sigma_near=[0.05, 0.05], sigma_far=[0.2, 0.2], random_seed=1234)),
+        ):
+            a, b = (
+                build_dataset(
+                    meshes, tmp_path_factory.mktemp(f"seed_{label}"), seed=7, **{**SMALL, **options}
+                )
+                for _ in range(2)
+            )
+            assert np.array_equal(cached_arrays(a)["pts"], cached_arrays(b)["pts"]), label
+
+
 class TestSeedDerivation:
     """
-    The per-draw seed derivation, pinned property by property.
-
-    ``derive_seed`` hands every (subject, sampling-combo, surface) its own seed, derived
-    from the run seed and the *bytes of the subject's meshes*. All five of the properties
-    below are silent when they break -- the data still looks like data -- so each says what
-    a reader loses if it stops holding.
+    ``derive_seed`` gives each (subject, sampling combo, surface) its own seed, from the run
+    seed and the bytes of the subject's meshes. Each property below is silent when it breaks.
     """
 
-    def test_different_seeds_give_different_data(self, meshes, tmp_path_factory):
+    def test_the_seed_reaches_each_draw_separately(self, meshes, tmp_path_factory):
         """
-        If this fails the seed is not reaching the sampler at all, and every "reproducible"
-        claim here is really just a cache hit.
+        Different seeds give different data, or "reproducible" would just mean a cache hit.
+        The near and far passes, asked for identical parameters, still draw different base
+        points, or the dataset carries half the surface locations it appears to.
         """
-        a = build_dataset(meshes, tmp_path_factory.mktemp("derive_1234"), random_seed=1234, **SMALL)
-        b = build_dataset(meshes, tmp_path_factory.mktemp("derive_5678"), random_seed=5678, **SMALL)
+        a, b = (
+            build_dataset(meshes, tmp_path_factory.mktemp(f"derive_{s}"), random_seed=s, **SMALL)
+            for s in (1234, 5678)
+        )
         assert not np.array_equal(cached_arrays(a)["pts"], cached_arrays(b)["pts"])
 
-    def test_the_two_sampling_combos_draw_different_points(self, meshes, tmp_path_factory):
-        """
-        Ask for the near and far passes with identical parameters -- same sigma, same
-        count -- and they must still produce different points.
-
-        ``rand_pts_around_surface`` picks base points on the surface and then perturbs
-        them, so one seed shared across the two combos means both passes perturb the *same*
-        base points. The dataset would then carry half as many distinct surface locations
-        as it appears to, at every sigma, and nothing downstream would notice.
-        """
         identical = dict(
             SMALL,
             sigma_near=[0.02, 0.02],
@@ -643,76 +410,37 @@ class TestSeedDerivation:
             random_seed=99,
         )
         dataset = build_dataset(meshes, tmp_path_factory.mktemp("combos"), **identical)
-
-        # pt_sample_combos is [near, far, uniform]; each contributes sum(n_pts) points to
-        # the front of `pts`, in order.
         near_count, far_count = (sum(combo[0]) for combo in dataset.pt_sample_combos[:2])
-        assert near_count == far_count, "the two combos must be the same size to compare"
         points = cached_arrays(dataset)["pts"]
-        near, far = points[:near_count], points[near_count : near_count + far_count]
+        assert near_count == far_count
+        assert not np.array_equal(points[:near_count], points[near_count : 2 * near_count])
 
-        assert not np.array_equal(near, far)
-
-    def test_the_mesh_list_order_does_not_change_a_subjects_data(self, tmp_path_factory):
+    def test_order_and_location_do_not_change_a_subjects_data(self, tmp_path_factory):
         """
-        Reverse ``list_mesh_paths`` and every subject must keep its own samples.
-
-        This is why the derivation is keyed on the mesh contents and not on ``enumerate``'s
-        index, and it is the property most likely to be "simplified" back out: an index is
-        right there in the loop. Keyed positionally, adding one subject to the front of a
-        training list would resample every other subject -- while their cache keys, and so
-        their cached files, stayed valid.
+        Keyed on mesh contents, not position: adding a subject to the front of a list would
+        otherwise resample every other subject while their cached files stayed valid. And
+        the same bytes at another path, a genuine cold resample, land on the same points.
         """
         two = write_synthetic_meshes(tmp_path_factory.mktemp("order_meshes"))[:2]
-        forward = build_dataset(two, tmp_path_factory.mktemp("order_fwd"), random_seed=321, **SMALL)
-        reverse = build_dataset(
-            list(reversed(two)), tmp_path_factory.mktemp("order_rev"), random_seed=321, **SMALL
-        )
-
+        forward = build_dataset(two, tmp_path_factory.mktemp("fwd"), random_seed=321, **SMALL)
+        reverse = build_dataset(two[::-1], tmp_path_factory.mktemp("rev"), random_seed=321, **SMALL)
         for index in range(2):
             mine = cached_arrays(forward, index)["pts"]
-            counterpart = cached_arrays(reverse, 1 - index)["pts"]
-            positional = cached_arrays(reverse, index)["pts"]
-            assert np.array_equal(mine, counterpart), f"subject {index} was resampled"
-            assert not np.array_equal(mine, positional), (
-                f"subject {index} matches whatever is at its position, so this test cannot "
-                f"tell the two derivations apart"
-            )
+            assert np.array_equal(mine, cached_arrays(reverse, 1 - index)["pts"])
+            assert not np.array_equal(mine, cached_arrays(reverse, index)["pts"])
 
-    def test_moving_the_meshes_does_not_change_the_data(self, tmp_path_factory):
-        """
-        The same mesh bytes at two different absolute paths, same ``random_seed``, must
-        sample identically.
-
-        The two cache *keys* differ -- the path is still hashed into them -- so the second
-        build is a genuine cold resample that happens to land on the same answer, not a
-        cache hit. That is the whole point of keying the seed on contents: the seed decides
-        which points get drawn, so relocating a dataset must not silently redraw it.
-        """
-        original = write_synthetic_meshes(tmp_path_factory.mktemp("here"))[:1]
         moved = write_synthetic_meshes(tmp_path_factory.mktemp("there"))[:1]
-        assert original[0] != moved[0], "the two copies must be at different paths"
-
-        near = dict(SMALL, random_seed=4242)
-        a = build_dataset(original, tmp_path_factory.mktemp("moved_a"), **near)
-        b = build_dataset(moved, tmp_path_factory.mktemp("moved_b"), **near)
-
-        assert a.create_hash(original[0]) != b.create_hash(moved[0]), "cache keys must differ"
+        a = build_dataset(two[:1], tmp_path_factory.mktemp("here_a"), random_seed=4242, **SMALL)
+        b = build_dataset(moved, tmp_path_factory.mktemp("there_b"), random_seed=4242, **SMALL)
+        assert a.create_hash(two[0]) != b.create_hash(moved[0])
         assert np.array_equal(cached_arrays(a)["pts"], cached_arrays(b)["pts"])
 
     def test_multiprocessing_does_not_change_the_data(self, tmp_path_factory):
         """
-        ``multiprocessing=True`` must produce the same cache as ``multiprocessing=False``.
-
-        ``Pool`` forks, so every worker inherits one copy of the parent's global numpy
-        state. Before the seed was threaded through, that state was the only thing driving
-        the sampler and the pooled build reproduced none of the serial one -- all three
-        subjects differed. That path is still live: rerun this with ``random_seed=None``
-        and the same three comparisons come back ``[False, False, False]``.
-
-        Both datasets are built in *separate* processes. Building one in-process and
-        forking for the other hangs -- a pre-existing fork-after-VTK hazard, unrelated to
-        seeding.
+        ``Pool`` forks, and before the seed was threaded through, the forked global numpy
+        state drove the sampler: all three subjects differed. With ``random_seed=None`` they
+        still do. Each build runs in its own process, because building in-process and then
+        forking hangs (a fork-after-VTK hazard, unrelated to seeding).
         """
         mesh_dir = str(tmp_path_factory.mktemp("mp_meshes"))
         write_synthetic_meshes(mesh_dir)
@@ -727,121 +455,66 @@ class TestSeedDerivation:
             assert finished.returncode == 0, finished.stderr[-2000:]
 
         serial, parallel = (_cached_by_name(cache) for cache in caches)
-        assert sorted(serial) == sorted(parallel) and len(serial) == 3, (serial, parallel)
-        for name in sorted(serial):
-            assert np.array_equal(
-                np.load(serial[name])["pts"], np.load(parallel[name])["pts"]
-            ), f"{name} differs between the serial and pooled builds"
-
-
-@pytest.fixture(scope="module")
-def bone_meshes(tmp_path_factory):
-    """``[bone, bone]`` -- single paths, not pairs, which is what ``SDFSamples`` takes."""
-    pairs = write_synthetic_meshes(tmp_path_factory.mktemp("single_meshes"))[:2]
-    return [pair[0] for pair in pairs]
+        assert sorted(serial) == sorted(parallel) and len(serial) == 3
+        for name in serial:
+            assert np.array_equal(np.load(serial[name])["pts"], np.load(parallel[name])["pts"])
 
 
 class TestSingleSurfaceSDFSamples:
     """
-    The same seeding contract, on the single-surface PARENT class.
-
     ``SDFSamples`` is not ``MultiSurfaceSDFSamples`` with one surface: it has its own
-    ``get_sample_data_dict``, ``get_pt_sample_combos`` and ``__getitem__``, and its own
-    call to ``read_mesh_get_sampled_pts`` -- the *other* sampler, not the one the subclass
-    uses. Nothing ``TestSeeding`` and ``TestSeedDerivation`` establish above carries over
-    to any of it, and until this class existed nothing in ``testing/`` constructed an
-    ``SDFSamples`` at all.
-
-    The four properties below are the subclass's, restated. They are the ones that would
-    let a seeded run silently stop being reproducible.
+    ``get_sample_data_dict``, ``__getitem__`` and sampler, so the seeding contract is
+    asserted on it separately.
     """
 
-    @pytest.fixture(scope="class")
-    def dataset(self, bone_meshes, tmp_path_factory):
-        return build_single_surface_dataset(
-            bone_meshes, tmp_path_factory.mktemp("single_build"), **SMALL_SINGLE
-        )
-
-    @pytest.fixture(scope="class")
-    def seeded_pair(self, bone_meshes, tmp_path_factory):
-        """The same ``random_seed`` against two *cold*, separate caches."""
-        return [
+    def test_it_caches_its_scalar_n_pts_and_its_seed_reproduces(
+        self, bone_meshes, tmp_path_factory
+    ):
+        first, second = (
             build_single_surface_dataset(
-                bone_meshes, tmp_path_factory.mktemp(f"single_seeded_{label}"), **SMALL_SINGLE
+                bone_meshes, tmp_path_factory.mktemp(f"single_{label}"), **SMALL_SINGLE
             )
             for label in ("a", "b")
-        ]
-
-    def test_it_builds_and_caches_one_file_per_subject(self, dataset, bone_meshes):
-        assert len(dataset.data) == len(bone_meshes)
-        for path in dataset.data:
-            assert os.path.exists(path) and path.endswith(".npz")
-
-    def test_the_scalar_n_pts_is_the_point_count_that_lands_in_the_cache(self, dataset):
-        """
-        The parent's ``get_sample_data_dict`` preallocates ``data["xyz"]`` with the
-        scalar ``self.n_pts`` where the subclass uses ``sum(self.n_pts)`` over its
-        per-surface list. Both are right for their own class; this pins that the scalar
-        one is, so a later attempt to unify the two cannot quietly truncate this path.
-        """
-        assert cached_arrays(dataset)["pts"].shape == (SMALL_SINGLE["n_pts"], 3)
-
-    def test_the_same_seed_reproduces_a_cold_run(self, seeded_pair):
-        """
-        Two separate cache directories, so neither run can be reading the other's file --
-        the warm-cache illusion that hid the unseeded sampler for as long as it did.
-        """
-        first, second = seeded_pair
+        )
+        assert len(first.data) == len(bone_meshes)
+        assert cached_arrays(first)["pts"].shape == (SMALL_SINGLE["n_pts"], 3)
         assert first.data[0] != second.data[0], "the two runs shared a cache file"
         for index in range(len(first.data)):
             assert np.array_equal(
                 cached_arrays(first, index)["pts"], cached_arrays(second, index)["pts"]
-            ), f"subject {index} did not reproduce"
+            )
 
-    def test_a_different_seed_gives_different_points(
-        self, seeded_pair, bone_meshes, tmp_path_factory
-    ):
-        """The guard on the test above: without this, "reproducible" could just mean inert."""
         other = build_single_surface_dataset(
-            bone_meshes, tmp_path_factory.mktemp("single_other_seed"), seed=5678, **SMALL_SINGLE
+            bone_meshes, tmp_path_factory.mktemp("single_other"), seed=5678, **SMALL_SINGLE
         )
-        assert not np.array_equal(cached_arrays(seeded_pair[0])["pts"], cached_arrays(other)["pts"])
+        assert not np.array_equal(cached_arrays(first)["pts"], cached_arrays(other)["pts"])
 
     def test_an_unseeded_run_is_not_reproducible(self, bone_meshes, tmp_path_factory):
         """
-        ``random_seed=None`` must stay unseeded. Both runs get the same ``np.random.seed``
-        and still differ, which is the point: on the near-surface path the draw happens
-        inside ``pymskt.Mesh.rand_pts_around_surface``, off the global stream, so
+        The near-surface draw happens inside pymskt, off numpy's global stream, so
         ``random_seed`` is the only thing that can make it reproducible.
         """
-        unseeded = [
+        a, b = (
             build_single_surface_dataset(
                 bone_meshes,
-                tmp_path_factory.mktemp(f"single_unseeded_{label}"),
+                tmp_path_factory.mktemp(f"unseeded_{label}"),
                 random_seed=None,
                 **SMALL_SINGLE,
             )
             for label in ("a", "b")
-        ]
-        assert not np.array_equal(
-            cached_arrays(unseeded[0])["pts"], cached_arrays(unseeded[1])["pts"]
         )
+        assert not np.array_equal(cached_arrays(a)["pts"], cached_arrays(b)["pts"])
 
 
 class TestFormerlyUncallableConfigurations:
-    """
-    Advertised constructor arguments that used to build fine and crash on first use.
-    Each test asserts the option now works; the crashes they replace were #22 and #23,
-    fixed Aug 2026.
-    """
+    """Constructor options that built fine and crashed on first use (#22, #23, #69)."""
 
-    def test_zero_sampling_probability_samples_nothing(self, meshes, tmp_path_factory):
+    def test_a_zero_sampling_probability_samples_nothing(
+        self, meshes, bone_meshes, tmp_path_factory
+    ):
         """
-        ``get_pt_sample_combos`` emits a ``[0, sigma]`` combo when a probability is 0,
-        and ``get_sample_data_dict`` now skips it (#23) instead of handing
-        ``point_cloud_utils`` an empty point cloud to crash on. The remaining combos
-        still fill the whole preallocated buffer -- the random share absorbs what the
-        probabilities leave over, so nothing is silently left at zero.
+        #23: the empty combo reached ``point_cloud_utils`` and crashed. The other combos
+        still fill the whole buffer, so no row is left at zero.
         """
         dataset = build_dataset(
             meshes,
@@ -851,73 +524,36 @@ class TestFormerlyUncallableConfigurations:
             sigma_near=[0.05, 0.05],
             **SMALL,
         )
-        assert len(dataset) == len(meshes)
-        arrays = cached_arrays(dataset)
-        # A skipped combo must not leave a hole of never-written rows in the buffer.
-        assert not np.any(np.all(arrays["pts"] == 0, axis=1))
-        item, _ = dataset[0]
-        assert {"xyz", "gt_sdf"} <= set(item)
-
-    def test_zero_probability_on_the_single_surface_class(self, bone_meshes, tmp_path_factory):
-        """``SDFSamples.get_sample_data_dict`` is separate code from the subclass's."""
-        dataset = build_single_surface_dataset(
+        assert not np.any(np.all(cached_arrays(dataset)["pts"] == 0, axis=1))
+        assert {"xyz", "gt_sdf"} <= set(dataset[0][0])
+        single = build_single_surface_dataset(
             bone_meshes[:1],
             tmp_path_factory.mktemp("p_zero_single"),
             p_near_surface=0.0,
             p_further_from_surface=0.5,
             **SMALL_SINGLE,
         )
-        item, _ = dataset[0]
-        assert {"xyz", "gt_sdf"} <= set(item)
+        assert {"xyz", "gt_sdf"} <= set(single[0][0])
 
-    def test_store_data_in_memory_yields_an_item(self, meshes, tmp_path_factory):
-        """
-        ``MultiSurfaceSDFSamples.__getitem__`` read ``time_`` and ``size``, which are only
-        bound when a disk load happened, so ``store_data_in_memory=True`` raised
-        ``UnboundLocalError`` (#22). It now carries the same guard as the single-surface
-        ``SDFSamples.__getitem__`` always did: timing keys are emitted only when a load
-        was actually timed.
-        """
-        dataset = build_dataset(
-            meshes, tmp_path_factory.mktemp("in_memory"), store_data_in_memory=True, **SMALL
-        )
-        item, _ = dataset[0]
-        assert set(item) == {"xyz", "gt_sdf"}
-
-    @pytest.fixture(scope="class")
-    def timing_free_dataset(self, meshes, tmp_path_factory):
-        """In memory with load timing off -- formerly the half-workaround for #22."""
-        return build_dataset(
-            meshes,
-            tmp_path_factory.mktemp("in_memory_ok"),
-            store_data_in_memory=True,
-            test_load_times=False,
-            **SMALL,
-        )
-
-    def test_store_data_in_memory_works_with_load_timing_off(self, timing_free_dataset):
-        item, index = timing_free_dataset[0]
-        assert set(item) == {"xyz", "gt_sdf"} and index == 0
-
-    def test_the_trainer_consumes_batches_without_timing_keys(
-        self, timing_free_dataset, tmp_path_factory
+    def test_an_in_memory_dataset_trains_with_or_without_load_timing(
+        self, meshes, tmp_path_factory
     ):
         """
-        ``train_epoch`` used to read all four load-timing keys unconditionally, which is
-        what made #22 unfixable by the dataset guard alone: the combination that avoided
-        the crash produced batches the trainer could not consume, so no combination of
-        the two flags both constructed and trained. The keys are now optional
-        diagnostics on both sides -- emitted only when a disk load was timed, accumulated
-        and logged only when present.
-
-        Asserted by running the trainer rather than by grepping its source: a grep for
-        ``sdf_data["size"]`` lies in both directions -- red on a harmless rename, green
-        on an unguarded read that crashes.
-
-        ``samples_per_object_per_batch`` has to follow ``SMALL``'s ``subsample``: mismatch
-        them and the run dies at the batch concatenation, several steps before the reads
-        this is about.
+        #22: ``store_data_in_memory=True`` raised ``UnboundLocalError`` on the timing keys,
+        and ``train_epoch`` read all four timing keys unconditionally, so no combination of
+        the two flags both built and trained. Asserted by running the trainer.
         """
+        for timing in (True, False):
+            dataset = build_dataset(
+                meshes,
+                tmp_path_factory.mktemp(f"in_memory_{timing}"),
+                store_data_in_memory=True,
+                test_load_times=timing,
+                **SMALL,
+            )
+            item, index = dataset[0]
+            assert set(item) == {"xyz", "gt_sdf"} and index == 0
+
         config = training_config(tmp_path_factory.mktemp("in_memory_train"))
         config.update(
             {
@@ -927,294 +563,155 @@ class TestFormerlyUncallableConfigurations:
                 "samples_per_object_per_batch": SMALL["subsample"],
             }
         )
-        records, _ = run_training(config, build_model(config), timing_free_dataset)
-        assert len(records) == 1
-        assert "loss" in records[0]
+        records, _ = run_training(config, build_model(config), dataset)
+        assert len(records) == 1 and "loss" in records[0]
 
-
-class TestScaleJointlyInMemory:
-    """
-    ``scale_jointly=True`` with ``store_data_in_memory=True`` never constructed before
-    the #69 fix: the in-memory branch of ``norm_and_scale_all_meshes`` read the
-    flattened ``new_pts_0``-style keys that exist only in the ``.npz`` cache layout,
-    and it also omitted ``joint_scale_buffer``. Until the fix this was a strict-xfail
-    pin whose ``raises=KeyError`` made a KeyError-only half-fix a plain failure; the
-    body asserts the buffered domain, so it now guards both halves of the fix: both
-    storage modes compute the shared frame and ``__getitem__`` applies it per batch.
-    """
-
-    def test_an_in_memory_dataset_lands_inside_the_buffered_domain(self, meshes, tmp_path_factory):
+    def test_scale_jointly_works_in_either_storage_mode(self, meshes, tmp_path_factory):
         """
-        ``joint_scale_buffer=9`` makes the shared scale 10x the observed max radius, so
-        every batch coordinate lands within ~0.1-0.2 of the origin; an unbuffered
-        scaling leaves the near-surface points at radius ~0.5-1.1. The 0.25 threshold
-        sits severalfold clear of both, on any draw.
-        """
-        dataset = build_dataset(
-            meshes,
-            tmp_path_factory.mktemp("joint_mem"),
-            center_pts=False,
-            norm_pts=False,
-            scale_jointly=True,
-            joint_scale_buffer=9.0,
-            store_data_in_memory=True,
-            **SMALL,
-        )
-        item, _ = dataset[0]
-        assert item["xyz"].norm(dim=1).max() < 0.25
-
-    def test_both_storage_modes_agree_on_the_shared_frame(self, meshes, tmp_path_factory):
-        """
-        Was #1: ``norm_and_scale_all_meshes`` "assumes ``self.data`` includes all of the
-        meshes ... if data [is] being loaded [from disk] then it does not". The premise
-        had it backwards -- the ``.npz`` branch was the one that worked -- and the
-        remedy #1 proposed, scaling ``xyz`` in ``__getitem__``, is what #69 shipped for
-        both modes. This is the assertion that closes it: same meshes, same frame, and
-        batches in the same domain whichever way the samples were stored.
+        #69: the in-memory branch read ``.npz``-only keys and omitted ``joint_scale_buffer``.
+        ``joint_scale_buffer=9`` puts every batch within ~0.1-0.2 of the origin; an
+        unbuffered scale leaves points at ~0.5-1.1, so 0.25 separates them on any draw.
         """
         joint = dict(
-            SMALL,
-            scale_jointly=True,
-            center_pts=False,
-            norm_pts=False,
-            joint_scale_buffer=9.0,
+            SMALL, scale_jointly=True, center_pts=False, norm_pts=False, joint_scale_buffer=9.0
         )
-        disk = build_dataset(
-            meshes, tmp_path_factory.mktemp("frame_disk"), store_data_in_memory=False, **joint
+        disk, memory = (
+            build_dataset(
+                meshes, tmp_path_factory.mktemp(f"joint_{mode}"), store_data_in_memory=mode, **joint
+            )
+            for mode in (False, True)
         )
-        memory = build_dataset(
-            meshes, tmp_path_factory.mktemp("frame_mem"), store_data_in_memory=True, **joint
-        )
-
         np.testing.assert_allclose(disk.center, memory.center, rtol=1e-6)
         np.testing.assert_allclose(disk.max_radius, memory.max_radius, rtol=1e-6)
-        # The frame is deterministic; the draw is not, so the batches are held to the
-        # sibling test's domain bound rather than to each other.
         assert disk[0][0]["xyz"].norm(dim=1).max() < 0.25
         assert memory[0][0]["xyz"].norm(dim=1).max() < 0.25
 
 
-class TestCacheLocationDefault:
+def test_the_cache_location_is_read_when_the_dataset_is_built(
+    meshes, monkeypatch, tmp_path_factory
+):
     """
-    ``loc_save=None`` resolves ``LOC_SDF_CACHE`` when the dataset is CONSTRUCTED. Until
-    Aug 2026 the environment read was a default argument, evaluated once at import (#24),
-    so setting the variable afterwards had no effect and the cache silently went to
-    ``~/.cache/nsm_sdf_cache``. The harness still passes ``loc_save`` explicitly
-    everywhere else so its tests can never depend on the developer's environment.
+    #24: ``LOC_SDF_CACHE`` was a default argument, read once at import. A blank value means
+    the home default, since kneepipeline blanks it rather than unsetting it, and an empty
+    ``loc_save`` would root the cache in the working directory.
     """
+    cache_root = tmp_path_factory.mktemp("env_cache")
+    monkeypatch.setenv("LOC_SDF_CACHE", str(cache_root))
+    dataset = build_dataset(meshes, "ignored-by-override", loc_save=None, **SMALL)
+    assert dataset.loc_save == str(cache_root) and dataset.data[0].startswith(str(cache_root))
 
-    def test_setting_the_env_var_changes_where_the_cache_goes(
-        self, meshes, monkeypatch, tmp_path_factory
-    ):
-        cache_root = tmp_path_factory.mktemp("env_cache")
-        monkeypatch.setenv("LOC_SDF_CACHE", str(cache_root))
-        dataset = build_dataset(meshes, "ignored-by-override", loc_save=None, **SMALL)
-        assert dataset.loc_save == str(cache_root)
-        assert dataset.data[0].startswith(str(cache_root))
-
-    def test_a_blank_env_var_counts_as_unset(self, meshes, monkeypatch, tmp_path_factory):
-        """
-        The downstream consumer blanks the variable rather than unsetting it
-        (``kneepipeline/steps/run_nsm.py``), and ``""`` must mean the home default: a
-        literally-empty ``loc_save`` would root the cache -- and ``find_hash``'s
-        recursive walk -- at the current working directory.
-        """
-        fake_home = tmp_path_factory.mktemp("fake_home")
-        monkeypatch.setenv("HOME", str(fake_home))
-        monkeypatch.setenv("LOC_SDF_CACHE", "")
-        dataset = build_dataset(meshes, "ignored-by-override", loc_save=None, **SMALL)
-        assert dataset.loc_save == os.path.join(str(fake_home), ".cache", "nsm_sdf_cache")
+    fake_home = tmp_path_factory.mktemp("fake_home")
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("LOC_SDF_CACHE", "")
+    dataset = build_dataset(meshes, "ignored-by-override", loc_save=None, **SMALL)
+    assert dataset.loc_save == os.path.join(str(fake_home), ".cache", "nsm_sdf_cache")
 
 
 class TestPointCenteringAndScaling:
-    """
-    ``get_pts_center_and_scale`` is the normalization every cached sample goes through.
-    Two of its documented behaviours are not its behaviours.
-    """
-
-    def test_center_and_scale_are_not_accepted_as_arguments(self):
-        """
-        They were removed rather than honoured, so this asserts they are gone.
-
-        Both were shadowed by the values computed from them before they were read, so
-        neither had any effect at any value. Honouring them instead would have been the
-        harmful fix: every caller passes ``scale=norm_pts``, which defaults to ``False``
-        at all four definition sites and is unset in the shipped configs, so an
-        authoritative argument would stop scaling on a default run -- measured, a point
-        cloud of max radius 24.95 stays at 24.95 instead of normalizing to 1.0. That
-        changes the coordinate frame of every dataset, checkpoint and reconstruction
-        NSM has ever produced. See #20.
-        """
-        from NSM.datasets.sdf_dataset import get_pts_center_and_scale
-
-        taken = inspect.signature(get_pts_center_and_scale).parameters
-        assert "center" not in taken
-        assert "scale" not in taken
-
     def test_centering_and_scaling_still_happen_unconditionally(self):
         """
-        The behaviour the removal must preserve: both operations always run.
-
-        This is the half that goes red if someone reinstates the arguments and wires
-        them up, because the defaults would then switch scaling off.
+        The ``center`` and ``scale`` arguments were overwritten before being read, and were
+        removed (#20). Honouring them would have stopped scaling on every default run
+        (``scale=norm_pts``, default False): a cloud of radius 24.95 would stay 24.95. The
+        caller's array is not modified (#21).
         """
         from NSM.datasets.sdf_dataset import get_pts_center_and_scale
 
-        points = np.array([[1.0, 1.0, 1.0], [3.0, 3.0, 3.0]])
-        center, scale, normalized = get_pts_center_and_scale(points, return_pts=True)
-
-        assert np.allclose(center, [2.0, 2.0, 2.0]), "centering did not happen"
-        assert np.isclose(
-            np.max(np.linalg.norm(normalized, axis=-1)), 1.0
-        ), "scaling did not happen"
-
-    def test_the_callers_array_must_not_be_mutated(self):
-        """
-        ``pts -= center`` used to write through to the caller's array. All three in-repo
-        call sites carried a defensive ``np.copy(...)``; the copy now lives inside the
-        function, where a fourth caller gets it for free. See #21.
-        """
-        from NSM.datasets.sdf_dataset import get_pts_center_and_scale
+        parameters = inspect.signature(get_pts_center_and_scale).parameters
+        assert "center" not in parameters and "scale" not in parameters
 
         points = np.array([[1.0, 1.0, 1.0], [3.0, 3.0, 3.0]])
-        get_pts_center_and_scale(points)
+        center, _, normalized = get_pts_center_and_scale(points, return_pts=True)
+        assert np.allclose(center, [2.0, 2.0, 2.0])
+        assert np.isclose(np.max(np.linalg.norm(normalized, axis=-1)), 1.0)
         assert np.allclose(points, [[1.0, 1.0, 1.0], [3.0, 3.0, 3.0]])
 
 
 class TestUniformSamplingCube:
     """
-    The uniform-sampling cube the two samplers draw from when ``sigma`` is None.
-
-    The single- and multi-mesh samplers carried private copies of the cube arithmetic and
-    they had diverged (#40, fixed Aug 2026): in both, ``mins`` was rebound before ``maxs``
-    read it, so a nonzero ``uniform_pts_buffer`` grew the cube more above than below; and
-    only the single-mesh copy clipped its draws, to +/-(1 + buffer/2), piling the
-    truncated samples onto the clip faces. Both now share
-    ``get_buffered_cube_mins_maxs`` and neither clips.
+    The two samplers had private copies of the cube arithmetic, and they had diverged (#40):
+    the buffer grew the cube more above than below, only one clipped, and ``pts_surface``
+    was a list from one and an array from the other.
     """
 
-    def test_the_buffer_expands_the_cube_symmetrically(self):
-        from NSM.datasets.sdf_dataset import get_buffered_cube_mins_maxs, get_cube_mins_maxs
+    def test_both_samplers_draw_from_one_symmetric_cube(self, meshes):
+        from NSM.datasets.sdf_dataset import (
+            get_buffered_cube_mins_maxs,
+            get_cube_mins_maxs,
+            read_mesh_get_sampled_pts,
+            read_meshes_get_sampled_pts,
+        )
 
-        rng = np.random.default_rng(0)
-        pts = rng.normal(size=(500, 3)) + [5.0, -2.0, 0.5]
+        pts = np.random.default_rng(0).normal(size=(500, 3)) + [5.0, -2.0, 0.5]
         mins0, maxs0 = get_cube_mins_maxs(pts)
         mins, maxs = get_buffered_cube_mins_maxs(pts, 0.5)
-
-        assert np.allclose((mins + maxs) / 2, (mins0 + maxs0) / 2), "the centre moved"
-        assert np.allclose(maxs - mins, 1.5 * (maxs0 - mins0)), "span must grow by 1+buffer"
-
-    def test_the_two_samplers_draw_from_the_same_cube(self, meshes):
-        """
-        Same mesh, same buffer, uniform path: a normalized mesh spans a +/-1 cube, and
-        ``uniform_pts_buffer=0.5`` widens it to +/-1.5 in both samplers. Before the fix
-        the single-mesh draw was clipped to +/-1.25 and the multi-mesh one spanned
-        -1.50/+1.56 -- so each bound assertion below fails against one of the two old
-        behaviours.
-        """
-        from NSM.datasets.sdf_dataset import (
-            read_mesh_get_sampled_pts,
-            read_meshes_get_sampled_pts,
-        )
+        assert np.allclose((mins + maxs) / 2, (mins0 + maxs0) / 2)
+        assert np.allclose(maxs - mins, 1.5 * (maxs0 - mins0))
 
         path = meshes[0][0]
-        kwargs = dict(center_pts=True, norm_pts=True, fix_mesh=False, get_random=True)
+        kwargs = dict(center_pts=True, norm_pts=True, fix_mesh=False, get_random=True, seed=0)
         with quiet():
             single = read_mesh_get_sampled_pts(
-                path, sigma=None, n_pts=4000, uniform_pts_buffer=0.5, seed=0, **kwargs
+                path, sigma=None, n_pts=4000, uniform_pts_buffer=0.5, **kwargs
             )
             multi = read_meshes_get_sampled_pts(
-                [path], sigma=[None], n_pts=[4000], uniform_pts_buffer=0.5, seed=0, **kwargs
+                [path], sigma=[None], n_pts=[4000], uniform_pts_buffer=0.5, **kwargs
             )
-
-        for label, pts in (("single", single["pts"]), ("multi", multi["pts"])):
-            assert pts.min() >= -1.5 and pts.max() <= 1.5, f"{label}: cube too large"
-            assert pts.max() > 1.4 and pts.min() < -1.4, f"{label}: cube did not reach its bounds"
-            assert abs(pts.max() + pts.min()) < 0.1, f"{label}: cube is asymmetric"
-
-    def test_pts_surface_return_types_match(self, meshes):
-        """
-        ``pts_surface`` was a Python list from the single-mesh sampler and an int64 array
-        from the multi-mesh one -- the last of #40's three divergences.
-        """
-        from NSM.datasets.sdf_dataset import (
-            read_mesh_get_sampled_pts,
-            read_meshes_get_sampled_pts,
-        )
-
-        path = meshes[0][0]
-        kwargs = dict(center_pts=True, norm_pts=True, fix_mesh=False, get_random=True)
-        with quiet():
-            single = read_mesh_get_sampled_pts(path, sigma=0.05, n_pts=200, seed=0, **kwargs)
-            multi = read_meshes_get_sampled_pts([path], sigma=[0.05], n_pts=[200], seed=0, **kwargs)
-
         for label, result in (("single", single), ("multi", multi)):
+            points = result["pts"]
+            assert -1.5 <= points.min() < -1.4 and 1.4 < points.max() <= 1.5, label
+            assert abs(points.max() + points.min()) < 0.1, label
             surface = result["pts_surface"]
-            assert isinstance(surface, np.ndarray), label
-            assert surface.dtype == np.int64, label
-            assert surface.shape == (200,), label
+            assert isinstance(surface, np.ndarray) and surface.dtype == np.int64, label
 
 
 class TestEmptySignedSamples:
     """
-    ``sdf_pos_neg_idx`` divided by zero whenever a surface had no positive or no negative
-    samples (#41, fixed Aug 2026). Now: a surface nothing draws from -- missing (None), or
-    allotted no subsample share -- yields empty index lists and is handled; a drawn-from
-    surface missing a sign raises a ``ValueError`` naming the surface.
+    ``sdf_pos_neg_idx`` divided by zero when a surface had no samples of one sign (#41).
+    A missing surface now gives empty index lists; a drawn-from surface missing a sign
+    raises, naming the surface.
     """
 
-    def test_a_nested_surface_raises_a_named_error(self, tmp_path_factory):
+    def test_a_surface_missing_a_sign_is_named_and_a_missing_surface_is_empty(
+        self, dataset, tmp_path_factory
+    ):
         """
-        One surface inside another loses every interior point to
-        ``remove_overlapping_points``, leaving it with no negative samples. The harness's
-        synthetic subjects are built disjoint precisely to stay clear of this
-        (``_harness.SUBJECTS``); here the nesting is deliberate.
+        One surface inside another loses its interior to ``remove_overlapping_points``. The
+        harness subjects are disjoint to avoid exactly this. A missing surface is an all-NaN
+        column, and is checked by direct call: the end-to-end path dies earlier (#67).
         """
         import pyvista as pv
-
-        directory = tmp_path_factory.mktemp("nested_meshes")
-        outer = pv.Sphere(radius=1.0, theta_resolution=24, phi_resolution=24).triangulate()
-        inner = pv.Sphere(radius=0.4, theta_resolution=24, phi_resolution=24).triangulate()
-        outer_path = os.path.join(str(directory), "outer.vtk")
-        inner_path = os.path.join(str(directory), "inner.vtk")
-        outer.save(outer_path)
-        inner.save(inner_path)
-
-        with pytest.raises(ValueError, match="Surface 1 has no negative"):
-            build_dataset(
-                [[outer_path, inner_path]], tmp_path_factory.mktemp("nested_cache"), **SMALL
-            )
-
-    def test_a_missing_surface_is_handled_as_empty(self, dataset):
-        """
-        An all-NaN SDF column is a missing (None) surface -- ``read_meshes`` fills the
-        column with NaN for a ``None`` path. Empty index lists are the contract:
-        ``__getitem__``'s ``randperm(0)`` draws nothing from them.
-
-        A direct method call, because the end-to-end None-surface path currently dies
-        earlier, at ``get_sample_data_dict``'s preallocated buffer write -- a separate
-        defect from this one (#67).
-        """
         import torch
 
-        gt_sdf = torch.stack(
-            [torch.linspace(-1.0, 1.0, 10), torch.full((10,), float("nan"))], dim=1
-        )
-        pos, neg, surf = dataset.sdf_pos_neg_idx({"gt_sdf": gt_sdf, "xyz": torch.zeros(10, 3)})
+        from NSM.datasets.sdf_dataset import SDFSamples
 
+        directory = tmp_path_factory.mktemp("nested_meshes")
+        paths = []
+        for name, radius in (("outer", 1.0), ("inner", 0.4)):
+            path = os.path.join(str(directory), f"{name}.vtk")
+            pv.Sphere(radius=radius, theta_resolution=24, phi_resolution=24).triangulate().save(
+                path
+            )
+            paths.append(path)
+        with pytest.raises(ValueError, match="Surface 1 has no negative"):
+            build_dataset([paths], tmp_path_factory.mktemp("nested_cache"), **SMALL)
+
+        gt_sdf = torch.stack([torch.linspace(-1.0, 1.0, 10), torch.full((10,), float("nan"))], 1)
+        pos, neg, surf = dataset.sdf_pos_neg_idx({"gt_sdf": gt_sdf, "xyz": torch.zeros(10, 3)})
         assert pos[0].numel() > 0 and neg[0].numel() > 0
-        assert pos[1].numel() == 0 and neg[1].numel() == 0 and surf[1].numel() == 0
+        assert pos[1].numel() == neg[1].numel() == surf[1].numel() == 0
+
+        from types import SimpleNamespace
+
+        with pytest.raises(ValueError, match="no negative SDF samples"):
+            SDFSamples.sdf_pos_neg_idx(
+                SimpleNamespace(subsample=64), {"gt_sdf": torch.linspace(0.1, 1.0, 10)}
+            )
 
     @pytest.mark.xfail(
         strict=True, reason="#67: a None surface dies at the preallocated buffer write"
     )
     def test_a_none_surface_subject_must_build(self, meshes, tmp_path_factory):
-        """
-        The fdfe902 feature: a subject may be missing a structure. The build currently
-        dies in ``get_sample_data_dict`` -- ``data["xyz"]`` expects ``sum(n_pts_)`` rows
-        per combo while the sampler returns only the non-None surfaces' points -- which
-        is why the NaN-column handling above is reachable only by direct call.
-        """
         dataset = build_dataset(
             [[meshes[0][0], None]],
             tmp_path_factory.mktemp("none_surface"),
@@ -1222,136 +719,61 @@ class TestEmptySignedSamples:
             save_cache=False,
             **SMALL,
         )
-        item, _ = dataset[0]
-        assert {"xyz", "gt_sdf"} <= set(item)
-
-    def test_the_single_surface_class_also_raises_by_name(self):
-        """``SDFSamples.sdf_pos_neg_idx`` is separate code with the same division."""
-        from types import SimpleNamespace
-
-        import torch
-
-        from NSM.datasets.sdf_dataset import SDFSamples
-
-        all_positive = {"gt_sdf": torch.linspace(0.1, 1.0, 10)}
-        with pytest.raises(ValueError, match="no negative SDF samples"):
-            SDFSamples.sdf_pos_neg_idx(SimpleNamespace(subsample=64), all_positive)
+        assert {"xyz", "gt_sdf"} <= set(dataset[0][0])
 
 
-class TestConstructorContract:
-    """The declared constructor surface of ``MultiSurfaceSDFSamples`` (#43, fixed Aug 2026)."""
-
-    def test_subsample_none_is_refused_at_construction(self, meshes, tmp_path_factory):
-        """
-        ``None`` -- the documented default until Aug 2026 -- used to construct and then
-        crash in ``get_samples_per_sign`` on a cold cache, or skip joint normalization
-        and return unnormalized points on a warm one. There is no working default, so
-        construction refuses by name.
-        """
-        with pytest.raises(ValueError, match="subsample must be a positive int"):
-            build_dataset(
-                meshes, tmp_path_factory.mktemp("none_sub"), **dict(SMALL, subsample=None)
-            )
-
-    def test_joint_scale_buffer_is_accepted_and_reaches_normalization(
-        self, meshes, tmp_path_factory
-    ):
-        """
-        ``joint_scale_buffer`` sets the margin on the joint max radius -- 0.1 in every
-        shipped multi-surface dataset -- and the constructor refused it with a
-        ``TypeError`` until Aug 2026. The parent's default happens to equal the
-        production value, which is why nothing noticed. Whether it belongs in the cache
-        key is #19's business (it does not change cached bytes), deliberately not
-        asserted here.
-        """
-        joint = dict(SMALL, scale_jointly=True, center_pts=False, norm_pts=False)
-        cache = tmp_path_factory.mktemp("joint_buffer")
-        narrow = build_dataset(meshes, cache, joint_scale_buffer=0.1, **joint)
-        wide = build_dataset(meshes, cache, load_cache=True, joint_scale_buffer=0.25, **joint)
-
-        assert wide.max_radius / narrow.max_radius == pytest.approx(1.25 / 1.1, rel=1e-6)
-
-
-class TestMeshSubjects:
+def test_the_constructor_refuses_no_subsample_and_honours_joint_scale_buffer(
+    meshes, tmp_path_factory
+):
     """
-    A subject passed as an in-memory ``Mesh`` -- which the ``isinstance(..., (str, Mesh))``
-    branches in ``preprocess_inputs`` and ``load_reference_mesh`` advertise -- has never
-    built end to end in either class (determined by execution, 2026-08-24):
-
-    * Both readers gate on ``os.path.exists(path)``, which returns ``False`` for a
-      ``Mesh`` object, so the subject is "skipped" as a missing path: the reader returns
-      None and ``__init__`` silently drops it. The dataset comes back shorter than the
-      subject list -- possibly empty -- with no error.
-    * Seeded (``random_seed`` set), the single class dies even earlier:
-      ``mesh_content_key`` iterates what it is given when it is not a path, and
-      iterating a ``Mesh`` raises ``KeyError: 'Index (0) not understood...'``.
-    * The multi class stringifies each ``Mesh`` into the cache key, i.e. by memory
-      address -- moot while the subject never builds, but it means fixing the build
-      alone would resurrect the ``TestReferenceMeshHashing`` defect one level down.
-
-    Both pins assert the behaviour the branches advertise. Issue text is drafted in the
-    section 8.0.F slice PR for the maintainer to file; #19's identity routing covers
-    what runs today, which is paths.
+    #43: ``subsample=None`` was the documented default, and it crashed on a cold cache or
+    skipped normalization on a warm one. ``joint_scale_buffer`` was refused with a
+    ``TypeError``, unnoticed because the parent's default equals the production 0.1.
     """
+    with pytest.raises(ValueError, match="subsample must be a positive int"):
+        build_dataset(meshes, tmp_path_factory.mktemp("none_sub"), **dict(SMALL, subsample=None))
 
-    @pytest.mark.xfail(strict=True, reason="a Mesh subject has never built (draft issue, slice PR)")
-    def test_a_mesh_subject_must_build_on_the_single_surface_class(
-        self, bone_meshes, tmp_path_factory
-    ):
-        from pymskt.mesh import Mesh
-
-        dataset = build_single_surface_dataset(
-            [Mesh(bone_meshes[0])],
-            tmp_path_factory.mktemp("mesh_subject_single"),
-            store_data_in_memory=True,
-            save_cache=False,
-            **SMALL_SINGLE,
-        )
-        assert len(dataset) == 1, "the Mesh subject was silently dropped"
-        item, _ = dataset[0]
-        assert {"xyz", "gt_sdf"} <= set(item)
-
-    @pytest.mark.xfail(strict=True, reason="a Mesh subject has never built (draft issue, slice PR)")
-    def test_a_mesh_subject_must_build_on_the_multi_surface_class(self, meshes, tmp_path_factory):
-        from pymskt.mesh import Mesh
-
-        dataset = build_dataset(
-            [[Mesh(path) for path in meshes[0]]],
-            tmp_path_factory.mktemp("mesh_subject_multi"),
-            store_data_in_memory=True,
-            save_cache=False,
-            **SMALL,
-        )
-        assert len(dataset) == 1, "the Mesh subject was silently dropped"
-        item, _ = dataset[0]
-        assert {"xyz", "gt_sdf"} <= set(item)
+    joint = dict(SMALL, scale_jointly=True, center_pts=False, norm_pts=False)
+    cache = tmp_path_factory.mktemp("joint_buffer")
+    narrow = build_dataset(meshes, cache, joint_scale_buffer=0.1, **joint)
+    wide = build_dataset(meshes, cache, load_cache=True, joint_scale_buffer=0.25, **joint)
+    assert wide.max_radius / narrow.max_radius == pytest.approx(1.25 / 1.1, rel=1e-6)
 
 
-class TestReferenceMeshFromSubjectIndex:
+@pytest.mark.xfail(strict=True, reason="a Mesh subject has never built (draft issue, slice PR)")
+@pytest.mark.parametrize("single", [True, False], ids=["single", "multi"])
+def test_a_mesh_subject_must_build(single, meshes, bone_meshes, tmp_path_factory):
     """
-    ``reference_mesh=<int>`` names a subject to register everyone else to (#61, fixed
-    Aug 2026).
+    Both classes advertise ``Mesh`` subjects, and neither builds one. The readers test
+    ``os.path.exists`` and drop a ``Mesh`` as a missing path, silently. Seeded, the single
+    class fails earlier: ``mesh_content_key`` iterates the ``Mesh``.
     """
+    from pymskt.mesh import Mesh
 
-    def test_an_integer_reference_with_combined_surfaces_builds(self, tmp_path_factory):
-        """
-        With ``mesh_to_scale=[0, 1]``, subject 0's two surfaces are combined into the
-        registration target. This path raised ``UnboundLocalError`` one statement before
-        the combine result -- a pyvista ``PolyData`` with no ``save_mesh`` -- would have
-        broken anyway; ``combine_meshes`` now keeps its declared ``Mesh`` return type.
-        """
-        from pymskt.mesh import Mesh
+    options = dict(store_data_in_memory=True, save_cache=False)
+    if single:
+        subjects, build, small = [Mesh(bone_meshes[0])], build_single_surface_dataset, SMALL_SINGLE
+    else:
+        subjects, build, small = [[Mesh(p) for p in meshes[0]]], build_dataset, SMALL
+    dataset = build(subjects, tmp_path_factory.mktemp("mesh_subject"), **options, **small)
+    assert len(dataset) == 1, "the Mesh subject was silently dropped"
+    assert {"xyz", "gt_sdf"} <= set(dataset[0][0])
 
-        subjects = write_synthetic_meshes(tmp_path_factory.mktemp("ref_meshes"))[:2]
-        dataset = build_dataset(
-            subjects,
-            tmp_path_factory.mktemp("ref_cache"),
-            mesh_to_scale=[0, 1],
-            reference_mesh=0,
-            **SMALL,
-        )
 
-        assert isinstance(dataset.reference_mesh, Mesh)
-        assert len(dataset) == 2
-        item, _ = dataset[0]
-        assert {"xyz", "gt_sdf"} <= set(item)
+def test_an_integer_reference_with_combined_surfaces_builds(tmp_path_factory):
+    """
+    #61: ``reference_mesh=0`` with ``mesh_to_scale=[0, 1]`` combines subject 0's surfaces
+    into the registration target. It raised ``UnboundLocalError``.
+    """
+    from pymskt.mesh import Mesh
+
+    subjects = write_synthetic_meshes(tmp_path_factory.mktemp("ref_meshes"))[:2]
+    dataset = build_dataset(
+        subjects,
+        tmp_path_factory.mktemp("ref_cache"),
+        mesh_to_scale=[0, 1],
+        reference_mesh=0,
+        **SMALL,
+    )
+    assert isinstance(dataset.reference_mesh, Mesh) and len(dataset) == 2
+    assert {"xyz", "gt_sdf"} <= set(dataset[0][0])

@@ -25,13 +25,7 @@ from _harness import (
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
-    """
-    Say what the xfails mean, rather than leaving "N xfailed" to be interpreted.
-
-    Every xfail in this directory asserts behaviour NSM *should* have and is marked
-    ``strict=True``, so the day one is fixed it XPASSes and the suite goes red -- which is
-    what stops "known defect" from decaying into "permanently ignored".
-    """
+    """Say what the strict xfails mean, rather than leaving "N xfailed" to be interpreted."""
     xfailed = terminalreporter.stats.get("xfailed", [])
     ours = [r for r in xfailed if "NSM/regression/" in str(getattr(r, "nodeid", ""))]
     if not ours:
@@ -89,18 +83,8 @@ def training_run(training_dataset, tmp_path_factory):
 @pytest.fixture(scope="session")
 def reconstruction_model(request, tmp_path_factory):
     """
-    A decoder trained far enough that its zero level set exists -- LOADED from a committed
-    asset, not retrained.
-
-    It used to be retrained here every session, which is what made the reconstruction
-    baselines pin a 60-epoch gradient-descent trajectory instead of ``reconstruct_mesh``.
-    ``_harness``'s asset section has the measurements; the short version is that a torch
-    bump moved the geometry baselines 763x their tolerance through the training, and 0.005x
-    through reconstruction on fixed weights.
-
-    ``training_dataset`` is requested rather than declared, because only the regeneration
-    branch needs training data and building a dataset the load path never touches would be
-    a dependency that is not one.
+    The committed decoder, loaded rather than retrained. ``training_dataset`` is requested
+    only on the regeneration branch, the one path that needs it.
     """
     if regenerating_decoder():
         model = train_reconstruction_decoder(
