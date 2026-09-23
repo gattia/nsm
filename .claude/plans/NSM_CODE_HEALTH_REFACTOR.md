@@ -23,9 +23,9 @@ under the same number.
 
 **Updated:** 2026-09-23 · **Status:** open
 
-- **Next:** Step U, on a new branch in a `git worktree` (see Working conventions). Then
-  Step Close.
-- **Blocked on:** nothing.
+- **Next:** the maintainer reviews PR #117 (Step U) and rules on decision 3 below. After
+  the merge, pull this checkout and restart the worker once it is idle. Then Step Close.
+- **Blocked on:** the maintainer's review of PR #117.
 - **Done:**
   - Phases 0–3, and slices A–R, each with its own PR. v0.2.0 (PR #36) and v0.3.0 shipped.
   - Both post-v0.3.0 validation runs passed: §7.5a on the production box (PR #102), §7.5b
@@ -45,7 +45,19 @@ under the same number.
     16,143 lines to 8,785, 110 s to 72 s, coverage kept. Every test opens its docstring with
     a "Fails if" line, and `test_docs_references` checks it. See Step T's Result.
     Production tree on `main` and worker restarted. #115 and #116 filed for Step U.
+  - Step U executed 2026-09-23 on `step-u`, PR #117 open: a test for each of the nine
+    rows, #115 and #116 fixed. See Step U's Result.
 - **Surprises:**
+  - **Pinning a behaviour can show it is wrong.** Row 1's test found that
+    `reconstruct_latent` returns the latent from after its best step's update, one step
+    past the latent the returned loss belongs to. Every production fit is affected. The
+    test pins the offset, `KNOWN_ISSUES.md` § Open records it, and decision 3 asks whether
+    to fix it.
+  - **`flag is True` is library-wide.** A truthy non-bool silently means `False` wherever a
+    flag is read that way, and `grep -rn "is True" NSM/` finds it in the readers, the
+    datasets, the models and the trainer. #116 fixed the two in `reconstruct_latent`, which
+    every reconstruction entry point passes through. The rest is a job for the config
+    plan's validation, not a sweep here.
   - **Deferred items get lost or are already done.** Five `reconstruct_latent` sites
     deferred to R had already been fixed. In S, one item was already closed by R, and two
     items deferred to S were missing from its table. Build a slice's item list by
@@ -424,7 +436,7 @@ docstrings and comments that named renamed tests.
   which coverage does not measure. `remove_overlapping_points`' early return for fewer
   than two surfaces gives the same result as the count without it.
 
-### Step U — slice §8.0.U: test the gaps slice T's audit found
+### Step U — slice §8.0.U: test the gaps slice T's audit found — **executed 2026-09-23, PR #117 open**
 
 Found 2026-09-23 by an audit of slice T (PR #114). The audit made single edits to `NSM/` and
 ran the old 1,184-test suite and the trimmed suite against each. The trim lost nothing. The
@@ -464,6 +476,27 @@ few lines for each fix. Nothing transitional.
 **Order.** One branch and PR, one commit per row. Rows 1 to 3 come first, because they
 protect kneepipeline's BScore. Then 4 and 5, then 6 with the #115 fix, then 7 to 9, then the #116 fix.
 
+#### Result (2026-09-23, branch `step-u`, PR #117)
+
+Ten commits, one per row plus the #116 fix. Every edit in the table fails its new test.
+Tests collected 260 → 268, `testing/` 8,785 → 9,078 lines, suite 72 s → 73 s. `NSM/`
+changed by +8 / −1 lines: the #115 fix and the #116 refusal.
+
+**Diverged:**
+- **Row 1 found a defect instead of pinning a correct behaviour.** See Surprises and
+  decision 3. The test pins today's offset, so a fix changes one index in it.
+- **Three rows replaced a test rather than adding one.** Row 4's continuation test replaces
+  the weights-only resume test. Row 6's gradient test absorbs the three forward-only option
+  tests into one `OPTIONS` table. Row 9's test replaces the one that ran its own copy of the
+  chunk loop.
+- **Row 4 needed the random state carried across the resume.** Checkpoints do not save it,
+  so an exact comparison fails without it. The test records it at each save and restores
+  it after the resume.
+- **Row 8 found a fourth unchecked key.** Dropping `scale_method` from the cache key also
+  passed. The hash test now changes every entry of `get_hash_params` and fails on an
+  entry it does not change.
+- **#116 covers `log_wandb` too.** It has the same `is True` read in the same function.
+
 ### Step Close — retire this plan
 
 Move both this file and `NSM_CODE_HEALTH_REFACTOR_HISTORY.md` to `.claude/plans/completed/`,
@@ -479,8 +512,8 @@ waiting on its own §2 layout ruling.
 
 ## Decisions the maintainer owes
 
-**Both were ruled 2026-09-22 and are struck through below.** Nothing is outstanding. They
-are kept rather than deleted because each records an argument that outlives its answer.
+**1 and 2 were ruled 2026-09-22 and are struck through below.** They are kept rather
+than deleted because each records an argument that outlives its answer. **3 is open.**
 
 1. ~~**Does slice S shrink the four public signatures, or does the config initiative?**~~
    **Ruled 2026-09-22: the config initiative.** S ships its other six items and leaves the
@@ -506,6 +539,24 @@ are kept rather than deleted because each records an argument that outlives its 
    L2 regularization with warmup and their own LR schedule. The 2026-08-22 note proposes an
    experiment; dropping it moves the row out of § Open. A test already pins the current
    behaviour (`test_train_epoch.TestGradClipReachesTheModelOnly`).
+
+3. **Fix the one-step-late latent, or leave it documented?** Found by Step U row 1.
+   Under `recon_loss` and `overall_loss`, `reconstruct_latent` copies the latent after
+   `optimizer.step()`. It returns the best step's loss with the next step's latent.
+   Copying before the step fixes it. That moves every production latent by one Adam step,
+   so the fix needs a `KNOWN_ISSUES.md` § History entry and an A/B on archived job
+   `8ff02ee4`, as in Step 0. How far it moves a BScore has not been measured. Draft issue,
+   for approval before filing:
+
+   > **`reconstruct_latent` returns the latent one step after its best loss**
+   >
+   > Under `convergence="recon_loss"` or `"overall_loss"`, `reconstruct_latent` runs
+   > `latent_ = torch.clone(latent)` after `optimizer.step()`. It returns the best step's
+   > loss with the latent after that step's update, and the two do not belong together.
+   > `test_reconstruct_latent.TestTheReturnedLossIsALoss::test_the_best_step_s_latent_is_returned`
+   > pins the offset. Both kneepipeline models fit with `recon_loss`. Fixed means the returned
+   > latent is the one the returned loss was measured on, with a `KNOWN_ISSUES.md` § History
+   > entry and a production A/B of the BScore change.
 
 **Also available, not required.** The 1,450-line State narrative now in the history file is
 superseded by PR descriptions, `CHANGELOG.md` and `docs/KNOWN_ISSUES.md`. It was archived
