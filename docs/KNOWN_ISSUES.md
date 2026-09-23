@@ -135,6 +135,7 @@ The trigger is narrower than "a second dataset", and the distinction matters bec
 |---|---|
 | `multiprocessing=True` → `multiprocessing=True` | **Fine.** Measured 2.6 s then 0.4 s |
 | `multiprocessing=False` → `multiprocessing=True` | **Hangs.** First build 5.7 s, second never returns |
+| `multiprocessing=True` → `multiprocessing=False` | **Fine.** Measured 2.7 s then 0.6 s, 3 runs of 3 |
 
 So a script that builds a train split in-process and then a val split on the default path
 deadlocks, with no message, on the second one. Long-standing rather than new.
@@ -147,7 +148,7 @@ user meets it — this entry is what they find afterwards. [#25](https://github.
 stays open as the queue entry.
 
 *Worked around in:* `test_dataset_cache.TestSeedDerivation`, which builds its two datasets
-in separate subprocesses.
+in one fresh subprocess, the pooled one first.
 
 ## Packaging and configuration
 

@@ -72,12 +72,10 @@ def bone_meshes(tmp_path_factory):
     return [pair[0] for pair in pairs]
 
 
-#: Builds one dataset in a fresh interpreter: ``sys.argv[1]`` is the cache directory,
-#: ``sys.argv[2]`` is "1" for ``multiprocessing=True``, ``sys.argv[3]`` is a mesh
-#: directory the CALLER has already populated. Both invocations reuse those files
-#: unmodified -- rewriting them per invocation would move their ``(path, size, mtime)``
-#: identity and with it the cache key -- so the two builds produce the same cache
-#: *filenames*, which is what lets the caller pair them up.
+#: Builds the same subjects pooled into ``sys.argv[1]``, then serially into ``sys.argv[2]``,
+#: from meshes the caller wrote to ``sys.argv[3]``. Both builds read the same files, so they
+#: produce the same cache filenames. A fresh process, pooled first: forking after the parent
+#: has built with VTK hangs.
 _BUILD_IN_SUBPROCESS = f"""
 import glob
 import os
@@ -86,14 +84,11 @@ sys.path.insert(0, {os.path.dirname(os.path.abspath(__file__))!r})
 from _harness import build_dataset
 
 bones = sorted(glob.glob(os.path.join(sys.argv[3], "*_bone.vtk")))
-build_dataset(
-    [[bone, bone.replace("_bone.vtk", "_cart.vtk")] for bone in bones],
-    sys.argv[1],
-    random_seed=1234,
-    multiprocessing=sys.argv[2] == "1",
-    n_processes=2,
-    **{SMALL!r},
-)
+subjects = [[bone, bone.replace("_bone.vtk", "_cart.vtk")] for bone in bones]
+for cache, pooled in ((sys.argv[1], True), (sys.argv[2], False)):
+    build_dataset(
+        subjects, cache, random_seed=1234, multiprocessing=pooled, n_processes=2, **{SMALL!r}
+    )
 """
 
 
@@ -439,22 +434,22 @@ class TestSeedDerivation:
         """
         ``Pool`` forks, and before the seed was threaded through, the forked global numpy
         state drove the sampler: all three subjects differed. With ``random_seed=None`` they
-        still do. Each build runs in its own process, because building in-process and then
-        forking hangs (a fork-after-VTK hazard, unrelated to seeding).
+        still do (checked 2026-09-23 with this script).
         """
         mesh_dir = str(tmp_path_factory.mktemp("mp_meshes"))
         write_synthetic_meshes(mesh_dir)
-        caches = [str(tmp_path_factory.mktemp("mp_off")), str(tmp_path_factory.mktemp("mp_on"))]
-        for cache, flag in zip(caches, ("0", "1")):
-            finished = subprocess.run(
-                [sys.executable, "-c", _BUILD_IN_SUBPROCESS, cache, flag, mesh_dir],
-                capture_output=True,
-                text=True,
-                timeout=600,
-            )
-            assert finished.returncode == 0, finished.stderr[-2000:]
+        pooled, serial = str(tmp_path_factory.mktemp("mp_on")), str(
+            tmp_path_factory.mktemp("mp_off")
+        )
+        finished = subprocess.run(
+            [sys.executable, "-c", _BUILD_IN_SUBPROCESS, pooled, serial, mesh_dir],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        assert finished.returncode == 0, finished.stderr[-2000:]
 
-        serial, parallel = (_cached_by_name(cache) for cache in caches)
+        serial, parallel = _cached_by_name(serial), _cached_by_name(pooled)
         assert sorted(serial) == sorted(parallel) and len(serial) == 3
         for name in serial:
             assert np.array_equal(np.load(serial[name])["pts"], np.load(parallel[name])["pts"])

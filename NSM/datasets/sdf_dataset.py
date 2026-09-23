@@ -236,7 +236,7 @@ class SDFSamples(torch.utils.data.Dataset):
             own process. Not fixed: a `spawn` context would change behaviour nobody has
             asked for, and this constraint is cheaper than that. Worked around in
             ``test_dataset_cache.TestSeedDerivation::test_multiprocessing_does_not_change_the_data``,
-            which builds its two datasets in separate subprocesses for this reason.
+            which builds its pooled dataset before its serial one for this reason.
         n_processes (int, optional): Pool size when multiprocessing. Defaults to 2.
         store_data_in_memory (bool, optional): Keep every subject's sample dict in
             memory (True), or keep only its cache path and reload the .npz on every
