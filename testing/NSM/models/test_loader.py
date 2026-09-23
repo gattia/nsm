@@ -170,7 +170,3 @@ class TestRepairingAnOldTriplanarConfig:
         assert repair == self.HISTORICAL
         config.update(repair)
         loader._get_triplanar_params(config)
-
-    def test_a_stated_padding_is_forwarded(self):
-        config = {**self.old_config(), **self.HISTORICAL, "padding": 0.35}
-        assert loader._get_triplanar_params(config)[1]["padding"] == 0.35

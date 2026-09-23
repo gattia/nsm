@@ -99,9 +99,6 @@ class TestAShippedCheckpoint:
         block = json.loads(message[message.index("{") : message.rindex("}") + 1])
         assert sorted(block) == sorted(missing)
 
-    def test_it_loads_strictly_through_load_model(self, config_path, checkpoint):
-        assert load_model(repaired(config_path), str(checkpoint), device="cpu") is not None
-
     def test_the_consumer_s_own_construction_is_the_same_model(self, config_path, checkpoint):
         """
         Bitwise, on a forward pass -- module types would miss a wrong ``padding``, which

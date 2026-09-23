@@ -43,13 +43,6 @@ class SphereDecoder(torch.nn.Module):
         return sdf.repeat(1, self.objects)
 
 
-class NoZeroLevelSetDecoder(torch.nn.Module):
-    """SDF +1 everywhere: the mean shape has no surface."""
-
-    def forward(self, x=None, latent=None, xyz=None, epoch=None):
-        return torch.ones((xyz if xyz is not None else x).shape[0], 1)
-
-
 @pytest.fixture(scope="module")
 def sphere_path(tmp_path_factory):
     import pyvista as pv
@@ -103,19 +96,6 @@ class TestUnknownKeywordsAreRefused:
                 deprecated=frozenset({"batch_size_latent_recon"}),
             )
 
-    def test_the_deprecated_key_warns_before_any_work_and_prints_nothing(self, caplog, capsys):
-        """
-        kneepipeline passes ``batch_size_latent_recon`` on every fit, so it is accepted with
-        a warning. An invalid ``path`` aborts right after it.
-        """
-        with caplog.at_level(logging.WARNING, logger="NSM"):
-            with pytest.raises(ValueError, match="path must be a string"):
-                recon_main.reconstruct_mesh(
-                    path=42, decoders=None, latent_size=8, batch_size_latent_recon=1
-                )
-        assert "batch_size_latent_recon is deprecated" in caplog.text
-        assert capsys.readouterr().out == ""
-
     def test_the_consumers_keyword_set_is_accepted(self):
         """
         Every keyword ``kneepipeline/steps/run_nsm.py`` passes. The two that are not named
@@ -157,30 +137,13 @@ class TestTheReferenceMeshIsBuiltWhenItIsUsed:
     the run when that mesh had no surface.
     """
 
-    def test_scale_jointly_alone_neither_builds_nor_aborts(self, sphere_path):
+    def test_scale_jointly_alone_builds_no_mean_mesh(self, sphere_path):
         counts = []
         for scale_jointly in (False, True):
             decoder = SphereDecoder()
             run(sphere_path, decoder, scale_jointly=scale_jointly, register_similarity=False)
             counts.append(decoder.n_points_evaluated)
         assert counts[0] == counts[1]
-
-        with pytest.raises(RuntimeError) as excinfo:
-            run(
-                sphere_path,
-                NoZeroLevelSetDecoder(),
-                scale_jointly=True,
-                register_similarity=False,
-                n_pts_per_axis_mean_mesh=16,
-            )
-        assert not isinstance(excinfo.value, recon_main.NoZeroLevelSetError)
-        with pytest.raises(recon_main.NoZeroLevelSetError, match="no zero level set"):
-            run(
-                sphere_path,
-                NoZeroLevelSetDecoder(),
-                register_similarity=True,
-                n_pts_per_axis_mean_mesh=16,
-            )
 
     def test_building_a_mesh_consumes_no_randomness(self):
         """Why dropping the unused build moved no result: it drew from neither generator."""

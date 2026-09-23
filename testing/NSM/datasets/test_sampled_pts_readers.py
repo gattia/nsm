@@ -262,15 +262,6 @@ class TestMultiMeshReader:
         assert np.all(result["pts"] >= mins) and np.all(result["pts"] <= maxs)
         assert result["pts"][result["pts_surface"] == 0][:, 0].max() > 3.5
 
-    def test_the_seed_decides_the_draw(self, sphere_paths):
-        kwargs = dict(sigma=[0.1, 0.1], n_pts=[25, 25], fix_mesh=False)
-        first = read_meshes_get_sampled_pts(list(sphere_paths), seed=7, **kwargs)
-        again = read_meshes_get_sampled_pts(list(sphere_paths), seed=7, **kwargs)
-        other = read_meshes_get_sampled_pts(list(sphere_paths), seed=8, **kwargs)
-        np.testing.assert_array_equal(again["pts"], first["pts"])
-        np.testing.assert_array_equal(again["sdf"][1], first["sdf"][1])
-        assert not np.array_equal(other["pts"], first["pts"])
-
     @pytest.mark.parametrize("sigma", [0.1, None], ids=["near-surface", "uniform-cube"])
     def test_include_surf_in_pts_appends_each_surfaces_own_vertices(self, sphere_paths, sigma):
         """

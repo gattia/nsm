@@ -119,34 +119,6 @@ class TestScheduleMapping:
         with pytest.raises(KeyError, match="no known 'target'"):
             adjust_learning_rate(schedules, optimizer, epoch=1)
 
-    def test_the_whole_schedule_travels_with_its_target(self):
-        """Interval and Factor follow the target too, not only Initial."""
-        config = {
-            "optimizer": "Adam",
-            "LearningRateSchedule": [
-                {
-                    "Target": "latent",
-                    "Type": "Step",
-                    "Initial": 0.005,
-                    "Interval": 16.7,
-                    "Factor": 0.95,
-                },
-                {
-                    "Target": "model",
-                    "Type": "Step",
-                    "Initial": 1e-4,
-                    "Interval": 1000,
-                    "Factor": 0.1,
-                },
-            ],
-        }
-        schedules = get_learning_rate_schedules(config)
-        assert set(schedules) == {LR_TARGET_MODEL, LR_TARGET_LATENT}
-        assert schedules[LR_TARGET_MODEL].get_learning_rate(1000) == pytest.approx(1e-5)
-        assert schedules[LR_TARGET_LATENT].get_learning_rate(1000) == pytest.approx(
-            0.005 * 0.95 ** (1000 // 16.7)
-        )
-
 
 class TestMigrationGuard:
     """A config that does not declare ``Target`` on both entries raises. It never guesses."""

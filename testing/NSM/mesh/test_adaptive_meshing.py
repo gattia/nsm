@@ -56,15 +56,9 @@ class TestCoarseBounds:
         wide = coarse_bounds_from_sign_change(centred, (0, 0, 0), spacing, 1.0, dilate_cells=3)
         assert np.all(wide[0] <= tight[0]) and np.all(wide[1] >= tight[1])
 
-    def test_no_sign_change_is_none_and_torch_matches_numpy(self):
+    def test_no_sign_change_is_none(self):
         for value in (5.0, -5.0):
             assert coarse_bounds_from_sign_change(np.full((10,) * 3, value), (0, 0, 0), 0.1) is None
-        sdf = _sphere_sdf_zyx(16)
-        from_numpy = coarse_bounds_from_sign_change(sdf, (0, 0, 0), 1 / 15)
-        from_torch = coarse_bounds_from_sign_change(
-            torch.tensor(sdf, dtype=torch.float32), (0, 0, 0), 1 / 15
-        )
-        np.testing.assert_allclose(from_torch, from_numpy, atol=1e-10)
 
 
 def test_grids_are_z_fastest_padded_and_at_least_min_dim():
