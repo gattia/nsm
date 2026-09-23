@@ -204,10 +204,5 @@ class TestYourNewModel(unittest.TestCase):
 For performance-critical changes:
 
 ```bash
-# Timing scripts live in testing/testing_sdf_calculation_times/ (scratch scripts,
-# run directly rather than through pytest)
-python testing/testing_sdf_calculation_times/time.py
-
-# Profile code
 python -m cProfile -s cumtime your_script.py
 ```
