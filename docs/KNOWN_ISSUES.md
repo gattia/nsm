@@ -1290,7 +1290,7 @@ Two questions, and both have to be "no":
 Under the fix every one of those calls raises a `ValueError` naming what to pass instead,
 so a re-run cannot silently repeat the mistake.
 
-*Pinned by:* `testing/NSM/mesh/test_mesh_contracts.py`, §1.
+*Pinned by:* `test_mesh_contracts.test_face_array_sites_accept_triangles_and_refuse_everything_else`.
 
 ---
 
@@ -1352,8 +1352,8 @@ Did you pass a non-default `search_bounds` (or a `recon_grid_origin` other than 
 `"Coarse pass found no surface. Falling back."` are affected — the two-pass path never
 used the parameter. Those reconstructions should be re-run.
 
-*Pinned by:* `test_mesh_contracts.test_fallback_grid_covers_search_bounds` and
-`test_default_search_bounds_keep_the_historical_fallback_origin`.
+*Pinned by:* `test_mesh_contracts.test_the_fallback_grid_spans_the_search_bounds`, which
+also checks that the default bounds keep the historical origin.
 
 ## 20. `reconstruct_mesh` accepted a misspelled parameter and used the default instead
 

@@ -120,6 +120,7 @@ UTILS = [
 PATHS = {
     "NSM.datasets": DATASETS,
     "NSM.datasets.sdf_dataset": DATASETS,
+    "NSM.mesh.refine_mesh": ["get_faces"],
     "NSM.models": [
         "Decoder",
         "ImplicitDecoder",
