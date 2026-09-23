@@ -253,14 +253,16 @@ class TestCacheHitRepair:
 
 
 class TestHashedParametersChangeTheKey:
-    def test_every_hashed_parameter_changes_the_key(self, dataset, meshes):
+    def test_every_hashed_parameter_changes_the_key(self, dataset, meshes, monkeypatch):
         """
-        Fails if ``MultiSurfaceSDFSamples.create_hash`` ignores a change to any listed
-        sampling, normalization or registration parameter, ``random_seed``, or the order of a
-        subject's surfaces (#19).
+        Fails if ``MultiSurfaceSDFSamples.create_hash`` ignores a change to any entry of
+        ``get_hash_params``, ``CACHE_FORMAT`` included, or to the order of a subject's
+        surfaces, or ``get_hash_params`` gains an entry this test does not change (#19).
         """
+        import NSM.datasets.sdf_dataset as sdf_dataset
+
         baseline = dataset.create_hash(meshes[0])
-        for attribute, value in (
+        changes = (
             ("center_pts", False),
             ("norm_pts", False),
             ("fix_mesh", True),
@@ -276,9 +278,18 @@ class TestHashedParametersChangeTheKey:
             ("sigma_far", [0.2, None]),
             ("rand_function", "laplace"),
             ("random_seed", 7),
-        ):
+            ("scale_method", "other"),
+            ("uniform_pts_buffer", 0.5),
+            ("mesh_to_scale", 1),
+        )
+        for attribute, value in changes:
             assert rehash(dataset, meshes[0], **{attribute: value}) != baseline, attribute
         assert dataset.create_hash([meshes[0][1], meshes[0][0]]) != baseline
+
+        monkeypatch.setattr(sdf_dataset, "CACHE_FORMAT", sdf_dataset.CACHE_FORMAT + 1)
+        assert rehash(dataset, meshes[0]) != baseline
+        tested = {attribute for attribute, _ in changes} | {"cache_format"}
+        assert set(dataset.get_hash_params()) == tested
 
 
 class TestFormerlyCollidingParameters:

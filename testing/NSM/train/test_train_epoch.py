@@ -247,8 +247,8 @@ class TestTheLogDict:
         ``latent_code_regularization_loss``, or ``l1_loss`` is not the mean of the
         ``l1_loss_{i}`` under uniform weights, for any prior and one to three surfaces.
 
-        Under ``surface_weighting`` the test asserts only that ``l1_loss`` differs from the
-        mean. It does not check how the weights are normalized.
+        It also fails if ``surface_weighting`` stops being normalized: ``[3, 1]`` must give
+        the weighted mean, ``0.75 * l1_loss_0 + 0.25 * l1_loss_1``.
         """
         for prior in ("identity", "spherical", "kld_diagonal"):
             for surfaces in (1, 2, 3):
@@ -260,8 +260,8 @@ class TestTheLogDict:
                 assert log["l1_loss"] == pytest.approx(sum(parts) / surfaces, rel=1e-6)
 
         weighted = run_epoch(surface_weighting=[3, 1])
-        mean = (weighted["l1_loss_0"] + weighted["l1_loss_1"]) / 2
-        assert weighted["l1_loss"] != pytest.approx(mean, rel=1e-6)
+        expected = 0.75 * weighted["l1_loss_0"] + 0.25 * weighted["l1_loss_1"]
+        assert weighted["l1_loss"] == pytest.approx(expected, rel=1e-6)
 
     def test_the_documented_keys_are_there(self):
         """
