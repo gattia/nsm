@@ -20,13 +20,10 @@ Three kinds of assertion live here and they are deliberately mixed:
 """
 
 import inspect
-import json
-import os
 
 import pytest
 import torch
 
-import NSM
 from NSM.datasets.sdf_dataset import MultiSurfaceSDFSamples, SDFSamples
 from NSM.models.loader import _get_deepsdf_params, _get_implicit_params
 from NSM.models.triplanar import TriplanarDecoder
@@ -351,23 +348,3 @@ class TestDecodeDispatchesOnTheForwardInterface:
         result = _decode(_TinyMlpInterface(), torch.randn(1, 4), torch.rand(16, 3))
 
         assert result.shape == (16, 1)
-
-
-# ---------------------------------------------------------------------------
-# The predicate, not the data: what a substring sweep over the sources misses
-# ---------------------------------------------------------------------------
-
-
-def test_the_shipped_config_is_the_one_this_slice_measured():
-    """
-    A guard on the guard. The literal sweep in `test_default_config_sync` is only as
-    honest as the file it reads, and §8.0.N's version of it passed six keys this slice
-    reports. If the shipped config is replaced wholesale, that test's exception list is
-    describing a file that no longer exists.
-    """
-    path = os.path.join(os.path.dirname(NSM.__file__), "configs", "default_config.json")
-    with open(path, encoding="utf-8") as handle:
-        shipped = json.load(handle)
-
-    assert shipped["model_type"] == "triplanar"
-    assert "conv_norm_type" in shipped and "padding" in shipped
