@@ -39,9 +39,9 @@ per-file-ignores =
 # The D1xx gate covers the API a user of the library calls. Two kinds of file are out,
 # and they are out for different reasons -- neither is "a docstring would be nice here".
 #
-# testing/ -- a suite documents itself in module and class docstrings, which it does
-#   thoroughly. Requiring one on every `def test_...` as well would add several hundred
-#   restatements of a name that is already a sentence.
+# testing/ -- every `def test_...` opens its docstring with a "Fails if" sentence, and
+#   test_docs_references checks that. D1xx would also demand docstrings on the fixtures and
+#   helpers, most of which are a few lines under a name that says what they build.
 #
 # The module below is ruled out of the documented surface by docs/SCOPE.md, and the
 #   ruling is the reason: section 2.4 (reconstruct_latent_S3 -- deferred research).

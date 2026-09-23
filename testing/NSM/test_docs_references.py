@@ -1,6 +1,7 @@
 """
 Names that prose cites must exist in the code: NSM symbols in ``docs/``, test names in
-``docs/`` and ``NSM/``, and parameters in a docstring's ``Args:`` block.
+``docs/`` and ``NSM/``, and parameters in a docstring's ``Args:`` block. Every test opens
+its docstring with the regression it catches.
 
 Citations are by name, not line number, because line numbers move on every reformat.
 """
@@ -246,3 +247,27 @@ def test_the_open_summary_table_and_its_entries_are_the_same_set():
     ]
     entries = [anchor(line[4:]) for line in section.splitlines() if line.startswith("### ")]
     assert sorted(rows) == sorted(entries)
+
+
+# ---------------------------------------------------------------------------
+# Every test says what it catches
+# ---------------------------------------------------------------------------
+
+
+def test_every_test_opens_its_docstring_with_what_it_catches():
+    """
+    Fails if a ``def test_...`` in ``testing/`` has no docstring, or one that does not open
+    with "Fails if" (or "Fails (strict XPASS)" for a strict xfail).
+
+    The sentence names the function and the wrong behaviour, so a failure says what broke
+    and two tests that catch the same regression read the same.
+    """
+    missing = [
+        f"{path.relative_to(REPO)}::{node.name}"
+        for path in sorted(TESTING.rglob("test_*.py"))
+        for node in ast.walk(ast.parse(_read(path)))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test")
+        and not (ast.get_docstring(node) or "").startswith(("Fails if", "Fails (strict XPASS)"))
+    ]
+    assert missing == []
