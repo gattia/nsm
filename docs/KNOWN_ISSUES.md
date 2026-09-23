@@ -49,6 +49,7 @@ more than that.
 | [Shipped model configs predate the `Target` requirement](#shipped-model-configs-predate-the-target-requirement-and-cannot-be-trained-from) | Medium — refused at train, inference unaffected | *none — the migration message is the fix, see below* |
 | [Shipped model configs omit two required architecture keys](#shipped-model-configs-omit-two-keys-load_model-requires-so-it-refuses-them) | Medium — refused at load, not silent | [#26](https://github.com/gattia/nsm/issues/26), [#45](https://github.com/gattia/nsm/issues/45) |
 | [Hybrid / LBFGS reconstruction is unvalidated](#hybrid--lbfgs-reconstruction-is-unvalidated-on-current-nsm) | Medium — runs, unmeasured; production uses Adam | *none — see below* |
+| [The returned latent is one step past the returned loss](#the-returned-latent-is-one-step-past-the-returned-loss) | Low — one optimizer step; unmeasured on production | *not filed yet* |
 | [`F401` is project-ignored, so unused imports never appear](#f401-is-project-ignored-so-unused-imports-do-not-appear-in-make-lint) | Low — tooling, not behaviour | *none — a judgement call, see below* |
 | [Latent gradients are summed over query points](#latent-gradients-are-summed-over-query-points-so-the-reg-balance-depends-on-n) | Medium — the reg balance moves with N | *none — a convention change, see below* |
 | [`enforce_minmax` clamps predictions](#enforce_minmax-clamps-the-prediction-not-just-the-target) | Medium — config semantics | *none — a docs/design call, see below* |
@@ -251,6 +252,26 @@ resurrect are in `.claude/plans/HYBRID_OPTIMIZER_REPORT.md`.
 
 *Pinned by:* `test_reconstruct_latent.TestTheDrawIsPerEvaluation` and
 `test_reconstruct_latent.TestTheDeferredSitesAreClosed::test_the_lbfgs_triple_is_read_on_the_non_hybrid_path`.
+
+## `reconstruct/latent_fit.py`
+
+### The returned latent is one step past the returned loss
+
+Under `convergence="recon_loss"` or `"overall_loss"`, `reconstruct_latent` returns the loss
+of its best step and the latent **after** that step's update. The two do not belong
+together. Unless the best step was the last, the next step scored the returned latent, and
+scored it no better than the loss returned. `"num_iterations"` has the same offset,
+returning the last step's loss with the latent after it.
+
+**How to tell whether a fit is affected:** every fit is. Both kneepipeline models fit with
+`recon_loss`, so every production latent is one Adam step past the best one it saw. How far
+that moves a BScore has not been measured.
+
+*Fix:* not filed yet. Copying the latent before `optimizer.step()` fixes it. That changes
+every fitted latent, so the fix needs a § History entry.
+
+*Pinned by:*
+`test_reconstruct_latent.TestTheReturnedLossIsALoss::test_the_best_step_s_latent_is_returned`.
 
 ## `reconstruct/cartilage_func.py`
 

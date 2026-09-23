@@ -202,6 +202,45 @@ class TestTheReturnedLossIsALoss:
         fit(patient, num_iterations=100, convergence="overall_loss", convergence_patience=5)
         assert len(patient.draws) < 100
 
+    def test_the_best_step_s_latent_is_returned(self):
+        """
+        Fails if ``reconstruct_latent`` under ``convergence="recon_loss"`` or
+        ``"overall_loss"`` returns a latent other than the one its lowest-loss step produced,
+        such as the initial or the last one. kneepipeline fits both shipped models with
+        ``recon_loss``.
+
+        The latent is copied after that step's update, so it is one step past the latent the
+        returned loss was measured on (KNOWN_ISSUES Open). At ``lr=0.05`` the fit overshoots
+        a constant target, so the initial, best and last latents all differ.
+        """
+
+        class LatentRecorder(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.latents = []
+
+            def forward(self, x=None, latent=None, xyz=None, epoch=None):
+                self.latents.append(latent.detach().clone())
+                return xyz[:, :1] * 0 + latent.sum()
+
+        for convergence in ("recon_loss", "overall_loss"):
+            decoder = LatentRecorder()
+            loss, latent = fit(
+                decoder,
+                num_iterations=40,
+                latent_size=4,
+                sdf_gt=torch.full((64, 1), 0.3),
+                lr=0.05,
+                n_lr_updates=0,
+                convergence=convergence,
+                convergence_patience=5,
+            )
+            losses = [abs(float(seen.sum()) - 0.3) for seen in decoder.latents]
+            best = losses.index(min(losses))
+            assert 0 < best < len(losses) - 2, convergence
+            assert float(loss) == pytest.approx(losses[best], abs=1e-6)
+            assert torch.equal(latent[0], decoder.latents[best + 1]), convergence
+
 
 _ADJUST_LEARNING_RATE = latent_fit.adjust_learning_rate
 
