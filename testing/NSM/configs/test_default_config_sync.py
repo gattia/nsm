@@ -31,7 +31,10 @@ def _shipped():
 
 
 def test_the_shipped_file_is_the_generators_output():
-    """The two drifted twice before this existed: ``axis_align`` and ``eikonal_weight``."""
+    """
+    Fails if ``default_config.json`` differs from ``generate_sdf_default_config.config``, or
+    ``DEFAULT_CONFIG_PATH`` stops pointing at the shipped file.
+    """
     assert os.path.realpath(DEFAULT_CONFIG_PATH) == os.path.realpath(SHIPPED_PATH)
     assert _shipped() == json.loads(json.dumps(generated_config)), (
         "default_config.json is out of sync with its generator. "
@@ -40,7 +43,7 @@ def test_the_shipped_file_is_the_generators_output():
 
 
 def test_importing_the_generator_writes_nothing(tmp_path, monkeypatch):
-    """The write used to run at import, into whatever directory the caller was in."""
+    """Fails if importing ``generate_sdf_default_config`` writes into the working directory."""
     import NSM.configs.generate_sdf_default_config as module
 
     monkeypatch.chdir(tmp_path)
@@ -50,13 +53,14 @@ def test_importing_the_generator_writes_nothing(tmp_path, monkeypatch):
 
 def test_every_shipped_key_is_read_or_names_a_parameter():
     """
-    A key is live if it appears as a string literal in a live ``NSM/`` module, or if it
-    names a ``MultiSurfaceSDFSamples`` or ``load_model`` parameter. NSM never builds a
-    dataset from a config, so the dataset half of the file is a specification the caller
-    passes to the constructor.
+    Fails if ``default_config.json`` carries a key that no live ``NSM/`` module spells as a
+    string literal and that names no ``MultiSurfaceSDFSamples`` or ``load_model`` parameter.
 
-    String literals, not substrings. A substring match passed six dead keys because each
-    was part of an unrelated identifier: ``n_val`` (``_run_validation``), ``modulated``,
+    Parameters count because NSM never builds a dataset from a config: the dataset half of
+    the file is a specification the caller passes to the constructor.
+
+    String literals, not substrings. A substring match counts six dead keys as live, because
+    each is part of an unrelated identifier: ``n_val`` (``_run_validation``), ``modulated``,
     ``entity`` (``identity``), ``cache`` (``empty_cache``), ``seed`` and ``model_type``.
     """
     literals = set()
@@ -79,9 +83,11 @@ def test_every_shipped_key_is_read_or_names_a_parameter():
 
 def test_nothing_can_set_chamfer_norm_during_training():
     """
-    #56's evidence that giving ``chamfer_norm`` one default moves no number: the trainer's
-    argument is commented out and no config carries the key, so every training run has
-    used ``get_mean_errors``' default.
+    Fails if ``train_deep_sdf`` passes ``chamfer_norm=`` or ``default_config.json`` gains a
+    ``chamfer_norm`` key, so training stops using ``get_mean_errors``' default (#56).
+
+    That is the evidence that giving ``chamfer_norm`` one default moves no number. Deleting
+    the ``# chamfer_norm`` comment in ``train_deep_sdf.py`` also fails it.
     """
     with open(os.path.join(NSM_ROOT, "train", "train_deep_sdf.py"), encoding="utf-8") as handle:
         source = handle.read()

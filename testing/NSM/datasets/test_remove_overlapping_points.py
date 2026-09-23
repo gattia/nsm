@@ -1,11 +1,9 @@
 """``remove_overlapping_points`` must remove exactly the points inside >= 2 surfaces.
 
-Its predecessor tested a sign SUM (``total == -2``), which is equivalent to the count
-test only at exactly two surfaces: enumerated by execution during the Aug 2026 audit, it
-removed nothing at 3 or 5 surfaces and only the inside-3-of-4 patterns at 4 — while never
-removing a point it should have kept. At exactly two surfaces the two tests agree on
-every sign pattern, which is why the committed regression baselines (two-surface data)
-do not move with this fix. See ``docs/KNOWN_ISSUES.md`` § History.
+A sign-sum test (``total == -2``) agrees with the count on every sign pattern at exactly
+two surfaces, so only three or more surfaces tell the two apart. At 3 or 5 surfaces the sum
+removes nothing; at 4 it removes only the inside-3-of-4 patterns. The two-surface
+regression baselines cannot see the difference. See ``docs/KNOWN_ISSUES.md`` § History 5.
 """
 
 import itertools
@@ -27,7 +25,13 @@ def _run(rows):
 
 
 def test_every_sign_pattern_keeps_a_point_iff_it_is_inside_fewer_than_two():
-    """Inside, on and outside for up to five surfaces. Exactly 0 is not inside."""
+    """
+    Fails if ``MultiSurfaceSDFSamples.remove_overlapping_points`` keeps a point inside two or
+    more of 2-5 surfaces, drops one inside fewer, or counts an SDF of exactly 0 as inside
+    (KNOWN_ISSUES History 5).
+
+    The method runs unbound on an empty ``SimpleNamespace``: it reads nothing from ``self``.
+    """
     for n_surfaces in (2, 3, 4, 5):
         rows = list(itertools.product((-0.5, 0.0, 0.5), repeat=n_surfaces))
         out, removed = _run(rows)

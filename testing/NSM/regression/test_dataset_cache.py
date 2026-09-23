@@ -105,10 +105,14 @@ def _cached_by_name(cache_dir):
 class TestCacheRoundTrip:
     def test_a_reload_serves_the_first_builds_file_byte_for_byte(self, meshes, tmp_path_factory):
         """
+        Fails if a ``load_cache=True`` build with the same key re-samples instead of serving
+        the cached ``.npz``, or ``find_hash`` cannot find that file by name.
+
         ``random_seed=None`` on both builds keeps the key the same while leaving sampling
-        unseeded, so a re-sample would change every number. The first build's arrays are
-        read before the second build runs: a re-sample writes to the same path. ``find_hash``
-        walks all of ``loc_save``, which is what lets a cache written on another day still hit.
+        unseeded, and the numpy seeds differ, so a re-sample changes every number. The first
+        build's arrays are read before the second build runs, because a re-sample writes to
+        the same path. ``find_hash`` walks all of ``loc_save``, which is what lets a cache
+        written on another day still hit.
         """
         cache = tmp_path_factory.mktemp("roundtrip")
         first = build_dataset(meshes, cache, seed=0, random_seed=None, **SMALL)
@@ -126,6 +130,10 @@ class TestCacheRoundTrip:
         assert os.path.basename(first.find_hash(filename=name)[0]) == name
 
     def test_a_disk_cache_serves_either_storage_mode(self, meshes, tmp_path_factory):
+        """
+        Fails if a disk-built cache reloaded with ``store_data_in_memory=True`` gives a
+        different ``xyz`` batch from the disk-backed dataset under the same torch seed.
+        """
         import torch
 
         cache = tmp_path_factory.mktemp("store_modes")
@@ -139,7 +147,12 @@ class TestCacheRoundTrip:
         assert torch.equal(from_disk["xyz"], from_memory["xyz"])
 
     def test_every_subject_started_is_logged(self, tmp_path_factory):
-        """So a crash mid-build names its subject. The log appends across builds."""
+        """
+        Fails if ``MultiSurfaceSDFSamples.get_sample_data_dict`` stops appending each subject
+        to ``list_meshes_started_loading.log`` in ``loc_save``, or truncates it on the next build.
+
+        The log exists so a crash mid-build names its subject.
+        """
         subjects = write_synthetic_meshes(tmp_path_factory.mktemp("logged_meshes"))[:2]
         cache = tmp_path_factory.mktemp("logged")
         log = os.path.join(str(cache), "list_meshes_started_loading.log")
@@ -158,8 +171,11 @@ class TestCacheHitRepair:
         self, meshes, bone_meshes, tmp_path_factory
     ):
         """
-        A truncated ``.npz`` (a crash mid-write) is deleted and the subject rebuilt at the
-        same path. So is one whose index lists point past its points: served as-is they
+        Fails if a cache hit serves or crashes on a non-zip ``.npz`` instead of deleting it and
+        rebuilding at the same path, in either class, or ``MultiSurfaceSDFSamples`` serves a
+        cache whose ``pos_idx`` points past its points.
+
+        A non-zip ``.npz`` is what a crash mid-write leaves. Out-of-range indices served as-is
         would read the wrong rows.
         """
         for label, build, subjects, n_pts in (
@@ -186,9 +202,11 @@ class TestCacheHitRepair:
 
     def test_a_pre_overlap_pass_cache_is_shrunk_and_resaved(self, meshes, tmp_path_factory):
         """
-        ``remove_overlapping_points`` runs on every hit. The index lists are not recomputed
-        on this path, so the poisoned row is pruned from them first, keeping the in-range
-        guard out of the way.
+        Fails if a ``MultiSurfaceSDFSamples`` cache hit does not run
+        ``remove_overlapping_points`` and resave the shrunk file in place, or rebuilds it.
+
+        The index lists are not recomputed on this path, so the poisoned row is pruned from
+        them first, keeping the in-range guard out of the way.
         """
         cache = tmp_path_factory.mktemp("overlap_upgrade")
         path = build_dataset(meshes, cache, **SMALL).data[0]
@@ -209,9 +227,11 @@ class TestCacheHitRepair:
         self, meshes, bone_meshes, tmp_path_factory
     ):
         """
-        The single-surface upgrade never fired until Aug 2026: ``unpack_numpy_data`` always
-        sets ``pos_idx``, as an empty list when absent, so the ``not in`` test was always
-        false and ``__getitem__`` raised ``IndexError``. It now checks the length.
+        Fails if a cache hit on a file with no ``pos_idx``/``neg_idx``/``surf_idx`` lists
+        serves it without recomputing them, in either class, so ``__getitem__`` raises.
+
+        ``unpack_numpy_data`` returns an absent index group as an empty list, so the upgrade
+        must test the length, not the key.
         """
         for label, build, subjects, small in (
             ("multi", build_dataset, meshes, SMALL),
@@ -233,7 +253,11 @@ class TestCacheHitRepair:
 
 class TestHashedParametersChangeTheKey:
     def test_every_hashed_parameter_changes_the_key(self, dataset, meshes):
-        """The seed changes the samples, so it is in the key, as are the mesh paths."""
+        """
+        Fails if ``MultiSurfaceSDFSamples.create_hash`` ignores a change to any listed
+        sampling, normalization or registration parameter, ``random_seed``, or the order of a
+        subject's surfaces (#19).
+        """
         baseline = dataset.create_hash(meshes[0])
         for attribute, value in (
             ("center_pts", False),
@@ -258,12 +282,11 @@ class TestHashedParametersChangeTheKey:
 
 class TestFormerlyCollidingParameters:
     """
-    ``mesh_to_scale`` and ``uniform_pts_buffer`` change the cached content and were missing
-    from the key (#19a), so with ``load_cache=True`` a second run silently trained on the
-    first's data. The premise, that the content differs, is asserted first.
+    ``mesh_to_scale`` and ``uniform_pts_buffer`` change the cached content, so both must
+    change the key (#19a). The premise, that the content differs, is asserted first.
 
-    ``subsample`` is deliberately not in the key. Its one effect on cached content, the
-    index padding, moved to draw time, sized by the ``subsample`` then in force.
+    ``subsample`` is deliberately not in the key. The index padding, its one effect on the
+    samples, happens at draw time, sized by the ``subsample`` then in force.
     """
 
     @staticmethod
@@ -281,6 +304,11 @@ class TestFormerlyCollidingParameters:
     def test_what_changes_the_content_changes_the_key_and_subsample_does_neither(
         self, meshes, tmp_path_factory
     ):
+        """
+        Fails if ``mesh_to_scale`` or ``uniform_pts_buffer`` changes the cached samples
+        without changing the key, a ``load_cache=True`` run is handed another
+        ``mesh_to_scale``'s file, or ``subsample`` changes the key or any cached array (#19).
+        """
         for label, override in (
             ("mts", {"mesh_to_scale": 1}),
             ("upb", {"uniform_pts_buffer": 0.5}),
@@ -303,9 +331,12 @@ class TestFormerlyCollidingParameters:
 
     def test_equal_pos_neg_holds_after_a_subsample_change(self, meshes, tmp_path_factory):
         """
-        The padding used to be cached for the build's ``subsample``, so a larger one topped
-        batches up with uniform points and ``equal_pos_neg`` stopped holding: 1.6x
-        under-representation of the small surface's interior (0.20 against 0.32).
+        Fails if a cache built at ``subsample=64`` and reused at 4096 draws a surface-1
+        interior fraction more than 25% off a fresh 4096 build's (#19).
+
+        Padding cached for the build-time ``subsample`` tops larger batches up with uniform
+        points, so ``equal_pos_neg`` stops holding. Measured: 0.20 against 0.32, 1.6x
+        under-representation of the small surface's interior.
         """
         import torch
 
@@ -324,7 +355,10 @@ class TestFormerlyCollidingParameters:
 
 class TestMeshContentInTheKey:
     def test_an_in_place_mesh_edit_changes_the_key(self, tmp_path_factory):
-        """#19b: the key hashed the path alone, so stale samples outlived an edit."""
+        """
+        Fails if ``create_hash`` keys a mesh by its path alone, so overwriting the file in
+        place keeps the key and the stale samples (#19b).
+        """
         import pyvista as pv
 
         subject = write_synthetic_meshes(tmp_path_factory.mktemp("editable"))[:1]
@@ -339,8 +373,8 @@ class TestMeshContentInTheKey:
 class TestReferenceMeshHashing:
     def test_equal_meshes_hash_the_same(self, dataset, meshes):
         """
-        #19c: a ``Mesh`` reference was stringified, and its ``__str__`` includes a memory
-        address, so such a dataset never hit its own cache.
+        Fails if ``create_hash`` keys a ``Mesh``-valued ``reference_mesh`` by object identity,
+        so two loads of one file give different keys and the cache never hits (#19c).
         """
         from pymskt.mesh import Mesh
 
@@ -358,6 +392,11 @@ class TestSeeding:
     """
 
     def test_seeded_builds_reproduce_on_both_paths(self, meshes, tmp_path_factory):
+        """
+        Fails if two cold ``MultiSurfaceSDFSamples`` builds with the same seed cache different
+        points, on the uniform path (``random_seed=None``, numpy seeded) or the near-surface
+        path (``random_seed`` set).
+        """
         for label, options in (
             ("uniform", dict(sigma_near=[None, None], sigma_far=[None, None], random_seed=None)),
             ("near", dict(sigma_near=[0.05, 0.05], sigma_far=[0.2, 0.2])),
@@ -380,9 +419,11 @@ class TestSeedDerivation:
 
     def test_the_seed_reaches_each_draw_separately(self, meshes, tmp_path_factory):
         """
-        Different seeds give different data, or "reproducible" would just mean a cache hit.
-        The near and far passes, asked for identical parameters, still draw different base
-        points, or the dataset carries half the surface locations it appears to.
+        Fails if two ``random_seed`` values cache the same points, or the near and far passes
+        draw the same base points when given identical parameters (KNOWN_ISSUES History 3).
+
+        Without the first, "reproducible" could just mean a cache hit. Without the second,
+        the dataset carries half the surface locations it appears to.
         """
         a, b = (
             build_dataset(meshes, tmp_path_factory.mktemp(f"derive_{s}"), random_seed=s, **SMALL)
@@ -406,9 +447,12 @@ class TestSeedDerivation:
 
     def test_order_and_location_do_not_change_a_subjects_data(self, tmp_path_factory):
         """
-        Keyed on mesh contents, not position: adding a subject to the front of a list would
-        otherwise resample every other subject while their cached files stayed valid. And
-        the same bytes at another path, a genuine cold resample, land on the same points.
+        Fails if ``derive_seed``'s subject key follows a subject's list position or file path
+        instead of its mesh bytes (KNOWN_ISSUES History 3).
+
+        Keyed on position, adding a subject to the front of a list would resample every other
+        subject while their cached files stayed valid. The moved copy has its own cache key,
+        so its build is a genuine cold resample.
         """
         two = write_synthetic_meshes(tmp_path_factory.mktemp("order_meshes"))[:2]
         forward = build_dataset(two, tmp_path_factory.mktemp("fwd"), random_seed=321, **SMALL)
@@ -426,9 +470,11 @@ class TestSeedDerivation:
 
     def test_multiprocessing_does_not_change_the_data(self, tmp_path_factory):
         """
-        ``Pool`` forks, and before the seed was threaded through, the forked global numpy
-        state drove the sampler: all three subjects differed. With ``random_seed=None`` they
-        still do (checked 2026-09-23 with this script).
+        Fails if a seeded ``multiprocessing=True`` build caches different points or file names
+        than the same build run serially (KNOWN_ISSUES History 3).
+
+        ``Pool`` forks, so unseeded workers draw from the forked global numpy state. With
+        ``random_seed=None`` all three subjects differ (checked 2026-09-23 with this script).
         """
         mesh_dir = str(tmp_path_factory.mktemp("mp_meshes"))
         write_synthetic_meshes(mesh_dir)
@@ -452,13 +498,19 @@ class TestSeedDerivation:
 class TestSingleSurfaceSDFSamples:
     """
     ``SDFSamples`` is not ``MultiSurfaceSDFSamples`` with one surface: it has its own
-    ``get_sample_data_dict``, ``__getitem__`` and sampler, so the seeding contract is
-    asserted on it separately.
+    ``_build_subject``, ``__getitem__`` and sampler, so the seeding contract is asserted on
+    it separately.
     """
 
     def test_it_caches_its_scalar_n_pts_and_its_seed_reproduces(
         self, bone_meshes, tmp_path_factory
     ):
+        """
+        Fails if ``SDFSamples`` caches other than ``n_pts`` rows, two cold builds with the same
+        ``random_seed`` cache different points, or a different ``random_seed`` the same ones.
+
+        Each build has its own cache directory, so both are cold.
+        """
         first, second = (
             build_single_surface_dataset(
                 bone_meshes, tmp_path_factory.mktemp(f"single_{label}"), **SMALL_SINGLE
@@ -480,14 +532,16 @@ class TestSingleSurfaceSDFSamples:
 
 
 class TestFormerlyUncallableConfigurations:
-    """Constructor options that built fine and crashed on first use (#22, #23, #69)."""
+    """Accepted constructor options that must build, serve batches and train (#22, #23, #69)."""
 
     def test_a_zero_sampling_probability_samples_nothing(
         self, meshes, bone_meshes, tmp_path_factory
     ):
         """
-        #23: the empty combo reached ``point_cloud_utils`` and crashed. The other combos
-        still fill the whole buffer, so no row is left at zero.
+        Fails if a zero-count sampling pass (``p_near_surface=0``) crashes either class's
+        build or leaves all-zero rows in the cached points (#23).
+
+        The other passes fill the whole buffer, so no row is left at zero.
         """
         dataset = build_dataset(
             meshes,
@@ -512,9 +566,11 @@ class TestFormerlyUncallableConfigurations:
         self, meshes, tmp_path_factory
     ):
         """
-        #22: ``store_data_in_memory=True`` raised ``UnboundLocalError`` on the timing keys,
-        and ``train_epoch`` read all four timing keys unconditionally, so no combination of
-        the two flags both built and trained. Asserted by running the trainer.
+        Fails if an in-memory ``MultiSurfaceSDFSamples`` item raises or carries keys besides
+        ``xyz``/``gt_sdf`` under either ``test_load_times``, or ``train_deep_sdf`` cannot
+        train on one (#22).
+
+        ``train_epoch`` must not require the timing keys, which in-memory items never carry.
         """
         for timing in (True, False):
             dataset = build_dataset(
@@ -541,7 +597,9 @@ class TestFormerlyUncallableConfigurations:
 
     def test_scale_jointly_works_in_either_storage_mode(self, meshes, tmp_path_factory):
         """
-        #69: the in-memory branch read ``.npz``-only keys and omitted ``joint_scale_buffer``.
+        Fails if ``norm_and_scale_all_meshes`` gives in-memory and disk data different joint
+        centres or radii, or ``__getitem__`` does not apply the buffered joint frame (#69).
+
         ``joint_scale_buffer=9`` puts every batch within ~0.1-0.2 of the origin; an
         unbuffered scale leaves points at ~0.5-1.1, so 0.25 separates them on any draw.
         """
@@ -564,9 +622,12 @@ def test_the_cache_location_is_read_when_the_dataset_is_built(
     meshes, monkeypatch, tmp_path_factory
 ):
     """
-    #24: ``LOC_SDF_CACHE`` was a default argument, read once at import. A blank value means
-    the home default, since kneepipeline blanks it rather than unsetting it, and an empty
-    ``loc_save`` would root the cache in the working directory.
+    Fails if ``SDFSamples.__init__`` reads ``LOC_SDF_CACHE`` at import instead of at
+    construction, or treats a blank value as a cache root instead of
+    ``~/.cache/nsm_sdf_cache`` (#24).
+
+    kneepipeline blanks the variable rather than unsetting it, and an empty ``loc_save``
+    would root the cache in the working directory.
     """
     cache_root = tmp_path_factory.mktemp("env_cache")
     monkeypatch.setenv("LOC_SDF_CACHE", str(cache_root))
@@ -583,10 +644,12 @@ def test_the_cache_location_is_read_when_the_dataset_is_built(
 class TestPointCenteringAndScaling:
     def test_centering_and_scaling_still_happen_unconditionally(self):
         """
-        The ``center`` and ``scale`` arguments were overwritten before being read, and were
-        removed (#20). Honouring them would have stopped scaling on every default run
-        (``scale=norm_pts``, default False): a cloud of radius 24.95 would stay 24.95. The
-        caller's array is not modified (#21).
+        Fails if ``get_pts_center_and_scale`` regains ``center``/``scale`` parameters, stops
+        centring on the mean and scaling to max radius 1, or modifies its input (#20, #21).
+
+        Honouring a ``scale`` argument would stop scaling on every default run, because
+        callers passed ``scale=norm_pts`` and ``norm_pts`` defaults to False: a cloud of
+        radius 24.95 would stay 24.95.
         """
         from NSM.datasets.sdf_dataset import get_pts_center_and_scale
 
@@ -601,13 +664,15 @@ class TestPointCenteringAndScaling:
 
 
 class TestUniformSamplingCube:
-    """
-    The two samplers had private copies of the cube arithmetic, and they had diverged (#40):
-    the buffer grew the cube more above than below, only one clipped, and ``pts_surface``
-    was a list from one and an array from the other.
-    """
-
     def test_both_samplers_draw_from_one_symmetric_cube(self, meshes):
+        """
+        Fails if ``get_buffered_cube_mins_maxs`` moves the cube's centre or grows it by other
+        than ``1 + buffer``, either reader's uniform draw leaves or is clipped inside that
+        cube, or either returns ``pts_surface`` as anything but an int64 array (#40).
+
+        With ``norm_pts=True`` and buffer 0.5 the cube is ±1.5, so the 1.4 bounds catch a
+        clip at ±(1 + buffer / 2).
+        """
         from NSM.datasets.sdf_dataset import (
             get_buffered_cube_mins_maxs,
             get_cube_mins_maxs,
@@ -640,15 +705,18 @@ class TestUniformSamplingCube:
 
 class TestEmptySignedSamples:
     """
-    ``sdf_pos_neg_idx`` divided by zero when a surface had no samples of one sign (#41).
-    A missing surface now gives empty index lists; a drawn-from surface missing a sign
-    raises, naming the surface.
+    ``sdf_pos_neg_idx`` on a surface with no samples of one sign (#41). A missing surface
+    gives empty index lists; a drawn-from surface missing a sign raises, naming the surface.
     """
 
     def test_a_surface_missing_a_sign_is_named_and_a_missing_surface_is_empty(
         self, dataset, tmp_path_factory
     ):
         """
+        Fails if a nested surface builds instead of raising ``ValueError`` naming it, the
+        multi-surface ``sdf_pos_neg_idx`` raises on an all-NaN column instead of returning
+        empty lists, or ``SDFSamples.sdf_pos_neg_idx`` accepts all-positive samples (#41).
+
         One surface inside another loses its interior to ``remove_overlapping_points``. The
         harness subjects are disjoint to avoid exactly this. A missing surface is an all-NaN
         column, and is checked by direct call: the end-to-end path dies earlier (#67).
@@ -685,6 +753,7 @@ class TestEmptySignedSamples:
         strict=True, reason="#67: a None surface dies at the preallocated buffer write"
     )
     def test_a_none_surface_subject_must_build(self, meshes, tmp_path_factory):
+        """Fails (strict XPASS) once a ``[mesh, None]`` subject builds and serves a batch (#67)."""
         dataset = build_dataset(
             [[meshes[0][0], None]],
             tmp_path_factory.mktemp("none_surface"),
@@ -699,9 +768,12 @@ def test_the_constructor_refuses_no_subsample_and_honours_joint_scale_buffer(
     meshes, tmp_path_factory
 ):
     """
-    #43: ``subsample=None`` was the documented default, and it crashed on a cold cache or
-    skipped normalization on a warm one. ``joint_scale_buffer`` was refused with a
-    ``TypeError``, unnoticed because the parent's default equals the production 0.1.
+    Fails if ``SDFSamples.__init__`` accepts ``subsample=None``, or ``MultiSurfaceSDFSamples``
+    refuses ``joint_scale_buffer`` or leaves it out of the joint max radius (#43).
+
+    The parent's default equals the production 0.1, so the test uses 0.25 against 0.1. The
+    second build reuses the first's cache, since ``joint_scale_buffer`` is not in the key,
+    so the two radii differ only by the buffer.
     """
     with pytest.raises(ValueError, match="subsample must be a positive int"):
         build_dataset(meshes, tmp_path_factory.mktemp("none_sub"), **dict(SMALL, subsample=None))
@@ -717,9 +789,12 @@ def test_the_constructor_refuses_no_subsample_and_honours_joint_scale_buffer(
 @pytest.mark.parametrize("single", [True, False], ids=["single", "multi"])
 def test_a_mesh_subject_must_build(single, meshes, bone_meshes, tmp_path_factory):
     """
-    Both classes advertise ``Mesh`` subjects, and neither builds one. The readers test
-    ``os.path.exists`` and drop a ``Mesh`` as a missing path, silently. Seeded, the single
-    class fails earlier: ``mesh_content_key`` iterates the ``Mesh``.
+    Fails (strict XPASS) once ``SDFSamples`` or ``MultiSurfaceSDFSamples`` builds a pymskt
+    ``Mesh`` subject and serves a batch from it.
+
+    Both classes advertise ``Mesh`` subjects. The readers test ``os.path.exists`` and drop a
+    ``Mesh`` as a missing path, silently. Seeded, the single class fails earlier:
+    ``mesh_content_key`` iterates the ``Mesh``.
     """
     from pymskt.mesh import Mesh
 
@@ -735,8 +810,12 @@ def test_a_mesh_subject_must_build(single, meshes, bone_meshes, tmp_path_factory
 
 def test_an_integer_reference_with_combined_surfaces_builds(tmp_path_factory):
     """
-    #61: ``reference_mesh=0`` with ``mesh_to_scale=[0, 1]`` combines subject 0's surfaces
-    into the registration target. It raised ``UnboundLocalError``.
+    Fails if ``MultiSurfaceSDFSamples(reference_mesh=0, mesh_to_scale=[0, 1])`` raises in
+    ``load_reference_mesh`` or leaves ``reference_mesh`` as anything but a pymskt ``Mesh``
+    (#61).
+
+    That combination registers every subject to subject 0's surfaces combined into one mesh.
+    The build is in-process, so the ``save_mesh`` spill under multiprocessing is not reached.
     """
     from pymskt.mesh import Mesh
 

@@ -32,10 +32,13 @@ def _npz(directory, coord_key="pts", sdf_key="sdfs", **extra):
 
 
 class TestUnpackNumpyData:
-    """The cache's key spellings changed over time, and unpacking accepts all of them."""
+    """``unpack_numpy_data`` accepts every key spelling the cache has used."""
 
     def test_every_spelling_unpacks_and_the_precedence_is_fixed(self, tmp_path):
-        """``pts`` over ``xyz``; ``sdfs`` over ``gt_sdf`` over ``sdf``."""
+        """
+        Fails if ``unpack_numpy_data`` stops reading ``xyz``, ``gt_sdf`` or ``sdf``, or
+        changes the precedence ``pts`` over ``xyz`` and ``sdfs`` over ``gt_sdf`` over ``sdf``.
+        """
         via_pts = unpack_numpy_data(_npz(tmp_path, coord_key="pts"))
         assert torch.equal(via_pts["xyz"], unpack_numpy_data(_npz(tmp_path, "xyz"))["xyz"])
         for sdf_key in ("sdfs", "gt_sdf", "sdf"):
@@ -49,6 +52,7 @@ class TestUnpackNumpyData:
         assert unpack_numpy_data(gt_sdf_over_sdf)["gt_sdf"].tolist() == SDF
 
     def test_a_missing_group_raises_by_name(self, tmp_path):
+        """Fails if ``unpack_numpy_data`` accepts data missing its coordinate or SDF key."""
         np.savez(tmp_path / "no_coords.npz", sdfs=np.zeros(4))
         with pytest.raises(ValueError, match="No pts or xyz"):
             unpack_numpy_data(np.load(tmp_path / "no_coords.npz"))
@@ -58,9 +62,12 @@ class TestUnpackNumpyData:
 
     def test_the_output_shape(self, tmp_path):
         """
-        float32 whatever came in; absent index groups as empty lists; ``point_cloud`` only
-        on request. A plain dict works only with no additional key groups, because the
-        default reads ``data.files``: no in-repo caller passes a dict.
+        Fails if ``unpack_numpy_data`` returns non-float32 tensors, anything but ``[]`` for an
+        absent key group, or ``point_cloud`` unasked.
+
+        A plain dict works only with ``list_additional_keys=[]``, because unpacking a key
+        group reads ``data.files``. The ``AttributeError`` check pins that limit. No in-repo
+        caller passes a dict.
         """
         data = _npz(tmp_path, point_cloud=np.ones((4, 3)))
         unpacked = unpack_numpy_data(data)
@@ -76,6 +83,10 @@ class TestUnpackNumpyData:
 
 
 def test_unpack_pts_rebuilds_indexed_keys_in_order(tmp_path):
+    """
+    Fails if ``unpack_pts`` returns a group's ``{name}_0..N`` arrays out of index order or
+    not as tensors, or anything but ``[]`` for an absent group.
+    """
     data = _npz(tmp_path, new_pts_0=np.zeros((2, 3)), new_pts_1=np.ones((3, 3)))
     pts = unpack_pts(data, pts_name="new_pts")
     assert [p.shape for p in pts] == [(2, 3), (3, 3)]
@@ -84,6 +95,11 @@ def test_unpack_pts_rebuilds_indexed_keys_in_order(tmp_path):
 
 
 def test_the_validators_refuse_by_name():
+    """
+    Fails if ``check_probabilities`` or ``check_probabilities_sum`` accepts a value outside
+    [0, 1] or a near + far sum above 1, or ``get_cube_mins_maxs`` / ``get_pts_center_and_scale``
+    accepts an empty or non-(n, 3) array or an unknown ``scale_method``.
+    """
     for ok in (0.0, 0.5, 1.0):
         check_probabilities(ok)
     for bad in (-0.1, 1.1):
@@ -103,9 +119,11 @@ def test_the_validators_refuse_by_name():
 
 def test_combine_meshes_returns_one_mesh_or_their_union():
     """
-    One index, bare or in a list, returns that mesh. Several return a pymskt ``Mesh``:
-    pymskt's ``+`` gives a pyvista ``PolyData``, and ``load_reference_mesh`` calls
-    ``save_mesh`` on the result (#61).
+    Fails if ``combine_meshes`` returns a pyvista ``PolyData`` or drops a mesh for two or more
+    indices, or anything but the mesh itself for one index (#61).
+
+    pymskt's ``+`` gives a ``PolyData``, and ``load_reference_mesh`` calls ``save_mesh`` on
+    the result, which ``PolyData`` lacks.
     """
     meshes = [
         Mesh(np.array([[x, 0, 0], [x + 1, 0, 0], [x, 1, 0]]), np.array([[0, 1, 2]]))

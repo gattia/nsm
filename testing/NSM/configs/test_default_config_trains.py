@@ -1,7 +1,6 @@
 """
-The shipped ``default_config.json`` drives ``train_deep_sdf`` (#48: five keys the trainer
-reads were missing). Overrides may change a shipped value but never add a key, so a key
-missing from the file still raises here.
+The shipped ``default_config.json`` drives ``train_deep_sdf`` (#48). Overrides may change a
+shipped value but never add a key, so a key missing from the file still raises here.
 """
 
 import json
@@ -24,6 +23,10 @@ from NSM.configs.generate_sdf_default_config import DEFAULT_CONFIG_PATH  # noqa:
 
 
 def test_the_shipped_default_config_drives_train_deep_sdf(tmp_path):
+    """
+    Fails if ``train_deep_sdf`` reads a key the shipped ``default_config.json`` lacks, or two
+    CPU epochs from it give a non-finite loss or write no ``.pth`` checkpoint (#48).
+    """
     with open(DEFAULT_CONFIG_PATH, encoding="utf-8") as f:
         config = json.load(f)
 

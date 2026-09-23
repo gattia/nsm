@@ -43,8 +43,11 @@ def _axis_points():
 
 def test_an_open_mesh_reads_as_its_capped_counterpart(clipped_sphere):
     """
-    No phantom interior: every probe beyond the cut is outside, and the open mesh's field
-    matches the meshfix-capped mesh's rather than being a third convention.
+    Fails if pymskt's ``get_sdf_pts(method="pcu")`` labels a probe beyond an open cut as
+    inside, or reads the open mesh more than ``OPEN_VS_CAPPED_ATOL`` away from its
+    ``meshfix``-capped counterpart.
+
+    It calls pymskt directly, so it guards the dependency, not the readers' choice of pcu.
     """
     open_sdf = Mesh(pv.PolyData(clipped_sphere)).get_sdf_pts(_axis_points(), method="pcu")
     assert np.all(open_sdf > 0), open_sdf
