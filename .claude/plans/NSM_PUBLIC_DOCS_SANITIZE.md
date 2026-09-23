@@ -6,8 +6,7 @@
 
 **Updated:** 2026-09-23 · **Status:** open
 
-- **Next:** Step 1, the inventory. Start after PR #113 merges, so the sweep runs on the
-  v0.4.0 text.
+- **Next:** Step 1, the inventory.
 - **Blocked on:** nothing.
 - **Done:** nothing yet.
 - **Surprises:** none yet.
