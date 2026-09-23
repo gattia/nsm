@@ -40,9 +40,12 @@ class TestRoundTrip:
         self, reconstruction_model, tmp_path
     ):
         """
-        Bitwise, since no arithmetic on this path can legitimately differ. Through
-        ``load_model`` (in eval mode, epoch recorded), through each checkpoint layout it
-        accepts, and through the consumer's bare ``load_state_dict`` (``SCOPE`` §4).
+        Fails if a checkpoint reloaded by ``load_model``, in any of the four layouts it
+        accepts, or by a bare ``load_state_dict`` computes a different output, ``load_model``
+        returns train mode, or ``save_model`` stops recording ``epoch``.
+
+        Bitwise, since no arithmetic on this path can legitimately differ. The bare
+        ``load_state_dict`` is the consumer's path (``SCOPE`` §4).
         """
         from NSM.models.loader import load_model
 
@@ -69,7 +72,10 @@ class TestRoundTrip:
             assert torch.equal(expected, forward(loaded, inputs)), layout
 
     def test_the_comparison_can_fail(self, reconstruction_model, tmp_path):
-        """Perturbing every float tensor must show, or ``torch.equal`` proves nothing."""
+        """
+        Fails if a checkpoint with every float tensor shifted by 0.01 loads through
+        ``load_model`` to the same output, which would make the bitwise round trip vacuous.
+        """
         from NSM.models.loader import load_model
 
         inputs = query_points()
@@ -84,7 +90,13 @@ class TestRoundTrip:
         assert not torch.equal(forward(reconstruction_model, inputs), forward(perturbed, inputs))
 
     def test_the_config_a_run_saves_is_enough_to_reload_it(self, training_run, tmp_path):
-        """The consumer's loop: train, read back ``model_params_config.json``, rebuild."""
+        """
+        Fails if ``train_deep_sdf``'s ``model_params_config.json`` omits an ``ARCHITECTURE``
+        key, or records a value from which ``load_model`` builds a different model.
+
+        The consumer's loop: train, read back the config, rebuild. The trained model is
+        re-saved with ``save_model`` rather than loaded from the run's own checkpoint.
+        """
         from NSM.models.loader import load_model
 
         directory = training_run["config"]["experiment_directory"]
@@ -109,8 +121,13 @@ class TestPaddingIsNotInTheCheckpoint:
 
     def test_a_config_must_state_it_and_stating_it_restores_the_model(self, tmp_path):
         """
-        The refusal is worth its cost: a mismatch moves the ``tanh``-bounded SDF by more
-        than 1e-2. Asserted as a floor, so padding mattering less would show here.
+        Fails if ``load_model`` accepts a triplanar config without ``padding``, leaves the
+        0.1 repair out of its ``KeyError``, or builds a model whose output does not follow
+        the stated ``padding`` (#26; KNOWN_ISSUES History 16).
+
+        The refusal is worth its cost: a mismatch (0.35 trained, 0.1 loaded) moves the
+        ``tanh``-bounded SDF by more than 1e-2. Asserted as a floor, so padding mattering
+        less would show here.
         """
         from NSM.models.loader import load_model
 
@@ -134,10 +151,12 @@ class TestPaddingIsNotInTheCheckpoint:
 
     def test_self_padding_alone_governs_normalization(self):
         """
-        ``normalize_coordinates`` took a ``padding`` argument and divided by ``self.padding``.
-        Its one caller passes none, so honouring the argument would have handed it the 0.1
-        default instead of the shipped 0.35: a 0.063 SDF difference. The argument was
-        deleted. Called with the caller's own arguments, the exact quotient is asserted.
+        Fails if ``TriplanarDecoder.normalize_coordinates`` takes a ``padding`` argument, or
+        its result is not exactly ``xy / (1 + self.padding + 10e-6)`` at 0.35 and at 0.1.
+
+        Its one caller passes no ``padding``, so an argument defaulting to 0.1 would replace
+        a 0.35 model's own value: a 0.063 SDF difference. It is called here with the
+        caller's own arguments.
         """
         shipped = build_model(dict(ARCHITECTURE, padding=self.TRAINED_PADDING))
         default = build_model(dict(ARCHITECTURE))
@@ -154,13 +173,20 @@ class TestPaddingIsNotInTheCheckpoint:
 
 class TestAliasedCheckpointEntries:
     """
-    ``VAEDecoder`` registered every layer twice until #27, so each tensor was saved under two
-    names and a by-key edit to one was reverted by the other. Shipped checkpoints still carry
-    both, so a load-time hook drops the ``layers.*`` aliases, and where they disagree the
-    ``decoder.*`` value wins, as it always did.
+    A checkpoint saved before #27 carries every ``VAEDecoder`` tensor twice, under
+    ``decoder.*`` and a ``layers.*`` alias. The shipped checkpoints are among them. A
+    load-time hook drops the aliases, so where the two disagree the ``decoder.*`` value wins.
     """
 
     def test_each_parameter_is_saved_once_and_an_edit_takes_effect(self, tmp_path):
+        """
+        Fails if ``TriplanarDecoder.state_dict()`` carries ``vae_decoder.layers.*`` aliases
+        or any tensor twice, or a by-key edit to ``vae_decoder.decoder.*`` does not change
+        the loaded model's output (#27).
+
+        The element-count check assumes the model has no buffers: true under layer norm,
+        false under batch norm.
+        """
         from NSM.models.loader import load_model
 
         model = build_model(dict(ARCHITECTURE))
@@ -177,6 +203,14 @@ class TestAliasedCheckpointEntries:
         assert not torch.equal(forward(model, inputs), forward(edited, inputs))
 
     def test_a_pre_fix_checkpoint_still_loads_both_ways(self, tmp_path):
+        """
+        Fails if a checkpoint carrying ``vae_decoder.layers.*`` aliases fails a strict
+        ``load_state_dict`` or ``load_model``, or loads the alias values over ``decoder.*``
+        (#27).
+
+        The aliases are offset by 1.0, so a load that let them win changes the output.
+        kneepipeline loads the shipped checkpoints with a strict ``load_state_dict``.
+        """
         from NSM.models.loader import load_model
 
         model = build_model(dict(ARCHITECTURE))

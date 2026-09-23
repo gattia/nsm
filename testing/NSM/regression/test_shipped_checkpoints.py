@@ -7,9 +7,10 @@ NSM_SHIPPED_MODELS=/path/to/NSM_MODELS pytest testing/NSM/regression/test_shippe
 
 Each subdirectory with a ``model_params_config.json`` and a ``model/*.pth`` is one case.
 Both shipped configs omit ``padding`` and ``conv_activation``, so ``load_model`` refuses
-them (#26, #45). The refusal must name every missing key in one message; the repaired
-config must load strictly; and kneepipeline's own construction, fifteen keys by hand with
-neither of those two, must build the identical model.
+them (#26, #45). The refusal must name every missing key in one message. The config
+repaired from that message must load strictly through ``load_model``, and kneepipeline's
+own construction, fifteen keys by hand with neither of those two, must build the identical
+model. ``test_the_consumer_s_own_construction_is_the_same_model`` checks both.
 """
 
 import json
@@ -61,7 +62,7 @@ def repaired(config_path):
 
 def consumer_style(config, checkpoint):
     """
-    ``kneepipeline/steps/run_nsm.py:93-112``, reproduced: fifteen keys by hand, no
+    ``kneepipeline/steps/run_nsm.py:94-112``, reproduced: fifteen keys by hand, no
     ``padding`` and no ``conv_activation``.
     """
     model = TriplanarDecoder(
@@ -88,6 +89,10 @@ def consumer_style(config, checkpoint):
 @pytest.mark.parametrize("config_path,checkpoint", CASES)
 class TestAShippedCheckpoint:
     def test_one_message_names_every_key_the_config_lacks(self, config_path, checkpoint):
+        """
+        Fails if ``load_model``'s refusal of a shipped config omits one of its missing
+        ``REQUIRED_ARCHITECTURE_KEYS``, or its JSON repair block names a different set.
+        """
         config = json.loads(Path(config_path).read_text(encoding="utf-8"))
         missing = [key for key in REQUIRED_ARCHITECTURE_KEYS if key not in config]
         if not missing:
@@ -101,8 +106,12 @@ class TestAShippedCheckpoint:
 
     def test_the_consumer_s_own_construction_is_the_same_model(self, config_path, checkpoint):
         """
-        Bitwise, on a forward pass -- module types would miss a wrong ``padding``, which
-        is not a parameter and changes only where the feature planes get sampled.
+        Fails if the repaired config does not load through ``load_model``, or kneepipeline's
+        hand-built ``TriplanarDecoder`` differs from that model in state-dict keys,
+        ``padding`` or forward output.
+
+        Bitwise, on a forward pass: module types would miss a wrong ``padding``, which is
+        not a parameter and changes only where the feature planes get sampled.
         """
         config = repaired(config_path)
         by_loader = load_model(config, str(checkpoint), device="cpu")

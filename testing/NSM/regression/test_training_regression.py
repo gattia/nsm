@@ -3,10 +3,10 @@ End-to-end training regression: 8 epochs, CPU, fixed seed, asserted against base
 
 What this pins, most important first:
 
-1. **The learning rate of each param group at every epoch.** This would have caught the
-   schedule swap in ``docs/KNOWN_ISSUES.md`` §1. The two schedules differ in Interval and
-   Factor as well as Initial, so transposing them inverts the run, and
-   ``TestDeliberateBreak`` transposes them and watches the baselines fail.
+1. **The learning rate of each param group at every epoch**, which catches the schedule
+   swap in ``docs/KNOWN_ISSUES.md`` §1. The two schedules differ in Interval and Factor as
+   well as Initial, so transposing them inverts the run. ``TestDeliberateBreak`` transposes
+   them and asserts the baselines fail.
 2. The loss trajectory and its components.
 3. The latent norms.
 """
@@ -38,13 +38,16 @@ from _harness import (
 
 
 def test_baselines_are_not_being_regenerated():
-    """A regeneration run must not read as a passing run."""
+    """Fails if ``NSM_REGENERATE_BASELINES`` is set, so a run that rewrote baselines reads red."""
     assert not regenerating(), f"{REGENERATE_ENV} is set: baselines were REWRITTEN, not checked"
 
 
 def test_the_reconstruction_decoder_is_not_being_regenerated():
     """
-    A run that rewrote ``assets/reconstruction_decoder.pt`` compared every reconstruction
+    Fails if ``NSM_REGENERATE_RECON_DECODER`` is set, so a run that retrained the committed
+    decoder reads red.
+
+    Such a run rewrote ``assets/reconstruction_decoder.pt`` and compared every reconstruction
     baseline against weights it had just written. If the decoder really changed, the
     reconstruction baselines must be regenerated too.
     """
@@ -58,6 +61,11 @@ class TestBaselinePlatformPin:
     """
 
     def test_the_gate_skips_only_a_foreign_platform(self, training_baseline):
+        """
+        Fails if the harness's ``platform_matches`` skips baselines on a torch version change
+        or applies them on a foreign platform, or ``training.json`` was generated off
+        Linux-x86_64 or is empty.
+        """
         assert platform_matches(provenance()) and platform_matches({})
         assert platform_matches(dict(provenance(), torch="99.0.0"))
         assert not platform_matches({"platform": "Neverland-vax"})
@@ -72,9 +80,14 @@ class TestLearningRateTrajectory:
         self, training_run, training_baseline
     ):
         """
-        Exact, with no tolerance: ``Initial * Factor ** (epoch // Interval)`` in Python floats
-        is identical everywhere. Also recomputed from the config independently of the
-        baseline, and the two schedules must differ, or a swap would be invisible.
+        Fails if ``train_deep_sdf`` runs an epoch with a param group's LR other than its own
+        ``Target`` schedule's ``Initial * Factor ** (epoch // Interval)``, as when the model
+        and latent schedules are swapped (KNOWN_ISSUES History 1).
+
+        The baseline comparison is exact, with no tolerance: that expression in Python floats
+        is identical everywhere, so it runs on every platform. The rates are also recomputed
+        from the config. The two schedules must differ and each must change within the run,
+        or a swap would be invisible.
         """
         records = training_run["records"]
         assert [r["epoch"] for r in records] == list(range(1, N_EPOCHS + 1))
@@ -94,6 +107,13 @@ class TestLearningRateTrajectory:
 
 class TestLossAndLatents:
     def test_the_trajectories_match_baseline(self, training_run, training_baseline):
+        """
+        Fails if ``train_deep_sdf``'s 8-epoch loss, L1, regularization or per-subject
+        latent-norm trajectory moves from baseline by more than ``LOSS_RTOL`` or
+        ``LATENT_NORM_ATOL``.
+
+        The baselines were generated on Linux-x86_64, and this test skips elsewhere.
+        """
         records = training_run["records"]
         for key, field in (
             ("loss_trajectory", "loss"),
@@ -106,7 +126,13 @@ class TestLossAndLatents:
         training_baseline.check("final_latent_norms", norms[-1], atol=LATENT_NORM_ATOL)
 
     def test_training_reduces_the_loss(self, training_run, training_dataset):
-        """A run frozen at its initial loss would match a frozen baseline forever."""
+        """
+        Fails if ``train_deep_sdf``'s last-epoch loss is not below its first, or the history's
+        ``latent_norms`` stops holding one entry per subject.
+
+        A run frozen at its initial loss would match a baseline regenerated from it forever.
+        This test runs on every platform.
+        """
         losses = [r["loss"] for r in training_run["records"]]
         assert losses[-1] < losses[0], losses
         assert len(training_run["records"][-1]["latent_norms"]) == len(training_dataset)
@@ -114,9 +140,13 @@ class TestLossAndLatents:
 
 def test_the_run_leaves_checkpoints_and_a_config_that_record_the_targets(training_run):
     """
-    ``save_frequency=4`` with ``checkpoint_epochs=8`` saves at epochs 4 and 8. The
-    returned history is what wandb would have seen (#28). ``mesh_names`` is recorded but
-    no model reads it, which is why surface identity in ``reconstruct_mesh`` is positional.
+    Fails if ``train_deep_sdf`` checkpoints at epochs other than 4 and 8, saves param groups
+    without ``name`` and ``target``, writes ``model_params_config.json`` without ``Target``
+    or ``mesh_names``, or returns a history missing an epoch or key (#28).
+
+    ``save_frequency=4`` with ``checkpoint_epochs=8`` saves at epochs 4 and 8. The returned
+    history is what wandb would have seen. ``mesh_names`` is recorded in the config and not
+    on the model, which is why surface identity in ``reconstruct_mesh`` is positional.
     """
     directory = training_run["config"]["experiment_directory"]
     for sub in ("model", "latent_codes"):
@@ -145,8 +175,9 @@ def test_the_run_leaves_checkpoints_and_a_config_that_record_the_targets(trainin
 class TestDeliberateBreak:
     """
     A harness nobody has seen fail is not evidence. This transposes the two ``Target`` labels,
-    the bug that started this work, and asserts the baselines reject the result by at least
-    ``MIN_HEADROOM`` times their tolerance. The learning rates are compared exactly.
+    which reproduces the schedule swap in ``docs/KNOWN_ISSUES.md`` §1, and asserts the
+    baselines reject the result by at least ``MIN_HEADROOM`` times their tolerance. The
+    learning rates are compared exactly.
     """
 
     @pytest.fixture(scope="class")
@@ -158,6 +189,13 @@ class TestDeliberateBreak:
         return run_training(config, build_model(config), training_dataset)[0]
 
     def test_swapping_lr_targets_fails_every_baseline(self, swapped, training_baseline):
+        """
+        Fails if ``LOSS_RTOL`` or ``LATENT_NORM_ATOL`` is widened, or the baselines lose
+        sensitivity, until the swapped run moves the loss trajectory or the final latent
+        norms by less than ``MIN_HEADROOM`` times the tolerance.
+
+        It guards the tolerances. ``TestLearningRateTrajectory`` catches the swap itself.
+        """
         if regenerating():
             pytest.skip("baselines are being rewritten")
         rates = {name: [r["lrs"][name] for r in swapped] for name in ("model_0", "latent")}
@@ -189,7 +227,14 @@ class TestClampedPredictionGradients:
     def test_fraction_of_dead_samples_at_init_matches_baseline(
         self, training_run, training_baseline
     ):
-        """How much of the signal ``clamp_dist=0.1`` discards before the first step."""
+        """
+        Fails if the fraction of a fresh seed-42 ``TriplanarDecoder``'s zero-latent
+        predictions outside +/-0.1 moves from baseline or falls to 25% or below.
+
+        The measurement behind the ``enforce_minmax`` entry in ``docs/KNOWN_ISSUES.md``
+        § Open: how much of the signal ``clamp_dist=0.1`` discards before the first step. It
+        never calls ``train_epoch``, so fixing the clamp does not turn it red.
+        """
         model = build_model(training_run["config"])
         model.eval()
         torch.manual_seed(0)
@@ -206,15 +251,19 @@ class TestClampedPredictionGradients:
 class TestResumeContract:
     """
     ``resume_epoch`` names the last completed epoch: its checkpoint is loaded and the loop
-    continues after it. ``resume_epoch=1`` used to skip epoch 1 and load nothing (#49,
-    § History 11).
+    continues after it.
     """
 
     def test_resuming_loads_exactly_the_named_checkpoint(self, training_dataset, tmp_path_factory):
         """
+        Fails if ``train_deep_sdf`` with ``resume_epoch`` 1 or 2 ends with model weights other
+        than that epoch's checkpoint, or trains an epoch when ``n_epochs == resume_epoch``
+        (#49; KNOWN_ISSUES History 11).
+
+        It checks the model weights only: skipping the latent or optimizer restore passes.
         With ``n_epochs`` equal to ``resume_epoch`` nothing trains, so the model must leave
         carrying that checkpoint's weights. It starts from a different seed, so a skipped
-        load cannot pass.
+        model load cannot pass.
         """
         source = training_config(tmp_path_factory.mktemp("resume_source"))
         source.update({"n_epochs": 2, "checkpoint_epochs": 1})
@@ -241,9 +290,11 @@ def test_a_schedule_free_run_survives_its_first_checkpoint(
     training_dataset, tmp_path_factory, monkeypatch
 ):
     """
-    #42: the eval warm-up handed the decoder the raw dataloader item, so every schedule_free
-    run died at its first checkpoint. ``schedulefree`` is not installed here, so it is
-    stubbed: AdamW plus the ``train()``/``eval()`` switches the trainer uses.
+    Fails if a ``schedule_free_AdamW`` run through ``train_deep_sdf`` raises at a checkpoint
+    epoch, in the eval warm-up or the save, or stops short of ``n_epochs`` (#42).
+
+    ``schedulefree`` is not installed here, so it is stubbed: AdamW plus the
+    ``train()``/``eval()`` switches the trainer uses.
     """
     import NSM.utils
 

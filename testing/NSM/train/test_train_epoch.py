@@ -1,9 +1,8 @@
 """
 ``train_epoch``: the config it reads, the epoch it runs, and the metrics it returns.
 
-Several contracts are one shape: a value was checked, or a loop bounded, away from where
-the value is named. So the failure named a local the caller never set, or the caller got
-an epoch they did not ask for.
+Several contracts here share one shape: a bad config value must raise an error that names
+its key before the value is used.
 """
 
 import contextlib
@@ -118,11 +117,14 @@ class _StubScheduleFree:
 
 def test_batch_split_changes_no_reported_number():
     """
-    ``batch_split`` bounds memory. ``torch.chunk(t, k)`` returns at most ``k`` pieces, and
-    the split loop assumed exactly ``k``: 5, 7, 9 and 11 raised ``IndexError`` naming a
-    local tuple on this 16-row batch. The latent-norm statistics were the last split's:
-    ``std_vec_length`` was ``nan`` at 6 and 16, and 0.0 at 2, 4 and 8. Surface weights are
-    computed once per epoch now, which must not move the loss either.
+    Fails if ``train_epoch`` reports a different ``loss``, ``mean_vec_length`` or
+    ``std_vec_length`` at any ``batch_split`` than unsplit, or raises at a split count
+    ``torch.chunk`` rounds down (KNOWN_ISSUES History 25).
+
+    ``torch.chunk(t, k)`` returns at most ``k`` pieces, so 5, 7, 9 and 11 are the split
+    counts that exercise it on this 16-row batch. At 6 and 16 a split holds a single row,
+    whose ``torch.std`` is NaN. The ``surface_weighting`` case holds the weighted loss to
+    the same invariance.
     """
     for surfaces, overrides in ((2, {}), (1, {}), (2, {"surface_weighting": [3, 1]})):
         reference = run_epoch(surfaces, **overrides)
@@ -134,9 +136,11 @@ def test_batch_split_changes_no_reported_number():
 
 def test_the_warmup_feeds_the_decoder_what_the_epoch_feeds_it():
     """
-    #42: the schedule_free warm-up forwarded the raw dataloader item, so every such run died
-    at its first checkpoint. It now unpacks the batch the way the epoch does, at every
-    split count. Both learning rates are 0, so the inputs compare tensor for tensor.
+    Fails if ``_schedule_free_eval_warmup`` feeds the decoder inputs that differ from what
+    ``train_epoch`` feeds it at the same ``batch_split`` (#42).
+
+    Both learning rates are 0, so the embedding cannot move and the inputs compare tensor
+    for tensor. 5 and 7 are split counts ``torch.chunk`` rounds down on this 16-row batch.
     """
     for splits in (1, 2, 5, 7):
         recorded = {"epoch": [], "warmup": []}
@@ -166,17 +170,16 @@ def test_the_warmup_feeds_the_decoder_what_the_epoch_feeds_it():
 
 
 class TestTheLatentNormStatsAreTheEpochMean:
-    """
-    ``mean_vec_length`` was assigned where it should have been accumulated, twice: at the
-    batch loop (#59, § History 12) and again at the split loop (§ History 25). So the
-    logged value was the last batch's, or the last split's.
-    """
-
     def test_the_logged_mean_is_the_mean_over_batches_of_every_subject(self):
         """
+        Fails if ``train_epoch`` logs the last batch's or the last split's mean latent norm
+        as ``mean_vec_length`` instead of the mean over batches (#59; KNOWN_ISSUES History 12
+        and 25).
+
         Latent LR 0, so the embedding cannot move and the answer is computable from it.
-        Three subjects in batches of two, each split in two: ``[s0, s1], [s2]``. Before
-        either fix the value was ``norm(s2) / 2``.
+        Three subjects in batches of two, each split in two: ``[s0, s1], [s2]``. The last
+        batch gives ``norm(s2) / 2`` and the last split ``(norm(s1) + norm(s2)) / 2``, so
+        each wrong form differs from the mean.
         """
         model, loader, latents, optimizer, config = epoch_inputs(
             n_subjects=3, batch_split=2, latent_lr=0.0
@@ -189,12 +192,12 @@ class TestTheLatentNormStatsAreTheEpochMean:
 
 def test_config_values_are_refused_where_they_are_named():
     """
-    Each of these used to fail far from the key: ``multi_object_overlap`` as a bare
-    ``Exception`` after a full forward and backward; a mis-sized ``surface_weighting`` as a
-    bare ``assert``, which ``-O`` removes and which then rescaled the weights it did use;
-    a ``samples_per_object_per_batch`` that disagrees with the batch as a ``torch.cat`` size
-    error; a zero ``code_regularization_warmup`` as ``ZeroDivisionError`` hundreds of steps
-    in. The warm-up refuses the sample count too.
+    Fails if ``train_epoch`` stops refusing ``multi_object_overlap``, a mis-sized
+    ``surface_weighting`` or a ``samples_per_object_per_batch`` the batch disagrees with, or
+    ``_code_regularization_loss`` stops refusing ``code_regularization_warmup=0``.
+
+    ``multi_object_overlap`` must be refused before the first batch is fetched.
+    ``_schedule_free_eval_warmup`` must refuse the sample count too.
     """
 
     class Unfetchable:
@@ -240,8 +243,12 @@ class TestTheLogDict:
 
     def test_the_loss_is_its_parts_for_every_prior_and_surface_count(self):
         """
-        ``loss`` is the L1 term plus regularization. The L1 term is the mean of the
-        per-surface terms, except under an explicit ``surface_weighting``.
+        Fails if ``train_epoch``'s ``loss`` is not ``l1_loss`` plus
+        ``latent_code_regularization_loss``, or ``l1_loss`` is not the mean of the
+        ``l1_loss_{i}`` under uniform weights, for any prior and one to three surfaces.
+
+        Under ``surface_weighting`` the test asserts only that ``l1_loss`` differs from the
+        mean. It does not check how the weights are normalized.
         """
         for prior in ("identity", "spherical", "kld_diagonal"):
             for surfaces in (1, 2, 3):
@@ -257,6 +264,10 @@ class TestTheLogDict:
         assert weighted["l1_loss"] != pytest.approx(mean, rel=1e-6)
 
     def test_the_documented_keys_are_there(self):
+        """
+        Fails if ``train_epoch``'s log dict for a two-surface run gains or loses a key,
+        variational or not, such as a load-timing key from a dataset that timed no load.
+        """
         for variational in (False, True):
             log = run_epoch(variational=variational, code_regularization_type_prior="kld_diagonal")
             assert set(log) == {
@@ -294,8 +305,10 @@ def debug_records():
 
 def test_a_host_at_debug_sees_the_records_whatever_the_config_says():
     """
-    Twenty records sat behind ``config["verbose"]``, so a config with ``verbose: false``
-    hid them from a host that asked for DEBUG. Nothing reads the key since v0.4.0.
+    Fails if ``train_epoch`` emits a different set of DEBUG records when
+    ``config["verbose"]`` is false, or stops emitting its ``"l1 loss: %s"`` record.
+
+    The ``"l1 loss: %s"`` check keeps the set comparison from passing on two empty lists.
     """
     with debug_records() as default:
         run_epoch()
@@ -312,6 +325,13 @@ class TestGradClipReachesTheModelOnly:
     """
 
     def test_the_clipped_parameters_are_exactly_the_models(self, monkeypatch):
+        """
+        Fails if ``train_epoch`` with ``grad_clip`` hands ``clip_grad_norm_`` anything but
+        exactly the decoder's parameters, such as the latent embedding.
+
+        The spy replaces ``torch.nn.utils.clip_grad_norm_``. A trainer that imports the
+        function by name bypasses it and fails here.
+        """
         clipped = []
         real = torch.nn.utils.clip_grad_norm_
 

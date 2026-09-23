@@ -31,7 +31,11 @@ def validate(config, dataset_names=None):
 
 
 def test_the_config_names_must_match_the_surface_count():
-    """A multi-surface config with no names warns; a single-surface one does not."""
+    """
+    Fails if ``train_deep_sdf`` accepts ``mesh_names`` of a length other than
+    ``objects_per_decoder``, warns on a named or single-surface config, or stops warning on
+    an unnamed multi-surface one.
+    """
     with pytest.raises(ValueError, match="mesh_names has 1 entries"):
         train_deep_sdf(
             {"objects_per_decoder": 2, "mesh_names": ["bone"]},
@@ -44,6 +48,11 @@ def test_the_config_names_must_match_the_surface_count():
 
 
 def test_the_dataset_declares_the_names_and_the_trainer_adopts_them():
+    """
+    Fails if ``MultiSurfaceSDFSamples`` accepts ``mesh_names`` of the wrong length, or
+    ``train_deep_sdf`` does not copy the dataset's names into a config that has none, or
+    accepts a config whose names are in a different order from the dataset's (#52).
+    """
     with pytest.raises(ValueError, match="mesh_names"):
         MultiSurfaceSDFSamples(
             list_mesh_paths=[["a.vtk", "b.vtk"]], subsample=4, mesh_names=["bone"]
