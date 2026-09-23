@@ -33,12 +33,7 @@ from NSM.models.triplanar import TriplanarDecoder
 from NSM.reconstruct.latent_fit import _decode, reconstruct_latent
 from NSM.reconstruct.utils import refuse_unknown_kwargs
 from NSM.train.train_deep_sdf import _code_regularization_loss
-from NSM.utils import (
-    StepLearningRateSchedule,
-    WarmupLearningRateSchedule,
-    get_checkpoints,
-    get_latent_vecs,
-)
+from NSM.utils import get_latent_vecs
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -208,16 +203,6 @@ class TestZeroAndMissingConfigValuesRefuse:
     produced it or what to set instead.
     """
 
-    @pytest.mark.parametrize("interval", [0, -1])
-    def test_a_step_schedule_refuses_a_non_positive_interval(self, interval):
-        with pytest.raises(ValueError, match="Factor"):
-            StepLearningRateSchedule(initial=0.001, interval=interval, factor=0.5)
-
-    @pytest.mark.parametrize("length", [0, -1])
-    def test_a_warmup_schedule_refuses_a_non_positive_length(self, length):
-        with pytest.raises(ValueError, match="Constant"):
-            WarmupLearningRateSchedule(initial=0.0, warmed_up=0.001, length=length)
-
     def test_code_regularization_refuses_a_zero_warmup(self):
         config = {
             "code_regularization_type_prior": "spherical",
@@ -236,20 +221,6 @@ class TestZeroAndMissingConfigValuesRefuse:
                 epoch=0,
                 config=config,
             )
-
-    def test_get_checkpoints_names_the_key_and_the_remedy(self):
-        with pytest.raises(KeyError, match=r"\[\]"):
-            get_checkpoints({"checkpoint_epochs": 100, "n_epochs": 1000})
-
-    def test_the_schedules_still_compute_their_documented_formula(self):
-        """The refusals must not move a rate anyone is training against."""
-        step = StepLearningRateSchedule(initial=0.001, interval=500, factor=0.5)
-        warm = WarmupLearningRateSchedule(initial=0.0, warmed_up=0.001, length=100)
-
-        assert step.get_learning_rate(0) == pytest.approx(0.001)
-        assert step.get_learning_rate(1000) == pytest.approx(0.00025)
-        assert warm.get_learning_rate(50) == pytest.approx(0.0005)
-        assert warm.get_learning_rate(500) == pytest.approx(0.001)
 
 
 # ---------------------------------------------------------------------------

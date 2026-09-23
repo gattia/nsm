@@ -1648,8 +1648,8 @@ nothing about the weights is: the entry is provenance, not an input to training 
 reconstruction, and no NSM code path reads it back.
 
 *Pinned by:*
-`test_utils.TestTheRecordNamesItsSubjects` (the shipped default, the round trip, the
-control with no config key, and the fact that no regression test read the value).
+`test_utils.TestTheRecordNamesItsSubjects` (the shipped default, a previous run's list,
+and the control with no config key).
 
 ## 27. A single-joint cartilage validation function scored the femur's meshes
 
