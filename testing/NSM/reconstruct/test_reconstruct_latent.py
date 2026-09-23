@@ -166,6 +166,19 @@ class TestUnknownValuesAreRefusedWhereTheyAreNamed:
         lower, upper = fit(convergence="recon_loss"), fit(convergence="Recon_Loss")
         assert torch.equal(lower[1], upper[1]) and float(lower[0]) == float(upper[0])
 
+    def test_a_flag_that_is_not_a_bool_is_refused(self):
+        """
+        Fails if ``reconstruct_latent`` accepts an ``l2reg`` or ``log_wandb`` that is not a
+        bool (#116).
+
+        Both are read with ``is True``, so ``l2reg=1`` gave a latent loss of 0 and
+        ``log_wandb=1`` logged nothing.
+        """
+        for name in ("l2reg", "log_wandb"):
+            for value in (1, "yes", None):
+                with pytest.raises(TypeError, match=name):
+                    fit(**{name: value})
+
     def test_hybrid_mode_refuses_an_optimizer_name_it_will_not_consult(self):
         """
         Fails if ``reconstruct_latent(hybrid_optimizer=True, optimizer_name="lbfgs")`` runs
