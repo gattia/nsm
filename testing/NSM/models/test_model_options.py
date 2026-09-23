@@ -255,21 +255,11 @@ def test_the_constructors_refuse_unknown_keywords():
     for deleted in DELETED_DECODER_ARGUMENTS:
         assert Decoder(latent_size=LATENT, dims=[16, 16], **{deleted: None}) is not None
 
-    consumer_keys = {
-        "latent_dim",
-        "n_objects",
-        "conv_hidden_dims",
-        "conv_deep_image_size",
-        "conv_norm",
-        "conv_norm_type",
-        "conv_start_with_mlp",
-        "sdf_latent_size",
-        "sdf_hidden_dims",
-        "sdf_weight_norm",
-        "sdf_final_activation",
-        "sdf_activation",
-        "sdf_dropout_prob",
-        "sum_sdf_features",
-        "conv_pred_sdf",
-    }
+    consumer_keys = set(
+        """
+        latent_dim n_objects conv_hidden_dims conv_deep_image_size conv_norm conv_norm_type
+        conv_start_with_mlp sdf_latent_size sdf_hidden_dims sdf_weight_norm
+        sdf_final_activation sdf_activation sdf_dropout_prob sum_sdf_features conv_pred_sdf
+        """.split()
+    )
     assert consumer_keys <= set(inspect.signature(TriplanarDecoder.__init__).parameters)

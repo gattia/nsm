@@ -1,15 +1,7 @@
-"""The shipped ``default_config.json`` can actually drive ``train_deep_sdf``.
-
-Its predecessor could not: five unconditionally-read keys were missing, fatal in
-sequence starting with ``KeyError('prefetch_factor')`` (#48). The config is now a
-sanitized snapshot of the ShapeMedKnee ``647`` run (see
-``generate_sdf_default_config.py``); this test runs the real trainer from the shipped
-file on the regression harness's synthetic CPU setup.
-
-The override rule is what lets this test fail: overrides may change a shipped value
-(tiny architecture, two epochs, CPU) but may never *introduce* a key, so any
-trainer-read key missing from the shipped file still raises ``KeyError`` in the run
-below rather than being quietly supplied by the test.
+"""
+The shipped ``default_config.json`` drives ``train_deep_sdf`` (#48: five keys the trainer
+reads were missing). Overrides may change a shipped value but never add a key, so a key
+missing from the file still raises here.
 """
 
 import json

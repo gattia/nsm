@@ -1,9 +1,6 @@
 """
-Structural facts about ``models/`` that no fix in this package may silently change.
-
-Two of them are defects nobody can repair without breaking shipped checkpoints, so the
-only thing standing between them and an accidental "cleanup" is an assertion that says
-what is true today and why it has to stay that way.
+Structural facts about ``models/`` that no fix may silently change. Two are defects that
+cannot be repaired without breaking shipped checkpoints.
 """
 
 import pytest
@@ -25,11 +22,8 @@ def build_vae(**overrides):
 
 def additivity_error(vae, alpha=0.3):
     """
-    How far the decoder is from affine, and the value scale to read it against.
-
-    An affine map commutes with an affine combination of its inputs. The final ``Tanh``
-    does not and is not the question, so it is swapped for ``Identity`` for the duration:
-    what is being measured is whether the *stack* supplies any nonlinearity of its own.
+    How far the stack is from affine, and the value scale to read it against. The final
+    ``Tanh`` is swapped for ``Identity``: the question is the stack's own nonlinearity.
     """
     final = vae.decoder[-1]
     saved, final[1] = final[1], nn.Identity()
@@ -133,23 +127,15 @@ class TestTheOptInConvActivation:
 
 class TestWhatLayerNormActuallySupplies:
     """
-    The shipped models are nonlinear only because of LayerNorm (see above), so *what kind*
-    of nonlinearity that is decides how much the missing activation costs. Three properties,
-    none of them re-derivable by reading, all of them constraining any future fix.
-
-    LayerNorm subtracts a mean and divides by a standard deviation. Only the division is
-    nonlinear, and it is a radial projection: it preserves direction and rescales magnitude.
-    It cannot zero a feature out, cannot form a decision boundary, cannot make the function
-    piecewise. Whatever an activation would add is *selectivity*, and none of it is here.
+    The shipped models are nonlinear only through LayerNorm, so its kind of nonlinearity
+    decides what the missing activation costs. Only its division is nonlinear, a radial
+    projection: it cannot zero a feature or form a decision boundary.
     """
 
     def test_normalization_is_over_the_whole_feature_map_not_per_position(self):
         """
-        ``normalized_shape`` is the full ``(C, H, W)``, so each sample gets **one** scale
-        for its entire feature map. The ConvNeXt convention -- normalizing over channels at
-        each spatial position -- would give a per-location gain that the next conv could mix
-        into genuine multiplicative interactions across space. This is the weaker of the two
-        and is what every shipped model runs.
+        Over the full ``(C, H, W)``: one scale per sample for the whole map. ConvNeXt's
+        per-position convention would give a per-location gain; this is the weaker kind.
         """
         norms = [m for m in build_vae(norm_type="layer").decoder if isinstance(m, nn.LayerNorm)]
         assert norms, "the layer variant stopped building LayerNorms"
@@ -157,15 +143,10 @@ class TestWhatLayerNormActuallySupplies:
 
     def test_the_latent_magnitude_is_not_discarded(self):
         """
-        LayerNorm is degree-0 homogeneous -- ``LN(cx) == LN(x)`` -- so a stack whose first
-        LayerNorm saw only linear maps would be blind to ``||z||``, and the L2 latent prior
-        could shrink latents at no reconstruction cost.
-
-        That is not this stack: ``fc`` and the first ``ConvTranspose2d`` both carry biases,
-        which break the homogeneity before the first LayerNorm sees anything. Asserted
-        rather than assumed, because the conclusions that follow from the homogeneous case
-        (an inert latent-norm penalty; interpolating on the sphere rather than the line) are
-        wrong here, and are the kind of thing a reader will otherwise derive from theory.
+        ``LN(cx) == LN(x)``, so a stack of linear maps into LayerNorm would be blind to
+        ``||z||`` and the L2 prior would cost nothing. The biases in ``fc`` and the first
+        ``ConvTranspose2d`` break that. Theory for the homogeneous case (an inert norm
+        penalty, spherical interpolation) does not apply here.
         """
         vae = build_vae(norm_type="layer")
         assert vae.fc.bias is not None and vae.decoder[0].bias is not None
@@ -179,18 +160,10 @@ class TestWhatLayerNormActuallySupplies:
 
     def test_the_data_dependence_of_the_gain_attenuates_with_depth(self):
         """
-        How much nonlinearity LayerNorm actually contributes is how much its per-sample
-        sigma *moves* across inputs -- a sigma that never changes is a fixed affine map
-        wearing a normalization layer's name.
-
-        Measured here across latents spanning a 2.5x range of norms, matching the fitted
-        production range (median ~7.3, bound 10; ``NSM_TRAINING_IDEAS.md`` Idea 4).
-        The spread is real at the first LayerNorm and decays towards 1.0 by the last, so
-        the deeper layers are close to fixed affine maps. On the shipped 647 model the same
-        sweep gives 1.71x, 1.30x, 1.15x, 1.02x, 1.00x.
-
-        Asserted as *first > last* and not as values: the magnitudes depend on width and
-        depth, the ordering is the property.
+        A per-sample sigma that never moves is a fixed affine map. Across latents spanning
+        the fitted production range of norms (``NSM_TRAINING_IDEAS.md`` Idea 4), the spread
+        is real at the first LayerNorm and near 1 at the last. On the shipped 647 model:
+        1.71x, 1.30x, 1.15x, 1.02x, 1.00x. The ordering is asserted, not the values.
         """
         vae = build_vae(hidden_dims=[16] * 5, norm_type="layer")
 

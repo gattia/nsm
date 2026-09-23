@@ -122,35 +122,15 @@ class TestUnknownKeywordsAreRefused:
         parameters are the deprecated one, which works, and ``verbose``, which the consumer
         had to drop before pulling v0.4.0.
         """
-        consumer = {
-            "path",
-            "decoders",
-            "latent_size",
-            "num_iterations",
-            "l2reg",
-            "latent_reg_weight",
-            "loss_type",
-            "lr",
-            "lr_update_factor",
-            "n_lr_updates",
-            "return_latent",
-            "register_similarity",
-            "scale_jointly",
-            "scale_all_meshes",
-            "objects_per_decoder",
-            "batch_size_latent_recon",
-            "get_rand_pts",
-            "n_pts_random",
-            "sigma_rand_pts",
-            "n_samples_latent_recon",
-            "calc_assd",
-            "convergence",
-            "convergence_patience",
-            "clamp_dist",
-            "fix_mesh",
-            "verbose",
-            "return_registration_params",
-        }
+        consumer = set(
+            """
+            path decoders latent_size num_iterations l2reg latent_reg_weight loss_type lr
+            lr_update_factor n_lr_updates return_latent register_similarity scale_jointly
+            scale_all_meshes objects_per_decoder batch_size_latent_recon get_rand_pts
+            n_pts_random sigma_rand_pts n_samples_latent_recon calc_assd convergence
+            convergence_patience clamp_dist fix_mesh verbose return_registration_params
+            """.split()
+        )
         named = set(inspect.signature(recon_main.reconstruct_mesh).parameters)
         assert consumer - named == {"batch_size_latent_recon", "verbose"}
 

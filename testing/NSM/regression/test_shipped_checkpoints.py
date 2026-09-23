@@ -1,31 +1,15 @@
 """
-The release-time check on a real shipped checkpoint.
-
-§7.1 left one box that is genuinely release-time rather than CI: the harness's synthetic
-decoder is 2 analytic meshes and 8 CPU epochs, and the models NSM actually ships are 275
-MB and 260 MB. Those do not belong in CI -- §7.2 says so in writing -- so this module runs
-only when it is pointed at them:
+The release-time check on the real shipped checkpoints (275 MB and 260 MB, never in CI):
 
 ```bash
 NSM_SHIPPED_MODELS=/path/to/NSM_MODELS pytest testing/NSM/regression/test_shipped_checkpoints.py
 ```
 
-Each immediate subdirectory holding a ``model_params_config.json`` and a ``model/*.pth``
-is one case. It asserts three things a release must not break, and only things that are
-computed here rather than transcribed from a previous run:
-
-1. **The refusal is repairable in one edit.** Both shipped configs predate Aug 2026 and
-   omit ``padding`` and ``conv_activation``, so ``load_model`` refuses them. That is
-   deliberate (#26, #45) and documented in ``KNOWN_ISSUES`` § Packaging -- what this
-   asserts is that one message names every missing key, which is what §8.0.O(a) changed.
-2. **The checkpoint still loads, strictly.** No missing and no unexpected state-dict keys
-   against the architecture the repaired config builds.
-3. **The consumer's hand-rolled construction is bitwise-identical to ``load_model``'s.**
-   ``kneepipeline/steps/run_nsm.py`` does not call ``load_model``; it builds
-   ``TriplanarDecoder(**params)` from fifteen config keys of its own choosing and passes
-   neither ``padding`` nor ``conv_activation``. Nothing else in the repo would notice the
-   two drifting apart, and §8.0.O(b) moved a constructor default that only the second path
-   can see.
+Each subdirectory with a ``model_params_config.json`` and a ``model/*.pth`` is one case.
+Both shipped configs omit ``padding`` and ``conv_activation``, so ``load_model`` refuses
+them (#26, #45). The refusal must name every missing key in one message; the repaired
+config must load strictly; and kneepipeline's own construction, fifteen keys by hand with
+neither of those two, must build the identical model.
 """
 
 import json
@@ -62,12 +46,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def repaired(config_path):
-    """
-    The config plus exactly what its refusal message says to add.
-
-    Parsed out of the message rather than hardcoded, so this cannot pass against a message
-    that has stopped being accurate.
-    """
+    """The config plus what its refusal message says to add, parsed from the message."""
     config = json.loads(Path(config_path).read_text(encoding="utf-8"))
     try:
         load_model(config, "/nonexistent", device="cpu")

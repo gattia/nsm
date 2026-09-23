@@ -48,26 +48,12 @@ HISTORICAL_CONFIG = {
 NAMED = set(inspect.signature(reconstruct_mesh).parameters)
 
 #: A real harness passed these on every run, whatever its config said. Five name nothing.
-HARNESS_KEYWORDS = [
-    "latent_norm",
-    "use_soft_norm_constraint",
-    "norm_penalty_weight",
-    "norm_penalty_type",
-    "hybrid_optimizer",
-    "adam_iterations",
-    "lbfgs_iterations",
-    "lbfgs_lr",
-    "lbfgs_max_iter",
-    "lbfgs_history_size",
-    "min_rel_improve",
-    "grad_tol",
-    "param_change_tol",
-    "recon_tol",
-    "log_wandb_step",
-    "return_registration_params",
-    "max_n_samples_latent_recon",
-    "n_steps_sample_ramp_latent_recon",
-]
+HARNESS_KEYWORDS = """
+latent_norm use_soft_norm_constraint norm_penalty_weight norm_penalty_type hybrid_optimizer
+adam_iterations lbfgs_iterations lbfgs_lr lbfgs_max_iter lbfgs_history_size min_rel_improve
+grad_tol param_change_tol recon_tol log_wandb_step return_registration_params
+max_n_samples_latent_recon n_steps_sample_ramp_latent_recon
+""".split()
 
 
 def test_a_historical_config_loses_exactly_the_inert_keys():
