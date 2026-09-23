@@ -210,11 +210,9 @@ def compare_cart_thickness(
     the original bone's -- scores the whole key set NaN, the same answer
     ``compute_recon_loss`` gives the same subject.
 
-    The region array is read under the name ``"labels"``, which is not configurable:
-    pymskt's ``BoneMesh.get_cart_thickness_mean`` and ``.get_cart_thickness_std`` both
-    open ``get_scalar("labels")`` with the name hardcoded. A ``regions_label`` parameter
-    offered the choice until v0.4.0 and every value but ``"labels"`` raised. Rename the
-    array on the original mesh instead.
+    The region array on the original bone must be named ``"labels"``: pymskt's
+    ``get_cart_thickness_mean`` and ``get_cart_thickness_std`` read that name and it
+    cannot be changed.
 
     A ``BoneMesh`` or ``CartilageMesh`` argument is **mutated** -- see ``_as_mesh``.
     """
@@ -246,7 +244,6 @@ def compare_cart_thickness(
     recon_cart = _as_mesh(CartilageMesh, recon_cart)
     orig_bone = _as_mesh(BoneMesh, orig_bone)
 
-    # "labels" and not a parameter: pymskt's two thickness readers open it by that name.
     recon_bone.copy_scalars_from_other_mesh_to_current(orig_bone, orig_scalars_name="labels")
 
     recon_bone.list_cartilage_meshes = recon_cart

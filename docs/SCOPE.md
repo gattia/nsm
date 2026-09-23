@@ -301,21 +301,13 @@ Proposed: *research-only, no production caller.* Wrong on the caller half for bo
   whole-joint list (§ History 27). The refusal keeps the second from being silent; this
   ruling is why the first goes with it rather than being special-cased back in. Pinned
   by `test_cartilage_func.TestTheMeshListLength`.
-- **The original cartilage mesh stays in the list although nothing reads it** (ruled at
-  plan Step S, 2026-09-22). `compare_cart_thickness` unpacks `orig_bone, orig_cart` and
-  never mentions `orig_cart` again — the original's thickness is read off the array the
-  original bone arrives carrying, so anything at all may stand in that slot
-  (`test_cartilage_func.TestTheOriginalCartilageIsNeverRead` passes `None`, a string and
-  an integer and gets the same answer). §8.0.N′ deferred deleting it to the v0.4.0
-  signature change, alongside `regions_label`, and that turned out to be a misreading:
-  `regions_label` was a parameter and is gone, but `orig_cart` is element 1 of a list
-  whose length is the fixed-layout contract above. `reconstruct_mesh` calls every
-  validator as `func(sampled["orig_mesh"], meshes)`, so the two lists are the *same*
-  surface layout by construction. Dropping the slot from the original side alone would
-  make them different shapes and would renumber `_whole_joint`'s slicing to `[:1]`,
-  `[1:2]`, `[2:3]` against `[:2]`, `[2:4]`, `[4:6]`. That is a new contract, not the
-  removal of an unread argument, so the slot stays and the fact that nothing reads it is
-  documented at the function and here.
+- **The original cartilage mesh is required but not read** (ruled 2026-09-22).
+  `compare_cart_thickness` takes `orig_meshes = [bone, cartilage]` but only uses the bone:
+  the original's thickness comes from arrays already on the bone mesh. The cartilage slot
+  stays because both lists must have the same layout. `reconstruct_mesh` calls every
+  validator as `func(sampled["orig_mesh"], meshes)`, and removing the slot from one side
+  would change the slicing in `_whole_joint`. Pinned by
+  `test_cartilage_func.TestTheOriginalCartilageIsNeverRead`.
 - `predictive_validation_class.py` is called from `reconstruct/main.py`. It is the only
   latent-to-factor regression validator. **Research.** Its seam defect —
   `reconstruct.get_mean_errors` passed the whole result dict to `Regress.add_latent`
@@ -539,8 +531,8 @@ Two things about that surface are load-bearing and undocumented:
    `latent_fit._recon_loss` `break`s out of the surface loop under an in-code TODO that says
    outright "it assumes the first surface is the bone / only of interest". Since §8.0.K it
    is no longer *silent*: that break and the `None`-ground-truth `continue` beside it log at
-   `warning` to whatever the host configured, where before they were gated behind the
-   `verbose` flag that v0.4.0 deleted.
+   `warning` to whatever the host configured. Before, they were hidden unless `verbose`
+   was set (a flag removed in v0.4.0).
    A deliberate, written-down design compromise, not a defect to file — it is recorded
    here because it is one more instance of the positional-surface-identity contract this
    section owns, and any surface-naming fix must cover it.

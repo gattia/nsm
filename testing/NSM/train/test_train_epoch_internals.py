@@ -566,19 +566,14 @@ class TestTheDebugRecordsAreNotGatedOnAConfigKey:
     which it left alone. §8.0.N cleared those; two of them are in this path, from
     ``NSM.utils.adjust_learning_rate``, and they are in the set below.
 
-    **Since v0.4.0 nothing reads ``config["verbose"]``**, so the two tests that used to
-    stand here -- one per value of the key -- assert the same thing and are one test. The
-    key is not refused and every ``model_params_config.json`` on disk keeps working; it
-    selects nothing, and the level the host configures is the whole of the filtering.
+    Since v0.4.0 nothing reads ``config["verbose"]``. Configs that still carry it load
+    and log the same records.
     """
 
     def test_a_host_at_debug_sees_them_whatever_the_config_says(self):
         """
-        Was a strict xfail: the set was empty, whatever the host had configured. It is
-        also the before-and-after pin for the ungating -- it may not change what a host
-        that had set ``verbose: true`` used to see. The deletion pass that followed
-        removed four templates and renamed three, and both show up in this set rather
-        than in a count.
+        Was a strict xfail. Also pins that removing the gate did not change which records
+        a host at DEBUG sees.
         """
         with records_at(logging.DEBUG) as collected:
             run_epoch()

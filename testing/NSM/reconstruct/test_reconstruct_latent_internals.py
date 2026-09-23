@@ -134,12 +134,8 @@ MISSPELLINGS = [
 
 class TestUnknownKeywordsAreRefused:
     """
-    ``**kwargs`` used to be inspected for exactly one key, ``max_batch_size``. Every other
-    key reached the end of the function unread, so the caller got the default for the
-    parameter they meant to set and no indication that they had not set it.
-
-    Since v0.4.0 deleted ``max_batch_size`` there is no key ``**kwargs`` is for, and
-    ``reconstruct_latent`` passes no ``deprecated`` set at all.
+    ``**kwargs`` used to read only ``max_batch_size`` and silently ignore every other key,
+    so a misspelled parameter ran at its default. Unknown keys now raise.
     """
 
     @pytest.mark.parametrize("wrong", MISSPELLINGS)
@@ -154,10 +150,7 @@ class TestUnknownKeywordsAreRefused:
 
     def test_the_last_deprecated_key_is_now_refused_like_any_other(self):
         """
-        ``max_batch_size`` was the one key ``**kwargs`` was *for*: it warned and ran, from
-        the removal of the chunked forward until v0.4.0. It named a capability that no
-        longer existed either way -- #75's replacement is ``n_samples_per_chunk``, which
-        is a named parameter and not a keyword this has to catch.
+        Removed in v0.4.0; it did nothing. Use ``n_samples_per_chunk`` (#75).
         """
         with pytest.raises(TypeError, match="max_batch_size"):
             reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(max_batch_size=1))
@@ -189,16 +182,9 @@ class TestUnknownKeywordsAreRefused:
 
 class TestPtsSurfaceIsRequired:
     """
-    ``pts_surface=None`` was the default until v0.4.0 and was never a value the function
-    accepted: ``reconstruct_latent_pts_surface_type_check`` has rejected ``None`` for as
-    long as it has existed. The default said optional and the type check said required,
-    and the type check won, about twenty lines into the body.
-
-    The parameter now sits in the required block after ``sdf_gt``, which is where the two
-    arrays it labels are. That moves the positions of everything after it, and every way
-    of getting that wrong is loud: a caller who passed six or more arguments positionally
-    lands ``loss_type`` or ``lr`` here, and neither a string nor a float is one of the four
-    types the check takes.
+    Its default was ``None`` until v0.4.0, which the type check always rejected. It now
+    follows ``sdf_gt``, so later positional arguments shift by one. An old positional
+    call puts ``loss_type`` or ``lr`` here, which the type check rejects.
     """
 
     def test_omitting_it_is_a_typeerror_at_the_call(self):

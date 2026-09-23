@@ -404,8 +404,7 @@ class SDFSamples(torch.utils.data.Dataset):
 
         self.data = []
         # Wrap this loading loop in a multiprocessing pool
-        # A level check and not a flag: log arguments evaluate eagerly, and
-        # sched_getaffinity is a probe run solely to be logged.
+        # Guarded so sched_getaffinity only runs when DEBUG is on.
         if logger.isEnabledFor(logging.DEBUG):
             try:
                 logger.debug("CPU affinity:%s", os.sched_getaffinity(0))

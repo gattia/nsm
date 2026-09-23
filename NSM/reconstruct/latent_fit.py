@@ -106,9 +106,7 @@ def reconstruct_latent_pts_surface_type_check(pts_surface, device="cuda"):
     """Return ``pts_surface`` as a tensor on ``device``.
 
     Unlike the ``sdf_gt`` check above, this one raises ``ValueError`` rather than a
-    bare ``Exception``, and it rejects ``None``. ``reconstruct_latent`` carried a
-    ``pts_surface=None`` default against that until v0.4.0, which declared optional a
-    parameter this has always rejected; the parameter is required there now.
+    bare ``Exception``, and it rejects ``None``.
     """
     if isinstance(pts_surface, (list, tuple)):
         pts_surface = torch.tensor(pts_surface).to(device)

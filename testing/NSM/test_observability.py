@@ -92,8 +92,7 @@ class TestNSMOwnsNoStream:
         What the ``NullHandler`` on the ``"NSM"`` logger buys: records from ``NSM.*``
         find a handler, so ``logging.lastResort`` never fires and even a ``warning``
         stays silent until the host asks for it. That is the stdlib idiom's known
-        consequence, not an oversight: a library that emitted without being asked would
-        be deciding its host's output format for it.
+        consequence: the host decides where NSM's output goes.
         """
         completed = _run(
             """
@@ -127,7 +126,7 @@ class TestNSMOwnsNoStream:
 
 
 #: The Logger methods that emit a record. ``addHandler`` and friends are configuration,
-#: which a library does to nobody's logger but under a host's explicit instruction.
+#: which is left to the host.
 EMIT_METHODS = {"debug", "info", "warning", "error", "exception", "critical", "log"}
 
 
@@ -195,31 +194,16 @@ class TestTheConversionHolds:
 
     def test_no_log_record_is_gated_behind_a_flag(self):
         """
-        The last of §8.0.G's residue. A ``logger.debug`` inside ``if verbose:`` is gated
-        twice — once by the level the host configured and once by a parameter the host
-        does not know exists — so a host that turned on debug logging still sees nothing.
-        That is what made the ten records in ``reconstruct_mesh`` invisible to a consumer
-        running the exact call the deprecation notice named (§8.0.J).
+        A log call inside ``if flag:``, where ``flag`` is a parameter of the same function,
+        is hidden twice: by the host's logging level and by a flag the host may not know
+        about. This was the ``verbose=`` pattern (86 such gates at ``09c3834``), removed
+        in §8.0.N and v0.4.0.
 
-        Measured on ``main`` at ``09c3834``: **86** ``verbose``-conditioned ``if``
-        statements, **83** of them nothing but ``logger.*`` calls with no ``else``. §8.0.N
-        removed the 58 of those on the documented surface; v0.4.0 took the parameter
-        itself, so the only gates left anywhere are the three **argument guards**: each
-        evaluates something solely to log it — a ``sched_getaffinity`` probe, an extent
-        computed for the record, two CUDA memory queries inside ``forward`` — and log
-        arguments are eager, so ungating them would run those unconditionally. Each is
-        now written as ``logger.isEnabledFor(logging.DEBUG)``, which is the same guard
-        asking the host rather than the caller, and each says so at its site.
-
-        The sweep is for the *shape* rather than for the name ``verbose``: with the
-        parameter gone, matching its name would be a test that cannot fail. What it looks
-        for is a record reachable only through a **parameter of its own function** --
-        ``if flag:`` or ``if flag is True:`` over nothing but ``logger.*`` calls -- which
-        is the accepted-and-ignored trap in its logging form, whatever the flag is called.
-        A condition that is real control flow is not this shape and does not match, and
-        ``isEnabledFor`` asks the host rather than the caller. Classified by AST rather
-        than by grep, because "measuring the parameter form and reporting it as no gates"
-        is the error §8.0.L's review caught.
+        The check looks for the pattern under any parameter name, not just ``verbose``, so
+        it can still fail now that ``verbose`` is gone. Verified by adding such a gate and
+        seeing it fail. The three ``logger.isEnabledFor(logging.DEBUG)`` guards are not
+        flagged: they check the host's level, and only exist so that values computed just
+        for logging are skipped when DEBUG is off.
         """
 
         def gating_parameter(test):

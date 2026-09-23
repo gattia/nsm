@@ -420,20 +420,10 @@ def test_implicit_final_activations_forward(final_activation):
 
 class TestUnknownConstructorKeywordsAreRefused:
     """
-    ``Decoder`` and ``TriplanarDecoder`` are the only two constructors in ``models/`` that
-    take ``**kwargs``, and until v0.4.0 both swallowed whatever they did not read. Among
-    dozens of prefixed near-synonyms that made a misspelling build a model at the
-    parameter's default and say nothing.
-
-    ``padding`` is the one where that is not merely untidy: it scales query coordinates
-    before they index the feature planes and is not a learned parameter, so a checkpoint
-    trained at 0.35 loads cleanly under a typo'd key at the default 0.1 and samples at the
-    wrong scale (#26, ``KNOWN_ISSUES`` § Open). That is the case the parametrization uses.
-
-    ``load_model`` cannot produce this: all three translators in ``models/loader.py`` build
-    an explicit ``params`` dict, and the one that copied a config block verbatim went with
-    ``two_stage`` in §8.0.P. Direct construction is the remaining path, and it is the one
-    the production consumer uses.
+    Until v0.4.0 both constructors silently ignored unknown keywords, so a misspelled
+    parameter built the model at its default. For ``padding`` that means sampling the
+    feature planes at the wrong scale, with no error (#26). ``load_model`` always passes
+    known keys; this covers direct construction, which kneepipeline uses.
     """
 
     def test_deepsdf_refuses_a_misspelled_key(self):
@@ -449,17 +439,15 @@ class TestUnknownConstructorKeywordsAreRefused:
     @pytest.mark.parametrize("deleted", sorted(DELETED_DECODER_ARGUMENTS))
     def test_the_four_deleted_arguments_keep_their_own_answers(self, deleted):
         """
-        Each of the four is answered by name in ``Decoder.__init__`` with what it did and
-        what to do instead. The blanket refusal must not shadow those messages, so it
-        excludes them: passing one falsy is accepted, as every NSM-owned config ships it.
+        These keep their own messages in ``Decoder.__init__``. A falsy value, which every
+        NSM config ships, is still accepted.
         """
         assert Decoder(latent_size=LATENT, dims=[16, 16], **{deleted: None}) is not None
 
     def test_the_production_consumers_keys_are_all_named(self):
         """
-        kneepipeline builds the decoder directly (``steps/run_nsm.py:112``), so the
-        refusal reaches it in a way ``load_model`` would not. These are the 15 keys it
-        passes; the assertion is that none of them lands in ``**kwargs``.
+        The 15 keys kneepipeline passes to ``TriplanarDecoder`` (``steps/run_nsm.py:112``)
+        are all real parameters.
         """
         named = set(inspect.signature(TriplanarDecoder.__init__).parameters)
         consumer_keys = {

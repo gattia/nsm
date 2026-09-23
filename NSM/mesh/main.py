@@ -232,17 +232,13 @@ def _finish_meshes(
     """Flat per-object SDF values -> extracted, rescaled, saved meshes.
 
     Everything create_mesh and create_mesh_adaptive do after the decoder has been
-    evaluated; they differ only in how the grid was chosen. Two copies of this is what
-    let them drift over whether the deprecated ``verbose`` flag reached the extraction
-    twins -- it did in one and not the other, until v0.4.0 deleted the flag.
-
-    Thirteen arguments in a fixed order, not fourteen: ``verbose`` went with it.
+    evaluated; they differ only in how the grid was chosen.
 
     ``flat_sdfs`` is (N, objects) in get_sdfs' Z-fastest sample order, so the C-order
     reshape to ``grid_dims`` gives array[x, y, z] (module docstring). Remaining
     arguments are create_mesh's own. Returns its return value.
 
-    Keyword-only, and that is the point rather than a style choice: a dozen arguments
+    Keyword-only, and that is the point rather than a style choice: thirteen arguments
     in a fixed order is the shape that produced #60 one function down, where
     create_mesh_adaptive's fallback passed seventeen of them positionally and the fourth
     was wrong. A caller cannot get this list out of order because it cannot supply it in
@@ -766,8 +762,7 @@ def create_mesh_adaptive(
 
     bounds_min, bounds_max = bounds_result
 
-    # A level check and not a flag: `extent` is computed solely to be logged, and
-    # log arguments evaluate eagerly.
+    # Guarded so `extent` is only computed when DEBUG is on.
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug("Coarse spacing: %.6f, tau: %.6f", coarse_spacing, tau_voxels * coarse_spacing)
         logger.debug("Coarse bounds: min=%s, max=%s", bounds_min, bounds_max)

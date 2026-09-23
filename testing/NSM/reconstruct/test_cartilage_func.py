@@ -221,18 +221,9 @@ class TestFuncKeysAcrossSubjects:
 
 class TestTheRegionArrayNameIsNotAChoice:
     """
-    ``regions_label`` was a parameter until v0.4.0 and never a choice. The transfer
-    honoured it; the read ignored it. pymskt's ``get_cart_thickness_mean``/``_std`` open
-    ``self.get_scalar("labels")`` with the name hardcoded, so no other value could work —
-    and no caller passed one: ``get_mean_errors`` invokes these functions with two
-    positional arguments.
-
-    Both arrangements raised ``KeyError: 'labels'`` before §8.0.N′ turned them into a
-    ``ValueError``, from opposite sides. With the original carrying only the alternative
-    name it was the original's read that failed; with the original carrying **both**, the
-    read of the original succeeded and the copy landed on the reconstruction under the
-    caller's name, so it was the reconstruction's read that failed. There was no
-    arrangement that worked, which is why the parameter is gone rather than validated.
+    The region array must be named ``labels``: pymskt's ``get_cart_thickness_mean`` and
+    ``_std`` read that name. The ``regions_label`` parameter, removed in v0.4.0, never
+    worked with any other value.
     """
 
     def test_the_hardcoded_name_scores_normally(self):
@@ -256,9 +247,7 @@ class TestTheRegionArrayNameIsNotAChoice:
 
     def test_an_original_labelled_under_another_name_fails_at_the_read(self):
         """
-        What a caller who used to pass ``regions_label`` now gets: the same failure they
-        got with any value, arriving from pymskt rather than from a refusal here. The
-        message names ``labels``, which is what to go and rename the array to.
+        pymskt raises ``KeyError`` naming ``labels``, the name to rename the array to.
         """
         orig_bone = _original_bone(label_name="cart_regions")
         with pytest.raises(KeyError, match="labels"):
@@ -271,19 +260,12 @@ class TestTheRegionArrayNameIsNotAChoice:
 
 class TestTheOriginalCartilageIsNeverRead:
     """
-    ``orig_bone, orig_cart = orig_meshes`` and ``orig_cart`` is never referenced again.
-    The original's thickness is read off the array it arrived with; only the
-    reconstruction's is computed at this call. ``CLAUDE.md`` and #20 both say the fix for
-    an unread argument is to delete it, not to honour it — honouring this one, by
-    computing the original's thickness here, would move every ``orig_mean`` the function
-    has ever reported.
+    ``orig_cart`` is unpacked and never used: the original's thickness comes from arrays
+    already on the original bone. Computing it here instead would change every
+    ``orig_mean`` ever reported.
 
-    Deleting it is what plan §8.0.N′ scheduled for v0.4.0 and Step S then ruled out: this
-    is not a parameter but element 1 of a list whose length is the fixed-layout contract,
-    and ``reconstruct_mesh`` hands the same surface layout to both sides
-    (``func(sampled["orig_mesh"], meshes)``). ``docs/SCOPE.md`` §2.5 has the ruling. What
-    the tests below record is the consequence a caller can rely on: the slot is required
-    and its contents are not read.
+    The slot stays because the original and reconstructed lists share one layout
+    (``docs/SCOPE.md`` §2.5). The slot is required; its contents are not read.
     """
 
     @pytest.mark.parametrize("substitute", [None, "not a mesh at all", 7])

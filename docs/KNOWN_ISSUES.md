@@ -249,11 +249,7 @@ reproduced as measured.
 resurrect are in `.claude/plans/HYBRID_OPTIMIZER_REPORT.md`.
 
 *Pinned by:* `test_reconstruct_latent_internals.TestTheDrawIsPerEvaluation` and
-`test_parameter_surface.TestTheDeferredSitesAreClosed::test_the_lbfgs_triple_is_read_on_the_non_hybrid_path`,
-which asserts the constructed `(lr, max_iter, history_size)` is what the caller asked for
-on the non-hybrid path too. This line named `TestTheLbfgsParametersAreReadOnBothPaths`
-until Sep 2026 and no such class has ever existed — corrected at plan Step S, which
-re-ran the claim rather than inheriting it.
+`test_parameter_surface.TestTheDeferredSitesAreClosed::test_the_lbfgs_triple_is_read_on_the_non_hybrid_path`.
 
 ## `reconstruct/cartilage_func.py`
 
@@ -1365,7 +1361,7 @@ used the parameter. Those reconstructions should be re-run.
 | | |
 |---|---|
 | **Affected** | Any `reconstruct_mesh`, `get_mean_errors` or `reconstruct_latent` call that passed a keyword the signature does not name — a misspelling, a renamed parameter, or one copied from a sibling function |
-| **Unaffected** | Calls whose keywords all spell a real parameter, which is every NSM-internal one and kneepipeline's. `batch_size_latent_recon` (`reconstruct_mesh`) and `max_batch_size` (`reconstruct_latent`) were deliberately accepted at the fix. `max_batch_size` was deleted at v0.4.0 and now raises like any other unknown key; `batch_size_latent_recon` is still accepted |
+| **Unaffected** | Calls whose keywords all spell a real parameter, which is every NSM-internal one and kneepipeline's. `batch_size_latent_recon` (`reconstruct_mesh`) is deliberately still accepted. `max_batch_size` (`reconstruct_latent`) was too, until v0.4.0 removed it |
 | **Severity** | Silent — the run completed, reported nothing, and used the default for the parameter the caller believed they had set |
 | **Fixed in** | `reconstruct-mesh-internals`, Aug 2026 (plan §8.0.J); the `reconstruct_latent` site in `latent-fit-internals`, Aug 2026 (plan §8.0.K) |
 
