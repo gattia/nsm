@@ -23,8 +23,7 @@ under the same number.
 
 **Updated:** 2026-09-23 · **Status:** open
 
-- **Next:** **Slice T** is in progress on branch `slice-t-test-trim`. Continue the commit
-  order in Step T's slice statement.
+- **Next:** Merge slice T's PR (branch `slice-t-test-trim`). Then Step Close.
 - **Blocked on:** nothing.
 - **Done:**
   - Phases 0–3, and slices A–R, each with its own PR. v0.2.0 (PR #36) and v0.3.0 shipped.
@@ -41,14 +40,16 @@ under the same number.
     `NSM/` 13,555 → 13,326 lines; suite 1180 → 1177 passed. Production is on v0.4.0: the
     consumer no longer passes `verbose=`, and a real fit on archived job `8ff02ee4`
     matches its archived BScore to 1.3e-05 (same-code noise is 3.6e-05).
+  - Slice T done 2026-09-23 on branch `slice-t-test-trim`: 1,184 tests to 268, `testing/`
+    16,143 lines to 8,014, 110 s to 72 s, coverage kept. See Step T's Result.
 - **Surprises:**
   - **Deferred items get lost or are already done.** Five `reconstruct_latent` sites
     deferred to R had already been fixed. In S, one item was already closed by R, and two
     items deferred to S were missing from its table. Build a slice's item list by
     searching for everything that names the slice, and re-check each item before
     scheduling it.
-  - **Nothing checks test names cited in `docs/`.** `KNOWN_ISSUES.md` cited a test class
-    that never existed. `test_docs_references` only checks `NSM/` symbols.
+  - **Nothing checked test names cited in `docs/`.** `KNOWN_ISSUES.md` cited a test class
+    that did not exist. Slice T added the check to `test_docs_references`.
   - **No function-level "accepted but never read" parameters are left.** Every candidate
     was a hook whose sibling implementation reads it. The remaining cases are in
     `models/loader.py`'s config translation, which led to
@@ -70,7 +71,9 @@ under the same number.
     including the gradient bug that made its author switch it off. The port's tests
     checked the forward value, so they passed with and without the fix.
   - **The test suite grows faster than the library.** T was scheduled at a 1.02
-    test-to-source ratio; it is now 1.22.
+    test-to-source ratio, which had reached 1.22 by the time it started. T took it to 0.60.
+  - **Test count does not set the wall clock.** Cutting 77% of the tests cut 35% of the
+    time. The cost is in subprocesses and the harness's train and reconstruct fixtures.
 
 ---
 
@@ -370,6 +373,38 @@ Nothing transitional.
 
 **Order:** one commit per test package. `testing/NSM/` top level, then `configs`, `datasets`,
 `mesh`, `models`, `reconstruct`, `regression`, `train`. Last comes the State update.
+
+#### Result (2026-09-23, branch `slice-t-test-trim`)
+
+| | Before | Target | After |
+|---|---|---|---|
+| tests collected | 1,184 | ≤ 350 | **268** |
+| `testing/` lines | 16,143 (57 files) | ≤ 8,000 | **8,014** (40 files) |
+| suite wall clock, no coverage | 110 s | ≤ 70 s | **72 s** |
+| `NSM/` line coverage | 86.70% | ≥ 86% | **86.73%**, no line lost |
+
+`testing/` to `NSM/` lines went from 1.22 to 0.60. No library code changed, apart from
+docstrings and comments that named renamed tests.
+
+**Diverged:**
+- **Two targets missed, by 14 lines and 2 s.** The wall clock fell 35% while the count fell
+  77%. Time is in a few fixtures, not in the number of tests: three subprocess tests take
+  about 18 s together, collection takes 6 s, and the regression harness trains and
+  reconstructs.
+- **Most of the count was parametrization.** Import-name lists (127 cases), docstring and
+  doc-citation checks (99) and the model option matrix (79) became a handful of tests.
+  Each one reports every offender it finds.
+- **Four tests could not fail.** The grad-clip test compared two objects it built itself.
+  It now spies on the call `train_epoch` makes, and covers the clip line for the first
+  time. The `-O` subprocess repeated what the `ValueError` refusal already proves. One
+  test rebuilt the same model twice and compared the outputs. The last only checked that
+  two list literals were lists.
+- **Stale citations were already present.** The new citation check found two at once, and
+  caught three more during the slice. `KNOWN_ISSUES.md` #24's balanced draw had no pin,
+  because its test class had been deleted in an earlier slice. It has one again.
+- **Fork-after-VTK has a safe order.** Building pooled and then serial in one process does
+  not hang (3 runs of 3). This took the multiprocessing test from 10.9 s to 6.5 s, and the
+  measured order is now a row in `KNOWN_ISSUES.md` #25's table.
 
 ### Step Close — retire this plan
 
