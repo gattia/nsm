@@ -34,15 +34,11 @@ from _harness import (
     headroom,
     platform_matches,
     provenance,
-    quiet,
     regenerating,
     regenerating_decoder,
     run_training,
     training_config,
 )
-
-from NSM.train.train_deep_sdf import train_epoch
-from NSM.utils import get_latent_vecs, get_learning_rate_schedules, get_optimizer
 
 
 def test_baselines_are_not_being_regenerated():
@@ -478,51 +474,3 @@ class TestScheduleFreeRuns:
         records, _ = run_training(config, model, training_dataset)
 
         assert [r["epoch"] for r in records] == [1, 2]
-
-
-class TestLatentNormLogging:
-    """
-    ``train_epoch``'s logged latent-norm stats must be accumulated over the epoch, like
-    every accumulator around them. They used to be assigned (``=`` for ``+=``), which
-    made the logged value the *last batch's* stat over the batch count — wrong by
-    ~×n_batches on every wandb run since the metric existed (#59,
-    ``docs/KNOWN_ISSUES.md`` § History 12). Weights and gradients were never affected.
-    """
-
-    def test_logged_mean_vec_length_is_the_epoch_mean_not_the_last_batch(
-        self, training_dataset, tmp_path_factory
-    ):
-        """
-        The latent LR is set to 0 so the embedding cannot move during the epoch: the
-        expected value is then exactly the mean over batches of each batch's mean latent
-        norm, computable from the embedding directly. ``shuffle=False`` makes the batch
-        composition (``[s0, s1], [s2]``) part of the arithmetic rather than of the seed.
-        Pre-fix the logged value was ``norm(s2) / 2`` — the singleton last batch over
-        the batch count — the issue's ×n_batches observation in miniature.
-        """
-        config = training_config(tmp_path_factory.mktemp("latent_norm_log"))
-        for entry in config["LearningRateSchedule"]:
-            if entry["Target"] == "latent":
-                entry["Initial"] = 0.0
-        config["log_latent"] = None
-        config["lr_schedules"] = get_learning_rate_schedules(config)
-
-        data_loader = torch.utils.data.DataLoader(training_dataset, batch_size=2, shuffle=False)
-        model = build_model(config)
-        torch.manual_seed(0)
-        latent_vecs = get_latent_vecs(len(training_dataset), config)
-        optimizer = get_optimizer(
-            model,
-            latent_vecs,
-            lr_schedules=config["lr_schedules"],
-            optimizer=config["optimizer"],
-            weight_decay=config["weight_decay"],
-        )
-
-        norms = torch.norm(latent_vecs.weight.data, dim=1)
-        expected = ((norms[0] + norms[1]) / 2 + norms[2]) / 2
-
-        with quiet():
-            log = train_epoch(model, data_loader, latent_vecs, optimizer, config, epoch=1)
-
-        assert log["mean_vec_length"] == pytest.approx(expected.item(), rel=1e-6)

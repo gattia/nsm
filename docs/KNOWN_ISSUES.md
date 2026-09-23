@@ -1006,8 +1006,8 @@ proxy, not garbage: within a run with a fixed batch count, multiplying by
 value, not the epoch mean). Do not compare the metric across runs with different batch
 counts.
 
-*Pinned by:* `test_training_regression.TestLatentNormLogging` (latent LR 0 makes the
-true epoch mean exact).
+*Pinned by:* `test_train_epoch.TestTheLatentNormStatsAreTheEpochMean` (latent LR 0
+makes the true epoch mean exact).
 
 ---
 
@@ -1598,8 +1598,9 @@ series means some batch's final chunk held one row. Nothing else about the run i
 — re-training buys only the metric.
 
 *Pinned by:*
-`test_train_epoch_internals.TestTheLatentNormStatsAreTheEpochMean` (independence from
-`batch_split`, the epoch mean computed from the embedding at latent LR 0, and the `NaN`).
+`test_train_epoch.TestTheLatentNormStatsAreTheEpochMean` (the epoch mean computed from
+the embedding at latent LR 0) and `test_train_epoch.test_batch_split_changes_no_reported_number`
+(independence from `batch_split`, and no `NaN`).
 
 ## 26. `model_params_config.json` recorded no subject list, or a previous run's
 

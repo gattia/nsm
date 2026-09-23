@@ -8,19 +8,10 @@ with no error. Degenerate runs now clamp the cycle length to one epoch, which pi
 weight at ``min_``; any run with ``n_epochs >= n_cycles`` is bit-identical.
 """
 
-import numpy as np
-
 from NSM.train.utils import cyclic_anneal_linear
 
 
-def test_runs_shorter_than_the_cycle_count_stay_finite_at_min():
-    for epoch in (1, 2):
-        weight = cyclic_anneal_linear(epoch, n_epochs=2)
-        assert np.isfinite(weight)
-        assert weight == 0  # the default min_
-
-
-def test_runs_with_enough_epochs_are_unchanged():
-    # n_epochs=10, n_cycles=5 -> cycle_length 2; ratio 0.5 ramps to max_ mid-cycle.
-    # Values verified against the pre-fix implementation, which this path never touches.
+def test_the_cycle_is_finite_for_short_runs_and_unchanged_for_long_ones():
+    """Runs with at least ``n_cycles`` epochs are bit-identical to before the fix."""
+    assert [cyclic_anneal_linear(epoch, n_epochs=2) for epoch in (1, 2)] == [0, 0]
     assert [cyclic_anneal_linear(e, 10) for e in (0, 1, 2, 3)] == [0.0, 1.0, 0.0, 1.0]

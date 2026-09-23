@@ -412,7 +412,7 @@ are kept rather than deleted because each records an argument that outlives its 
    production model configs, so nothing has ever set it. The latents already have their own
    L2 regularization with warmup and their own LR schedule. The 2026-08-22 note proposes an
    experiment; dropping it moves the row out of § Open. A test already pins the current
-   behaviour (`test_parameter_surface.TestGradClipReachesTheModelOnly`).
+   behaviour (`test_train_epoch.TestGradClipReachesTheModelOnly`).
 
 **Also available, not required.** The 1,450-line State narrative now in the history file is
 superseded by PR descriptions, `CHANGELOG.md` and `docs/KNOWN_ISSUES.md`. It was archived

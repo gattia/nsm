@@ -90,7 +90,7 @@ fix rather than limitations to document:
   latents also already carry their own L2 regularization with warmup and their own LR
   schedule, so they are not unregularized; and the knob is `null` in the shipped default
   and in both production model configs, so nothing has ever set it. Pinned by
-  `test_parameter_surface.TestGradClipReachesTheModelOnly`. Clipping the latents too would
+  `test_train_epoch.TestGradClipReachesTheModelOnly`. Clipping the latents too would
   change the numerics of every run that sets `grad_clip`, which makes it a training
   experiment rather than a defect.
 
@@ -497,8 +497,7 @@ only-TriplanarDecoder reconstruction limit is already §1's first bullet.
 
 **Resurrection:** `git show v0.3.0:NSM/models/two_stage.py` is the complete module as last
 shipped; its loader branch (`_get_two_stage_params`), config template and tests live in the
-same tag under `NSM/models/loader.py`, `testing/NSM/models/` and
-`testing/NSM/test_parameter_surface.py`. Reviving it means re-adding those plus the Phase-4
+same tag under `NSM/models/loader.py` and `testing/NSM/`. Reviving it means re-adding those plus the Phase-4
 registration pathway (§1) that removal pre-empted.
 
 ---
