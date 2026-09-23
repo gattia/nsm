@@ -1,11 +1,11 @@
 """
 Migrating a pre-Aug-2026 reconstruction config, and the hint that points at the migrator.
+Delete this file with ``NSM/reconstruct/_config_migration.py``.
 
-``reconstruct_mesh`` used to take a ``**kwargs`` that read one key and swallowed the rest,
-so configs accumulated keys that named nothing (``docs/KNOWN_ISSUES.md`` History 20). Those
-configs now raise. Every key this module removes was inert before and after, so a migrated
-config cannot produce a different result -- which is the property that makes the migration
-safe to apply unattended, and the thing these tests exist to hold.
+Old configs can carry keys that name nothing, and those now raise (``docs/KNOWN_ISSUES.md``
+History 20). Every key the migrator removes was inert before and after, so a migrated config
+gives the same result. That property makes the migration safe to apply unattended, and these
+tests hold it.
 """
 
 import inspect
@@ -58,8 +58,10 @@ max_n_samples_latent_recon n_steps_sample_ramp_latent_recon
 
 def test_a_historical_config_loses_exactly_the_inert_keys():
     """
-    What survives is a real parameter, and everything that reaches the optimizer survives
-    unchanged, so migrating cannot move a number. Each removal is explained.
+    Fails if ``migrate_reconstruct_config`` removes a key other than the six inert ones,
+    changes a kept value, mutates its input, omits the note for a removal or for
+    ``batch_size``, or keeps a key ``reconstruct_mesh`` does not name.
+
     ``batch_size`` is kept and flagged: in an optimization block it reads as a fit knob and
     is the marching-cubes decode batch.
     """
@@ -86,7 +88,12 @@ def test_a_historical_config_loses_exactly_the_inert_keys():
 
 
 def test_a_current_config_and_a_non_hybrid_optimizer_name_are_left_alone():
-    """``latent_optimizer_name`` is inert only under hybrid; alone it picks the optimizer."""
+    """
+    Fails if ``migrate_reconstruct_config`` changes a current config or notes anything on it,
+    or removes ``latent_optimizer_name`` when ``hybrid_optimizer`` is False.
+
+    ``latent_optimizer_name`` is inert only under hybrid; alone it picks the optimizer.
+    """
     current = {"num_iterations": 100, "lr": 0.01, "loss_type": "l1"}
     assert migrate_reconstruct_config(current) == (current, [])
     cleaned, _ = migrate_reconstruct_config(dict(HISTORICAL_CONFIG, hybrid_optimizer=False))
@@ -94,7 +101,12 @@ def test_a_current_config_and_a_non_hybrid_optimizer_name_are_left_alone():
 
 
 def test_only_a_known_stale_key_earns_the_migration_hint():
-    """A typo is not a stale config, and the migrator has no answer for it."""
+    """
+    Fails if ``refuse_unknown_kwargs`` leaves the migration hint off a known stale key
+    (``grad_tol``), adds it to a typo, or ``migration_hint`` returns text for an unknown key.
+
+    A typo is not a stale config, and the migrator has no answer for it.
+    """
     call = dict(
         decoders=None, num_iterations=1, latent_size=8, xyz=None, sdf_gt=None, pts_surface=[0]
     )

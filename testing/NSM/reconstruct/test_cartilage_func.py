@@ -65,10 +65,13 @@ def _pair(label=11):
 
 def test_an_absent_surface_on_either_side_is_scored_nan():
     """
-    A decoder early in training leaves a surface ``None``, and validation runs then. Before
-    the guard a ``None`` reconstructed bone raised from pymskt, a ``None`` cartilage killed
-    the interpreter (``CartilageMesh(None)``, exit 139, SIGSEGV), and a ``None`` original
-    bone raised ``KeyError: 'labels'``.
+    Fails if ``compare_cart_thickness`` crashes on a ``None`` reconstructed bone, reconstructed
+    cartilage or original bone instead of scoring its four keys NaN, or ``compute_recon_loss``
+    scores a ``None`` reconstruction other than NaN.
+
+    A decoder early in training leaves a surface ``None``, and validation runs then. A ``None``
+    cartilage reaching pymskt kills the interpreter (``CartilageMesh(None)``, SIGSEGV), so that
+    regression shows as a crashed run, not a failed test.
     """
     for side, index in (("recon", 0), ("recon", 1), ("orig", 0)):
         orig_meshes, recon_meshes = _pair()
@@ -89,9 +92,10 @@ def test_an_absent_surface_on_either_side_is_scored_nan():
 
 def test_func_keys_are_collected_whichever_subject_is_degenerate(monkeypatch):
     """
-    ``get_mean_errors`` created each ``func_`` list at subject 0. A degenerate subject 0
-    has no ``func_`` keys, so the healthy subject 1 raised ``KeyError``. The fake returns
-    all four keys because ``get_mean_errors`` parses the names.
+    Fails if ``get_mean_errors`` creates its ``func_`` lists only at subject 0, so a degenerate
+    subject 0 makes a healthy subject 1 raise ``KeyError``.
+
+    The fake returns all four region keys because ``get_mean_errors`` parses the names.
     """
     from NSM.reconstruct.main import NoZeroLevelSetError
 
@@ -120,11 +124,17 @@ def test_func_keys_are_collected_whichever_subject_is_degenerate(monkeypatch):
 
 class TestTheOriginalCartilageIsNeverRead:
     """
-    ``orig_cart`` is unpacked and never used: the original's thickness is read off the
+    ``orig_cart`` is required but not read: the original's thickness is read off the
     original bone. The slot stays because both lists share one layout (``SCOPE.md`` §2.5).
     """
 
     def test_anything_may_stand_in_for_it_but_the_bone_needs_its_thickness(self):
+        """
+        Fails if ``compare_cart_thickness`` reads the original cartilage slot, or stops
+        raising ``KeyError`` when the original bone has no ``thickness (mm)`` array.
+
+        The ``KeyError`` is raised by pymskt, not by NSM.
+        """
         expected = compare_cart_thickness(*_pair(), cart_regions=(11,))
         for substitute in (None, "not a mesh at all", 7):
             orig_meshes, recon_meshes = _pair()
@@ -141,9 +151,11 @@ class TestTheOriginalCartilageIsNeverRead:
 
 def test_each_function_scores_its_own_joints_regions():
     """
-    The bare ``compare_cart_thickness`` defaults to the femur's regions, so a tibial pair
-    scores 20 NaNs with only pymskt's warning to show for it. The wrappers exist to ask
-    for the right set.
+    Fails if ``compare_cart_thickness_femur``, ``_tibia`` or ``_patella`` scores another
+    joint's regions, or the bare ``compare_cart_thickness`` stops defaulting to the femur's.
+
+    A tibial pair through the bare function scores 20 NaNs, with only pymskt's warning to show
+    for it (``KNOWN_ISSUES`` Open). The wrappers pick the right set.
     """
     assert tuple(CART_REGIONS) == tuple(CART_REGIONS_DICT["femur"])
     result = compare_cart_thickness(*_pair(label=2))
@@ -162,9 +174,8 @@ def test_each_function_scores_its_own_joints_regions():
 
 class TestTheMeshListLength:
     """
-    Every wrapper sliced ``[:2]`` and nothing checked the length. The functions are
-    fixed-layout by ruling (``SCOPE.md`` §2.5): a multi-surface layout gets its own
-    ``DICT_VALIDATION_FUNCS`` entry when it needs one.
+    The functions are fixed-layout by ruling (``SCOPE.md`` §2.5): a multi-surface layout gets
+    its own ``DICT_VALIDATION_FUNCS`` entry when it needs one.
     """
 
     @staticmethod
@@ -176,6 +187,10 @@ class TestTheMeshListLength:
         return orig_meshes, recon_meshes
 
     def test_six_meshes_score_all_three_joints(self):
+        """
+        Fails if ``compare_cart_thickness_whole_joint`` mis-slices its six meshes, so a joint's
+        regions are missing or NaN.
+        """
         result = compare_cart_thickness_whole_joint(*self._whole_joint(3))
         assert len(result) == 4 * (5 + 2 + 1)
         for region in (11, 2, 4):
@@ -183,10 +198,13 @@ class TestTheMeshListLength:
 
     def test_a_list_of_the_wrong_length_is_refused_by_name(self):
         """
-        A whole-joint list into the tibia wrapper returned eight NaNs and exit 0: ``[:2]``
-        took the femur's pair. The four-surface femur layout (bone, cart, menisci) gave
-        ``KeyError: 'labels'`` in the whole-joint function. Into the femur wrapper it
-        sliced the right pair and scored correctly, and it is refused anyway, by ruling.
+        Fails if ``_require_meshes`` stops refusing a mesh list of the wrong length in any
+        wrapper or in the bare ``compare_cart_thickness`` (KNOWN_ISSUES History 27).
+
+        Unchecked, a whole-joint list into the tibia wrapper scores the femur's pair as eight
+        NaNs, and the four-surface femur layout (bone, cart, menisci) raises
+        ``KeyError: 'labels'`` in the whole-joint function. The femur wrapper refuses a
+        four-surface list by ruling, though ``[:2]`` would score it correctly.
         """
         with pytest.raises(ValueError, match="6"):
             compare_cart_thickness_tibia(*self._whole_joint(3))
@@ -205,9 +223,12 @@ class TestTheMeshListLength:
 class TestTheCoercion:
     def test_the_scored_values_are_what_the_geometry_gives(self):
         """
-        Deleting the redundant ``.mesh`` coercion branch changed nothing but three printed
-        lines per subject. These are the values before and after. The reconstruction is a
-        sphere, so every ray measures its diameter, 2 x 1.1.
+        Fails if ``compare_cart_thickness`` swaps which side it reads and which it computes,
+        flips the sign of the differences, or changes a per-region value on a fixed
+        two-region sphere pair.
+
+        The reconstruction is a sphere, so every ray measures its diameter, 2 x 1.1. The
+        original's thickness is a ramp from 1 to 2, split between regions 11 and 12.
         """
         orig_bone = Mesh(_sphere(1.0))
         n_points = orig_bone.GetNumberOfPoints()
@@ -228,9 +249,12 @@ class TestTheCoercion:
 
     def test_a_bonemesh_scores_the_same_and_is_the_only_argument_mutated(self):
         """
+        Fails if ``_as_mesh`` copies a ``BoneMesh`` or mutates a plain ``Mesh``, or a
+        ``BoneMesh`` scores differently from a plain ``Mesh``.
+
         A ``BoneMesh`` keeps its identity and comes back carrying ``labels`` and
-        ``thickness (mm)``. A plain ``Mesh``, what ``create_mesh`` returns, is copied and
-        comes back untouched. No in-repo caller passes a ``BoneMesh``.
+        ``thickness (mm)``. A plain ``Mesh`` is what ``create_mesh`` returns. No in-repo
+        caller passes a ``BoneMesh``.
         """
         orig_meshes, recon_meshes = _pair()
         plain = recon_meshes[0]

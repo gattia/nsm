@@ -81,12 +81,11 @@ def fit(decoder=None, **overrides):
 
 
 class TestUnknownKeywordsAreRefused:
-    """
-    ``**kwargs`` used to swallow every key, so a misspelled parameter ran at its default
-    with no warning and no log record. That is why it raises rather than warns.
-    """
-
     def test_a_misspelled_parameter_raises(self):
+        """
+        Fails if ``reconstruct_latent`` accepts a misspelled keyword or the removed
+        ``max_batch_size`` instead of raising ``TypeError`` naming it (KNOWN_ISSUES History 20).
+        """
         for wrong in (
             "num_iteration",
             "latent_reg_wieght",
@@ -101,7 +100,13 @@ class TestUnknownKeywordsAreRefused:
                 fit(**{wrong: 999})
 
     def test_reconstruct_mesh_passes_only_parameters_this_signature_names(self):
-        """Read from the dict ``reconstruct_mesh`` builds, so a new key is checked too."""
+        """
+        Fails if the ``reconstruct_inputs`` dict in ``reconstruct_mesh`` forwards a key that
+        ``reconstruct_latent`` does not name.
+
+        The keys are read from ``main.py`` with ``ast``, by the local name
+        ``reconstruct_inputs``, so a new key is checked too.
+        """
         tree = ast.parse(open(recon_main.__file__, encoding="utf-8").read())
         dict_node = next(
             node.value
@@ -115,8 +120,11 @@ class TestUnknownKeywordsAreRefused:
 
 def test_pts_surface_is_required_and_a_positional_shift_is_refused():
     """
-    It follows ``sdf_gt`` since v0.4.0. An old six-argument positional call puts ``loss_type``
-    or ``lr`` here, which the type check refuses.
+    Fails if ``reconstruct_latent`` gives ``pts_surface`` a default, or accepts ``None``, a
+    string or a float for it.
+
+    ``pts_surface`` follows ``sdf_gt``. An old six-argument positional call puts ``loss_type``
+    or ``lr`` in its slot, and the type check must refuse it.
     """
     kwargs = fit_kwargs()
     del kwargs["pts_surface"]
@@ -128,14 +136,17 @@ def test_pts_surface_is_required_and_a_positional_shift_is_refused():
 
 
 class TestUnknownValuesAreRefusedWhereTheyAreNamed:
-    """
-    Three ``if``/``elif`` chains had no ``else``. ``optimizer_name`` and ``loss_type`` failed
-    much later as an ``UnboundLocalError`` or ``NameError`` naming a local.
-    ``convergence``'s missing ``else`` was the default branch, so ``"Recon_Loss"`` silently
-    meant ``"num_iterations"``. Case is folded, and NSM's trainer spells ``"Adam"``.
-    """
+    """``reconstruct_latent`` folds case because NSM's trainer spells ``"Adam"``."""
 
     def test_an_unknown_value_names_its_parameter_and_case_is_folded(self):
+        """
+        Fails if ``reconstruct_latent`` accepts an unknown or ``None`` ``optimizer_name``,
+        ``loss_type`` or ``convergence`` without a ``ValueError`` naming the parameter, or
+        stops folding case (KNOWN_ISSUES History 23).
+
+        ``"Recon_Loss"`` must fit exactly as ``"recon_loss"``, the mode
+        ``default_config.json`` ships.
+        """
         for parameter, value in (
             ("optimizer_name", "sgd"),
             ("loss_type", "l1_smooth"),
@@ -156,19 +167,27 @@ class TestUnknownValuesAreRefusedWhereTheyAreNamed:
         assert torch.equal(lower[1], upper[1]) and float(lower[0]) == float(upper[0])
 
     def test_hybrid_mode_refuses_an_optimizer_name_it_will_not_consult(self):
-        """Hybrid mode is Adam then LBFGS; ``optimizer_name`` is read nowhere in it."""
+        """
+        Fails if ``reconstruct_latent(hybrid_optimizer=True, optimizer_name="lbfgs")`` runs
+        instead of raising ``ValueError`` (KNOWN_ISSUES History 22).
+
+        Hybrid mode runs Adam then LBFGS and reads ``optimizer_name`` nowhere.
+        """
         with pytest.raises(ValueError, match="optimizer_name is not consulted"):
             fit(hybrid_optimizer=True, optimizer_name="lbfgs", adam_iterations=2)
 
 
 class TestTheReturnedLossIsALoss:
-    """
-    ``loss`` started at the literal ``100``, a sentinel. Under ``convergence="recon_loss"``,
-    the shipped default, it was never updated, so the function returned ``100``. A fit
-    whose losses never went below 100 raised ``UnboundLocalError`` after every iteration.
-    """
-
     def test_each_convergence_mode_returns_a_real_loss(self):
+        """
+        Fails if ``reconstruct_latent``, in any convergence mode, returns its float sentinel
+        instead of a tensor loss or raises when no loss falls below 100
+        (KNOWN_ISSUES History 21).
+
+        Ground truth scaled by 1000 keeps every loss above 100, the old sentinel. The test
+        also fails if ``num_iterations=0`` returns other than ``inf`` and a ``(1, L)`` latent,
+        or if ``overall_loss`` patience never stops the fit.
+        """
         for convergence in ("recon_loss", "overall_loss", "num_iterations"):
             loss, latent = fit(convergence=convergence)
             assert isinstance(loss, torch.Tensor) and float(loss) != 100
@@ -202,8 +221,12 @@ def _learning_rates_seen(monkeypatch, **overrides):
 class TestTheLearningRateScheduleSpansThePhaseItSteps:
     def test_hybrid_mode_applies_the_updates_asked_for(self, monkeypatch):
         """
-        The step interval came from ``num_iterations``, which hybrid mode does not run.
-        Measured before the fix: 11 decays over 100 Adam steps, ending at exactly 0.0.
+        Fails if hybrid ``reconstruct_latent`` takes its LR decay interval from
+        ``num_iterations`` instead of ``adam_iterations``, so the Adam phase decays more than
+        asked (KNOWN_ISSUES History 22).
+
+        With the interval from ``num_iterations=10``, 100 Adam steps took 11 decays and ended
+        at exactly 0.0.
         """
         expected = _learning_rates_seen(monkeypatch, num_iterations=100)
         hybrid = _learning_rates_seen(
@@ -220,7 +243,13 @@ class TestTheLearningRateScheduleSpansThePhaseItSteps:
 
 class TestTheDeferredSitesAreClosed:
     def test_the_lbfgs_triple_is_read_on_the_non_hybrid_path(self, monkeypatch):
-        """``lr`` stood in for ``lbfgs_lr`` here: at a config's usual 0.005, a 200x step."""
+        """
+        Fails if ``reconstruct_latent(optimizer_name="lbfgs")`` builds LBFGS with ``lr``
+        instead of ``lbfgs_lr``, or ignores ``lbfgs_max_iter`` or ``lbfgs_history_size``.
+
+        At a config's usual ``lr`` of 0.005 and ``lbfgs_lr`` of 1.0, that step is 200x too
+        small.
+        """
         seen = {}
         real = torch.optim.LBFGS
 
@@ -245,9 +274,9 @@ class TestTheDrawIsPerEvaluation:
     The sample draw runs on every loss evaluation, not once per step. Adam evaluates once
     per step; LBFGS evaluates several times, and each evaluation redraws.
 
-    Hoisting the draw to once per step was proposed and measured, and it lost. L-BFGS
-    assumes a fixed objective, but the redraw is also how the fit covers the cloud. Over 20
-    problems at 12,000 decoder evaluations, LBFGS, median held-out error:
+    A draw once per step measures worse. L-BFGS assumes a fixed objective, but the redraw is
+    also how the fit covers the cloud. Over 20 problems at 12,000 decoder evaluations, LBFGS,
+    median held-out error:
 
     | sampling ratio | per evaluation | per step | cloud seen |
     |---|---|---|---|
@@ -260,7 +289,7 @@ class TestTheDrawIsPerEvaluation:
     (13/20 diverged against 7/20). A deterministic draw with good coverage would answer the
     line-search objection; that is a sampling-strategy change.
 
-    The full cloud measured best of all, and ``n_samples_per_chunk`` (#75) makes it
+    The full cloud measures best of all, and ``n_samples_per_chunk`` (#75) makes it
     affordable:
 
     | regime | median | diverged | cloud seen |
@@ -272,6 +301,11 @@ class TestTheDrawIsPerEvaluation:
     """
 
     def test_lbfgs_redraws_within_a_step_and_adam_draws_once(self):
+        """
+        Fails if ``reconstruct_latent`` stops redrawing samples on every LBFGS loss
+        evaluation, evaluates Adam more than once per step, or subsamples when ``n_samples``
+        equals the cloud.
+        """
         lbfgs = RecordingDecoder()
         fit(lbfgs, n_pts=100, num_iterations=1, optimizer_name="lbfgs", n_samples=50)
         assert len(lbfgs.draws) > 1 and len(set(lbfgs.draws)) == len(lbfgs.draws)
@@ -285,7 +319,12 @@ class TestTheDrawIsPerEvaluation:
         assert len(set(full.draws)) == 1
 
     def test_a_subsampled_lbfgs_fit_says_so(self, caplog):
-        """``"LBFGS"`` is here because the first guard read the name before the case fold."""
+        """
+        Fails if ``reconstruct_latent`` stops warning that an LBFGS or hybrid fit draws a
+        subsample, including for ``optimizer_name="LBFGS"``.
+
+        The upper-case spelling checks that the guard runs after the case fold.
+        """
         for options in (
             {"optimizer_name": "lbfgs"},
             {"optimizer_name": "LBFGS"},
@@ -298,9 +337,12 @@ class TestTheDrawIsPerEvaluation:
 
     def test_a_multi_surface_draw_is_balanced_and_the_guard_says_what_it_draws(self, caplog):
         """
-        Every surface contributes the same count, held to the smallest (``KNOWN_ISSUES``
-        #24). On 300 and 90 points the draw is 90 each, whatever ``n_samples`` is, so the
-        warning names the draw and the reachable maximum, not the budget or the cloud.
+        Fails if ``_samples_per_surface`` stops holding every surface to the smallest one's
+        count, or the LBFGS warning reports the budget instead of the planned draw and the
+        reachable maximum (KNOWN_ISSUES History 24).
+
+        On 300 and 90 points, a budget of 390 draws 90 from each surface. The fit's budget of
+        100 draws 50 from each, and 180 of the 390 points is the most a balanced draw reaches.
         """
         pts_surface = torch.tensor([0] * 300 + [1] * 90)
         assert latent_fit._samples_per_surface(
@@ -326,9 +368,13 @@ class TestTheDrawIsPerEvaluation:
 
 def test_the_lbfgs_closure_does_not_retain_its_graph():
     """
-    Each closure call builds its own graph, so none is backwarded twice. Retaining kept a
-    dead graph resident: on a T4 at 60,000 points, 2265 MiB retained against 1240 MiB not,
-    for a bit-identical latent. Checked as a call keyword, since a comment names the flag.
+    Fails if any call in ``latent_fit.py`` passes ``retain_graph=``, or a two-step LBFGS fit
+    returns a non-finite loss or latent.
+
+    Each closure call builds its own graph, so none is backwarded twice. Retaining kept a dead
+    graph resident: on a T4 at 60,000 points, 2265 MiB against 1240 MiB, for a bit-identical
+    latent. The source is scanned for the call keyword, not the text, because a comment names
+    the flag.
     """
     tree = ast.parse(open(latent_fit.__file__, encoding="utf-8").read())
     assert not [
@@ -353,7 +399,13 @@ class TestChunkedForwardAndBackward:
     """
 
     def test_the_accumulated_gradient_matches_the_unchunked_one(self):
-        """97 points, so some chunk sizes leave a ragged last chunk. It must not be over-counted."""
+        """
+        Fails if ``_recon_loss`` stops returning a per-point mean, so share-weighted chunk
+        losses no longer sum to the unchunked gradient.
+
+        The chunk loop is the test's own copy; NSM's ``compute_loss_chunked`` does not run.
+        97 points leave a ragged last chunk at sizes 10 and 32.
+        """
 
         def gradient(chunk):
             torch.manual_seed(5)
@@ -380,8 +432,11 @@ class TestChunkedForwardAndBackward:
 
     def test_the_default_is_the_unchunked_path_and_a_chunked_fit_lands_close(self):
         """
-        ``None`` must reproduce the code before this parameter, bit for bit. Chunking changes
-        the summation order, so a chunked fit is close, not identical.
+        Fails if ``reconstruct_mesh``'s ``n_samples_per_chunk_latent_recon`` stops defaulting
+        to ``None``, the default fit differs at all from ``n_samples_per_chunk=None``, or a
+        chunked ``reconstruct_latent`` fit moves the latent more than 1e-6 (#75).
+
+        Chunking changes the summation order, so a chunked fit is close, not identical.
         """
 
         def run(**overrides):
@@ -413,10 +468,9 @@ class TestChunkedForwardAndBackward:
 
 def test_both_decoder_forward_interfaces_fit_the_same_latent():
     """
-    ``reconstruct_latent`` called ``decoder(latent=..., xyz=...)`` unconditionally, so every
-    MLP model raised ``TypeError`` on its first batch. Production ships only triplanar, so
-    nothing noticed until plan §7.5b. The keyword interface must still receive keywords, and
-    the concatenation order ``[latent, xyz]`` must match: a wrong order lands elsewhere.
+    Fails if ``_decode`` stops dispatching between the keyword ``forward(latent=, xyz=)`` and
+    ``deep_sdf.Decoder``'s concatenated ``forward(input_)``, or concatenates other than
+    ``[latent, xyz]``.
     """
     seen = []
 
@@ -433,8 +487,11 @@ def test_both_decoder_forward_interfaces_fit_the_same_latent():
 
 def test_each_decoder_reads_its_own_slice_of_the_ground_truth():
     """
-    With decoder-local indexing, the second decoder silently re-read surfaces 0 and 1: all-NaN
-    surfaces 2 and 3 left the loss bit-identical.
+    Fails if ``_recon_loss`` indexes ``sdf_gt`` per decoder instead of by the running
+    ``surface_offset``, so the second decoder re-reads surfaces 0 and 1
+    (KNOWN_ISSUES History 5).
+
+    Only surfaces 2 and 3 differ between the two calls.
     """
 
     class TwoSurfaces(torch.nn.Module):
@@ -466,8 +523,13 @@ def test_each_decoder_reads_its_own_slice_of_the_ground_truth():
 class TestTheHelpers:
     def test_the_type_checks(self):
         """
+        Fails if ``reconstruct_latent_sdf_gt_type_check`` stops wrapping or copying its input,
+        ``reconstruct_latent_pts_surface_type_check`` stops converting a list or array, or any
+        of the three type checks accepts an ``int``.
+
         ``sdf_gt`` refuses a string by pointing at ``reconstruct_mesh``, and other types with
-        a bare ``Exception``. A list comes back as a new list holding the caller's tensors.
+        a bare ``Exception``; the test pins that type. The copied list holds the caller's
+        tensors. The decoders check also refuses a list holding a non-module.
         """
         sdf = torch.zeros(5, 1)
         assert reconstruct_latent_sdf_gt_type_check(sdf) == [sdf]
@@ -497,7 +559,13 @@ class TestTheHelpers:
                 reconstruct_latent_decoders_type_check(bad)
 
     def test_the_lr_update_frequency_and_the_sdf_preprocess(self):
-        """0 or ``None`` updates means never: the frequency overshoots the loop bound."""
+        """
+        Fails if ``reconstruct_latent_get_lr_update_freq`` stops treating 0 or ``None`` as
+        never or flooring at 1, or ``reconstruct_latent_preprocess_sdf_gt`` stops clamping
+        to ``clamp_dist``, drops a ``None`` surface, or clamps when ``clamp_dist`` is ``None``.
+
+        Never is an interval one past the loop bound: 101 for 100 iterations.
+        """
         assert [reconstruct_latent_get_lr_update_freq(n, 100) for n in (0, None, 4, 7, 200)] == [
             101,
             101,
@@ -515,6 +583,11 @@ class TestTheHelpers:
         assert untouched[0].tolist() == [-2.0]
 
     def test_project_latent_clamps_the_norm_in_place(self):
+        """
+        Fails if ``project_latent`` stops rescaling the latent in place into ``[min, max]`` or
+        onto a single target, or accepts a three-element or string ``latent_norm``.
+        """
+
         def norm_after(start, spec):
             latent = torch.zeros(1, 4)
             latent[0, 0] = start
@@ -531,8 +604,11 @@ class TestTheHelpers:
 
     def test_latent_norm_penalty(self):
         """
-        A single target with ``"barrier"`` computes the quadratic penalty, as its docstring
-        says. Huber's delta is 10% of the range.
+        Fails if ``latent_norm_penalty`` changes its quadratic or Huber values or its
+        ``penalty_weight`` scaling, stops computing quadratic for a single-target
+        ``"barrier"``, or accepts an unknown ``penalty_type``.
+
+        Huber's delta is 10% of the range.
         """
 
         def penalty(norm, target, **kwargs):
@@ -555,13 +631,15 @@ class TestTheHelpers:
 
 
 class TestBarrierNormPenalty:
-    """
-    #48: ``"barrier"`` returned NaN outside ``[min, max]``, which is where a latent starts
-    (std 0.01 puts a 256-dim latent at norm ~0.16), while its gradient pushed the norm away
-    from the range. It now raises by name there, and the fit fails at step 0.
-    """
-
     def test_outside_the_range_raises_and_inside_is_finite(self):
+        """
+        Fails if ``latent_norm_penalty(penalty_type="barrier")`` returns NaN instead of
+        raising outside ``(min, max)``, is non-finite inside it, or ``reconstruct_latent``
+        with that range starts fitting instead of raising (KNOWN_ISSUES History 8).
+
+        ``torch.ones(1, 256) * 0.01`` has norm 0.16, where ``latent_init_std=0.01`` starts a
+        256-dim latent.
+        """
         for latent in (torch.ones(1, 256) * 0.01, torch.ones(1, 16)):
             with pytest.raises(ValueError, match="barrier"):
                 latent_norm_penalty(latent, (0.5, 1.0), penalty_type="barrier")

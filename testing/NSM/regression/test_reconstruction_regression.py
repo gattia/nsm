@@ -52,6 +52,11 @@ class TestConsumerContract:
     """
 
     def test_the_result_has_the_keys_and_types_the_consumer_reads(self, reconstruction):
+        """
+        Fails if ``reconstruct_mesh`` under kneepipeline's flags drops a key ``run_nsm.py``
+        reads, returns other than two non-empty (n, 3) meshes, or changes the type of
+        ``icp_transform`` or the shape of ``latent``, ``center`` or ``scale``.
+        """
         from _harness import LATENT_SIZE
 
         assert set(reconstruction) >= {
@@ -78,8 +83,11 @@ class TestConsumerContract:
 
     def test_each_index_is_its_own_surface(self, reconstruction, synthetic_meshes):
         """
-        Surface *i* of the result is nearer surface *i* of the input than the other one,
-        by at least 3x, and ``assd_i`` follows the same order.
+        Fails if ``reconstruct_mesh`` returns ``mesh`` or ``assd_i`` in a different order from
+        the input paths.
+
+        Each output must be 3x nearer its own input than the other, and ``assd_i`` 3x below
+        its distance to the other input.
         """
         import pyvista as pv
 
@@ -112,6 +120,11 @@ def surface_distance(reconstructed, original_path):
 
 class TestNumericalBaselines:
     def test_the_reconstruction_matches_baseline(self, reconstruction, reconstruction_baseline):
+        """
+        Fails if ``reconstruct_mesh`` on the committed decoder moves the fitted latent, mesh
+        geometry, point counts, ASSD, ``scale`` or ``center`` past their tolerances from the
+        committed baseline.
+        """
         latent = reconstruction["latent"].detach().cpu().numpy().ravel()
         reconstruction_baseline.check("fitted_latent", latent, atol=FITTED_LATENT_ATOL)
         reconstruction_baseline.check(
@@ -128,6 +141,10 @@ class TestNumericalBaselines:
     def test_the_same_inputs_give_the_same_answer_exactly(
         self, synthetic_meshes, reconstruction_model, reconstruction
     ):
+        """
+        Fails if two identically seeded ``reconstruct_mesh`` calls on the vertex path
+        (``get_rand_pts=False``) return a different latent or ``assd_0``.
+        """
         again = run_reconstruction(synthetic_meshes[0], reconstruction_model)
         assert torch.equal(again["latent"], reconstruction["latent"])
         assert again["assd_0"] == reconstruction["assd_0"]
@@ -156,6 +173,11 @@ class TestDeliberateBreak:
     def test_denting_the_bone_fails_the_latent_and_geometry_baselines(
         self, perturbed_reconstruction, reconstruction_baseline
     ):
+        """
+        Fails if ``FITTED_LATENT_ATOL`` or ``GEOMETRY_ATOL`` is loosened, or the baseline
+        check weakened, so far that a one-vertex dent in the input bone no longer clears
+        ``MIN_HEADROOM`` times the tolerance.
+        """
         if regenerating():
             pytest.skip("baselines are being rewritten")
         latent = perturbed_reconstruction["latent"].detach().cpu().numpy().ravel()
@@ -183,13 +205,16 @@ def test_the_sampled_reconstruction_is_seeded(
     synthetic_meshes, reconstruction_model, reconstruction
 ):
     """
-    ``reconstruct_mesh(seed=...)`` on the multi-object branch the consumer takes. The
-    harness passes it as ``sample_seed``: its own ``seed`` would swallow the keyword, reseed
-    torch, leave the draw unseeded, and still pass three times in four.
+    Fails if ``reconstruct_mesh``'s ``seed`` stops seeding the multi-surface point draw under
+    ``get_rand_pts=True``: the same seed differs, another seed agrees, or ``seed=None``
+    repeats under a fixed global seed.
 
-    The draw must actually happen (the fit moves from the vertex-only one), the same seed
-    must reproduce the latent and every vertex, a different seed must not, and an unseeded
-    draw must not reproduce even under the same global torch and numpy seed.
+    kneepipeline's model configs set ``get_rand_pts_recon`` false, so production fits draw no
+    points and ``seed`` reaches nothing there.
+
+    The harness passes the seed as ``sample_seed``: its own ``seed`` would swallow the keyword,
+    reseed torch, leave the draw unseeded, and still pass three times in four. The first
+    assert checks that the draw happens at all: the fit must move from the vertex-only one.
     """
 
     def fit(sample_seed):
@@ -215,6 +240,10 @@ class TestTheCommittedDecoder:
     """Every test above runs on ``assets/reconstruction_decoder.pt``, loaded, not retrained."""
 
     def test_it_records_the_stack_it_was_generated_on(self, reconstruction_model):
+        """
+        Fails if the committed decoder records fields other than ``provenance()`` returns,
+        or was generated on a platform other than Linux-x86_64.
+        """
         recorded = torch.load(RECON_DECODER_ASSET, weights_only=True)["generated_on"]
         assert set(recorded) == set(provenance()), recorded
         assert recorded["platform"] == "Linux-x86_64", recorded
@@ -238,6 +267,10 @@ class TestAFreshlyTrainedDecoder:
     def test_training_is_what_makes_the_surfaces_fit(
         self, synthetic_meshes, training_dataset, tmp_path_factory
     ):
+        """
+        Fails if ``reconstruct_mesh`` cannot run on a decoder fresh from ``train_deep_sdf``,
+        or that decoder's ASSD is not ``MIN_IMPROVEMENT`` times better than an untrained one's.
+        """
         from _harness import LATENT_SIZE, build_model, training_config
 
         trained = train_reconstruction_decoder(
@@ -263,11 +296,15 @@ class NoZeroLevelSetDecoder(torch.nn.Module):
 
 class TestDecoderWithNoZeroLevelSet:
     """
-    #29: ``reconstruct_mesh`` raises by name. It used to return a plausible dict of ``None``
-    meshes, NaN metrics and the untouched zero latent (History §10). ``get_mean_errors``
-    catches it and scores NaN, pinned in ``test_reconstruct_mesh``.
+    ``get_mean_errors`` catches the error and scores NaN; that half is pinned in
+    ``test_reconstruct_mesh``.
     """
 
     def test_it_raises_by_name(self, synthetic_meshes):
+        """
+        Fails if ``reconstruct_mesh(register_similarity=True)`` returns a result instead of
+        raising ``NoZeroLevelSetError`` when the mean shape has no surface
+        (KNOWN_ISSUES History 10).
+        """
         with pytest.raises(NoZeroLevelSetError, match="no zero level set"):
             run_reconstruction(synthetic_meshes[0], NoZeroLevelSetDecoder())
