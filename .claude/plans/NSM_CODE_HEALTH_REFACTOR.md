@@ -23,7 +23,9 @@ under the same number.
 
 **Updated:** 2026-09-23 · **Status:** open
 
-- **Next:** Merge slice T's PR #114 (branch `slice-t-test-trim`). Then Step Close.
+- **Next:** Merge slice T's PR #114 (branch `slice-t-test-trim`). Then Step U on a new
+  branch, once the maintainer has filed issues A and B from its draft text or said "file
+  these". Then Step Close.
 - **Blocked on:** nothing.
 - **Done:**
   - Phases 0–3, and slices A–R, each with its own PR. v0.2.0 (PR #36) and v0.3.0 shipped.
@@ -40,8 +42,9 @@ under the same number.
     `NSM/` 13,555 → 13,326 lines; suite 1180 → 1177 passed. Production is on v0.4.0: the
     consumer no longer passes `verbose=`, and a real fit on archived job `8ff02ee4`
     matches its archived BScore to 1.3e-05 (same-code noise is 3.6e-05).
-  - Slice T done 2026-09-23, PR #114 open: 1,184 tests to 268, `testing/`
-    16,143 lines to 8,014, 110 s to 72 s, coverage kept. See Step T's Result.
+  - Slice T done 2026-09-23, PR #114 open: 1,184 tests to 259, `testing/`
+    16,143 lines to 8,785, 110 s to 72 s, coverage kept. Every test opens its docstring with
+    a "Fails if" line, and `test_docs_references` checks it. See Step T's Result.
 - **Surprises:**
   - **Deferred items get lost or are already done.** Five `reconstruct_latent` sites
     deferred to R had already been fixed. In S, one item was already closed by R, and two
@@ -74,6 +77,10 @@ under the same number.
     test-to-source ratio, which had reached 1.22 by the time it started. T took it to 0.60.
   - **Test count does not set the wall clock.** Cutting 77% of the tests cut 35% of the
     time. The cost is in subprocesses and the harness's train and reconstruct fixtures.
+  - **Mutation testing shows what a trim lost.** The same single edits to `NSM/`, run
+    against the old and the trimmed suite, were caught identically, apart from one the old
+    suite caught by luck of its seed. The same runs found nine edits on production paths
+    that pass both suites (Step U), and a cache test that compared a file with itself.
 
 ---
 
@@ -378,10 +385,10 @@ Nothing transitional.
 
 | | Before | Target | After |
 |---|---|---|---|
-| tests collected | 1,184 | ≤ 350 | **268** |
-| `testing/` lines | 16,143 (57 files) | ≤ 8,000 | **8,014** (40 files) |
+| tests collected | 1,184 | ≤ 350 | **259** |
+| `testing/` lines | 16,143 (57 files) | ≤ 8,000 | **8,785** (40 files) |
 | suite wall clock, no coverage | 110 s | ≤ 70 s | **72 s** |
-| `NSM/` line coverage | 86.70% | ≥ 86% | **86.73%**, no line lost |
+| `NSM/` line coverage | 86.70% | ≥ 86% | **86.66%** |
 
 `testing/` to `NSM/` lines went from 1.22 to 0.60. No library code changed, apart from
 docstrings and comments that named renamed tests.
@@ -405,6 +412,70 @@ docstrings and comments that named renamed tests.
 - **Fork-after-VTK has a safe order.** Building pooled and then serial in one process does
   not hang (3 runs of 3). This took the multiprocessing test from 10.9 s to 6.5 s, and the
   measured order is now a row in `KNOWN_ISSUES.md` #25's table.
+- **An audit followed the trim, on the same PR.** It gave every test a one-sentence "Fails
+  if" line and checked the trim with mutation testing. It deleted nine more tests: five
+  duplicates, and four that no NSM edit can fail. It fixed the cache round-trip test, which
+  compared a file with itself. Its gaps and two library defects are Step U.
+- **The "Fails if" lines cost 771 lines.** `testing/` went from 8,014 to 8,785 lines, all
+  in docstrings. The sentence runs a median of 2 lines. Measurements the tests depend on
+  stayed.
+- **Coverage lost four lines, each by a chosen deletion.** The deprecation warning and the
+  `path` refusal in `reconstruct_mesh` still run in the `test_observability` subprocess,
+  which coverage does not measure. `remove_overlapping_points`' early return for fewer
+  than two surfaces gives the same result as the count without it.
+
+### Step U — slice §8.0.U: test the gaps slice T's audit found
+
+Found 2026-09-23 by an audit of slice T (PR #114). The audit made single edits to `NSM/` and
+ran the old 1,184-test suite and the trimmed suite against each. The trim lost nothing. The
+edits below pass **both** suites, and each sits on a path a caller relies on. The audit also
+found two library defects.
+
+**Method.** Each item names the edit its new test must catch. Write the test, make the edit
+by hand, confirm the test fails, revert. That is the item's verification. The test's
+"Fails if" line names the behaviour.
+
+| # | Behaviour to pin | Edit that passes every test today | Who relies on it |
+|---|---|---|---|
+| 1 | `reconstruct_latent` returns the best latent under `convergence="recon_loss"` and `"overall_loss"` | Delete `latent_ = torch.clone(latent)` in either branch | kneepipeline: both shipped models fit with `recon_loss` |
+| 2 | `TriplanarDecoder`'s `padding=0.1` and `conv_activation=None` defaults, in CI | `padding=0.1` to `0.2` | kneepipeline builds the decoder without passing either |
+| 3 | `reconstruct_mesh` on the production branch: `scale_jointly=True`, `convergence="recon_loss"`, one- and two-surface path lists. `icp_transform` recovers a known similarity. `center` supports `.tolist()` and `scale` is JSON-serializable | None: this branch never runs. The harness uses `scale_jointly=False` and `"num_iterations"` | kneepipeline's 551 and 647 fits |
+| 4 | A resumed run continues the uninterrupted one: same losses and latents after N/2 + N/2 epochs as after N | Delete `optimizer.load_state_dict(...)` or `latent_vecs.load_state_dict(...)` in `_resume_from_checkpoint` | Anyone resuming training |
+| 5 | `_resume_from_checkpoint` refuses a checkpoint with no optimizer, and one whose groups carry no `target` | None: both raises are untested | Resuming a pre-Aug-2026 run |
+| 6 | Every trainable parameter gets a non-zero gradient, for every model type and option, in train mode | None. Fails today on `ImplicitDecoder` with linear blocks and modulation (issue A) | All training |
+| 7 | `SDFSamples` and `MultiSurfaceSDFSamples` divide `gt_sdf` by `max_radius` under `scale_jointly` | Delete `sdf = sdf / self.max_radius` in either `__getitem__`. The `SDFSamples` line never runs | The default config trains with `scale_jointly: true` |
+| 8 | `surface_weighting` is normalized. `latent_bound` reaches the embedding. `cache_format` is in the cache key | `weight / total * n_surfaces` to `weight` in `_surface_weights`. `max_norm=latent_bound` to `None` in `get_latent_vecs`. Drop `"cache_format"` from `get_hash_params` | Training users |
+| 9 | `compute_loss_chunked` weights each chunk by its share of points | `(stop - start) / n_points` to `n_samples_per_chunk / n_points`. Check one step's latent gradient through `reconstruct_latent`. The chunked-fit test's latent drifts only 2.6e-7 under the edit, inside its 1e-6 tolerance, and the gradient test runs its own copy of the loop | Chunked reconstruction |
+
+**Issues to file.** The text below is a draft. The maintainer files it, or says "file these".
+The Step U PR closes both.
+
+> **A. `ImplicitDecoder` with linear blocks and modulation fails on its first backward pass.**
+> Build `ImplicitDecoder` through `load_model` with `block_type: "linear"` and
+> `modulation: true`, then call `backward()`. It raises `RuntimeError: one of the variables
+> needed for gradient computation has been modified by an inplace operation`.
+> `MLP.forward` runs `x *= modulations[i]` (`NSM/models/modulated_periodic_activations.py`),
+> which overwrites the ReLU output autograd saved. The other three block and modulation
+> combinations train. `test_every_implicit_option_forwards` runs under `no_grad`, so it
+> does not see this. Fixed means this combination backpropagates, and a test runs
+> `backward()` for every model type and option.
+>
+> **B. `reconstruct_latent` applies L2 regularization only when `l2reg` is the literal
+> `True`.** `_regularization_losses` and the logged `latent_loss` test `l2reg is True`, so
+> `l2reg=1` or `1.0` gives a latent loss of 0. `register_similarity` had the same defect
+> and was fixed. Both shipped configs set `l2reg_recon: false`, so no shipped run is
+> affected. Fixed means a non-bool `l2reg` raises `TypeError`, or any truthy value applies
+> the term.
+
+For B, raising is the safer fix: honouring a truthy value silently changes the result for
+any caller passing `1`, and would need a `KNOWN_ISSUES.md` § History entry. A needs no
+History entry, because that combination always crashed.
+
+**Size.** Permanent: about nine tests, 250 to 350 lines, in the existing test files, and a
+few lines for each fix. Nothing transitional.
+
+**Order.** One branch and PR, one commit per row. Rows 1 to 3 come first, because they
+protect kneepipeline's BScore. Then 4 and 5, then 6 with fix A, then 7 to 9, then fix B.
 
 ### Step Close — retire this plan
 
