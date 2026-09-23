@@ -23,8 +23,8 @@ under the same number.
 
 **Updated:** 2026-09-23 · **Status:** open
 
-- **Next:** **Slice T**, the test-suite trim, the last slice before Step Close. Re-measure
-  the Step T table first; slice S changed it.
+- **Next:** **Slice T** is in progress on branch `slice-t-test-trim`. Continue the commit
+  order in Step T's slice statement.
 - **Blocked on:** nothing.
 - **Done:**
   - Phases 0–3, and slices A–R, each with its own PR. v0.2.0 (PR #36) and v0.3.0 shipped.
@@ -327,6 +327,49 @@ Biggest files, as a starting point rather than a target: `test_dataset_cache.py`
 
 **Time-box it.** Two days, then stop and keep what is left. An unbounded aesthetic trim on
 a green suite is how this slice fails to end.
+
+#### Slice statement (2026-09-23)
+
+**The target changed.** The maintainer, 2026-09-23: *"The goal here is to drastically
+reduce the tests. >1k tests does not make sense for this library."* So the test count is
+now a target alongside the wall clock. The earlier reason to ignore line counts still
+holds: a docstring that carries a measurement stays.
+
+Measured on `main` at `442cfa7`:
+
+| | Before | Target |
+|---|---|---|
+| tests collected | 1,184 | ≤ 350 |
+| `testing/` lines | 16,143 (57 files) | ≤ 8,000 |
+| suite wall clock | 110 s | ≤ 70 s |
+| `NSM/` line coverage | 87% (558 of 4,197 missed) | ≥ 86% |
+
+**Criteria**, in addition to the three above:
+
+4. **A parametrized list where one test can report every failure.** Import-name lists,
+   docstring and doc-citation checks, and option matrices. One test that lists every
+   offender says the same thing with one entry instead of 55.
+5. **A test of a dependency, not of NSM.** `torch.chunk`'s return count, `torch.clamp`'s
+   gradient, CUDA seed ordering.
+6. **Vacuous tests**, e.g. `assert isinstance([1, 2], list)`.
+7. **History in docstrings.** "Was a strict xfail" and "until Aug 2026 it did X" are
+   already recorded in `KNOWN_ISSUES.md` § History and in git. Measurements that a test
+   depends on stay (rule 3).
+
+**Permanent code:** no library change. One addition to `test_docs_references.py`: cited
+test names (`TestX`, `test_x.py`) must resolve. About 15 lines. The slice renames and
+merges many test classes, and nothing currently checks those citations (Surprises).
+Nothing transitional.
+
+**Verification:**
+
+- Coverage: `pytest --cov=NSM` after each commit. It must stay at 86% or above, and any
+  line that loses coverage must be one I chose to drop.
+- Citations: the new check runs in every commit after the first.
+- Wall clock and count: `pytest --durations=15`, recorded in the State block at the end.
+
+**Order:** one commit per test package. `testing/NSM/` top level, then `configs`, `datasets`,
+`mesh`, `models`, `reconstruct`, `regression`, `train`. Last comes the State update.
 
 ### Step Close — retire this plan
 
