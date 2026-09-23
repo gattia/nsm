@@ -301,6 +301,13 @@ Proposed: *research-only, no production caller.* Wrong on the caller half for bo
   whole-joint list (§ History 27). The refusal keeps the second from being silent; this
   ruling is why the first goes with it rather than being special-cased back in. Pinned
   by `test_cartilage_func.TestTheMeshListLength`.
+- **The original cartilage mesh is required but not read** (ruled 2026-09-22).
+  `compare_cart_thickness` takes `orig_meshes = [bone, cartilage]` but only uses the bone:
+  the original's thickness comes from arrays already on the bone mesh. The cartilage slot
+  stays because both lists must have the same layout. `reconstruct_mesh` calls every
+  validator as `func(sampled["orig_mesh"], meshes)`, and removing the slot from one side
+  would change the slicing in `_whole_joint`. Pinned by
+  `test_cartilage_func.TestTheOriginalCartilageIsNeverRead`.
 - `predictive_validation_class.py` is called from `reconstruct/main.py`. It is the only
   latent-to-factor regression validator. **Research.** Its seam defect —
   `reconstruct.get_mean_errors` passed the whole result dict to `Regress.add_latent`
@@ -456,7 +463,7 @@ place so its removal happens in one reviewed pass over its module, not as a driv
 
 Two rows retired 2026-08-24: `tune_reconstruction` and
 `compute_correlation_coefficient` were deleted by their deferred-to pass — §8.0.E's
-work over `reconstruct/main.py` (branch `wandb-optional`; CHANGELOG Unreleased
+work over `reconstruct/main.py` (branch `wandb-optional`; CHANGELOG v0.3.0
 § Breaking), zero callers re-verified at deletion.
 
 **Ruled kept despite zero callers:**
@@ -524,8 +531,8 @@ Two things about that surface are load-bearing and undocumented:
    `latent_fit._recon_loss` `break`s out of the surface loop under an in-code TODO that says
    outright "it assumes the first surface is the bone / only of interest". Since §8.0.K it
    is no longer *silent*: that break and the `None`-ground-truth `continue` beside it log at
-   `warning` to whatever the host configured, where before they were gated behind the
-   deprecated `verbose` flag.
+   `warning` to whatever the host configured. Before, they were hidden unless `verbose`
+   was set (a flag removed in v0.4.0).
    A deliberate, written-down design compromise, not a defect to file — it is recorded
    here because it is one more instance of the positional-surface-identity contract this
    section owns, and any surface-naming fix must cover it.

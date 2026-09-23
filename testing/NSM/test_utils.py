@@ -234,11 +234,11 @@ class TestWriteOnce:
 
     def test_the_report_names_every_diverging_key_and_no_other(self, running_config, caplog):
         """
-        Was a strict xfail. Three diverging keys out of the shipped config's 123: the report is a set, not a
-        sample, and it must not sweep in the 120 that agree.
+        Was a strict xfail. Three diverging keys out of the running config's hundred-odd:
+        the report is a set, not a sample, and it must not sweep in the rest, which agree.
 
-        Only multi-token keys are searched for. Sixteen of the 123 are ordinary words --
-        ``device``, ``cache``, ``seed``, ``padding``, ``verbose`` -- which any wording of
+        Only multi-token keys are searched for. A dozen or so are ordinary words --
+        ``device``, ``cache``, ``seed``, ``padding``, ``profiler`` -- which any wording of
         the message could contain innocently, so scanning for those would assert the prose
         rather than the report.
         """
@@ -285,7 +285,7 @@ class TestNonSerialisableValues:
         The measurement that decides where the log belongs.
 
         The reported symptom is real, but its production instance is benign and singular:
-        of the 123 keys a run carries, the only one that cannot be serialised is
+        of the keys a run carries, the only one that cannot be serialised is
         ``lr_schedules``, the dict of schedule objects the trainer writes back into the
         caller's config at ``train_deep_sdf:123`` -- and its source, ``LearningRateSchedule``,
         is on disk regardless. So the log rides with the write, once per run, and a warning
@@ -540,9 +540,9 @@ class TestCheckpointList:
 
 #: Every public name bound in ``NSM.utils``. Frozen the way
 #: ``test_train_import_compat`` freezes the trainer's: removing one is a deliberate,
-#: changelogged decision, and adding one should be visible in a diff. ``honour_verbose``
-#: is a leaked re-import from ``._verbose_deprecation`` and is listed for the same reason
-#: that file lists ``os`` and ``torch`` -- because it is importable, not because it is API.
+#: changelogged decision, and adding one should be visible in a diff. It lists ``os`` and
+#: ``torch`` for the same reason that one does -- because they are importable, not because
+#: they are API.
 PUBLIC_NAMES = [
     "ConstantLearningRateSchedule",
     "LATENT_GROUP_NAME",
@@ -563,7 +563,6 @@ PUBLIC_NAMES = [
     "get_latent_vecs",
     "get_learning_rate_schedules",
     "get_optimizer",
-    "honour_verbose",
     "is_jsonable",
     "resolve_schedule_targets",
     "save_latent_vectors",

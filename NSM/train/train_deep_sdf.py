@@ -360,7 +360,6 @@ def _run_validation(config, model):
         convergence=config["convergence_type_recon"],
         convergence_patience=config["convergence_patience_recon"],
         # log_wandb
-        verbose=config["verbose"],
         objects_per_decoder=config["objects_per_decoder"],
         get_rand_pts=config["get_rand_pts_recon"],
         n_pts_random=config["n_pts_random_recon"],

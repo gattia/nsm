@@ -16,6 +16,7 @@ out at the sphere's diameter — the ray cast passes clean through. The *value* 
 artifact; only its constancy is used, and no assertion here depends on the number.
 """
 
+import inspect
 import json
 import os
 
@@ -218,49 +219,53 @@ class TestFuncKeysAcrossSubjects:
         assert result["cart_thick_11_orig_mean"] == pytest.approx(1.5)
 
 
-class TestRegionsLabel:
+class TestTheRegionArrayNameIsNotAChoice:
     """
-    The transfer honours ``regions_label``; the read ignores it. pymskt's
-    ``get_cart_thickness_mean``/``_std`` open ``self.get_scalar("labels")`` with the name
-    hardcoded, so no other value can work — and no caller passes one:
-    ``get_mean_errors`` invokes these functions with two positional arguments.
+    The region array must be named ``labels``: pymskt's ``get_cart_thickness_mean`` and
+    ``_std`` read that name. The ``regions_label`` parameter, removed in v0.4.0, never
+    worked with any other value.
     """
 
-    def test_the_default_scores_normally(self):
+    def test_the_hardcoded_name_scores_normally(self):
         orig_meshes, recon_meshes = _pair()
         result = compare_cart_thickness(orig_meshes, recon_meshes, cart_regions=(11,))
         assert set(result) == REGION_11_KEYS
         assert not any(np.isnan(value) for value in result.values())
 
-    @pytest.mark.parametrize("also_label_it_labels", [False, True])
-    def test_a_non_default_name_is_refused_by_name(self, also_label_it_labels):
+    @pytest.mark.parametrize(
+        "function",
+        [
+            compare_cart_thickness,
+            compare_cart_thickness_tibia,
+            compare_cart_thickness_patella,
+            compare_cart_thickness_femur,
+            compare_cart_thickness_whole_joint,
+        ],
+    )
+    def test_none_of_the_five_takes_it_any_more(self, function):
+        assert "regions_label" not in inspect.signature(function).parameters
+
+    def test_an_original_labelled_under_another_name_fails_at_the_read(self):
         """
-        Both arrangements raised ``KeyError: 'labels'`` before, from opposite sides. With
-        the original carrying only the alternative name it is the original's read that
-        fails; with the original carrying **both**, the read of the original succeeds and
-        the copy lands on the reconstruction under the caller's name, so it is the
-        reconstruction's read that fails. There is no arrangement that works.
+        pymskt raises ``KeyError`` naming ``labels``, the name to rename the array to.
         """
         orig_bone = _original_bone(label_name="cart_regions")
-        if also_label_it_labels:
-            orig_bone.point_data["labels"] = orig_bone.point_data["cart_regions"]
-        with pytest.raises(ValueError, match="regions_label"):
+        with pytest.raises(KeyError, match="labels"):
             compare_cart_thickness(
                 [orig_bone, _plain(1.1)],
                 [_plain(1.0), _plain(1.1)],
                 cart_regions=(11,),
-                regions_label="cart_regions",
             )
 
 
 class TestTheOriginalCartilageIsNeverRead:
     """
-    ``orig_bone, orig_cart = orig_meshes`` and ``orig_cart`` is never referenced again.
-    The original's thickness is read off the array it arrived with; only the
-    reconstruction's is computed at this call. ``CLAUDE.md`` and #20 both say the fix for
-    an unread argument is to delete it, not to honour it — honouring this one, by
-    computing the original's thickness here, would move every ``orig_mean`` the function
-    has ever reported.
+    ``orig_cart`` is unpacked and never used: the original's thickness comes from arrays
+    already on the original bone. Computing it here instead would change every
+    ``orig_mean`` ever reported.
+
+    The slot stays because the original and reconstructed lists share one layout
+    (``docs/SCOPE.md`` §2.5). The slot is required; its contents are not read.
     """
 
     @pytest.mark.parametrize("substitute", [None, "not a mesh at all", 7])

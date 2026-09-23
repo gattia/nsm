@@ -56,7 +56,7 @@ def _require_meshes(caller, n_expected, layout, orig_meshes, recon_meshes):
             )
 
 
-def compare_cart_thickness_tibia(orig_meshes, recon_meshes, regions_label="labels"):
+def compare_cart_thickness_tibia(orig_meshes, recon_meshes):
     """``compare_cart_thickness`` over the two tibial plateaus, for a tibia model."""
     _require_meshes(
         "compare_cart_thickness_tibia",
@@ -69,11 +69,10 @@ def compare_cart_thickness_tibia(orig_meshes, recon_meshes, regions_label="label
         orig_meshes,
         recon_meshes,
         cart_regions=CART_REGIONS_DICT["tibia"],
-        regions_label=regions_label,
     )
 
 
-def compare_cart_thickness_patella(orig_meshes, recon_meshes, regions_label="labels"):
+def compare_cart_thickness_patella(orig_meshes, recon_meshes):
     """``compare_cart_thickness`` over the patellar cartilage, for a patella model."""
     _require_meshes(
         "compare_cart_thickness_patella",
@@ -86,11 +85,10 @@ def compare_cart_thickness_patella(orig_meshes, recon_meshes, regions_label="lab
         orig_meshes,
         recon_meshes,
         cart_regions=CART_REGIONS_DICT["patella"],
-        regions_label=regions_label,
     )
 
 
-def compare_cart_thickness_femur(orig_meshes, recon_meshes, regions_label="labels"):
+def compare_cart_thickness_femur(orig_meshes, recon_meshes):
     """
     ``compare_cart_thickness`` over the five femoral subregions, for a femur model.
 
@@ -108,11 +106,10 @@ def compare_cart_thickness_femur(orig_meshes, recon_meshes, regions_label="label
         orig_meshes,
         recon_meshes,
         cart_regions=CART_REGIONS_DICT["femur"],
-        regions_label=regions_label,
     )
 
 
-def compare_cart_thickness_whole_joint(orig_meshes, recon_meshes, regions_label="labels"):
+def compare_cart_thickness_whole_joint(orig_meshes, recon_meshes):
     """
     All three joints of a six-surface knee model, scored as three independent pairs.
 
@@ -137,21 +134,18 @@ def compare_cart_thickness_whole_joint(orig_meshes, recon_meshes, regions_label=
         orig_meshes[:2],
         recon_meshes[:2],
         cart_regions=CART_REGIONS_DICT["femur"],
-        regions_label=regions_label,
     )
 
     tib_results = compare_cart_thickness(
         orig_meshes[2:4],
         recon_meshes[2:4],
         cart_regions=CART_REGIONS_DICT["tibia"],
-        regions_label=regions_label,
     )
 
     pat_results = compare_cart_thickness(
         orig_meshes[4:6],
         recon_meshes[4:6],
         cart_regions=CART_REGIONS_DICT["patella"],
-        regions_label=regions_label,
     )
 
     dict_results.update(fem_results)
@@ -201,7 +195,6 @@ def compare_cart_thickness(
     orig_meshes,
     recon_meshes,
     cart_regions=CART_REGIONS,
-    regions_label="labels",
 ):
     """
     Score one bone/cartilage pair: mean and standard-deviation thickness per region.
@@ -217,21 +210,12 @@ def compare_cart_thickness(
     the original bone's -- scores the whole key set NaN, the same answer
     ``compute_recon_loss`` gives the same subject.
 
-    ``regions_label`` is refused unless it is ``"labels"``: pymskt's readers hardcode that
-    name, so no other value has ever worked. It is kept only until the v0.4.0 signature
-    change (plan §8.0.S) removes it.
+    The region array on the original bone must be named ``"labels"``: pymskt's
+    ``get_cart_thickness_mean`` and ``get_cart_thickness_std`` read that name and it
+    cannot be changed.
 
     A ``BoneMesh`` or ``CartilageMesh`` argument is **mutated** -- see ``_as_mesh``.
     """
-    if regions_label != "labels":
-        raise ValueError(
-            f"regions_label={regions_label!r} cannot work. The transfer honours it, but "
-            "pymskt's BoneMesh.get_cart_thickness_mean and .get_cart_thickness_std both "
-            'read get_scalar("labels") with the name hardcoded, so the region array must '
-            'be called "labels" on the original mesh and on the reconstruction. Rename '
-            "the array on the original mesh instead."
-        )
-
     _require_meshes("compare_cart_thickness", 2, "bone, cartilage", orig_meshes, recon_meshes)
 
     orig_bone, orig_cart = orig_meshes
@@ -260,7 +244,7 @@ def compare_cart_thickness(
     recon_cart = _as_mesh(CartilageMesh, recon_cart)
     orig_bone = _as_mesh(BoneMesh, orig_bone)
 
-    recon_bone.copy_scalars_from_other_mesh_to_current(orig_bone, orig_scalars_name=regions_label)
+    recon_bone.copy_scalars_from_other_mesh_to_current(orig_bone, orig_scalars_name="labels")
 
     recon_bone.list_cartilage_meshes = recon_cart
     recon_bone.calc_cartilage_thickness()

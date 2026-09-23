@@ -55,8 +55,6 @@ except ModuleNotFoundError:
 today_date = datetime.now().strftime("%b_%d_%Y")
 
 
-from .._verbose_deprecation import honour_verbose
-
 # Moved to .utils / .mesh_sampling in the §8.0 decomposition (slice A) and re-imported
 # here permanently: NSM.datasets and NSM.datasets.sdf_dataset are both live import
 # paths for these names (reconstruct/main.py uses both), so they are public API of
@@ -219,7 +217,6 @@ class SDFSamples(torch.utils.data.Dataset):
             scale, so each subject comes out at the reference's size: between-subject
             size does not survive registration, under scale_jointly or otherwise.
             Defaults to None.
-        verbose (bool, optional): Whether to print verbose output. Defaults to False.
         equal_pos_neg (bool, optional): Draw half of every batch from positive-SDF
             samples and half from negative, instead of uniformly. Defaults to True.
         fix_mesh (bool, optional): Whether to fix the meshes (using meshfix). Defaults to True.
@@ -264,7 +261,6 @@ class SDFSamples(torch.utils.data.Dataset):
         never hit again, so an old cache directory is reclaimable disk.
     """
 
-    @honour_verbose
     def __init__(
         self,
         list_mesh_paths,
@@ -285,7 +281,6 @@ class SDFSamples(torch.utils.data.Dataset):
         load_cache=True,
         random_seed=None,
         reference_mesh=None,
-        verbose=False,
         equal_pos_neg=True,
         fix_mesh=True,
         print_filename=False,
@@ -349,7 +344,6 @@ class SDFSamples(torch.utils.data.Dataset):
         self.loc_save = loc_save
         self.random_seed = random_seed
         self.reference_mesh = reference_mesh
-        self.verbose = verbose
         self.equal_pos_neg = equal_pos_neg
         self.fix_mesh = fix_mesh
         self.load_cache = load_cache
@@ -410,9 +404,8 @@ class SDFSamples(torch.utils.data.Dataset):
 
         self.data = []
         # Wrap this loading loop in a multiprocessing pool
-        # This gate survives the §8.0.N ungating deliberately: log arguments evaluate
-        # eagerly, and sched_getaffinity is a probe run solely to be logged.
-        if self.verbose is True:
+        # Guarded so sched_getaffinity only runs when DEBUG is on.
+        if logger.isEnabledFor(logging.DEBUG):
             try:
                 logger.debug("CPU affinity:%s", os.sched_getaffinity(0))
             except AttributeError:
@@ -1249,7 +1242,6 @@ class MultiSurfaceSDFSamples(SDFSamples):
           the surface the point was drawn around.
     """
 
-    @honour_verbose
     def __init__(
         self,
         list_mesh_paths,
@@ -1270,7 +1262,6 @@ class MultiSurfaceSDFSamples(SDFSamples):
         load_cache=True,
         random_seed=None,
         reference_mesh=None,
-        verbose=False,
         equal_pos_neg=True,
         fix_mesh=True,
         print_filename=False,
@@ -1334,7 +1325,6 @@ class MultiSurfaceSDFSamples(SDFSamples):
             load_cache=load_cache,
             random_seed=random_seed,
             reference_mesh=reference_mesh,
-            verbose=verbose,
             equal_pos_neg=equal_pos_neg,
             fix_mesh=fix_mesh,
             print_filename=print_filename,

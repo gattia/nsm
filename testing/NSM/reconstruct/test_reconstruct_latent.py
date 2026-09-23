@@ -16,7 +16,7 @@ from NSM.reconstruct.main import latent_norm_penalty
 # The output must depend on ``latent`` so the autograd graph remains intact
 # when reconstruct_latent backprops through this mock (xyz has no grad).
 class MockDecoder(torch.nn.Module):
-    def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+    def forward(self, x=None, latent=None, xyz=None, epoch=None):
         if x is not None:
             return x[:, :1]
         # Kwargs path: ensure the output depends on ``latent`` so grad flows
@@ -113,7 +113,7 @@ class TwoSurfaceDecoder(torch.nn.Module):
         super().__init__()
         self.scale = scale
 
-    def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+    def forward(self, x=None, latent=None, xyz=None, epoch=None):
         base = xyz[:, :1] * 0.01 + latent.sum() * self.scale
         return torch.cat([base, 2.0 * base], dim=1)
 

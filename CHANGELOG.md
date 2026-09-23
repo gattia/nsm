@@ -23,242 +23,147 @@ code still work?"* — that is about API. A change can warrant an entry in both.
 package), so pin the tag directly:
 
 ```
-nsm @ git+https://github.com/gattia/nsm@v0.3.0
+nsm @ git+https://github.com/gattia/nsm@v0.4.0
 ```
 
 ---
 
-## Unreleased
+## v0.4.0
+
+**Before upgrading:** if you pass `verbose=` to anything in NSM, delete it. It now raises
+`TypeError`. To see NSM's output, configure logging instead:
+`logging.basicConfig(level=logging.INFO)`, or `logging.getLogger("NSM").setLevel(logging.DEBUG)`
+with a handler. (The v0.3.0 `DeprecationWarning` was hidden by Python's default filter
+unless NSM was called from `__main__`, so you may not have seen it.)
+
+The long signatures of `reconstruct_mesh`, `reconstruct_latent`, `create_mesh_adaptive`
+and `create_mesh` are not shortened in this release. That waits for the config redesign,
+so callers only have to change once.
 
 ### Breaking
 
-- **The `two_stage` model type is removed** (plan §8.0.P). `NSM.models.TwoStageDecoder`,
-  `load_model(..., model_type="two_stage")`, its loader branch and its config template are
-  all gone, and `list_supported_models()` now returns `["triplanar", "deepsdf",
-  "implicit"]`. It had **zero training runs, ever** — no launcher script, no saved run
-  config, and neither measured consumer imports it — and until
-  [#46](https://github.com/gattia/nsm/issues/46) the class was not constructible at all,
-  so no checkpoint of it can exist outside this repo. `docs/SCOPE.md` §2.9 records the
-  ruling and the resurrection path; `v0.3.0` holds the last copy. The `implicit` type is
-  **not** removed — the maintainer ruled on 2026-09-04 that it stays, as the
-  ShapeMed-Knee paper's modulated-periodic-activations baseline.
+- **`verbose=` is removed from every function that took it**
+  ([#58](https://github.com/gattia/nsm/issues/58)), including `reconstruct_mesh`,
+  `reconstruct_latent`, `create_mesh_adaptive`, `create_mesh` and the `SDFSamples`
+  constructors. `NSM/_verbose_deprecation.py` is deleted.
+  - Log records are no longer hidden behind the flag, so the logging level alone decides
+    what you see. Some are `WARNING` or `INFO`, so a host at default levels may see new
+    output. The most common is `create_mesh` warning when a surface's SDF never crosses
+    zero, which is normal for a decoder early in training.
+  - `config["verbose"]` is no longer read. Configs that contain it still load. It is
+    removed from `default_config.json`.
 
-- **`roundtrip_distance` and `forward_backward_disagreement` are keyword-only**
-  ([#56](https://github.com/gattia/nsm/issues/56), plan §8.0.N). The two take *the same two arrays in opposite order*, forty
-  lines apart in `mesh/correspondence_metrics.py`, and neither swap was visible in what a
-  caller reads: `roundtrip_distance` is `norm(rt - orig)`, symmetric, so swapping it is a
-  no-op; `forward_backward_disagreement` sign-flips `field` and leaves
-  `magnitude_percentiles` identical. A positional call is now a `TypeError`. The values
-  are unchanged. `directed_distance_percentiles` is **not** included and keeps its
-  positional signature — it is asymmetric and documented as directional, so a swap there
-  changes the number rather than hiding.
+- **`reconstruct_latent`'s `pts_surface` is required.** Its default was `None`, which the
+  function has always rejected. It now comes right after `sdf_gt`, so positional
+  arguments after it shift by one. A call that passes them positionally fails with a
+  `ValueError` rather than running with the wrong values.
 
-- **`SDFSamples.load_mesh_step` no longer takes `verbose`** (plan §8.0.N). Its last reader
-  was a `logger.debug` gated on the flag; ungating that left the parameter accepted and
-  never read, which is the trap this project deletes rather than keeps. The internal
-  `_process_meshes_for_wandb` lost the same parameter for the same reason. Both are called
-  only from inside NSM, under public entry points that still accept and honour `verbose`.
+- **`Decoder` and `TriplanarDecoder` raise `TypeError` on unknown keyword arguments**
+  ([#26](https://github.com/gattia/nsm/issues/26)). Before, a misspelled keyword was
+  ignored and the model was built with that parameter's default. For `padding` this
+  silently changes where the decoder samples its feature planes. `load_model` is not
+  affected. `Decoder`'s four removed arguments (`xyz_in_all`, `latent_noise_sigma`,
+  `norm_layers`, `latent_dropout`) keep their existing messages.
 
-- **The cartilage validation functions check their mesh list's length** (plan §8.0.N′).
-  `compare_cart_thickness_tibia`, `_patella` and `_femur` each took `orig_meshes[:2]` and
-  nothing checked what they sliced from: measured, a six-mesh whole-joint list into
-  `compare_cart_thickness_tibia` scored the **femur's** pair against the tibial region
-  indices and returned NaN for every one, exit 0. The three now require exactly two meshes
-  and `compare_cart_thickness_whole_joint` exactly six, with the layout each assumes in
-  the message. A two-surface run — both shipped ShapeMedKnee configs — is unaffected, and
-  a whole-joint list into the wrong single-joint wrapper was already producing NaN
-  (`docs/KNOWN_ISSUES.md` § History 27). One previously *working* shape is removed with
-  them: `compare_cart_thickness_femur` on a femur-first list of more than two surfaces
-  sliced the correct pair and scored it. Ruled fixed-layout by design (maintainer,
-  2026-08-30): these validators were built to monitor the ShapeMedKnee femur
-  bone+cartilage training runs, and a model with another surface layout gets its own
-  named `DICT_VALIDATION_FUNCS` entry when a case needs one — `docs/SCOPE.md` §2.5.
+- **`reconstruct_latent` no longer accepts `max_batch_size`.** It has done nothing since
+  the chunked forward pass was removed; use `n_samples_per_chunk`
+  ([#75](https://github.com/gattia/nsm/issues/75)). `reconstruct_mesh`'s
+  `batch_size_latent_recon` is unchanged.
 
-- **`regions_label` is refused unless it is `"labels"`** (plan §8.0.N′). It was honoured at
-  the scalar transfer and ignored at the read — pymskt's `get_cart_thickness_mean` and
-  `_std` both open `get_scalar("labels")` with the name hardcoded — so every other value
-  already raised `KeyError: 'labels'`, from the original's side or the reconstruction's
-  depending on which arrays the original carried. This only decides which exception and
-  whether it says why. Deleting the parameter is scheduled for v0.4.0 (plan §8.0.S).
+- **`regions_label` is removed from the five `compare_cart_thickness` functions.** Any
+  value other than `"labels"` always failed, because pymskt reads the region array by
+  that fixed name. To use a differently named array, rename it to `labels` on the
+  original mesh.
+
+- **The cartilage validation functions check how many meshes they get.**
+  `compare_cart_thickness_tibia`, `_patella` and `_femur` require exactly two (bone,
+  cartilage); `compare_cart_thickness_whole_joint` requires six. Before, a six-mesh list
+  passed to `_tibia` silently scored the femur pair and returned NaN for every region
+  (`docs/KNOWN_ISSUES.md` § History 27). Two-surface models, including both shipped
+  ShapeMedKnee configs, are unaffected. See `docs/SCOPE.md` §2.5.
+
+- **`roundtrip_distance` and `forward_backward_disagreement` take keyword arguments only**
+  ([#56](https://github.com/gattia/nsm/issues/56)). The two take the same two arrays in
+  opposite order, and swapping them gave no visible error. Values are unchanged.
+
+- **The `two_stage` model type is removed.** `TwoStageDecoder`,
+  `load_model(..., model_type="two_stage")` and its config template are gone. It was
+  never trained and, until [#46](https://github.com/gattia/nsm/issues/46), could not be
+  constructed. `implicit` stays. See `docs/SCOPE.md` §2.9.
+
+- **The multi-head trainer (`NSM/train/train_deep_sdf_multi_head.py`) is removed**
+  ([#51](https://github.com/gattia/nsm/issues/51)). A bug meant only its last decoder
+  ever trained (`docs/KNOWN_ISSUES.md` § History 2), so no existing result depends on
+  it. See `docs/SCOPE.md` §2.1.
 
 ### Changed
 
-- **`NSM/train/train_deep_sdf_multi_head.py` is removed** (plan §8.0.P,
-  [#51](https://github.com/gattia/nsm/issues/51) closed). `NSM.train.train_deep_sdf_multi_head`
-  is gone and `NSM.train.__all__` is `["train_deep_sdf", "utils"]`. It was not a model type
-  — no class, just a training loop taking `models: tuple`, N ordinary decoders against one
-  shared latent. **Only its last decoder ever trained** (`KNOWN_ISSUES.md` § History 2, a
-  two-identifier bug open since 2023), so no run on disk depends on the capability it
-  advertised. 47% of its non-comment lines were verbatim copies of `train_deep_sdf.py`, and
-  its last feature work was Jan 2025. `v0.3.0` holds the last copy; `docs/SCOPE.md` §2.1
-  holds the ruling and the revival path.
+- **`NSM/train/deprecated/` is deleted.** Nothing imported it.
 
-  **One side effect worth knowing about.** Its `train_epoch` was the only function under
-  `NSM/train/` that took `verbose=`, and the only one carrying `@honour_verbose`, so **no
-  function in that package accepts `verbose=` any more**. `train_deep_sdf` and its
-  `train_epoch` never did — verified: both raise `TypeError` on it, and did before this
-  change too — so nothing that worked stops working. What it means is that the `verbose=`
-  bridge, which Step S deletes at v0.4.0, no longer reaches `NSM/train/` at all.
-
-- **The four `sample_difficulty_lx*` config keys are removed** (plan §8.0.P,
-  [#18](https://github.com/gattia/nsm/issues/18), closed won't-fix). `sample_difficulty_lx`,
-  `_schedule`, `_cooldown` and `_epsilon` have shipped in `default_config.json` since 2023
-  and have been read by nothing on a supported path since Feb 2024. **Removing them changes
-  no result** — a config that still carries them is not refused, and nothing reads them
-  either way.
-
-  #18 proposed porting the inverse-Lx weighting they configure out of `train/deprecated/`
-  instead. It was read rather than ported, and rejected: the form is NSM's own rather than
-  Curriculum DeepSDF's — the paper has two components, surface accuracy and sample
-  difficulty, and both are already implemented — it was switched off by its author in
-  Feb 2024 after four months, no shipped model was trained with it, and its weight was
-  built from the loss it multiplied without being detached, so the gradient inverted above
-  error 0.01 at the documented `lx=2`. `docs/SCOPE.md` §2.2 holds the ruling;
-  `docs/KNOWN_ISSUES.md` § History 31 holds the measurements and says which runs are
-  affected.
-
-- **`NSM/train/deprecated/` is deleted** (plan §8.0.P). 880 lines in two files,
-  quarantined since Aug 2025 with no importer, no `__init__.py` and so no place in the
-  coverage denominator. `train_deep_sdf_multi_surface_orig.py` was a strict subset of
-  `train_deep_sdf.py`; `train_deep_sdf_orig.py` held the only live copy of the inverse-Lx
-  sample weighting, which is removed rather than ported — see the entry below. Nothing
-  imported either file, so nothing that worked stops working; `v0.3.0` holds the last copy
-  of both.
-
-- **The shipped `default_config.json` sheds four keys nothing reads and renames a fifth**
-  (plan §8.0.R). `entity`, `modulated`, `cache` and `n_val` are deleted — the spellings
-  that are actually read (`entity_name`, `load_cache`) already ship alongside two of them,
-  `modulated` is not the loader's `modulation`, and `n_val` names nothing anywhere.
-  `seed: 52122` becomes **`random_seed`**, the `MultiSurfaceSDFSamples` parameter it was
-  always meant to be translated into. Nothing NSM runs reads any of the five, so no result
-  moves; a caller who built a dataset by hand from this file and passed `seed=` was already
-  passing an argument the constructor does not have. All six were hidden from §8.0.N's
-  sweep by matching each key as a *substring* of any live source — `n_val` inside
-  `_run_validation`, `modulated` inside `modulated_periodic_activations` — and the sweep
-  now matches string literals.
+- **`default_config.json` cleanup.** None of these changes a result, and older configs
+  that still carry the old keys keep working.
+  - The four `sample_difficulty_lx*` keys are removed. Nothing has read them since Feb
+    2024. [#18](https://github.com/gattia/nsm/issues/18), which proposed reviving the
+    weighting they configured, is closed won't-fix: that weighting had a gradient bug
+    (`docs/KNOWN_ISSUES.md` § History 31, `docs/SCOPE.md` §2.2).
+  - `entity`, `modulated`, `cache`, `n_val`, `decoder_type` and `sdf_skip_connection`
+    are removed. Nothing read them.
+  - `seed` is renamed to `random_seed`, the name `MultiSurfaceSDFSamples` uses.
+  - Six dataset keys are renamed to match the `MultiSurfaceSDFSamples` arguments:
+    `n_pts_per_object` → `n_pts`, `percent_near_surface` → `p_near_surface`,
+    `percent_further_from_surface` → `p_further_from_surface`, `random_function` →
+    `rand_function`, `normalize_pts` → `norm_pts`, `dataset_uniform_pts_buffer` →
+    `uniform_pts_buffer` (`docs/KNOWN_ISSUES.md` § History 6).
 
 - **A `two_stage` config's `layer_split`, `progressive_add_depth`, `conv_pred_sdf` and
-  `sum_conv_output_features` now reach the model** (plan §8.0.R). All four are read by
-  `_get_triplanar_params` or `_get_deepsdf_params` and accepted by the constructor;
-  `_get_two_stage_params`' inline branch named none of them. Each is read at the default
-  the branch produced by omission, so a config that does not set the key builds exactly
-  the model it built before — a config that *does* set one gets what it asked for, which
-  changes that model. See `docs/KNOWN_ISSUES.md` § History 30 for whether a run you have
-  is affected.
+  `sum_conv_output_features` now reach the model.** They were ignored before. This changes
+  the model only for a config that set one of them (`docs/KNOWN_ISSUES.md` § History 30).
 
-- **`chamfer_norm` and `sigma_rand_pts` have one default each** ([#56](https://github.com/gattia/nsm/issues/56), plan
-  §8.0.N). `compute_recon_loss`'s `chamfer_norm` goes 1 → **2**, matching `get_mean_errors`
-  and `reconstruct_mesh`; `reconstruct_mesh`'s `sigma_rand_pts` goes 0.001 → **0.01**,
-  matching `get_mean_errors` and the shipped config's `sigma_rand_pts_recon`. Both take the
-  value the ShapeMedKnee configuration already uses.
-
-  `chamfer_norm` changes no result on any NSM path: `train_deep_sdf.py` passes the argument
-  commented out and no shipped config carries the key, so every run has always taken
-  `get_mean_errors`' 2 and forwarded it explicitly. `sigma_rand_pts` **can** change a
-  result — see `docs/KNOWN_ISSUES.md` § History 29. `compute_chamfer(power=1)` is the same
-  knob under a fourth name and deliberately does not move: it is a generic distance helper,
-  1 is the textbook Chamfer definition, and its one NSM caller always passes the value
-  explicitly.
-
-- **Eight keys in the shipped `default_config.json`** (plan §8.0.N, §6.1). NSM never builds
-  a dataset from a config — `train_deep_sdf(config, model, sdf_dataset)` takes one already
-  built — so the dataset half of that file is a specification the caller translates into
-  `MultiSurfaceSDFSamples` arguments by hand, and six keys spelled that parameter
-  differently from the constructor while eighteen others did not. Renamed to the
-  constructor's spelling, values unchanged: `n_pts_per_object` → `n_pts`,
-  `percent_near_surface` → `p_near_surface`, `percent_further_from_surface` →
-  `p_further_from_surface`, `random_function` → `rand_function`, `normalize_pts` →
-  `norm_pts`, `dataset_uniform_pts_buffer` → `uniform_pts_buffer`. `decoder_type` and
-  `sdf_skip_connection` named nothing on either `model_type` path and are deleted. Nothing
-  in NSM reads either spelling, so no run changes; a config on disk keeps working, and
-  § History 6 says which spelling it will carry.
-
-- **The `verbose` flag no longer suppresses log records** (plan §8.0.N, completing §8.0.G).
-  Fifty-eight `logger.*` calls across eight modules sat inside `if verbose:`, so they were
-  gated twice — once by the level the host configured and once by a parameter the host does
-  not know exists. A host that configured `DEBUG` and asked for NSM's output now gets it.
-  Nothing new is emitted; what changes is that it arrives — **and not only at `DEBUG`**:
-  9 of the 58 are `WARNING` and 2 are `INFO`, so a host at default levels sees new output
-  too. The loud case is `mesh/main._finish_meshes`, which logs four warnings per surface
-  whose SDF does not cross zero — the ordinary state of a decoder early in training, which
-  is when validation runs. Those warnings were always *deserved* at their level (a missing
-  surface is a finding, not a trace); what was wrong before is that a host had no way to
-  receive them without a flag it could not see.
+- **`chamfer_norm` and `sigma_rand_pts` now have the same default everywhere**
+  ([#56](https://github.com/gattia/nsm/issues/56)). `compute_recon_loss`'s `chamfer_norm`
+  goes from 1 to 2, and `reconstruct_mesh`'s `sigma_rand_pts` from 0.001 to 0.01, matching
+  `get_mean_errors` and the shipped config. The `chamfer_norm` change affects no NSM
+  path. The `sigma_rand_pts` change can: see `docs/KNOWN_ISSUES.md` § History 29.
 
 ### Fixed
 
-- **Four config values refuse instead of dividing by zero** (plan §8.0.R). A `Step`
-  schedule with `Interval: 0`, a `Warmup` with `Length: 0`, `code_regularization_warmup: 0`
-  and a config with no `additional_checkpoints` each raised from arithmetic, somewhere
-  other than where the config was read — the warmup surfaced from inside the batch split
-  loop as `ZeroDivisionError: division by zero`, naming neither the key nor a remedy. Each
-  now refuses with the working spelling in the message (`"Factor": 1` for no decay,
-  `Type: "Constant"` for no warmup, `code_regularization_weight: 0` for no
-  regularization, `[]` for no extra checkpoints), and the two schedules refuse at
-  construction, while `get_learning_rate_schedules` is still reading the config. Every one
-  of these already crashed, so no result changes.
+- **Zero-valued config settings raise a clear error instead of `ZeroDivisionError`.**
+  This applies to a `Step` schedule with `Interval: 0`, a `Warmup` with `Length: 0`,
+  `code_regularization_warmup: 0`, and a missing `additional_checkpoints`. Each message
+  gives the setting to use instead.
 
-- **`reconstruct_latent` can reconstruct an MLP model** (plan §7.5b). It called
-  `decoder(latent=..., xyz=...)` unconditionally, which `TriplanarDecoder` accepts and
-  `deep_sdf.Decoder.forward(input_, epoch=None)` does not, so reconstructing any MLP model
-  raised `TypeError: forward() got an unexpected keyword argument 'latent'` on the first
-  batch — through `reconstruct_mesh` and through `get_mean_errors`, the validation hook the
-  training loop calls. It now dispatches on the decoder's signature and falls back to the
-  concatenated `[latent, xyz]` form, which is what `NSM/mesh/main.py` has always done.
-  Present since before the refactor and invisible because production ships only triplanar
-  models. **No result changes**: the keyword interface is still called with keywords, and
-  the path that raised produced nothing to change.
+- **`reconstruct_latent` works with MLP (`deepsdf`) models.** It used to raise
+  `TypeError` on the first batch, because it always called the decoder with `latent=` and
+  `xyz=` keywords, which only `TriplanarDecoder` accepts.
 
-- **`compute_recon_loss` no longer downcasts the caller's meshes — a mixed-dtype pair is
-  aligned on copies instead** ([#55](https://github.com/gattia/nsm/issues/55), plan §8.0.N;
-  corrected by plan §7.5a's compatibility check). Under `calc_assd=True` it set
-  `point_coords` to `float32` in place on both the reconstruction and the caller's ground
-  truth, under a comment reading "make sure the points for the meshes are the same types".
-  The mutation is gone, but the comment's reason was real: mskt 0.1.19 (the knee-pipeline
-  production environment) hands both dtypes straight to `point_cloud_utils`, which raises
-  `ValueError` on a mixed pair — and the production path always produces one, because
-  the knee pipeline's input meshes carry float64 points on disk while the reconstruction
-  arrives float32 from marching cubes. Deleting the cast outright (the first form of this change) broke every
-  production `calc_assd` call for the one day `main` carried it. A mixed pair is now
-  upcast to float64 on copies: the caller's meshes stay untouched, the upcast is exact,
-  and the value matches what mskt 0.1.21 (which casts inside `pcu_sdf`) computes. See
-  `docs/KNOWN_ISSUES.md` § History 28 for who is affected.
+- **`compute_recon_loss` no longer changes the caller's meshes to float32.** When the two
+  meshes have different dtypes, it now upcasts copies to float64 instead
+  ([#55](https://github.com/gattia/nsm/issues/55), `docs/KNOWN_ISSUES.md` § History 28).
 
-- **The `sdf_gt` preprocess no longer rewrites the caller's list** ([#55](https://github.com/gattia/nsm/issues/55), plan
-  §8.0.N). `reconstruct_latent_preprocess_sdf_gt` assigned the clamped, device-moved
-  tensors back into the list it was handed and returned that list;
-  `reconstruct_latent_sdf_gt_type_check` passed the caller's object straight through. Both
-  build a new list now. The values are unchanged. This also makes the `tuple` the type
-  check has always advertised usable — the index assignment raised `TypeError: 'tuple'
-  object does not support item assignment` at every call before it.
+- **`reconstruct_latent_preprocess_sdf_gt` no longer modifies the list it is given**
+  ([#55](https://github.com/gattia/nsm/issues/55)). Passing a tuple, which used to raise,
+  now works.
 
-- **`interpolate_mesh` and `interpolate_points` state whether they mutate**
-  ([#55](https://github.com/gattia/nsm/issues/55), plan §8.0.N). `interpolate_mesh` advances the caller's mesh in place and
-  returns that object, by design; `interpolate_points` does not touch its input and returns
-  a new array. The contract was written only on the private engine both call. No behaviour
-  change.
+- **`interpolate_mesh` and `interpolate_points` document whether they modify their
+  input** ([#55](https://github.com/gattia/nsm/issues/55)). `interpolate_mesh` moves the
+  caller's mesh in place; `interpolate_points` does not. Behaviour is unchanged.
 
-- **A surface the decoder did not produce no longer kills the process** (plan §8.0.N′).
-  `create_mesh` leaves a surface's slot `None` when its SDF does not cross zero — the
-  ordinary state of a decoder early in training, which is when validation runs — and
-  `compare_cart_thickness` passed that `None` to `CartilageMesh`, which builds a 0-point
-  mesh that `vtkOBBTree` dies on: measured, **exit 139, `SIGSEGV`**, uncatchable, taking
-  the training run with it. It is now scored `np.nan` across the whole key set, which is
-  what `compute_recon_loss` has always done with the same input.
+- **A missing reconstructed surface no longer crashes the process.** `create_mesh` returns
+  `None` for a surface whose SDF never crosses zero. `compare_cart_thickness` passed that
+  to pymskt, which segfaulted and ended the training run. It now scores NaN.
 
-- **A subject missing a structure can be scored** (plan §8.0.N′, `docs/SCOPE.md` §2.5b).
-  `compute_recon_loss` guarded the reconstructed mesh against `None` and read the original
-  unguarded on the next line, so `calc_symmetric_chamfer` or `calc_assd` raised
-  `AttributeError: 'NoneType' object has no attribute 'point_coords'`. Both are `true` in
-  the shipped `default_config.json`, so the capability §2.5b rules supported was
-  unreachable through `get_mean_errors`, the only production caller. The missing surface
-  now scores `nan` and the others score normally.
+- **A subject missing a structure can be scored.** `compute_recon_loss` raised
+  `AttributeError` when the original mesh was `None` with `calc_symmetric_chamfer` or
+  `calc_assd` on. That surface now scores NaN and the others score normally
+  (`docs/SCOPE.md` §2.5b).
 
-- **A degenerate first validation subject no longer loses the validation function's
-  metrics** (plan §8.0.N′). `get_mean_errors` created each `func_` key's list only on
-  subject 0, which contributes none when its reconstruction has no zero level set, so the
-  next subject with results raised `KeyError`. It fired on the order of the validation
-  set.
+- **`get_mean_errors` no longer raises `KeyError` when the first validation subject has
+  no reconstructed surface.**
+
+### Added
+
+- **`NSM.mesh` exposes its four submodules:** `correspondence_metrics`, `interpolate`,
+  `refine_mesh` and `triangle_metrics`. Before, `import NSM.mesh` did not load them.
 
 ---
 

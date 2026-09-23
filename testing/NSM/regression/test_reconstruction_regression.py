@@ -511,7 +511,7 @@ class NoZeroLevelSetDecoder(torch.nn.Module):
     keyword ``latent``/``xyz``, with the legacy concatenated form as a fallback.
     """
 
-    def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+    def forward(self, x=None, latent=None, xyz=None, epoch=None):
         n_points = xyz.shape[0] if xyz is not None else x.shape[0]
         return torch.ones(n_points, 2)
 

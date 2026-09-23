@@ -20,7 +20,6 @@ try:
 except ImportError:
     wandb = None
 
-from .._verbose_deprecation import honour_verbose
 from .predictive_validation_class import Regress
 from .utils import compute_chamfer  # , compute_assd
 
@@ -163,7 +162,6 @@ def compute_recon_loss(
     return result
 
 
-@honour_verbose
 def get_mean_errors(
     mesh_paths,
     decoders,
@@ -189,7 +187,6 @@ def get_mean_errors(
     register_similarity=False,
     scale_all_meshes=True,
     model_type="deepsdf",
-    verbose=False,
     objects_per_decoder=1,
     latent_optimizer_name="adam",
     get_rand_pts=False,
@@ -255,7 +252,6 @@ def get_mean_errors(
             "convergence": convergence,
             "convergence_patience": convergence_patience,
             "objects_per_decoder": objects_per_decoder,
-            "verbose": verbose,
             "latent_optimizer_name": latent_optimizer_name,
             "get_rand_pts": get_rand_pts,
             "n_pts_random": n_pts_random,

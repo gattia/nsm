@@ -34,7 +34,6 @@ sdf_dataset = MultiSurfaceSDFSamples(
     scale_method="max_rad",
     random_seed=52122,
     reference_mesh=0,
-    verbose=True,
     save_cache=False,
     equal_pos_neg=True,
     fix_mesh=False,

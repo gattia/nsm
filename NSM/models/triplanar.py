@@ -20,7 +20,6 @@ import torch
 from torch import nn
 from torch.nn.functional import grid_sample
 
-from .._verbose_deprecation import honour_verbose
 from .deep_sdf import Decoder, get_activation
 
 logger = logging.getLogger(__name__)
@@ -293,7 +292,6 @@ class TriplanarDecoder(nn.Module):
         sum_sdf_features=True,
         conv_pred_sdf=False,
         padding=0.1,
-        **kwargs,
     ):
         super(TriplanarDecoder, self).__init__()
 
@@ -460,8 +458,7 @@ class TriplanarDecoder(nn.Module):
 
         return xy_new[None, :, None, :]
 
-    @honour_verbose
-    def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+    def forward(self, x=None, latent=None, xyz=None, epoch=None):
         """
         Forward pass through the triplanar decoder.
 
@@ -470,7 +467,6 @@ class TriplanarDecoder(nn.Module):
             latent: Single latent vector (D,) or (1,D) - for fast inference
             xyz: Query points (N,3) - for fast inference
             epoch: Current training epoch (for logging)
-            verbose: Whether to print debug information
 
         Note:
             - Use either x OR (latent + xyz), not both
@@ -509,10 +505,8 @@ class TriplanarDecoder(nn.Module):
                     "Cannot specify both x and (latent, xyz). Use one interface or the other."
                 )
 
-            # This gate survives the §8.0.N ungating deliberately: log arguments
-            # evaluate eagerly, and the two CUDA memory queries below are device
-            # probes inside forward().
-            if verbose:
+            # Guarded so the CUDA memory queries below only run when DEBUG is on.
+            if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("Triplanar.forward()")
                 logger.debug("Epoch: %s", epoch)
                 logger.debug("Device: %s", x.device)

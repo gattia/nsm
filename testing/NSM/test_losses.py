@@ -103,7 +103,6 @@ def _one_epoch(**config_overrides):
         "code_cyclic_anneal": False,
         "n_epochs": 1,
         "grad_clip": None,
-        "verbose": False,
         "log_latent": None,
         "latent_size": 8,
         "latent_bound": 10,

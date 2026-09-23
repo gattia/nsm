@@ -141,12 +141,10 @@ def adjust_learning_rate(initial_lr, optimizer, iteration, decreased_by, adjust_
 def refuse_unknown_kwargs(kwargs, *, function_name, deprecated=()):
     """Raise on any keyword ``function_name`` neither names nor deprecates.
 
-    Both public entry points take a ``**kwargs`` that reads one key and swallowed the
-    rest, so a misspelling among dozens of near-synonymous parameter names ran with the
-    intended parameter's default and said nothing at all. One implementation because it
-    is one defect: ``reconstruct_mesh`` (58 named parameters, deprecating
-    ``batch_size_latent_recon``) and ``reconstruct_latent`` (38, deprecating
-    ``max_batch_size``). See ``docs/KNOWN_ISSUES.md`` § History 20.
+    Used by ``reconstruct_mesh`` and ``reconstruct_latent``. Before this, their
+    ``**kwargs`` silently ignored misspelled parameters. The error message includes a
+    migration hint for known old config keys. ``reconstruct_mesh`` still accepts
+    ``batch_size_latent_recon`` as ``deprecated``. See ``docs/KNOWN_ISSUES.md`` § History 20.
     """
     unknown = sorted(set(kwargs) - set(deprecated))
     if unknown:

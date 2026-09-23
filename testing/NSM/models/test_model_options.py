@@ -15,15 +15,19 @@ strict xfails name which one. The option values come from
 from, plus the values ``NSM/configs/default_config.json`` actually ships.
 """
 
+import inspect
+
 import pytest
 import torch
 
+from NSM.models.deep_sdf import DELETED_DECODER_ARGUMENTS, Decoder
 from NSM.models.loader import (
     _get_deepsdf_params,
     _get_implicit_params,
     _get_triplanar_params,
     get_model_config_template,
 )
+from NSM.models.triplanar import TriplanarDecoder
 
 #: Small enough that the whole matrix runs in about a second, large enough that the
 #: DeepSDF branch has the eight hidden layers ``PROGRESSIVE_PARAMS`` indexes (5, 6, 7).
@@ -409,3 +413,58 @@ def test_implicit_options_forward(block_type, modulation):
 def test_implicit_final_activations_forward(final_activation):
     forwarded = build_and_forward("implicit", final_activation=final_activation)
     assert forwarded.shape == (N_POINTS, 1)
+
+
+# --- what the two constructors do not name -----------------------------------
+
+
+class TestUnknownConstructorKeywordsAreRefused:
+    """
+    Until v0.4.0 both constructors silently ignored unknown keywords, so a misspelled
+    parameter built the model at its default. For ``padding`` that means sampling the
+    feature planes at the wrong scale, with no error (#26). ``load_model`` always passes
+    known keys; this covers direct construction, which kneepipeline uses.
+    """
+
+    def test_deepsdf_refuses_a_misspelled_key(self):
+        with pytest.raises(TypeError, match="paddding"):
+            Decoder(latent_size=LATENT, dims=[16, 16], paddding=0.35)
+
+    def test_triplanar_refuses_a_misspelled_key(self):
+        with pytest.raises(TypeError, match="paddding"):
+            TriplanarDecoder(
+                latent_dim=LATENT, conv_hidden_dims=[16], sdf_hidden_dims=[16], paddding=0.35
+            )
+
+    @pytest.mark.parametrize("deleted", sorted(DELETED_DECODER_ARGUMENTS))
+    def test_the_four_deleted_arguments_keep_their_own_answers(self, deleted):
+        """
+        These keep their own messages in ``Decoder.__init__``. A falsy value, which every
+        NSM config ships, is still accepted.
+        """
+        assert Decoder(latent_size=LATENT, dims=[16, 16], **{deleted: None}) is not None
+
+    def test_the_production_consumers_keys_are_all_named(self):
+        """
+        The 15 keys kneepipeline passes to ``TriplanarDecoder`` (``steps/run_nsm.py:112``)
+        are all real parameters.
+        """
+        named = set(inspect.signature(TriplanarDecoder.__init__).parameters)
+        consumer_keys = {
+            "latent_dim",
+            "n_objects",
+            "conv_hidden_dims",
+            "conv_deep_image_size",
+            "conv_norm",
+            "conv_norm_type",
+            "conv_start_with_mlp",
+            "sdf_latent_size",
+            "sdf_hidden_dims",
+            "sdf_weight_norm",
+            "sdf_final_activation",
+            "sdf_activation",
+            "sdf_dropout_prob",
+            "sum_sdf_features",
+            "conv_pred_sdf",
+        }
+        assert consumer_keys - named == set()

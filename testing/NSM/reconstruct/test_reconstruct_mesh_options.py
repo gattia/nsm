@@ -139,7 +139,7 @@ class SphereDecoder(torch.nn.Module):
     — keyword ``latent``/``xyz`` — like the harness's ``NoZeroLevelSetDecoder``.
     """
 
-    def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+    def forward(self, x=None, latent=None, xyz=None, epoch=None):
         pts = xyz if xyz is not None else x[:, -3:]
         sdf = torch.norm(pts, dim=1, keepdim=True) - 0.5
         if latent is not None:

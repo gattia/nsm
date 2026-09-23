@@ -124,6 +124,23 @@ place that shape occurs before proposing a fix.
 found hard to reason about are self-soothing. Error text that restates a document it
 already links to is padding. Keep what the reader cannot look up.
 
+### Writing
+
+Applies to `docs/`, `CHANGELOG.md`, plans, docstrings, comments, commit messages and PR
+descriptions.
+
+- **Short, plain sentences.** Say what changed, what the reader must do, and why, then stop.
+  One fact per sentence.
+- **No double negatives or inverted phrasing.** Write "`orig_cart` is required but not
+  read", not "stays in the list although nothing reads it".
+- **Don't narrate the process** ("measured rather than argued", "re-ran the claim rather
+  than inheriting it", "which is the point"). Give the result.
+- **Name things.** Not "item (4)" or "§8.0.N′" outside the plan that defines them.
+- **Say it once.** No restating a fact for emphasis, and no history of how a doc got
+  corrected. Git has that.
+- **CHANGELOG entries are for users upgrading:** what changed and what to do, in two to
+  four sentences, with a link for detail.
+
 ### Plans
 
 A plan for a non-trivial change should state, before any code:

@@ -21,7 +21,6 @@ except ImportError:
 
 from NSM.losses import EIKONAL_UNSUPPORTED, eikonal_loss
 
-from .._verbose_deprecation import honour_verbose
 from .utils import adjust_learning_rate, refuse_unknown_kwargs
 
 logger = logging.getLogger(__name__)
@@ -65,8 +64,7 @@ def _decode(decoder, latent, xyz):
     return decoder(torch.cat([latent.expand(xyz.shape[0], -1), xyz], dim=1))
 
 
-@honour_verbose
-def reconstruct_latent_sdf_gt_type_check(sdf_gt, verbose=False):
+def reconstruct_latent_sdf_gt_type_check(sdf_gt):
     """Normalise ``sdf_gt`` to a list of per-surface tensors, one entry per surface.
 
     A single tensor or array is wrapped; a list or tuple is copied into a new list
@@ -104,14 +102,11 @@ def reconstruct_latent_sdf_gt_type_check(sdf_gt, verbose=False):
     return sdf_gt
 
 
-@honour_verbose
-def reconstruct_latent_pts_surface_type_check(pts_surface, verbose=False, device="cuda"):
+def reconstruct_latent_pts_surface_type_check(pts_surface, device="cuda"):
     """Return ``pts_surface`` as a tensor on ``device``.
 
     Unlike the ``sdf_gt`` check above, this one raises ``ValueError`` rather than a
-    bare ``Exception``, and it rejects ``None`` -- so ``reconstruct_latent``'s
-    ``pts_surface=None`` default declares optional a parameter that has never been
-    (a signature correction deferred to the next release boundary).
+    bare ``Exception``, and it rejects ``None``.
     """
     if isinstance(pts_surface, (list, tuple)):
         pts_surface = torch.tensor(pts_surface).to(device)
@@ -163,8 +158,7 @@ def reconstruct_latent_get_lr_update_freq(n_lr_updates, num_iterations):
     return adjust_lr_every
 
 
-@honour_verbose
-def reconstruct_latent_preprocess_sdf_gt(sdf_gt, clamp_dist, device="cuda", verbose=False):
+def reconstruct_latent_preprocess_sdf_gt(sdf_gt, clamp_dist, device="cuda"):
     """Clamp each surface's SDF samples to ±``clamp_dist`` and move them to ``device``.
 
     Clamping is what makes the fit match training: the decoder was trained against
@@ -571,19 +565,13 @@ def _normalized_choice(value, *, allowed, parameter):
     return normalized
 
 
-#: The only keyword ``reconstruct_latent`` takes without naming it, left over from the
-#: chunked forward removed in 4583246; it is warned about where it is read. Issue #75 is
-#: the capability that went with it, and its replacement is a named parameter.
-_DEPRECATED_KWARGS = frozenset({"max_batch_size"})
-
-
-@honour_verbose
 def reconstruct_latent(
     decoders,
     num_iterations,
     latent_size,
     xyz,  # Nx3
     sdf_gt,  # Nx1 or list of Nx1
+    pts_surface,  # N, the surface each xyz/sdf_gt row belongs to
     loss_type="l1",
     lr=5e-4,
     loss_weight=1.0,
@@ -598,14 +586,12 @@ def reconstruct_latent(
     convergence_patience=50,
     log_wandb=False,
     log_wandb_step=10,
-    verbose=False,
     optimizer_name="adam",
     n_samples=None,
     max_n_samples=None,  # 100000,
     n_steps_sample_ramp=None,  # 200,
     n_samples_per_chunk=None,  # #75: split the step's forward+backward into chunks
     difficulty_weight=None,
-    pts_surface=None,
     latent_norm=None,
     device="cuda",
     eikonal_weight=0.0,  # Weight for eikonal loss (0 to disable)
@@ -652,7 +638,7 @@ def reconstruct_latent(
     Returns:
         (loss, latent): the final loss value and the fitted latent tensor.
     """
-    refuse_unknown_kwargs(kwargs, function_name="reconstruct_latent", deprecated=_DEPRECATED_KWARGS)
+    refuse_unknown_kwargs(kwargs, function_name="reconstruct_latent")
 
     # All three used to be `if`/`elif` chains with no `else`. Two left `optimizer` or
     # `loss_fn` unassigned and surfaced 100 lines later as an UnboundLocalError naming a
@@ -680,19 +666,11 @@ def reconstruct_latent(
     if log_wandb and wandb is None:
         raise ImportError("log_wandb=True requires wandb, which is not installed")
 
-    # Check for deprecated parameters
-    if "max_batch_size" in kwargs:
-        logger.warning(
-            "max_batch_size is deprecated and will be removed in future versions. Batch processing has been simplified and now processes all data at once for better performance."
-        )
-
     if eikonal_weight > 0:
         raise NotImplementedError(EIKONAL_UNSUPPORTED)
 
-    sdf_gt = reconstruct_latent_sdf_gt_type_check(sdf_gt, verbose=verbose)
-    pts_surface = reconstruct_latent_pts_surface_type_check(
-        pts_surface, verbose=verbose, device=device
-    )
+    sdf_gt = reconstruct_latent_sdf_gt_type_check(sdf_gt)
+    pts_surface = reconstruct_latent_pts_surface_type_check(pts_surface, device=device)
     decoders = reconstruct_latent_decoders_type_check(decoders)
 
     # print info about xyz
@@ -709,9 +687,7 @@ def reconstruct_latent(
     else:
         n_samples_init = None
 
-    sdf_gt = reconstruct_latent_preprocess_sdf_gt(
-        sdf_gt, clamp_dist, device=device, verbose=verbose
-    )
+    sdf_gt = reconstruct_latent_preprocess_sdf_gt(sdf_gt, clamp_dist, device=device)
 
     # A subsampled objective is redrawn on every loss evaluation, which is what gives the
     # fit its coverage of the point cloud (see `_select_samples`). LBFGS evaluates the loss

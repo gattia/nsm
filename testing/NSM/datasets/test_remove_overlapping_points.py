@@ -22,7 +22,7 @@ def _run(rows):
         "gt_sdf": torch.tensor(rows, dtype=torch.float32),
         "xyz": torch.zeros(len(rows), 3),
     }
-    shim = SimpleNamespace(verbose=False)
+    shim = SimpleNamespace()
     out, removed = MultiSurfaceSDFSamples.remove_overlapping_points(shim, data)
     return out, int(removed)
 

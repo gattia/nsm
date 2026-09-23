@@ -48,6 +48,13 @@ PROGRESSIVE_PARAMS = {
 }
 
 
+#: Removed :class:`Decoder` arguments that ``__init__`` still answers with their own
+#: message. Any other unknown keyword raises ``TypeError``.
+DELETED_DECODER_ARGUMENTS = frozenset(
+    {"xyz_in_all", "latent_noise_sigma", "norm_layers", "latent_dropout"}
+)
+
+
 class Decoder(nn.Module):
     """MLP decoder: ``[latent, xyz] -> sdf`` per object, optionally with skips.
 
@@ -65,9 +72,8 @@ class Decoder(nn.Module):
     * ``progressive_add_depth`` phases later blocks in over training, which makes
       ``forward`` depend on ``epoch``; it raises if the epoch is not supplied.
 
-    ``**kwargs`` exists only to refuse or warn on parameters that were accepted and
-    never read (``xyz_in_all``, ``latent_noise_sigma``, ``norm_layers``,
-    ``latent_dropout``); it is not an extension point.
+    ``**kwargs`` exists only to answer the four removed arguments in
+    ``DELETED_DECODER_ARGUMENTS``. Any other unknown keyword raises ``TypeError``.
     """
 
     def __init__(
@@ -144,6 +150,10 @@ class Decoder(nn.Module):
                     "longer be built here -- pin NSM < 0.3.0 to load such a checkpoint. "
                     "Under weight_norm=True the key was always a no-op."
                 )
+
+        unknown = sorted(set(kwargs) - DELETED_DECODER_ARGUMENTS)
+        if unknown:
+            raise TypeError(f"Decoder() got unexpected keyword arguments: {unknown}")
 
         self._activation_ = activation
         self._final_activation_ = final_activation

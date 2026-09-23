@@ -31,8 +31,6 @@ from NSM.datasets import read_mesh_get_sampled_pts, read_meshes_get_sampled_pts
 from NSM.datasets.sdf_dataset import combine_meshes
 from NSM.mesh import create_mesh_adaptive
 
-from .._verbose_deprecation import honour_verbose
-
 # The .latent_fit, .wandb_logging and .recon_evaluation imports re-serve definitions
 # moved out in the §8.0.C and §8.0.E splits. Public API, not scaffolding:
 # ``NSM.reconstruct`` (star-import of this module) and ``NSM.reconstruct.main`` are both
@@ -117,7 +115,6 @@ def _build_reference_mesh(
     recon_grid_origin,
     batch_size,
     device,
-    verbose,
 ):
     """The decoder's mean shape -- its zero-latent surface -- for a subject to register to.
 
@@ -137,7 +134,6 @@ def _build_reference_mesh(
         search_bounds=(-recon_grid_origin, recon_grid_origin),
         objects=objects_per_decoder[decoder_to_scale],
         batch_size=batch_size,
-        verbose=verbose,
         device=device,
     )
 
@@ -250,7 +246,6 @@ def _assemble_result(
     return_registration_params,
     return_timing,
     log_wandb,
-    verbose,
 ):
     """``reconstruct_mesh``'s return value, in whichever of its two forms the flags ask for.
 
@@ -301,7 +296,7 @@ def _assemble_result(
 
     if log_wandb is True:
         # Prepare and log results to wandb with 3D point cloud visualization
-        result_wandb = prepare_results_for_wandb(result, verbose=verbose)
+        result_wandb = prepare_results_for_wandb(result)
         wandb.log(result_wandb)
         logger.debug("done wandb stuff")
 
@@ -313,7 +308,6 @@ def _assemble_result(
     return result
 
 
-@honour_verbose
 def reconstruct_mesh(
     path,
     decoders,
@@ -344,7 +338,6 @@ def reconstruct_mesh(
     mesh_to_scale=0,  # int index, or list of indices to combine for joint registration
     decoder_to_scale=0,  # PRETTY MUCH ASSUME ALWAYS SCALING FIRST DECODER
     scale_method="max_rad",
-    verbose=False,
     objects_per_decoder=1,
     latent_optimizer_name="adam",
     get_rand_pts=False,
@@ -478,7 +471,6 @@ def reconstruct_mesh(
                 recon_grid_origin=recon_grid_origin,
                 batch_size=batch_size,
                 device=device,
-                verbose=verbose,
             )
             if register_to_mean
             else None
@@ -524,8 +516,6 @@ def reconstruct_mesh(
             "log_wandb": log_wandb,
             "convergence": convergence,
             "convergence_patience": convergence_patience,
-            "verbose": verbose,
-            # "max_batch_size" parameter removed - now handled automatically
             "optimizer_name": latent_optimizer_name,
             "n_samples": n_samples_latent_recon,
             "n_samples_per_chunk": n_samples_per_chunk_latent_recon,
@@ -571,7 +561,6 @@ def reconstruct_mesh(
                 scale=sampled["scale"],
                 icp_transform=sampled["icp_transform"],
                 objects=objects_per_decoder[decoder_idx],
-                verbose=verbose,
                 device=device,
                 batch_size=batch_size,
             )
@@ -601,5 +590,4 @@ def reconstruct_mesh(
         return_registration_params=return_registration_params,
         return_timing=return_timing,
         log_wandb=log_wandb,
-        verbose=verbose,
     )

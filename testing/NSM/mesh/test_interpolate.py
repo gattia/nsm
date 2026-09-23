@@ -36,7 +36,7 @@ class SphereSDF(nn.Module):
         self.sdf_scale = sdf_scale
         self._param = nn.Parameter(torch.zeros(1))
 
-    def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+    def forward(self, x=None, latent=None, xyz=None, epoch=None):
         if x is not None:
             latent = x[:, : self.d_lat]
             xyz = x[:, self.d_lat :]

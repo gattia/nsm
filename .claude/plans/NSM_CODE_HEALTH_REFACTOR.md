@@ -21,67 +21,56 @@ under the same number.
 
 ## State
 
-**Updated:** 2026-09-22 · **Status:** open
+**Updated:** 2026-09-23 · **Status:** open
 
-- **Next:** **Slice S.** Steps 0 and P are closed and nothing gates S. Start by re-reading
-  Step S's item table below — item (1) is no longer in it (ruled 2026-09-22), so S is six
-  items and a tag.
-- **Blocked on:** nothing. Both maintainer decisions are ruled (§ Decisions).
-- **Done:** Phases 0–3 complete. Eighteen slices executed, A through R, each with its own
-  PR. v0.2.0 (PR #36) and v0.3.0 (§8.0.O) shipped. Both post-v0.3.0 validation runs
-  passed — §7.5a on the production box (PR #102), §7.5b on the maintainer's cluster
-  (PR #105) — so nothing gates the remaining slices. **§8.0.R merged 2026-09-21 as
-  `d9ae062` (PR #107):** suite 1180 → 1213 passed, net +61 lines in `NSM/`. Per-slice
-  detail is in the history file. **Step 0 closed 2026-09-22:** its last item validated R
-  against production and passed — R moves the production BScore less than re-running the
-  same code does (numbers at the ticked box). **Slice P closed 2026-09-22**, as two merged PRs.
-  **#110** (`2c0a9cf`): delete `train/deprecated/`, remove `two_stage`, sweep six stale
-  references, delete the `sample_difficulty_lx` keys — **#18 closed won't-fix** rather than
-  ported. **#111** (`a7b3351`, stacked): remove the multi-head trainer (**#51 closed**) and
-  close the `grad_clip` entry as working by design. Together **+397 / −2207 across 30
-  files**; `NSM/` 15,106 → 13,555 lines. Suite 1213 → 1180 passed, all removals.
-  Tree pulled and the celery worker restarted 2026-09-22 (PID 986906, stamp now
-  `v0.3.0-84-ga7b3351`).
+- **Next:** **Slice T**, the test-suite trim, the last slice before Step Close. Re-measure
+  the Step T table first; slice S changed it.
+- **Blocked on:** nothing. **Before pulling v0.4.0 into production**, delete
+  `verbose=True` from `kneepipeline/steps/run_nsm.py:211`. Otherwise the next NSM fit
+  raises `TypeError`. That line can be removed now; it is harmless on `main`.
+- **Done:**
+  - Phases 0–3, and slices A–R, each with its own PR. v0.2.0 (PR #36) and v0.3.0 shipped.
+  - Both post-v0.3.0 validation runs passed: §7.5a on the production box (PR #102), §7.5b
+    on the maintainer's cluster (PR #105).
+  - Slice R merged 2026-09-21 (PR #107, `d9ae062`).
+  - Step 0 closed 2026-09-22. Slice R changes the production BScore by less than
+    re-running the same code does.
+  - Slice P closed 2026-09-22 (PRs #110 `2c0a9cf`, #111 `a7b3351`): `train/deprecated/`,
+    `two_stage` and the multi-head trainer deleted; #18 closed won't-fix; #51 closed.
+    `NSM/` 15,106 → 13,555 lines. Production tree pulled and worker restarted (stamp
+    `v0.3.0-84-ga7b3351`).
+  - Slice S done 2026-09-22 on `slice-s-v0-4-0-signatures` (PR #113). See Step S.
+    `NSM/` 13,555 → 13,326 lines; suite 1180 → 1177 passed. v0.4.0 is tagged after merge.
 - **Surprises:**
-  - **A slice can close a finding in the same breath as deferring it.** All five
-    `reconstruct_latent` sites §8.0.K deferred to R were already fixed by §8.0.K's own
-    review round and §8.0.J's kwargs refusal. The row recorded the deferral and lost the
-    fix, so R was scheduled to re-fix a "200× step size" that had already moved. **Build a
-    slice row by sweeping what names it, and re-run it before scheduling it.**
-  - **The "accepted and never read" class is empty on the function surface.** Every
-    candidate was a polymorphic hook whose *sibling* implementation reads the parameter, so
-    #20's delete-the-parameter remedy needs judging across every implementation. Every live
-    instance is one frame up, at the config layer, in `models/loader.py`. That finding is
-    what started `NSM_CONFIG_SECTIONS_AND_MODEL_REGISTRY.md`.
-  - **A validation A/B does not need the production tree checked out to the old ref.**
-    §7.5a checked out each ref in the working tree the production worker imports, and made
-    "restore `main`, verified" the last step of every session. Step 0's R validation ran
-    both versions from one tree instead: the old checkout sits in scratch and wins
-    `import NSM` through `PYTHONPATH` plus a `sitecustomize.py` that drops the editable
-    install's meta-path finder, which otherwise beats `PYTHONPATH`. The production tree is
-    never modified, so there is nothing to restore and no window where an arriving job
-    would run the wrong code.
-  - **A deletion slice is mostly a documentation slice, and the sweep needs its own
-    sweep.** P deleted 1,108 lines of `NSM/` and touched 23 files to do it: every carve-out
-    that existed only for the deleted code, every ruling that assumed it (`SCOPE.md` §1,
-    §2.2, §2.6, §2.7, §2.9 and §5, plus the `ARCHITECTURE.md` coverage and duplicate-name
-    tables), and two `KNOWN_ISSUES` entries about code that no longer exists. A History
-    entry outlives the code it describes on purpose — it answers a question about runs —
-    but a *dotted citation* in one does not: `test_docs_references` requires every
-    `module.symbol` in `docs/` to resolve in the current tree, which is a good rule that a
-    deletion slice will trip. **The first pass still missed six**, all prose rather than
-    code: see Step P.
-  - **Porting a feature means reading it, not moving it.** #18 had a maintainer-endorsed
-    "port this" on the issue since Aug 2026, and the first version of P carried it out
-    faithfully — including the defect that had made its author switch it off in Feb 2024,
-    which nothing in the issue, `SCOPE.md` or the plan recorded because nobody had run it.
-    `CLAUDE.md`'s "never inherit a rationale along with the code" is the rule that would
-    have caught it, and what it needs in practice is a *behavioural* check: the four tests
-    the port shipped all passed with and without the one-word fix, because they asserted
-    the forward value and the defect was in the gradient.
-  - **The test suite grew faster than the library it tests.** Slice T was scheduled at a
-    1.02 test-to-source ratio and a 109-second suite; measured 2026-09-21 it is **1.10 and
-    180 seconds**. Every slice since has added to what T was created to trim.
+  - **Deferred items get lost or are already done.** Five `reconstruct_latent` sites
+    deferred to R had already been fixed. In S, one item was already closed by R, and two
+    items deferred to S were missing from its table. Build a slice's item list by
+    searching for everything that names the slice, and re-check each item before
+    scheduling it.
+  - **Nothing checks test names cited in `docs/`.** `KNOWN_ISSUES.md` cited a test class
+    that never existed. `test_docs_references` only checks `NSM/` symbols.
+  - **No function-level "accepted but never read" parameters are left.** Every candidate
+    was a hook whose sibling implementation reads it. The remaining cases are in
+    `models/loader.py`'s config translation, which led to
+    `NSM_CONFIG_SECTIONS_AND_MODEL_REGISTRY.md`.
+  - **An unread item in a list argument is not the same as an unread parameter.**
+    `orig_cart` is never read, but removing it would break the fixed layout that the
+    original and reconstructed mesh lists share (`SCOPE.md` §2.5).
+  - **A `DeprecationWarning` does not reach an unpinned consumer.** Python hides it
+    outside `__main__`, so kneepipeline never saw the `verbose=` deprecation. For that
+    consumer, tell its maintainer directly.
+  - **An A/B validation can run without checking out the old ref in production.** Put
+    the old checkout in scratch and put it first with `PYTHONPATH` plus a
+    `sitecustomize.py` that removes the editable install's import finder. The production
+    tree is never touched, so there is nothing to restore.
+  - **Deleting code is mostly a docs job, and the first sweep misses things.** P touched
+    23 files and still left six stale references, all in prose. Search prose for the
+    deleted name, and check any count a sentence states.
+  - **Read a feature before porting it.** The first version of P ported #18's weighting,
+    including the gradient bug that made its author switch it off. The port's tests
+    checked the forward value, so they passed with and without the fix.
+  - **The test suite grows faster than the library.** T was scheduled at a 1.02
+    test-to-source ratio; it is now 1.22.
 
 ---
 
@@ -249,32 +238,42 @@ moves to `SCOPE.md` or the issue closes there. It rides its own PR because #110 
 The working tree is on `main`, so production is not running branch code; after the merge,
 pull and restart the worker.*
 
-### Step S — slice §8.0.S: v0.4.0, the public signatures
+### Step S — slice §8.0.S: v0.4.0, the public signatures — **done 2026-09-22, PR #113**
 
-Six Breaking items earlier slices deferred to §8.0.O by name. v0.4.0 is already scheduled
-by something else — `NSM/_verbose_deprecation.py` says *delete at v0.4.0* and v0.3.0
-existing is what makes that due — so these do not need a boundary invented for them.
+Release v0.4.0: the breaking changes earlier slices deferred, plus deleting the `verbose=`
+bridge, which `NSM/_verbose_deprecation.py` scheduled for v0.4.0. Nothing in the PR bumps
+a version; the maintainer tags after merge.
 
-**Re-measured 2026-09-21**, because the row's numbers were a year of slices old:
+Each item was re-checked against `main` at `1e5fd4a` before starting.
 
-| Item | State today |
+| Item | Outcome |
 |---|---|
-| (1) the four public signatures as one set | `reconstruct_mesh` **59** named + `**kwargs`, `reconstruct_latent` **39** + `**kwargs`, `create_mesh_adaptive` **26**, `create_mesh` **17**. The row said 58 and 38. |
-| (2) `reconstruct_latent(pts_surface=None)` | still present — a default that declares optional a parameter the type check has always rejected |
-| (3) the `lbfgs_*` prefix decision | read them on both paths or delete the non-tested non-hybrid path; a signature call either way. `docs/KNOWN_ISSUES.md` § Open records the hybrid path as unvalidated |
-| (4) refuse unknown `**kwargs` on `Decoder` / `TriplanarDecoder` | still open, and #107 asserted the config path to it: a misspelled key in a `two_stage` config's `triplanar_params` block builds at the default `padding=0.1` and says nothing |
-| (5) delete `max_batch_size` | still accepted-and-warned, `NSM/reconstruct/latent_fit.py:684` |
-| (6) submodule imports in `NSM/mesh/__init__.py` | **derive the rationale before doing it.** The row itself says this looks additive rather than Breaking and that §8.0.I never said why it needs the boundary. If it is additive, it does not belong in S. |
-| (7) the `verbose` bridge | delete `NSM/_verbose_deprecation.py` and the 13 sites it decorates. Its own header names v0.4.0 as the delete-when condition. |
+| Shrink the four long public signatures | Not in S. Moved to `NSM_CONFIG_SECTIONS_AND_MODEL_REGISTRY.md` (§ Decisions) |
+| `reconstruct_latent(pts_surface=None)` | Now required. `None` was always rejected |
+| `lbfgs_*` prefix decision | Already fixed in R. Only a docs fix: `KNOWN_ISSUES.md` cited a test class that does not exist |
+| `Decoder` / `TriplanarDecoder` ignore unknown `**kwargs` | Now raise `TypeError`. The config path to this went with `two_stage`; direct construction is what is left. kneepipeline's 15 keys are all real parameters |
+| `max_batch_size` | Deleted. `reconstruct_mesh`'s `batch_size_latent_recon` stays; kneepipeline passes it |
+| `compare_cart_thickness`'s `regions_label` | Deleted. Only `"labels"` ever worked |
+| `compare_cart_thickness`'s unread `orig_cart` | **Kept** (see Diverged) |
+| `NSM.mesh` submodule imports | Added. It removes nothing, so it is not breaking |
+| `verbose=` bridge | Deleted: 27 decorated functions plus 4 private ones. `config["verbose"]` is no longer read and is removed from `default_config.json` |
 
-**One item on the old row is already done and should not be re-attempted.** It listed
-§8.0.N's keyword-only `roundtrip_distance` / `directed_distance_percentiles` pair as
-joining S. Verified 2026-09-21: `roundtrip_distance` and `forward_backward_disagreement`
-are keyword-only on `main` today, and `directed_distance_percentiles` was deliberately
-excluded because it is asymmetric, so a swap there changes the number rather than hiding.
-That landed in §8.0.N and the CHANGELOG already carries it.
+Permanent code added: +39 lines (budget +60). Suite 1177 passed, 4 skipped, 3 xfailed.
 
-Then **tag v0.4.0**.
+**Diverged:**
+- **`orig_cart` stays.** The plan was to delete it. It is not a parameter but the second
+  item in a list, and the original and reconstructed lists must have the same layout.
+  Removing it from one side changes `_whole_joint`'s slicing. Ruling in `SCOPE.md` §2.5.
+- **Two tests could no longer fail and were changed.** The check that no
+  `reconstruct_mesh` log call is gated on `verbose` was deleted. The observability check
+  now looks for any log call gated on a function's own parameter, whatever its name. It
+  was confirmed by adding such a gate and seeing it fail.
+- **`verbose` was also removed from `default_config.json`**, following P's precedent for
+  unread keys. Configs that contain it still load.
+
+**Owed outside this repo:** delete `verbose=True` from `kneepipeline/steps/run_nsm.py:211`
+before pulling v0.4.0 into production. To keep NSM's debug output, set
+`logging.getLogger("NSM").setLevel(logging.DEBUG)`.
 
 ### Step T — slice §8.0.T: trim the test suite
 
@@ -294,16 +293,15 @@ EOF
 python -m pytest testing -q --durations=15
 ```
 
-| | Scheduled (2026-08-29) | 2026-09-21 | After slice P (2026-09-22) |
-|---|---|---|---|
-| `testing/` vs `NSM/` lines | 14,770 / 14,460 | 16,685 / 15,104 | **16,316 / 13,555** |
-| ratio | 1.02 | 1.10 | **1.20** |
-| suite wall clock | 109 s | 180 s | **110 s** |
+| | Scheduled (2026-08-29) | 2026-09-21 | After P (2026-09-22) | After S (2026-09-22) |
+|---|---|---|---|---|
+| `testing/` vs `NSM/` lines | 14,770 / 14,460 | 16,685 / 15,104 | 16,316 / 13,555 | **16,208 / 13,326** |
+| ratio | 1.02 | 1.10 | 1.20 | **1.22** |
+| suite wall clock | 109 s | 180 s | 110 s | **110 s** |
 
-**Slice P moved the ratio the wrong way and the clock the right way.** It cut 1,549 source
-lines against 369 test lines, so the ratio T was created to attack is now its worst ever;
-the clock halved because the deletions took slow tests with them. Ten tests are ~50 s of
-the 110; `--durations` names them, and the top three are
+**P and S both raised the ratio.** P cut 1,549 source lines and 369 test lines; S cut
+229 and 108. The suite got faster at P because slow tests were deleted, and has not changed
+since. Ten tests take ~50 s of the 110; `--durations` names them, and the top three are
 `test_dataset_cache.py::TestSeedDerivation::test_multiprocessing_does_not_change_the_data`
 (10.4 s), `test_train_epoch_internals.py::...test_a_mismatched_weighting_is_still_refused_under_O`
 (7.5 s) and four `test_observability.py` subprocess tests at ~6.3 s each.

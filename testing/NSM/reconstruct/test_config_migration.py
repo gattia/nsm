@@ -174,6 +174,7 @@ class TestTheRefusalPointsAtTheMigrator:
                 latent_size=8,
                 xyz=None,
                 sdf_gt=None,
+                pts_surface=[0],
                 grad_tol=1e-5,
             )
 
@@ -189,6 +190,7 @@ class TestTheRefusalPointsAtTheMigrator:
                 latent_size=8,
                 xyz=None,
                 sdf_gt=None,
+                pts_surface=[0],
                 num_iteration=1,
             )
         assert "migrate_reconstruct_config" not in str(excinfo.value)

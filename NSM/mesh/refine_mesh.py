@@ -41,8 +41,6 @@ import numpy as np
 import pyvista as pv
 from vtk.util.numpy_support import numpy_to_vtk
 
-from .._verbose_deprecation import honour_verbose
-
 # get_faces is re-exported deliberately: it used to be defined here, and
 # NSM.mesh.refine_mesh.get_faces is the path callers have always used.
 from .triangle_metrics import TriangleProperties, get_faces
@@ -398,10 +396,7 @@ def subdivide_triangles(mesh, cells_to_divide):
     return mesh_
 
 
-@honour_verbose
-def get_target_cells(
-    mesh, area_threshold=None, length_threshold=None, max_length_threshold=None, verbose=False
-):
+def get_target_cells(mesh, area_threshold=None, length_threshold=None, max_length_threshold=None):
     """
     Get the indices of cells (faces/triangles) in a mesh that meet the criteria for subdivision.
 
@@ -450,9 +445,8 @@ def get_target_cells(
     return cells_to_divide
 
 
-@honour_verbose
 def subdivide_large_triangles(
-    mesh, area_threshold=None, length_threshold=None, max_length_threshold=None, verbose=False
+    mesh, area_threshold=None, length_threshold=None, max_length_threshold=None
 ):
     """
     Subdivide large triangles in a mesh by splitting specified cells (faces/triangles)
@@ -464,15 +458,12 @@ def subdivide_large_triangles(
       means "50% larger than the mean triangle". Triangles above it are subdivided.
     - length_threshold: The maximum:min edge length ratio of a triangle before it is subdivided.
     - max_length_threshold: The maximum edge length of a triangle before it is subdivided.
-    - verbose: Whether to print additional information.
 
     Returns:
     - mesh_: A new PyVista mesh with the specified cells split into 4 sub-triangles.
     """
 
-    cells_to_divide = get_target_cells(
-        mesh, area_threshold, length_threshold, max_length_threshold, verbose=verbose
-    )
+    cells_to_divide = get_target_cells(mesh, area_threshold, length_threshold, max_length_threshold)
 
     mesh_ = subdivide_triangles(mesh, cells_to_divide)
 
@@ -507,14 +498,12 @@ def _warn_if_connectivity_differs(base_mesh, mesh):
         )
 
 
-@honour_verbose
 def subdivide_triangles_on_base_mesh(
     base_mesh,
     mesh,
     area_threshold=None,
     length_threshold=None,
     max_length_threshold=None,
-    verbose=False,
 ):
     """
     Subdivide large triangles in a mesh by splitting specified cells (faces/triangles) on a base mesh.
@@ -530,7 +519,6 @@ def subdivide_triangles_on_base_mesh(
       means "50% larger than the mean triangle". Triangles above it are subdivided.
     - length_threshold: The maximum:min edge length ratio of a triangle before it is subdivided.
     - max_length_threshold: The maximum edge length of a triangle before it is subdivided.
-    - verbose: Whether to print additional information.
 
     Returns:
     - mesh_: A new PyVista mesh copy of the base_mesh with the specified cells split into 4 sub-triangles.
@@ -544,9 +532,7 @@ def subdivide_triangles_on_base_mesh(
     """
     _warn_if_connectivity_differs(base_mesh, mesh)
 
-    cells_to_divide = get_target_cells(
-        mesh, area_threshold, length_threshold, max_length_threshold, verbose=verbose
-    )
+    cells_to_divide = get_target_cells(mesh, area_threshold, length_threshold, max_length_threshold)
 
     n_cells = base_mesh.GetNumberOfCells()
 

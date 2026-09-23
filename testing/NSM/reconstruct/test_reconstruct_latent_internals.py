@@ -21,7 +21,7 @@ a default they did not ask for.
    phase decays its way to exactly 0.0.
 6. **``compute_loss`` resamples on every call** and LBFGS calls it many times per step, so
    the line search optimises a function that moves under it.
-7. **25 of 30 log records are gated behind the deprecated ``verbose`` flag**, three of
+7. **25 of 30 log records were gated behind the deprecated ``verbose`` flag**, three of
    them warnings about the result rather than chatter.
 
 Plus the end-to-end pin the commit-9 extraction and the commit-10 chunking are measured
@@ -61,7 +61,7 @@ class LinearDecoder(torch.nn.Module):
         self.surfaces = surfaces
         self.scale = scale
 
-    def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+    def forward(self, x=None, latent=None, xyz=None, epoch=None):
         pts = xyz if xyz is not None else x[:, -3:]
         base = (pts[:, :1] + latent.sum()) * self.scale
         return base.repeat(1, self.surfaces)
@@ -74,10 +74,10 @@ class RecordingDecoder(LinearDecoder):
         super().__init__(**kwargs)
         self.draws = []
 
-    def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+    def forward(self, x=None, latent=None, xyz=None, epoch=None):
         pts = xyz if xyz is not None else x[:, -3:]
         self.draws.append(round(float(pts.sum()), 9))
-        return super().forward(x=x, latent=latent, xyz=xyz, epoch=epoch, verbose=verbose)
+        return super().forward(x=x, latent=latent, xyz=xyz, epoch=epoch)
 
 
 @contextlib.contextmanager
@@ -134,9 +134,8 @@ MISSPELLINGS = [
 
 class TestUnknownKeywordsAreRefused:
     """
-    ``**kwargs`` is inspected for exactly one key, ``max_batch_size``. Every other key
-    reaches the end of the function unread, so the caller gets the default for the
-    parameter they meant to set and no indication that they had not set it.
+    ``**kwargs`` used to read only ``max_batch_size`` and silently ignore every other key,
+    so a misspelled parameter ran at its default. Unknown keys now raise.
     """
 
     @pytest.mark.parametrize("wrong", MISSPELLINGS)
@@ -149,14 +148,12 @@ class TestUnknownKeywordsAreRefused:
         with pytest.raises(TypeError, match=wrong):
             reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(**{wrong: 999}))
 
-    def test_the_deprecated_key_is_still_accepted(self, caplog):
+    def test_the_last_deprecated_key_is_now_refused_like_any_other(self):
         """
-        ``max_batch_size`` is the one key ``**kwargs`` is *for*. Refusing unknown keys must
-        not refuse it: it warns and runs, as it has since the chunked forward was removed.
+        Removed in v0.4.0; it did nothing. Use ``n_samples_per_chunk`` (#75).
         """
-        with caplog.at_level(logging.WARNING, logger="NSM"):
+        with pytest.raises(TypeError, match="max_batch_size"):
             reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(max_batch_size=1))
-        assert any("max_batch_size is deprecated" in r.getMessage() for r in caplog.records)
 
     def test_reconstruct_mesh_passes_only_parameters_this_signature_names(self):
         """
@@ -176,6 +173,35 @@ class TestUnknownKeywordsAreRefused:
         assert passed, "the reconstruct_inputs scan matched no keys"
         named = set(inspect.signature(reconstruct_latent).parameters)
         assert passed - named == set()
+
+
+# ---------------------------------------------------------------------------
+# 1b. pts_surface is required (v0.4.0, plan Step S item 2)
+# ---------------------------------------------------------------------------
+
+
+class TestPtsSurfaceIsRequired:
+    """
+    Its default was ``None`` until v0.4.0, which the type check always rejected. It now
+    follows ``sdf_gt``, so later positional arguments shift by one. An old positional
+    call puts ``loss_type`` or ``lr`` here, which the type check rejects.
+    """
+
+    def test_omitting_it_is_a_typeerror_at_the_call(self):
+        kwargs = fit_kwargs()
+        del kwargs["pts_surface"]
+        with pytest.raises(TypeError, match="pts_surface"):
+            reconstruct_latent(decoders=LinearDecoder(), **kwargs)
+
+    def test_none_is_still_refused_by_name(self):
+        with pytest.raises(ValueError, match="pts_surface"):
+            reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(pts_surface=None))
+
+    @pytest.mark.parametrize("shifted", ["l1", 5e-4])
+    def test_a_positional_shift_lands_on_a_type_the_check_refuses(self, shifted):
+        """The two values a six-argument positional call would put here, before and after."""
+        with pytest.raises(ValueError, match="pts_surface"):
+            reconstruct_latent(decoders=LinearDecoder(), **fit_kwargs(pts_surface=shifted))
 
 
 # ---------------------------------------------------------------------------
@@ -766,7 +792,7 @@ class TestBothDecoderForwardInterfaces:
         seen = []
 
         class Recording(LinearDecoder):
-            def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+            def forward(self, x=None, latent=None, xyz=None, epoch=None):
                 seen.append(
                     {"x_is_none": x is None, "kwargs_given": latent is not None and xyz is not None}
                 )

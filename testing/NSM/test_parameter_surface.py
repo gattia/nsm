@@ -52,7 +52,7 @@ class _TinyTriplanarInterface(torch.nn.Module):
         super().__init__()
         self.net = torch.nn.Linear(latent_size + 3, 1)
 
-    def forward(self, x=None, latent=None, xyz=None, epoch=None, verbose=False):
+    def forward(self, x=None, latent=None, xyz=None, epoch=None):
         if latent is not None:
             x = torch.cat([latent.expand(xyz.shape[0], -1), xyz], dim=1)
         return self.net(x)

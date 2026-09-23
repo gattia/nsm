@@ -116,7 +116,6 @@ config = {
     "save_frequency": 50,
     "device": "cuda:0",
     "profiler": False,
-    "verbose": True,
     "log_latent": None,
     # loss
     "enforce_minmax": True,

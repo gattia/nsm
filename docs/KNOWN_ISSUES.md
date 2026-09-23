@@ -249,7 +249,7 @@ reproduced as measured.
 resurrect are in `.claude/plans/HYBRID_OPTIMIZER_REPORT.md`.
 
 *Pinned by:* `test_reconstruct_latent_internals.TestTheDrawIsPerEvaluation` and
-`TestTheLbfgsParametersAreReadOnBothPaths`.
+`test_parameter_surface.TestTheDeferredSitesAreClosed::test_the_lbfgs_triple_is_read_on_the_non_hybrid_path`.
 
 ## `reconstruct/cartilage_func.py`
 
@@ -1361,7 +1361,7 @@ used the parameter. Those reconstructions should be re-run.
 | | |
 |---|---|
 | **Affected** | Any `reconstruct_mesh`, `get_mean_errors` or `reconstruct_latent` call that passed a keyword the signature does not name — a misspelling, a renamed parameter, or one copied from a sibling function |
-| **Unaffected** | Calls whose keywords all spell a real parameter, which is every NSM-internal one and kneepipeline's. `batch_size_latent_recon` (`reconstruct_mesh`) and `max_batch_size` (`reconstruct_latent`) were and remain deliberately accepted |
+| **Unaffected** | Calls whose keywords all spell a real parameter, which is every NSM-internal one and kneepipeline's. `batch_size_latent_recon` (`reconstruct_mesh`) is deliberately still accepted. `max_batch_size` (`reconstruct_latent`) was too, until v0.4.0 removed it |
 | **Severity** | Silent — the run completed, reported nothing, and used the default for the parameter the caller believed they had set |
 | **Fixed in** | `reconstruct-mesh-internals`, Aug 2026 (plan §8.0.J); the `reconstruct_latent` site in `latent-fit-internals`, Aug 2026 (plan §8.0.K) |
 
@@ -1656,7 +1656,7 @@ control with no config key, and the fact that no regression test read the value)
 | | |
 |---|---|
 | **Affected** | Runs whose `recon_val_func_name` named `compare_cart_thickness_tibia`, `_patella` or `_femur` while the model produced **more than two surfaces** whose first pair was **not that joint's** bone and cartilage. → Aug 2026 |
-| **Unaffected** | Two-surface models, which is what both shipped ShapeMedKnee configs are; `compare_cart_thickness_femur` on a femur-**first** multi-surface list, which sliced the correct pair and scored it — right numbers by position rather than by contract, a shape the fix removes anyway (ruled fixed-layout by design, `SCOPE.md` §2.5, CHANGELOG § Unreleased *Breaking*); `compare_cart_thickness_whole_joint`, which took its own slices; every metric other than `cart_thick_*`; and everything about the weights |
+| **Unaffected** | Two-surface models, which is what both shipped ShapeMedKnee configs are; `compare_cart_thickness_femur` on a femur-**first** multi-surface list, which sliced the correct pair and scored it — right numbers by position rather than by contract, a shape the fix removes anyway (ruled fixed-layout by design, `SCOPE.md` §2.5, CHANGELOG v0.4.0 *Breaking*); `compare_cart_thickness_whole_joint`, which took its own slices; every metric other than `cart_thick_*`; and everything about the weights |
 | **Severity** | Silent, and it produces NaN rather than a wrong number |
 | **Fixed in** | `slice-n-prime-cartilage-func`, Aug 2026 (plan §8.0.N′) |
 
