@@ -2,8 +2,9 @@
 ``reconstruct_mesh`` and the batch driver ``get_mean_errors``: what they accept, the stages
 they run, what they report, and what they hand their collaborators.
 
-The end-to-end runs use the sampled branch, ``get_rand_pts=True``, on one sphere path.
+Most end-to-end runs use the sampled branch, ``get_rand_pts=True``, on one sphere path.
 ``TestASubjectMissingASurface`` passes two paths, one of them ``None``.
+``TestTheProductionBranch`` runs kneepipeline's keywords on moved ellipsoids.
 """
 
 import inspect
@@ -221,6 +222,112 @@ def test_a_host_at_debug_sees_the_stage_records(sphere_path, caplog):
     with caplog.at_level(logging.DEBUG, logger="NSM"):
         run(sphere_path)
     assert "Loaded mesh in" in caplog.text and "Created mesh in" in caplog.text
+
+
+class TestTheProductionBranch:
+    """
+    kneepipeline's 551 and 647 fits: ``register_similarity``, ``scale_jointly``,
+    ``convergence="recon_loss"`` and ``get_rand_pts=False``, on a list of one or two paths.
+    No other test takes all four.
+    """
+
+    AXES = torch.tensor([0.5, 0.35, 0.25])
+
+    class Ellipsoids(torch.nn.Module):
+        """
+        Nested ellipsoids with three different axes, so a registration has one answer. The
+        latent shifts both surfaces, so the fit has something to move.
+        """
+
+        def __init__(self, axes, objects):
+            super().__init__()
+            self.axes, self.objects = axes, objects
+
+        def forward(self, x=None, latent=None, xyz=None, epoch=None):
+            inner = (torch.norm(xyz / self.axes, dim=1, keepdim=True) - 1) * 0.25 + latent.sum()
+            return torch.cat([inner, inner - 0.02][: self.objects], dim=1)
+
+    @pytest.fixture(scope="class")
+    def moved(self, tmp_path_factory):
+        """The two zero-latent surfaces, moved by a known similarity, and that similarity."""
+        import pyvista as pv
+        from scipy.spatial.transform import Rotation
+
+        similarity = np.eye(4)
+        similarity[:3, :3] = (
+            1.3 * Rotation.from_euler("xyz", [10, -15, 25], degrees=True).as_matrix()
+        )
+        similarity[:3, 3] = [5.0, -3.0, 2.0]
+        paths = []
+        for index, grow in enumerate((1.0, 1.08)):  # 0.02 / 0.25 = 0.08
+            surface = pv.Sphere(radius=1.0, theta_resolution=30, phi_resolution=30).triangulate()
+            points = surface.points * self.AXES.numpy() * grow
+            surface.points = points @ similarity[:3, :3].T + similarity[:3, 3]
+            paths.append(str(tmp_path_factory.mktemp("moved") / f"surface_{index}.vtk"))
+            surface.save(paths[-1])
+        return paths, similarity
+
+    @pytest.mark.parametrize("n_surfaces", [1, 2])
+    def test_the_consumer_s_fit_undoes_a_known_similarity(self, moved, n_surfaces):
+        """
+        Fails if ``reconstruct_mesh`` with kneepipeline's keywords does not recover the
+        similarity the subject was moved by, returns meshes outside the subject's frame,
+        or returns registration parameters kneepipeline cannot write to JSON.
+
+        ``scale_jointly`` leaves normalization to the registration, so ``center`` is zeros
+        and ``scale`` is 1. Measured: the transform is within 0.012 of the inverse and the
+        ASSD is at most 0.013. A mesh left in the model's frame is about 6 away.
+        """
+        from pymskt.mesh.meshTransform import get_linear_transform_matrix
+
+        paths, similarity = moved
+        torch.manual_seed(42)
+        result = recon_main.reconstruct_mesh(
+            path=paths[:n_surfaces],
+            decoders=self.Ellipsoids(self.AXES, n_surfaces),
+            latent_size=8,
+            num_iterations=30,
+            l2reg=False,
+            latent_reg_weight=False,
+            loss_type="l1",
+            lr=0.005,
+            lr_update_factor=1.1,
+            n_lr_updates=10,
+            return_latent=True,
+            register_similarity=True,
+            scale_jointly=True,
+            scale_all_meshes=True,
+            objects_per_decoder=n_surfaces,
+            batch_size_latent_recon=300000,
+            get_rand_pts=False,
+            n_pts_random=1000,
+            sigma_rand_pts=0.01,
+            n_samples_latent_recon=500,
+            calc_assd=True,
+            convergence="recon_loss",
+            convergence_patience=5,
+            clamp_dist=0.1,
+            fix_mesh=False,
+            return_registration_params=True,
+            n_pts_per_axis=32,
+            n_pts_per_axis_mean_mesh=32,
+            device="cpu",
+        )
+
+        icp_transform = get_linear_transform_matrix(result["icp_transform"])
+        np.testing.assert_allclose(icp_transform @ similarity, np.eye(4), atol=0.03)
+        assert len(result["mesh"]) == n_surfaces
+        assert all(result[f"assd_{index}"] < 0.05 for index in range(n_surfaces))
+
+        # kneepipeline's steps/run_nsm.py writes these to NSM_recon_params.json.
+        params = {
+            "latent": result["latent"].detach().cpu().numpy().tolist(),
+            "icp_transform": icp_transform.tolist(),
+            "center": result["center"].tolist(),
+            "scale": result["scale"],
+        }
+        assert json.loads(json.dumps(params))["center"] == [0.0, 0.0, 0.0]
+        assert params["scale"] == 1
 
 
 class TestASubjectMissingASurface:
