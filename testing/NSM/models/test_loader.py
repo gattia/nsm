@@ -46,6 +46,11 @@ def small_config(model_type):
 
 
 def test_unknown_model_types_and_missing_inputs_are_refused(tmp_path):
+    """
+    Fails if ``get_model_config_template`` or ``load_model`` accepts an unknown model type,
+    ``list_supported_models`` changes its three types, or ``load_model`` raises anything but
+    ``FileNotFoundError`` for a missing checkpoint and ``KeyError`` for an empty config.
+    """
     assert set(list_supported_models()) == set(EXPECTED_CLASS)
     with pytest.raises(ValueError, match="Unknown model type"):
         get_model_config_template("invalid_model_type")
@@ -64,9 +69,12 @@ def test_unknown_model_types_and_missing_inputs_are_refused(tmp_path):
 @pytest.mark.parametrize("model_type", sorted(EXPECTED_CLASS))
 def test_every_model_type_loads_from_its_template(model_type, tmp_path):
     """
-    Built through the loader's own translator, saved, then loaded: the right class, in eval
-    mode, on the CPU, computing what was saved. The bitwise round trip for triplanar is in
-    ``regression/test_model_roundtrip.py``.
+    Fails if ``load_model`` builds the wrong class for a ``model_type``, returns it in
+    training mode, or loads a checkpoint that computes differently from the model saved.
+
+    The saved model is built through the same translator ``load_model`` uses, so a
+    translator bug shows on both sides and cannot fail this test. The bitwise round trip
+    for triplanar is in ``regression/test_model_roundtrip.py``.
     """
     config = small_config(model_type)
     model_class, params = EXTRACTORS[model_type](config)
@@ -88,14 +96,17 @@ def test_every_model_type_loads_from_its_template(model_type, tmp_path):
 
 class TestConvNormTypeMustBeStated:
     """
-    ``conv_norm_type`` and ``conv_activation`` decide what gets built, and four places used
-    to default ``conv_norm_type`` and disagree. The trained value, ``"layer"``, won one of
-    them. ``"layer"`` is also the only thing that makes the VAE nonlinear (ARCHITECTURE
-    §7.1). The loader keeps no default for either key, and the triplanar template states
-    the trained values.
+    ``conv_norm_type`` and ``conv_activation`` decide what gets built. ``"layer"`` is the
+    trained value, and the only thing that makes the VAE nonlinear (ARCHITECTURE §7.1). The
+    loader keeps no default for either key, and the triplanar template states the trained
+    values.
     """
 
     def test_a_config_without_either_key_is_refused_and_the_template_states_both(self):
+        """
+        Fails if the triplanar template stops stating ``conv_norm_type="layer"`` and
+        ``conv_activation=None``, or ``load_model`` accepts a triplanar config missing either.
+        """
         template = get_model_config_template("triplanar")
         assert (template["conv_norm_type"], template["conv_activation"]) == ("layer", None)
         for key in ("conv_norm_type", "conv_activation"):
@@ -104,7 +115,13 @@ class TestConvNormTypeMustBeStated:
                 load_model(stripped, "/nonexistent.pt", model_type="triplanar")
 
     def test_the_loader_keeps_no_silent_default_for_them(self):
-        """A third ``config.get("conv_norm_type", ...)`` would bring the disagreement back."""
+        """
+        Fails if ``loader.py`` gains a ``config.get`` with a default for ``conv_norm_type`` or
+        ``conv_activation``.
+
+        An AST scan of the module source, so it also sees a default in a branch no other
+        test builds.
+        """
         defaulted = [
             node.lineno
             for node in ast.walk(ast.parse(inspect.getsource(loader)))
@@ -119,9 +136,11 @@ class TestConvNormTypeMustBeStated:
 
     def test_direct_construction_gets_the_trained_normalization(self):
         """
-        The constructors default to ``"layer"`` since v0.3.0, which reaches kneepipeline:
-        it builds ``TriplanarDecoder`` directly. The two norms differ on disk, so a strict
-        load of the wrong one is refused rather than silent.
+        Fails if ``TriplanarDecoder`` or ``VAEDecoder`` built without a norm type gets
+        BatchNorm instead of the trained LayerNorm.
+
+        The state-dict half shows why a wrong norm fails at load rather than silently:
+        ``"batch"`` has every ``"layer"`` key plus BatchNorm's running statistics.
         """
 
         def norms(model):
@@ -155,6 +174,9 @@ class TestRepairingAnOldTriplanarConfig:
 
     def test_one_refusal_carries_a_printable_repair(self):
         """
+        Fails if ``_get_triplanar_params`` refuses an old config one key at a time, prints
+        the refusal with ``\\n`` escapes, or offers a JSON block that does not repair it.
+
         ``KeyError.__str__`` is ``repr(args[0])``, which prints ``\\n`` escapes and turns the
         JSON block into one unusable line. ``MissingArchitectureKeys`` overrides it and is
         still a ``KeyError``.

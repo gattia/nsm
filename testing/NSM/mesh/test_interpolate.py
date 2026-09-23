@@ -70,7 +70,15 @@ def _radii(points, center=(0, 0, 0)):
 
 @pytest.mark.parametrize("sdf_scale", [1.0, 1.6], ids=["eikonal", "non-eikonal"])
 def test_points_land_on_the_target_sphere(sdf_scale):
-    """The Newton step is exact even when the SDF gradient is not unit length."""
+    """
+    Fails if ``interpolate_points`` steps by the unit normal instead of the Newton step
+    ``x - sdf * grad / |grad|^2``, or ``update_positions`` stops returning a CPU tensor of
+    the input's shape.
+
+    Only the non-Eikonal case (``|grad| = 1.6``) separates the two steps. Measured, a
+    unit-normal step misses the target radius by 2.3e-3 there, against ``atol=1e-3``, and by
+    1.7e-7 in the Eikonal case.
+    """
     z1, z2 = _latents(1.0, 1.5)
     pts = _sphere_points(radius=1.0)
     warped = interpolate_points(
@@ -84,6 +92,14 @@ def test_points_land_on_the_target_sphere(sdf_scale):
 
 
 def test_tangent_laplacian_smoothing_needs_faces_and_keeps_the_target():
+    """
+    Fails if ``interpolate_points(tangent_laplacian=True)`` runs without ``faces``, its
+    smoothing pulls points off the target sphere, or ``build_mesh_laplacian``'s rows stop
+    summing to 1.
+
+    The row-sum assert is the only check on the normalisation. Measured, an unnormalised
+    adjacency still lands every point within 4.4e-7 of the target.
+    """
     import pyvista as pv
 
     z1, z2 = _latents(1.0, 1.2)
@@ -111,7 +127,14 @@ def test_tangent_laplacian_smoothing_needs_faces_and_keeps_the_target():
 
 
 def test_the_feature_mask_flags_sharp_edges_only():
-    """A fine sphere has none; a 90-degree tent and a thin disk's rim do."""
+    """
+    Fails if ``compute_feature_mask`` flags a vertex of a smooth closed sphere, or misses the
+    vertices on an open boundary edge.
+
+    The tent and the disk are flagged by their boundary edges alone: the tent is two open
+    triangles, and ``pv.Cylinder``'s caps do not share its rim vertices (96 boundary edges).
+    Measured, turning the dihedral-angle test off still passes, so it is not pinned here.
+    """
     import pyvista as pv
 
     sphere = pv.Sphere(theta_resolution=32, phi_resolution=32)

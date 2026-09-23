@@ -18,6 +18,10 @@ from NSM.mesh.main import (
 
 
 def test_dilate6_grows_a_voxel_to_its_face_neighbours():
+    """
+    Fails if ``_dilate6`` grows a voxel into its edge or corner neighbours, wraps around the
+    array border, or mutates its input.
+    """
     mask = np.zeros((5, 5, 5), dtype=bool)
     mask[2, 2, 2] = True
     out = _dilate6(mask)
@@ -39,7 +43,12 @@ def _sphere_sdf_zyx(n, radius=0.3, center_zyx=(0.5, 0.5, 0.5)):
 
 class TestCoarseBounds:
     def test_the_bounds_enclose_the_surface_in_xyz_order(self):
-        """An off-centre sphere catches a swapped ZYX-to-XYZ mapping."""
+        """
+        Fails if ``coarse_bounds_from_sign_change`` returns bounds in (Z, Y, X) order, ignores
+        ``origin``, or returns a smaller box as ``tau_voxels`` and ``dilate_cells`` grow.
+
+        The off-centre sphere is what catches a swapped ZYX-to-XYZ mapping.
+        """
         n = 32
         spacing = 1.0 / (n - 1)
         sdf = _sphere_sdf_zyx(n, radius=0.15, center_zyx=(0.2, 0.5, 0.8))
@@ -57,11 +66,24 @@ class TestCoarseBounds:
         assert np.all(wide[0] <= tight[0]) and np.all(wide[1] >= tight[1])
 
     def test_no_sign_change_is_none(self):
+        """
+        Fails if ``coarse_bounds_from_sign_change`` returns anything but None, or raises, for
+        an SDF that is positive everywhere or negative everywhere.
+        """
         for value in (5.0, -5.0):
             assert coarse_bounds_from_sign_change(np.full((10,) * 3, value), (0, 0, 0), 0.1) is None
 
 
 def test_grids_are_z_fastest_padded_and_at_least_min_dim():
+    """
+    Fails if ``create_grid_samples`` or ``create_grid_samples_in_bounds`` stop varying Z
+    fastest, or the latter's grid stops covering the bounds, pads more than ``padding`` past
+    them, or ignores ``min_dim`` or the ``min_pad_voxels_fine`` floor.
+
+    Z-fastest is the order ``_finish_meshes``' C-order reshape assumes. The padding check
+    bounds the grid from outside only: a grid that ignores ``padding`` and pads by the floor
+    still passes.
+    """
     n = 4
     samples = create_grid_samples(n, (0, 0, 0), 1.0 / (n - 1))
     assert samples.shape == (n**3, 3)
@@ -87,6 +109,11 @@ def test_grids_are_z_fastest_padded_and_at_least_min_dim():
 
 
 def test_cropping_to_the_narrow_band():
+    """
+    Fails if ``crop_sdf_to_narrow_band`` stops cropping, crops away the zero crossing, keeps
+    the old origin after a crop, or does not return the full volume and origin when no voxel
+    is in the band.
+    """
     lin = np.linspace(-1, 1, 64)
     x, y, z = np.meshgrid(lin, lin, lin, indexing="ij")
     sdf = np.sqrt(x**2 + y**2 + z**2) - 0.3
@@ -122,6 +149,10 @@ class _Spheres(torch.nn.Module):
 
 
 def test_create_mesh_adaptive_meshes_every_object_for_less_than_a_full_grid():
+    """
+    Fails if ``create_mesh_adaptive`` evaluates the decoder on a full ``n_pts_per_axis``^3
+    grid, or returns an empty mesh or fewer meshes than ``objects``.
+    """
     common = dict(search_bounds=(-1.0, 1.0), scale_to_original_mesh=False, device="cpu")
     single = _Spheres([0.2], [[0.0, 0.0, 0.0]])
     mesh = create_mesh_adaptive(
@@ -139,6 +170,10 @@ def test_create_mesh_adaptive_meshes_every_object_for_less_than_a_full_grid():
 
 @pytest.mark.parametrize("fallback", [True, False])
 def test_no_surface_is_none_with_or_without_the_dense_fallback(fallback):
+    """
+    Fails if ``create_mesh_adaptive`` returns anything but None, or raises, for a decoder
+    whose SDF is positive everywhere, with ``fallback_to_original`` on or off.
+    """
     no_surface = _Spheres([-1.0], [[0.0, 0.0, 0.0]])
     assert (
         create_mesh_adaptive(

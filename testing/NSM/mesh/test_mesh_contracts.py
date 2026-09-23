@@ -2,9 +2,8 @@
 What the ``mesh/`` package does with inputs it was not meant to take: it refuses them
 rather than returning a plausible number.
 
-1. **Face arrays (#57).** Sites that reshape a VTK face array refuse anything that is not
-   all-triangle. Whether the old reshape raised or fabricated triangles depended on the
-   cell count mod 3 or mod 4.
+1. **Face arrays (#57).** Sites that take a face array refuse anything that is not
+   all-triangle.
 2. **The ``use_vtk`` twins (#60)** take the same inputs under the same defaults.
 3. **The adaptive fallback grid (#60)** covers the ``search_bounds`` it was given.
 4. **Refusal versus invention (#54).**
@@ -53,10 +52,14 @@ def triangle_sphere():
 
 def test_face_array_sites_accept_triangles_and_refuse_everything_else():
     """
-    3 quads flatten to 15 entries (15 % 3 == 0) and 4 quads to 20 (20 % 4 == 0), so between
-    them each old reshape had a case that silently succeeded: 4 quads came back as five
-    fabricated triangles. A mesh's own ``.faces`` is the wrong array for the two sites that
-    take a face array, and 384 % 3 == 0 made that silent too.
+    Fails if ``self_intersection_count``, ``foldover_count``, ``get_faces``,
+    ``build_mesh_laplacian`` or ``compute_feature_mask`` takes a quad or mixed mesh, or a flat
+    VTK face array, without raising ``ValueError`` (KNOWN_ISSUES History 17).
+
+    The fixtures are the cases a bare reshape passes silently. 3 quads flatten to 15 entries
+    (15 % 3 == 0) and 4 quads to 20 (20 % 4 == 0): 4 quads reshape into five fabricated
+    triangles. A mesh's own ``.faces`` is the wrong array for the two sites that take a face
+    array, and its 384 entries divide by 3. The first assert keeps the fixtures that way.
     """
     assert (strip(n_quads=3).faces.size % 3, strip(n_quads=4).faces.size % 4) == (0, 0)
 
@@ -99,7 +102,10 @@ def sphere_sdf_grid(radius=0.5):
 
 
 def test_both_twins_take_numpy_or_torch_with_one_narrow_band_default():
-    """``use_vtk`` picks a backend; it used to pick an input type and a default too."""
+    """
+    Fails if ``sdf_grid_to_mesh`` and ``sdf_grid_to_mesh_vtk`` default ``narrow_band``
+    differently, or either refuses a numpy array or a torch tensor (#60).
+    """
 
     def default(fn):
         return inspect.signature(fn).parameters["narrow_band"].default
@@ -113,8 +119,11 @@ def test_both_twins_take_numpy_or_torch_with_one_narrow_band_default():
 @pytest.mark.parametrize("twin", [sdf_grid_to_mesh, sdf_grid_to_mesh_vtk])
 def test_the_narrow_band_does_not_move_the_surface(twin):
     """
+    Fails if narrow-band cropping in ``sdf_grid_to_mesh`` or ``sdf_grid_to_mesh_vtk`` moves
+    a vertex or changes the vertex count, as a wrong crop origin would.
+
     Measured max vertex displacement 6.2e-08 (skimage) and 7.5e-08 (VTK), about float32's
-    resolution. A regression that re-tessellated would move a vertex by a voxel, 0.065.
+    resolution. A re-tessellation would move a vertex by a voxel, 0.065.
     """
     grid = torch.from_numpy(sphere_sdf_grid())
     full = twin(grid, ORIGIN, VOXEL_SIZE, narrow_band=False).point_coords
@@ -149,10 +158,12 @@ class _SmallOffsetSphere(torch.nn.Module):
 
 def test_the_fallback_grid_spans_the_search_bounds(monkeypatch):
     """
-    Before #60's fix ``search_bounds=(0, 4)`` gave a fallback grid over [-1, 3]: the origin
-    kept its default while the voxel size followed the bounds. At the default bounds the
-    derived origin is the old ``(-1, -1, -1)``, so no existing run moves. A passed origin
-    still wins.
+    Fails if ``create_mesh_adaptive``'s dense fallback takes its grid origin from a default
+    rather than ``search_bounds``, or overrides an explicit ``voxel_origin``
+    (KNOWN_ISSUES History 19).
+
+    ``create_mesh`` is replaced to capture the grid the fallback asks for. At the default
+    bounds the derived origin is ``(-1, -1, -1)``, the origin every existing run used.
     """
     seen = []
     monkeypatch.setattr(mesh_main, "create_mesh", lambda *a, **k: seen.append(k))
@@ -177,8 +188,12 @@ def test_the_fallback_grid_spans_the_search_bounds(monkeypatch):
 @pytest.mark.parametrize("use_vtk", [True, False])
 def test_dense_and_adaptive_extract_the_same_surfaces(use_vtk):
     """
-    The adaptive grid is cropped to the detected bounds, so agreement tests the shared
-    tail. Measured max displacement 7.1e-07 against a 0.087 voxel.
+    Fails if ``create_mesh_adaptive`` samples its fine grid off ``create_mesh``'s lattice,
+    so the two extract different vertices from the same decoder.
+
+    Measured max displacement 7.0e-07 against a 0.087 voxel. The coarse pass finds the whole
+    search box here and ``min_dim=64`` pads the fine grid past it, so no crop is tested.
+    Both shapes are symmetric under an axis swap, so an X-fastest fine grid passes too.
     """
     common = dict(objects=2, device="cpu", scale_to_original_mesh=False, use_vtk=use_vtk)
     dense = create_mesh(_TwoSpheres(), None, n_pts_per_axis=24, **common)
@@ -191,6 +206,10 @@ def test_dense_and_adaptive_extract_the_same_surfaces(use_vtk):
 
 
 def test_scale_and_offset_reach_the_finished_mesh():
+    """
+    Fails if ``create_mesh(scale_to_original_mesh=True)`` does not map each vertex to
+    ``vertex * scale + offset``, for example by adding the offset before scaling.
+    """
     common = dict(objects=2, device="cpu", n_pts_per_axis=24)
     plain = create_mesh(_TwoSpheres(), None, scale_to_original_mesh=False, **common)
     scaled = create_mesh(
@@ -212,8 +231,11 @@ def test_scale_and_offset_reach_the_finished_mesh():
 
 def test_refine_mesh_runs_on_its_defaults_and_each_threshold_alone():
     """
-    ``get_target_cells`` raised ``UnboundLocalError`` on its own defaults (#54, ``SCOPE``
-    §2.3), and the area and length criteria were unreachable.
+    Fails if ``get_target_cells`` raises on its defaults, selects cells with no threshold
+    set, or ignores ``area_threshold``, ``length_threshold`` or ``max_length_threshold``
+    passed alone (#54).
+
+    ``refine_mesh`` is research code (``SCOPE`` §2.3).
     """
     sphere = triangle_sphere()
     assert len(get_target_cells(sphere)) == 0
@@ -236,11 +258,15 @@ def _warp(mesh):
 
 def test_subdividing_warns_when_the_two_meshes_are_different_triangles():
     """
+    Fails if ``subdivide_triangles_on_base_mesh`` warns when ``mesh`` is ``base_mesh`` warped
+    or copied, or stays silent when ``base_mesh`` has a different cell count.
+
     A cell index selected on one tessellation means nothing in another, and the result is
     a wrong mesh rather than an error. The check compares faces, not points, so the
     documented use (``mesh`` is ``base_mesh`` warped) stays quiet. Reusing a mesh after
-    subdividing its base is the iterative caller's mistake: measured, it took 624 cells to
-    1110 with no error.
+    subdividing its base (``refined``) is the iterative caller's mistake: measured, it takes
+    624 cells to 1110 with no error. Both mismatched cases differ in cell count, so the
+    same-count, different-faces branch is not exercised.
     """
     base = pv.Sphere(theta_resolution=12, phi_resolution=12).triangulate()
     with warnings.catch_warnings():
@@ -256,8 +282,13 @@ def test_subdividing_warns_when_the_two_meshes_are_different_triangles():
 
 def test_roundtrip_metrics_skip_without_a_source_mesh():
     """
-    Every other metric in the dict skips without its input. These two used to substitute
-    the warped mesh: a mean roundtrip distance of 0.2500 against a true 0.0017.
+    Fails if ``score_correspondence`` measures ``roundtrip_distance`` or
+    ``forward_backward_disagreement`` against the warped mesh instead of skipping when
+    ``source_mesh`` is None, or against anything but ``source_mesh`` when it is given
+    (KNOWN_ISSUES History 18).
+
+    The warped mesh is the source scaled 1.5x, so measuring against it gives a mean
+    roundtrip distance of 0.2500 against a true 0.0017.
     """
     source = triangle_sphere()
     warped = source.copy()

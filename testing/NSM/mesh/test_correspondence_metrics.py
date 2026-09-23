@@ -29,6 +29,13 @@ def _plane():
 
 
 def test_assd_is_zero_on_itself_and_grows_with_the_offset():
+    """
+    Fails if ``assd`` is nonzero for a mesh against itself, returns a non-float, or sums
+    signed point-to-surface distances instead of their absolute values.
+
+    Only the radius-2 case catches a signed sum: the two spheres' signed distances to each
+    other have opposite signs.
+    """
     sphere = _sphere(resolution=30)
     assert assd(sphere, sphere) == pytest.approx(0.0, abs=1e-10)
     assert isinstance(assd(sphere, sphere), float)
@@ -37,7 +44,11 @@ def test_assd_is_zero_on_itself_and_grows_with_the_offset():
 
 
 def test_the_distance_summaries_on_known_inputs():
-    """``directed_distance_percentiles``, ``off_surface_error`` and ``roundtrip_distance``."""
+    """
+    Fails if ``directed_distance_percentiles``, ``off_surface_error`` or
+    ``roundtrip_distance`` change their keys, or miscompute a constant 3-unit shift, the
+    absolute SDF values, or their RMS.
+    """
     origin = np.zeros((20, 3))
     shifted = origin + [3.0, 0, 0]
 
@@ -57,6 +68,10 @@ def test_the_distance_summaries_on_known_inputs():
 
 
 def test_triangle_health_on_clean_and_collapsed_meshes():
+    """
+    Fails if ``triangle_health`` changes its 12 keys, reports degenerate triangles on a clean
+    sphere or plane, or misses a triangle with a zero-length edge.
+    """
     health = triangle_health(_sphere(resolution=30))
     assert set(health) == {
         "edge_length_mean",
@@ -81,6 +96,13 @@ def test_triangle_health_on_clean_and_collapsed_meshes():
 
 
 def test_self_intersections_are_counted_and_large_meshes_are_skipped():
+    """
+    Fails if ``self_intersection_count`` counts crossings on a clean sphere or plane, misses
+    two crossing triangles, or does not return None with a ``RuntimeWarning`` above
+    ``max_triangles``.
+
+    The crossing case runs only with ``broadphase=True``.
+    """
     assert self_intersection_count(_sphere(resolution=15)) == 0
     assert self_intersection_count(_plane()) == 0
     assert isinstance(self_intersection_count(_plane()), int)
@@ -96,6 +118,10 @@ def test_self_intersections_are_counted_and_large_meshes_are_skipped():
 
 
 def test_foldovers_are_counted():
+    """
+    Fails if ``foldover_count`` counts flips on an unwarped mesh, drops ``near_degenerate``,
+    or misses a triangle whose orientation reversed.
+    """
     sphere = _sphere()
     unchanged = foldover_count(sphere, sphere.points.copy())
     assert unchanged["flipped_count"] == 0 and unchanged["flipped_fraction"] == 0.0
@@ -118,15 +144,22 @@ def test_foldovers_are_counted():
 
 class TestTheReversedPairHidesASwap:
     """
-    #56. ``roundtrip_distance(original_points, roundtrip_points)`` and
+    ``roundtrip_distance(original_points, roundtrip_points)`` and
     ``forward_backward_disagreement(roundtrip_points, original_points)`` take the same two
-    arrays in opposite order, and a swap was invisible in both: the first is symmetric,
-    and the second flips the sign of ``field`` but not its summary. So both are
-    keyword-only. ``directed_distance_percentiles`` is asymmetric, so a swap shows, and it
-    stays positional.
+    arrays in opposite order, and a swap is invisible in both: the first is symmetric, and
+    the second flips the sign of ``field`` but not its summary. So both are keyword-only
+    (#56). ``directed_distance_percentiles`` is asymmetric, so a swap shows, and it stays
+    positional.
     """
 
     def test_a_swap_is_invisible_so_a_positional_call_is_refused(self):
+        """
+        Fails if ``roundtrip_distance`` or ``forward_backward_disagreement`` accepts
+        positional arguments (#56).
+
+        The asserts before the loop check the premise in the class docstring. Only the loop
+        guards the fix.
+        """
         rng = np.random.default_rng(0)
         a = rng.normal(size=(50, 3))
         b = a + rng.normal(scale=0.1, size=(50, 3))
@@ -147,6 +180,10 @@ class TestTheReversedPairHidesASwap:
                 func(a, b)
 
     def test_the_disagreement_field_on_a_known_displacement(self):
+        """
+        Fails if ``forward_backward_disagreement`` returns ``field`` as original minus
+        roundtrip, or miscomputes the magnitude summary of a unit shift.
+        """
         original = np.zeros((10, 3))
         moved = original + [1.0, 0, 0]
         result = forward_backward_disagreement(roundtrip_points=moved, original_points=original)
@@ -157,6 +194,13 @@ class TestTheReversedPairHidesASwap:
 
 class TestScoreCorrespondence:
     def test_a_mesh_scored_against_itself(self):
+        """
+        Fails if ``score_correspondence``, given every input, skips or swallows an error in
+        ``assd``, ``foldover_count``, ``self_intersection_count``, ``off_surface_error`` or
+        ``roundtrip_distance``, or scores a mesh against itself as nonzero.
+
+        One mesh plays every role, so a swap between source, warped and target cannot show.
+        """
         sphere = _sphere(resolution=15)
         result = score_correspondence(
             warped_mesh=sphere,
@@ -172,6 +216,11 @@ class TestScoreCorrespondence:
         assert result["roundtrip_distance"]["max"] == 0.0
 
     def test_missing_inputs_skip_with_a_reason(self):
+        """
+        Fails if ``score_correspondence`` computes or errors on a metric whose input is
+        absent instead of skipping it with a reason, or skips one that needs only the two
+        meshes.
+        """
         sphere = _sphere(resolution=10)
         result = score_correspondence(
             pv.PolyData(sphere.points + [10.0, 0, 0], sphere.faces),
