@@ -23,9 +23,8 @@ under the same number.
 
 **Updated:** 2026-09-23 · **Status:** open
 
-- **Next:** Merge slice T's PR #114 (branch `slice-t-test-trim`). Then Step U on a new
-  branch, once the maintainer has filed issues A and B from its draft text or said "file
-  these". Then Step Close.
+- **Next:** Step U, on a new branch in a `git worktree` (see Working conventions). Then
+  Step Close.
 - **Blocked on:** nothing.
 - **Done:**
   - Phases 0–3, and slices A–R, each with its own PR. v0.2.0 (PR #36) and v0.3.0 shipped.
@@ -42,9 +41,10 @@ under the same number.
     `NSM/` 13,555 → 13,326 lines; suite 1180 → 1177 passed. Production is on v0.4.0: the
     consumer no longer passes `verbose=`, and a real fit on archived job `8ff02ee4`
     matches its archived BScore to 1.3e-05 (same-code noise is 3.6e-05).
-  - Slice T done 2026-09-23, PR #114 open: 1,184 tests to 260, `testing/`
+  - Slice T merged 2026-09-23 (PR #114, `49e761a`): 1,184 tests to 260, `testing/`
     16,143 lines to 8,785, 110 s to 72 s, coverage kept. Every test opens its docstring with
     a "Fails if" line, and `test_docs_references` checks it. See Step T's Result.
+    Production tree on `main` and worker restarted. #115 and #116 filed for Step U.
 - **Surprises:**
   - **Deferred items get lost or are already done.** Five `reconstruct_latent` sites
     deferred to R had already been fixed. In S, one item was already closed by R, and two
@@ -285,7 +285,7 @@ Permanent code added: +39 lines (budget +60). Suite 1177 passed, 4 skipped, 3 xf
 before pulling v0.4.0 into production. To keep NSM's debug output, set
 `logging.getLogger("NSM").setLevel(logging.DEBUG)`.
 
-### Step T — slice §8.0.T: trim the test suite
+### Step T — slice §8.0.T: trim the test suite — **done 2026-09-23, PR #114**
 
 Scheduled by the maintainer 2026-08-29: *"they have gotten VERY bloated during this
 refactor. Many are valuable, but they are also overkill."* It runs last because every
@@ -442,40 +442,27 @@ by hand, confirm the test fails, revert. That is the item's verification. The te
 | 3 | `reconstruct_mesh` on the production branch: `scale_jointly=True`, `convergence="recon_loss"`, one- and two-surface path lists. `icp_transform` recovers a known similarity. `center` supports `.tolist()` and `scale` is JSON-serializable | None: this branch never runs. The harness uses `scale_jointly=False` and `"num_iterations"` | kneepipeline's 551 and 647 fits |
 | 4 | A resumed run continues the uninterrupted one: same losses and latents after N/2 + N/2 epochs as after N | Delete `optimizer.load_state_dict(...)` or `latent_vecs.load_state_dict(...)` in `_resume_from_checkpoint` | Anyone resuming training |
 | 5 | `_resume_from_checkpoint` refuses a checkpoint with no optimizer, and one whose groups carry no `target` | None: both raises are untested | Resuming a pre-Aug-2026 run |
-| 6 | Every trainable parameter gets a non-zero gradient, for every model type and option, in train mode | None. Fails today on `ImplicitDecoder` with linear blocks and modulation (issue A) | All training |
+| 6 | Every trainable parameter gets a non-zero gradient, for every model type and option, in train mode | None. Fails today on `ImplicitDecoder` with linear blocks and modulation (#115) | All training |
 | 7 | `SDFSamples` and `MultiSurfaceSDFSamples` divide `gt_sdf` by `max_radius` under `scale_jointly` | Delete `sdf = sdf / self.max_radius` in either `__getitem__`. The `SDFSamples` line never runs | The default config trains with `scale_jointly: true` |
 | 8 | `surface_weighting` is normalized. `latent_bound` reaches the embedding. `cache_format` is in the cache key | `weight / total * n_surfaces` to `weight` in `_surface_weights`. `max_norm=latent_bound` to `None` in `get_latent_vecs`. Drop `"cache_format"` from `get_hash_params` | Training users |
 | 9 | `compute_loss_chunked` weights each chunk by its share of points | `(stop - start) / n_points` to `n_samples_per_chunk / n_points`. Check one step's latent gradient through `reconstruct_latent`. The chunked-fit test's latent drifts only 2.6e-7 under the edit, inside its 1e-6 tolerance, and the gradient test runs its own copy of the loop | Chunked reconstruction |
 
-**Issues to file.** The text below is a draft. The maintainer files it, or says "file these".
-The Step U PR closes both.
+**Issues, filed 2026-09-23.** The Step U PR closes both.
 
-> **A. `ImplicitDecoder` with linear blocks and modulation fails on its first backward pass.**
-> Build `ImplicitDecoder` through `load_model` with `block_type: "linear"` and
-> `modulation: true`, then call `backward()`. It raises `RuntimeError: one of the variables
-> needed for gradient computation has been modified by an inplace operation`.
-> `MLP.forward` runs `x *= modulations[i]` (`NSM/models/modulated_periodic_activations.py`),
-> which overwrites the ReLU output autograd saved. The other three block and modulation
-> combinations train. `test_every_implicit_option_forwards` runs under `no_grad`, so it
-> does not see this. Fixed means this combination backpropagates, and a test runs
-> `backward()` for every model type and option.
->
-> **B. `reconstruct_latent` applies L2 regularization only when `l2reg` is the literal
-> `True`.** `_regularization_losses` and the logged `latent_loss` test `l2reg is True`, so
-> `l2reg=1` or `1.0` gives a latent loss of 0. `register_similarity` had the same defect
-> and was fixed. Both shipped configs set `l2reg_recon: false`, so no shipped run is
-> affected. Fixed means a non-bool `l2reg` raises `TypeError`, or any truthy value applies
-> the term.
-
-For B, raising is the safer fix: honouring a truthy value silently changes the result for
-any caller passing `1`, and would need a `KNOWN_ISSUES.md` § History entry. A needs no
-History entry, because that combination always crashed.
+- **#115:** `ImplicitDecoder` with `block_type: "linear"` and `modulation: true` fails on its
+  first `backward()`. `MLP.forward` runs `x *= modulations[i]`
+  (`NSM/models/modulated_periodic_activations.py`), which overwrites the ReLU output
+  autograd saved. The other three combinations train. No History entry: it always crashed.
+- **#116:** `_regularization_losses` and the logged `latent_loss` test `l2reg is True`, so
+  `l2reg=1` gives a latent loss of 0. Shipped configs pass `false`. Prefer raising
+  `TypeError` on a non-bool: honouring a truthy value silently changes the result for any
+  caller passing `1`, and would need a `KNOWN_ISSUES.md` § History entry.
 
 **Size.** Permanent: about nine tests, 250 to 350 lines, in the existing test files, and a
 few lines for each fix. Nothing transitional.
 
 **Order.** One branch and PR, one commit per row. Rows 1 to 3 come first, because they
-protect kneepipeline's BScore. Then 4 and 5, then 6 with fix A, then 7 to 9, then fix B.
+protect kneepipeline's BScore. Then 4 and 5, then 6 with the #115 fix, then 7 to 9, then the #116 fix.
 
 ### Step Close — retire this plan
 
@@ -531,8 +518,21 @@ environment, `make lint` at zero, admin merge as the normal path on a protected 
 one commit per concern with review feedback landing on top, no AI attribution lines, and
 nothing posted to the public tracker without the maintainer approving the exact text.
 
-Two that bite on the slices below: plan-only text commits straight to `main` with no PR,
-and a test that reads a file needs `encoding="utf-8"` explicitly.
+Five that bite on the slices below:
+
+- Plan-only text commits straight to `main` with no PR.
+- A test that reads a file needs `encoding="utf-8"` explicitly.
+- **This checkout is production's NSM.** kneepipeline imports `DEPENDENCIES/nsm`, so a
+  branch checked out here runs in production. Work in a worktree, for example
+  `git worktree add /mnt/data/programming/nsm-step-u -b step-u main`, and leave this
+  checkout on `main`. pytest run from the worktree's root imports the worktree's `NSM`,
+  subprocess tests included (checked 2026-09-23).
+- **The machine also runs the production worker.** Run the full suite and any long job
+  under `nice -n 19`, one at a time, and tell subagents the same.
+- **After a PR merges,** pull `main` in this checkout, then restart
+  `knee-pipeline-worker.service` once it is idle (no step children, empty `active()` and
+  `reserved()`). The website caches the NSM commit it stamps on job manifests per worker
+  process.
 
 ---
 
