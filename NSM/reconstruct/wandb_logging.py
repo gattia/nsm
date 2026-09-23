@@ -5,7 +5,7 @@ JSON-serializable filtering.
 Moved verbatim from ``main.py`` in the §8.0.C split; its own module rather than part of
 an evaluation module because ``reconstruct_mesh`` calls it — parking it beside
 ``get_mean_errors`` would make ``main`` and evaluation import each other. ``main.py``
-re-imports both names (public API, pinned by ``test_reconstruct_import_compat``).
+re-imports both names (public API, pinned by ``test_import_paths``).
 """
 
 import copy

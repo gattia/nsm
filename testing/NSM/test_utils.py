@@ -44,7 +44,6 @@ import re
 import pytest
 import torch
 
-import NSM.utils
 from NSM.train.utils import add_plain_lr_to_config
 from NSM.utils import (
     ConstantLearningRateSchedule,
@@ -531,53 +530,3 @@ class TestCheckpointList:
         """
         with pytest.raises(KeyError, match="additional_checkpoints"):
             get_checkpoints({"checkpoint_epochs": 10, "n_epochs": 30})
-
-
-# ---------------------------------------------------------------------------
-# The module's public surface
-# ---------------------------------------------------------------------------
-
-
-#: Every public name bound in ``NSM.utils``. Frozen the way
-#: ``test_train_import_compat`` freezes the trainer's: removing one is a deliberate,
-#: changelogged decision, and adding one should be visible in a diff. It lists ``os`` and
-#: ``torch`` for the same reason that one does -- because they are importable, not because
-#: they are API.
-PUBLIC_NAMES = [
-    "ConstantLearningRateSchedule",
-    "LATENT_GROUP_NAME",
-    "LR_TARGETS",
-    "LR_TARGET_KEY",
-    "LR_TARGET_LATENT",
-    "LR_TARGET_MODEL",
-    "LearningRateSchedule",
-    "LogAnnealLearningRateSchedule",
-    "MODEL_GROUP_PREFIX",
-    "PARAM_GROUP_TARGET_KEY",
-    "StepLearningRateSchedule",
-    "WarmupLearningRateSchedule",
-    "adjust_learning_rate",
-    "clear_gpu_cache",
-    "filter_non_jsonable",
-    "get_checkpoints",
-    "get_latent_vecs",
-    "get_learning_rate_schedules",
-    "get_optimizer",
-    "is_jsonable",
-    "resolve_schedule_targets",
-    "save_latent_vectors",
-    "save_model",
-    "save_model_params",
-]
-
-
-def test_the_modules_public_names_are_frozen():
-    """Imported modules and the logger are bindings too; only NSM's own names are listed."""
-    imported = {"json", "logging", "math", "os", "warnings", "torch", "schedulefree"}
-    bound = {
-        name
-        for name in dir(NSM.utils)
-        if not name.startswith("_") and name not in imported and name != "logger"
-    }
-
-    assert sorted(bound) == PUBLIC_NAMES

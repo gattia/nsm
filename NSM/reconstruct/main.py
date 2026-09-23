@@ -8,7 +8,7 @@ is built from live beside it -- ``latent_fit`` (the optimization),
 
 This module re-imports every name from those, so ``NSM.reconstruct.main`` and
 ``NSM.reconstruct`` both still serve them; that re-import block is public API and
-``test_reconstruct_import_compat`` pins it.
+``test_import_paths`` pins it.
 
 **The return type depends on the flags** -- a dict when any of them is set, a bare
 list of meshes otherwise. Every first-party caller takes the dict branch. See
@@ -35,7 +35,7 @@ from NSM.mesh import create_mesh_adaptive
 # moved out in the §8.0.C and §8.0.E splits. Public API, not scaffolding:
 # ``NSM.reconstruct`` (star-import of this module) and ``NSM.reconstruct.main`` are both
 # live import paths, so every name that lived here stays importable from both. Frozen by
-# testing/NSM/reconstruct/test_reconstruct_import_compat.py.
+# testing/NSM/test_import_paths.py.
 from .latent_fit import (  # noqa: F401
     latent_norm_penalty,
     project_latent,
@@ -50,7 +50,7 @@ from .recon_evaluation import compute_recon_loss, get_mean_errors  # noqa: F401
 from .wandb_logging import _process_meshes_for_wandb, prepare_results_for_wandb  # noqa: F401
 
 # Unused here and re-exported deliberately: the *leaked* half of the import contract
-# test_reconstruct_import_compat.py freezes, so unleaking one is changelogged rather than
+# test_import_paths.py freezes, so unleaking one is changelogged rather than
 # tidied. Marked because `.flake8` project-ignores F401 and a reader cannot otherwise tell
 # these from the five dead imports deleted alongside them (`KNOWN_ISSUES` § Open).
 from fnmatch import fnmatch  # noqa: F401  isort:skip

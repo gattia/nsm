@@ -6,7 +6,7 @@ point.
 pass deleted ``tune_reconstruction`` and ``compute_correlation_coefficient`` — SCOPE
 §2's dead ruling). ``main.py`` re-imports it, so ``NSM.reconstruct`` and
 ``NSM.reconstruct.main`` both still serve it — that re-import block is public API,
-pinned by ``test_reconstruct_import_compat``.
+pinned by ``test_import_paths``.
 """
 
 import logging
