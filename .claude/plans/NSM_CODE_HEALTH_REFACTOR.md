@@ -42,7 +42,7 @@ under the same number.
     `NSM/` 13,555 → 13,326 lines; suite 1180 → 1177 passed. Production is on v0.4.0: the
     consumer no longer passes `verbose=`, and a real fit on archived job `8ff02ee4`
     matches its archived BScore to 1.3e-05 (same-code noise is 3.6e-05).
-  - Slice T done 2026-09-23, PR #114 open: 1,184 tests to 259, `testing/`
+  - Slice T done 2026-09-23, PR #114 open: 1,184 tests to 260, `testing/`
     16,143 lines to 8,785, 110 s to 72 s, coverage kept. Every test opens its docstring with
     a "Fails if" line, and `test_docs_references` checks it. See Step T's Result.
 - **Surprises:**
@@ -385,7 +385,7 @@ Nothing transitional.
 
 | | Before | Target | After |
 |---|---|---|---|
-| tests collected | 1,184 | ≤ 350 | **259** |
+| tests collected | 1,184 | ≤ 350 | **260** |
 | `testing/` lines | 16,143 (57 files) | ≤ 8,000 | **8,785** (40 files) |
 | suite wall clock, no coverage | 110 s | ≤ 70 s | **72 s** |
 | `NSM/` line coverage | 86.70% | ≥ 86% | **86.66%** |
