@@ -226,7 +226,8 @@ class MLP(nn.Module):
         for i, block in enumerate(self.blocks):
             x = block(x)
             if modulations is not None and len(self.blocks) > i + 1:
-                x *= modulations[i]
+                # Not in place: autograd saved the ReLU output for its backward (#115).
+                x = x * modulations[i]
         return self.final_activation(x)
 
 

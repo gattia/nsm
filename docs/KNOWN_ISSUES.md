@@ -1212,7 +1212,7 @@ since the checkpoint loads either way.
 
 *Pinned by:* `test_model_options.test_concatenation_uses_all_three_planes`, which also
 checks that the VAE keeps its width, and
-`test_model_options.test_triplanar_feature_combination_works_or_refuses`.
+`test_model_options.TestTriplanar::test_concatenation_refuses_conv_pred_sdf`.
 
 ## 16. A `padding` a config did not state was silently defaulted, at any trained value
 
