@@ -437,35 +437,41 @@ class TestChunkedForwardAndBackward:
     gradient and the default are what is asserted.
     """
 
-    def test_the_accumulated_gradient_matches_the_unchunked_one(self):
+    def test_a_chunked_step_has_the_unchunked_gradient(self, monkeypatch):
         """
-        Fails if ``_recon_loss`` stops returning a per-point mean, so share-weighted chunk
-        losses no longer sum to the unchunked gradient.
+        Fails if ``reconstruct_latent``'s chunked step weights a chunk other than by its share
+        of the points, or ``_recon_loss`` stops returning a per-point mean, so the latent
+        gradient Adam steps on differs from the unchunked one.
 
-        The chunk loop is the test's own copy; NSM's ``compute_loss_chunked`` does not run.
-        97 points leave a ragged last chunk at sizes 10 and 32.
+        The gradient is read at Adam's first step. 97 points leave a ragged last chunk at
+        sizes 10 and 32. Adam's first update is about ``lr`` times the gradient's sign, so the
+        fitted latent alone hides a wrong weight.
         """
+        gradients = []
+
+        class RecordingAdam(torch.optim.Adam):
+            def step(self, closure=None):
+                gradients.append(self.param_groups[0]["params"][0].grad.clone())
+                return super().step(closure)
+
+        monkeypatch.setattr(torch.optim, "Adam", RecordingAdam)
 
         def gradient(chunk):
             torch.manual_seed(5)
-            latent = torch.zeros(1, 8, requires_grad=True)
-            xyz = torch.rand(97, 3)
-            sdf_gt = [torch.rand(97, 1) for _ in range(2)]
-            for start in range(0, 97, chunk):
-                stop = min(start + chunk, 97)
-                latent_fit._recon_loss(
-                    decoders=[LinearDecoder(surfaces=2)],
-                    latent=latent,
-                    xyz_input=xyz[start:stop],
-                    sdf_gt_=[gt[start:stop] for gt in sdf_gt],
-                    loss_fn=torch.nn.L1Loss(reduction="none"),
-                    loss_weight=1.0,
-                    clamp_dist=0.1,
-                    difficulty_weight=None,
-                ).mul((stop - start) / 97).backward()
-            return latent.grad
+            reconstruct_latent(
+                decoders=LinearDecoder(surfaces=2),
+                num_iterations=1,
+                latent_size=8,
+                xyz=torch.rand(97, 3),
+                sdf_gt=[torch.rand(97, 1) for _ in range(2)],
+                pts_surface=[0] * 97,
+                clamp_dist=0.1,
+                n_samples_per_chunk=chunk,
+                device="cpu",
+            )
+            return gradients.pop()
 
-        unchunked = gradient(97)
+        unchunked = gradient(None)
         for chunk in (10, 32, 200):
             assert float((unchunked - gradient(chunk)).abs().max() / unchunked.abs().max()) < 1e-6
 
