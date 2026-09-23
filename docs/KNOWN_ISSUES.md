@@ -857,9 +857,8 @@ surface's vertex count)` instead of `n_random + Σ(each surface's vertex count)`
 No compatibility switch — a leaked loop variable, not a semantic option. Check out a
 pre-fix commit if an affected fit must be reproduced exactly.
 
-*Pinned by:* `test_sampled_pts_readers.TestMultiMeshReader::test_include_surf_in_pts_appends_each_surfaces_own_vertices`
-(and its uniform-cube sibling), strict-xfail pins of the correct behaviour until the
-fix, plain assertions since.
+*Pinned by:* `test_sampled_pts_readers.TestMultiMeshReader::test_include_surf_in_pts_appends_each_surfaces_own_vertices`,
+on the near-surface and the uniform-cube path.
 
 ---
 

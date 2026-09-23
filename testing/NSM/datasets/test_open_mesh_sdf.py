@@ -50,15 +50,14 @@ def _axis_points():
     return np.c_[zeros, zeros, PROBE_Z]
 
 
-def test_beyond_a_planar_cut_reads_as_outside(clipped_sphere):
-    """No phantom interior: pcu never labels the missing-cap volume as inside."""
-    sdf = Mesh(pv.PolyData(clipped_sphere)).get_sdf_pts(_axis_points(), method="pcu")
-    assert np.all(sdf > 0), sdf
-
-
-def test_the_open_mesh_matches_its_capped_counterpart(clipped_sphere):
-    """The open mesh's field is the capped mesh's field, not a third convention."""
+def test_an_open_mesh_reads_as_its_capped_counterpart(clipped_sphere):
+    """
+    No phantom interior: every probe beyond the cut is outside, and the open mesh's field
+    matches the meshfix-capped mesh's rather than being a third convention.
+    """
     open_sdf = Mesh(pv.PolyData(clipped_sphere)).get_sdf_pts(_axis_points(), method="pcu")
+    assert np.all(open_sdf > 0), open_sdf
+
     capped = Mesh(pv.PolyData(clipped_sphere.copy()))
     meshfix(capped)
     capped_boundary = pv.PolyData(capped.mesh).extract_feature_edges(

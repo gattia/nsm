@@ -11,7 +11,6 @@ do not move with this fix. See ``docs/KNOWN_ISSUES.md`` § History.
 import itertools
 from types import SimpleNamespace
 
-import pytest
 import torch
 
 from NSM.datasets.sdf_dataset import MultiSurfaceSDFSamples
@@ -27,31 +26,23 @@ def _run(rows):
     return out, int(removed)
 
 
-@pytest.mark.parametrize("n_surfaces", [2, 3, 4, 5])
-def test_every_sign_pattern_keeps_iff_inside_fewer_than_two(n_surfaces):
-    # Every combination of inside / on-surface / outside, one synthetic point each.
-    # On-surface (exactly 0) is not "inside": only strictly negative SDFs count.
-    rows = list(itertools.product((-0.5, 0.0, 0.5), repeat=n_surfaces))
-    out, removed = _run(rows)
-
-    expected_keep = [row for row in rows if sum(v < 0 for v in row) < 2]
-    assert removed == len(rows) - len(expected_keep)
-    kept = [tuple(v) for v in out["gt_sdf"].tolist()]
-    assert kept == [tuple(float(v) for v in row) for row in expected_keep]
-    assert out["xyz"].shape[0] == len(expected_keep)
-
-
-def test_nan_columns_do_not_count_as_inside():
-    # A None surface is stored as an all-NaN column and must be ignored by the count.
-    rows = [(-0.5, -0.5, float("nan")), (-0.5, 0.5, float("nan"))]
-    out, removed = _run(rows)
-    assert removed == 1
-    assert out["gt_sdf"].shape[0] == 1
-    assert out["xyz"].shape[0] == 1
+def test_every_sign_pattern_keeps_a_point_iff_it_is_inside_fewer_than_two():
+    """Inside, on and outside for up to five surfaces. Exactly 0 is not inside."""
+    for n_surfaces in (2, 3, 4, 5):
+        rows = list(itertools.product((-0.5, 0.0, 0.5), repeat=n_surfaces))
+        out, removed = _run(rows)
+        expected = [row for row in rows if sum(v < 0 for v in row) < 2]
+        assert removed == len(rows) - len(expected)
+        assert [tuple(v) for v in out["gt_sdf"].tolist()] == [
+            tuple(map(float, r)) for r in expected
+        ]
+        assert out["xyz"].shape[0] == len(expected)
 
 
-def test_fewer_than_two_real_surfaces_is_a_no_op():
-    rows = [(-0.5, float("nan")), (-0.5, float("nan"))]
-    out, removed = _run(rows)
-    assert removed == 0
-    assert out["gt_sdf"].shape[0] == 2
+def test_a_nan_column_is_a_missing_surface_and_never_counts_as_inside():
+    """A ``None`` surface is stored as an all-NaN column."""
+    out, removed = _run([(-0.5, -0.5, float("nan")), (-0.5, 0.5, float("nan"))])
+    assert removed == 1 and out["gt_sdf"].shape[0] == out["xyz"].shape[0] == 1
+
+    out, removed = _run([(-0.5, float("nan")), (-0.5, float("nan"))])
+    assert removed == 0 and out["gt_sdf"].shape[0] == 2

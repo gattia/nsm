@@ -188,7 +188,7 @@ The changes are fully backward compatible. Existing code using `mesh_to_scale=0`
 
 ## Testing
 
-A test script `test_multi_surface_registration.py` has been provided to demonstrate the new functionality and show usage examples.
+`combine_meshes` is tested in `testing/NSM/datasets/test_dataset_helpers.py`, and `mesh_to_scale=[0, 1]` end to end in `testing/NSM/regression/test_dataset_cache.py`.
 
 ## Migration Guide
 
