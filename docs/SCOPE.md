@@ -471,7 +471,7 @@ place so its removal happens in one reviewed pass over its module, not as a driv
 
 Two rows retired 2026-08-24: `tune_reconstruction` and
 `compute_correlation_coefficient` were deleted by their deferred-to pass — §8.0.E's
-work over `reconstruct/main.py` (branch `wandb-optional`; CHANGELOG v0.4.0
+work over `reconstruct/main.py` (branch `wandb-optional`; CHANGELOG v0.3.0
 § Breaking), zero callers re-verified at deletion.
 
 **Ruled kept despite zero callers:**
