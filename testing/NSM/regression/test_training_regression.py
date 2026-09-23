@@ -16,6 +16,7 @@ import json
 import os
 import types
 
+import numpy as np
 import pytest
 import torch
 from _harness import (
@@ -254,36 +255,49 @@ class TestResumeContract:
     continues after it.
     """
 
-    def test_resuming_loads_exactly_the_named_checkpoint(self, training_dataset, tmp_path_factory):
+    def test_a_resumed_run_continues_the_uninterrupted_one(
+        self, training_dataset, tmp_path_factory, monkeypatch
+    ):
         """
-        Fails if ``train_deep_sdf`` with ``resume_epoch`` 1 or 2 ends with model weights other
-        than that epoch's checkpoint, or trains an epoch when ``n_epochs == resume_epoch``
-        (#49; KNOWN_ISSUES History 11).
+        Fails if ``train_deep_sdf`` resumed at epoch 1 of 2 trains any epoch but 2, or
+        trains it differently from the uninterrupted run: in its losses, learning rates,
+        latent norms or final weights (#49; KNOWN_ISSUES History 11).
 
-        It checks the model weights only: skipping the latent or optimizer restore passes.
-        With ``n_epochs`` equal to ``resume_epoch`` nothing trains, so the model must leave
-        carrying that checkpoint's weights. It starts from a different seed, so a skipped
-        model load cannot pass.
+        So skipping the model, optimizer or latent restore fails it. The resumed model starts
+        from a different seed. Checkpoints hold no random state, so the test records it at
+        each save and restores it after the resume.
         """
-        source = training_config(tmp_path_factory.mktemp("resume_source"))
-        source.update({"n_epochs": 2, "checkpoint_epochs": 1})
-        records, _ = run_training(source, build_model(source), training_dataset)
+        import NSM.train.train_deep_sdf as trainer
+
+        random_state = {}
+        save_checkpoint = trainer._save_checkpoint
+        resume_from_checkpoint = trainer._resume_from_checkpoint
+
+        def save_and_record(config, epoch, *args):
+            random_state[epoch] = (torch.get_rng_state(), np.random.get_state())
+            save_checkpoint(config, epoch, *args)
+
+        def resume_and_restore(config, *args):
+            resume_from_checkpoint(config, *args)
+            if config["resume_epoch"]:
+                torch_state, numpy_state = random_state[config["resume_epoch"]]
+                torch.set_rng_state(torch_state)
+                np.random.set_state(numpy_state)
+
+        monkeypatch.setattr(trainer, "_save_checkpoint", save_and_record)
+        monkeypatch.setattr(trainer, "_resume_from_checkpoint", resume_and_restore)
+
+        config = training_config(tmp_path_factory.mktemp("resume"))
+        config.update({"n_epochs": 2, "checkpoint_epochs": 1})
+        uninterrupted = build_model(config)
+        records, _ = run_training(copy.deepcopy(config), uninterrupted, training_dataset)
         assert [r["epoch"] for r in records] == [1, 2]
 
-        directory = source["experiment_directory"]
-        for resume_epoch in (1, 2):
-            config = training_config(directory)
-            config.update(
-                {"n_epochs": resume_epoch, "checkpoint_epochs": 1, "resume_epoch": resume_epoch}
-            )
-            model = build_model(config, seed=7)
-            assert run_training(config, model, training_dataset)[0] == []
-            saved = torch.load(
-                os.path.join(directory, "model", f"{resume_epoch}.pth"), weights_only=False
-            )["model"]
-            state = model.state_dict()
-            assert state.keys() == saved.keys()
-            assert all(torch.equal(state[key], saved[key]) for key in state), resume_epoch
+        config["resume_epoch"] = 1
+        resumed = build_model(config, seed=7)
+        assert run_training(config, resumed, training_dataset)[0] == records[1:]
+        weights = zip(uninterrupted.state_dict().values(), resumed.state_dict().values())
+        assert all(torch.equal(a, b) for a, b in weights)
 
 
 def test_a_schedule_free_run_survives_its_first_checkpoint(

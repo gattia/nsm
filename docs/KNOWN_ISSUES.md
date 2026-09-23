@@ -1008,8 +1008,8 @@ initialization, not from the epoch-1 checkpoint it named.
 No switch. The old behaviour was a fresh run whose epoch numbering started at 2 —
 `resume_epoch: 0` is the supported way to train from scratch, with epoch 1 included.
 
-*Pinned by:* `test_training_regression.TestResumeContract` (all three boundaries:
-0 runs every epoch, 1 and 2 load their checkpoints).
+*Pinned by:* `test_training_regression.TestResumeContract`: 0 trains every epoch, and 1
+loads its checkpoint and continues exactly as the uninterrupted run.
 
 ## 12. The logged latent-norm stats were the last batch's, scaled down by the batch count
 
