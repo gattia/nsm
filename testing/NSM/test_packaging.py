@@ -213,7 +213,10 @@ class TestPublicApiDeclaration:
                 continue
             for entry in declared:
                 obj = getattr(module, entry, None)
-                owner = obj.__name__ if isinstance(obj, types.ModuleType) else obj.__module__
-                if obj is None or not str(owner).startswith("NSM"):
+                if isinstance(obj, types.ModuleType):
+                    owner = obj.__name__
+                else:
+                    owner = getattr(obj, "__module__", "")
+                if not str(owner).startswith("NSM"):
                     problems.append(f"{name}.__all__ names {entry}")
         assert problems == []

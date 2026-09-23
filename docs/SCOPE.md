@@ -621,8 +621,8 @@ re-exports themselves.
 is defined in them, submodules included. The rule is mechanical, so nothing is on a list by
 opinion; the stability tiering of §3.2 is a separate ruling and has not been applied to
 them. Pinned by `testing/NSM/test_packaging.py::TestPublicApiDeclaration`, which asserts
-that every declared name resolves, that none of them is foreign, and that
-`from <pkg> import *` binds exactly the declaration.
+that every declared name resolves and that none of them is foreign. Python then makes
+`from <pkg> import *` bind exactly the declaration.
 
 The plan's Phase 0 deliverable said "an `__all__` in `NSM/__init__.py`". As specified that
 could not be done, and the reason is why it went per-subpackage instead.
