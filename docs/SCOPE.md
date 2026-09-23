@@ -67,7 +67,7 @@ fix rather than limitations to document:
   default whatever the config asks for — the same key both sibling translators honour.
   Fold any fix into the registration-pathway work; no half is worth patching in
   isolation. Pinned by
-  `test_parameter_surface.TestTheEvidenceForSlicesThatOwnTheFix`.
+  `test_model_options.TestTheEvidenceForSlicesThatOwnTheFix`.
 - **The shipped `default_config.json` describes only the triplanar production model.**
   PR #64 (issue #48) replaced the old 61-key DeepSDF-shaped default — which could not
   drive `train_deep_sdf` at all — with a sanitized snapshot of the ShapeMedKnee

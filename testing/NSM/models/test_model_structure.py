@@ -54,137 +54,79 @@ def conv_stack_activations(vae):
 
 class TestTheVAEHasNoActivation:
     """
-    ``VAEDecoder.__init__`` used to build ``activation = activation_fn()`` and never append
-    it, while the two lines above it appended -- a leaked loop variable, present from the
-    first triplanar commit onwards. The dead argument is deleted (#20) and a working
-    ``conv_activation`` replaces it (see :class:`TestTheOptInConvActivation`), but **the
-    default is still no activation**, because that is the architecture every existing
-    checkpoint was fitted as.
-
-    So the stack these assertions describe is what you get by default and what every
-    shipped model is: ``ConvTranspose2d -> norm`` x N then ``Conv2d -> Tanh``.
-    ``docs/ARCHITECTURE.md`` section 7.1 holds the full account.
+    ``VAEDecoder`` built an activation and never appended it: a leaked loop variable, in
+    every shipped model. The default is still no activation, because that is the
+    architecture every checkpoint was fitted as: ``ConvTranspose2d -> norm`` x N, then
+    ``Conv2d -> Tanh``. ``docs/ARCHITECTURE.md`` §7.1 has the account.
     """
 
-    def test_no_pointwise_activation_is_registered_by_default(self):
-        assert (
-            conv_stack_activations(build_vae()) == []
-        ), "the DEFAULT gained an activation; every existing checkpoint stops loading"
+    def test_the_default_stack_has_only_the_final_tanh(self):
+        vae = build_vae()
+        assert conv_stack_activations(vae) == [], "the default changed; checkpoints stop loading"
+        assert isinstance(vae.decoder[-1][0], nn.Conv2d)
+        assert isinstance(vae.decoder[-1][1], nn.Tanh)
+        with pytest.raises(TypeError, match="activation"):
+            build_vae(activation="relu")
 
-    def test_the_only_nonlinearity_is_the_final_tanh(self):
-        final = build_vae().decoder[-1]
-        assert isinstance(final[0], nn.Conv2d) and isinstance(final[1], nn.Tanh)
-
-    @pytest.mark.parametrize(
-        "overrides, affine",
-        [
+    def test_the_stack_is_affine_except_where_layernorm_saves_it(self):
+        """
+        ``"batch"`` evaluates affine, so the conv stack collapses to one map. ``"layer"``,
+        which both shipped models use, is nonlinear only because LayerNorm divides by a
+        standard deviation of its own input.
+        """
+        for overrides, affine in (
             ({"norm": True, "norm_type": "batch"}, True),
             ({"norm": False}, True),
             ({"norm": True, "norm_type": "layer"}, False),
-        ],
-        ids=["batch", "no-norm", "layer"],
-    )
-    def test_the_stack_is_affine_except_where_layernorm_saves_it(self, overrides, affine):
-        """
-        ARCHITECTURE section 7.1's table, recomputed rather than transcribed.
-
-        ``"batch"`` is the constructor default and evaluates affine, so a five-layer conv
-        stack collapses to one. ``"layer"`` -- what both shipped models use -- is nonlinear
-        only because LayerNorm divides by a standard deviation computed from its own input.
-        The production models work by accident, and the accident is what this pins.
-        """
-        error, scale = additivity_error(build_vae(**overrides))
-        relative = error / scale
-        if affine:
-            assert relative < 1e-6, f"stopped being affine: {relative:.2e} of value scale"
-        else:
-            assert relative > 1e-2, f"LayerNorm stopped supplying the nonlinearity: {relative:.2e}"
-
-    def test_the_activation_argument_is_gone(self):
-        """
-        It was accepted and never read: ``relu`` and ``leakyrelu`` built the same module
-        and computed the same numbers, so deleting it changed nothing (#20's rule -- the
-        fix for an ignored argument is deletion, never making it authoritative).
-
-        ``VAEDecoder`` takes no ``**kwargs``, so passing it now raises on its own.
-        """
-        with pytest.raises(TypeError, match="activation"):
-            build_vae(activation="relu")
+        ):
+            error, scale = additivity_error(build_vae(**overrides))
+            assert (error / scale < 1e-6) is affine, (overrides, error / scale)
 
 
 class TestTheOptInConvActivation:
     """
-    ``conv_activation`` is the repair for the leaked loop variable, and it is opt-in for a
-    structural reason rather than a cautious one: ``nn.Sequential`` names its children by
-    position, so inserting a parameterless activation renumbers every later key. The
-    default therefore has to remain "no activation" for as long as any pre-Aug-2026
-    checkpoint exists -- which is forever.
-
-    ``loader`` requires the config to state which architecture it means; these assert that
-    both are real and that the boundary between them is exactly where it should be.
+    ``conv_activation`` is opt-in because ``nn.Sequential`` names children by position:
+    inserting an activation renumbers every later key, so a pre-Aug-2026 checkpoint loads
+    only at the default.
     """
 
-    def test_the_default_is_byte_for_byte_the_historical_architecture(self):
+    def test_the_default_is_the_historical_architecture_and_nothing_else_loads_it(self):
         torch.manual_seed(6)
         historical = build_vae()
         torch.manual_seed(6)
         explicit = build_vae(conv_activation=None)
-
-        assert list(historical.state_dict()) == list(explicit.state_dict())
         x = torch.randn(2, LATENT)
         with torch.no_grad():
             assert torch.equal(historical(x), explicit(x))
 
-    def test_a_pre_existing_checkpoint_loads_at_the_default_and_not_otherwise(self):
-        """
-        The whole reason this is a flag and not a fix. Same weights, same config, one key
-        different -- and the second model cannot be given them.
-        """
-        torch.manual_seed(7)
-        checkpoint = build_vae().state_dict()
-
-        torch.manual_seed(7)
-        build_vae(conv_activation=None).load_state_dict(checkpoint, strict=True)
-
+        checkpoint = historical.state_dict()
+        explicit.load_state_dict(checkpoint, strict=True)
         with pytest.raises(RuntimeError, match="Missing key"):
             build_vae(conv_activation="leaky_relu").load_state_dict(checkpoint, strict=True)
 
-    @pytest.mark.parametrize("activation", ["relu", "leaky_relu", "swish", "elu"])
-    def test_an_activation_is_appended_once_per_block_and_forwards(self, activation):
-        vae = build_vae(hidden_dims=[8, 8, 8], conv_activation=activation)
-        assert len(conv_stack_activations(vae)) == 3, [type(m).__name__ for m in vae.decoder]
-        with torch.no_grad():
-            assert vae(torch.randn(2, LATENT)).shape[1] == vae.out_features
+    def test_an_activation_goes_after_each_norm(self):
+        """
+        ``conv -> norm -> activation`` is provisional (``NSM_TRAINING_IDEAS.md`` Idea 13),
+        and is pinned so that changing it is a decision.
+        """
+        for activation in ("relu", "leaky_relu", "swish", "elu"):
+            vae = build_vae(hidden_dims=[8, 8, 8], conv_activation=activation)
+            assert len(conv_stack_activations(vae)) == 3
+            with torch.no_grad():
+                assert vae(torch.randn(2, LATENT)).shape[1] == vae.out_features
+        for norm_type, norm in (("layer", "LayerNorm"), ("batch", "BatchNorm2d")):
+            vae = build_vae(conv_activation="leaky_relu", norm_type=norm_type)
+            assert [type(m).__name__ for m in vae.decoder[:3]] == [
+                "ConvTranspose2d",
+                norm,
+                "LeakyReLU",
+            ]
 
-    @pytest.mark.parametrize("norm_type,norm", [("layer", "LayerNorm"), ("batch", "BatchNorm2d")])
-    def test_it_goes_after_the_norm(self, norm_type, norm):
-        """
-        Placement is ``conv -> norm -> activation`` and is provisional -- which of the two
-        orderings is right is part of what the retrain settles
-        (``NSM_TRAINING_IDEAS.md`` Idea 13). Pinned so that changing it is a decision
-        someone makes, not a diff someone lands.
-
-        Both norm types, stated rather than defaulted: this asserted the placement through
-        whatever the signature default happened to be, so moving that default from
-        ``"batch"`` to ``"layer"`` in v0.3.0 turned it red for a reason that had nothing to
-        do with placement.
-        """
-        vae = build_vae(conv_activation="leaky_relu", norm_type=norm_type)
-        order = [type(m).__name__ for m in vae.decoder[:3]]
-        assert order == ["ConvTranspose2d", norm, "LeakyReLU"], order
-
-    def test_an_unknown_activation_is_refused_by_name(self):
-        """
-        The deleted argument raised ``UnboundLocalError`` from a half-assigned local for
-        anything outside its two-value vocabulary. This one goes through ``get_activation``,
-        so ``models/`` has one activation vocabulary rather than two.
-        """
+    def test_unknown_and_linear_are_refused(self):
+        """``'linear'`` would silently mean the historical stack under a name that reads
+        like a choice, so the refusal points at ``None``."""
         with pytest.raises(ValueError, match="Unknown activation"):
             build_vae(conv_activation="not_an_activation")
-
-    def test_linear_is_refused_and_points_at_none(self):
-        """``get_activation('linear')`` returns ``None``, which would silently mean the
-        historical stack under a name that reads like a choice."""
         with pytest.raises(ValueError, match="None"):
             build_vae(conv_activation="linear")
 
@@ -289,39 +231,22 @@ class TestWhatLayerNormActuallySupplies:
         assert spreads[0] > spreads[-1], spreads
 
 
-class TestOneSine:
+def test_there_is_one_sine_and_sin_still_means_sin_30x():
     """
-    ``deep_sdf`` and ``modulated_periodic_activations`` each defined a ``Sine`` with
-    incompatible defaults -- ``w0`` hardcoded to 30 in one, an argument defaulting to 1.0
-    in the other -- and ``NSM.models.__init__``'s ``from .deep_sdf import *`` runs before
-    the explicit imports, so ``NSM.models.Sine`` silently meant the hardcoded one
-    (ARCHITECTURE section 6). ``deep_sdf`` now imports the parameterized one.
+    ``deep_sdf`` and ``modulated_periodic_activations`` each defined a ``Sine``, and
+    ``NSM.models.Sine`` silently meant the hard-coded one (ARCHITECTURE §6). Merging them
+    must not move a run: ``get_activation("sin")`` is still ``sin(30 x)``.
     """
+    import NSM.models as models
+    from NSM.models.deep_sdf import Decoder
+    from NSM.models.deep_sdf import Sine as ReExported
+    from NSM.models.deep_sdf import get_activation
+    from NSM.models.modulated_periodic_activations import Sine
 
-    def test_there_is_only_one_sine(self):
-        import NSM.models as models
-        from NSM.models.deep_sdf import Sine as ReExported
-        from NSM.models.modulated_periodic_activations import Sine
-
-        assert models.Sine is Sine is ReExported
-
-    def test_the_sin_activation_still_computes_sin_30x(self):
-        """
-        What makes merging the two safe: no run's arithmetic changes. The deleted class
-        computed ``torch.sin(30 * input)`` with 30 inlined; ``get_activation`` now returns
-        ``Sine(w0=30)``, and the parameterized default of 1.0 must not leak in here.
-        """
-        from NSM.models.deep_sdf import get_activation
-
-        torch.manual_seed(3)
-        x = torch.randn(32)
-        assert torch.equal(get_activation("sin")(x), torch.sin(30 * x))
-
-    def test_a_sine_decoder_forwards(self):
-        """The activation reached through a real ``Decoder``, not just constructed."""
-        from NSM.models.deep_sdf import Decoder
-
-        torch.manual_seed(4)
-        model = Decoder(latent_size=8, dims=[16, 16], activation="sin").eval()
-        with torch.no_grad():
-            assert model(torch.randn(5, 11)).shape == (5, 1)
+    assert models.Sine is Sine is ReExported
+    torch.manual_seed(3)
+    x = torch.randn(32)
+    assert torch.equal(get_activation("sin")(x), torch.sin(30 * x))
+    model = Decoder(latent_size=8, dims=[16, 16], activation="sin").eval()
+    with torch.no_grad():
+        assert model(torch.randn(5, 11)).shape == (5, 1)

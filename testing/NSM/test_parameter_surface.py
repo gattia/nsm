@@ -25,8 +25,6 @@ import pytest
 import torch
 
 from NSM.datasets.sdf_dataset import MultiSurfaceSDFSamples, SDFSamples
-from NSM.models.loader import _get_deepsdf_params, _get_implicit_params
-from NSM.models.triplanar import TriplanarDecoder
 from NSM.reconstruct.latent_fit import _decode, reconstruct_latent
 from NSM.reconstruct.utils import refuse_unknown_kwargs
 from NSM.train.train_deep_sdf import _code_regularization_loss
@@ -74,20 +72,6 @@ def _fit_kwargs(**overrides):
     )
     kwargs.update(overrides)
     return kwargs
-
-
-#: A config that both `_get_triplanar_params` and `_get_deepsdf_params` accept, so the
-#: three translators can be compared on one input. Only the keys under test vary.
-BOTH_MODEL_TYPES = {
-    "latent_size": 16,
-    "layer_dimensions": [8, 8],
-    "padding": 0.35,
-    "conv_norm_type": "layer",
-    "conv_activation": None,
-    "conv_hidden_dims": [8],
-    "sdf_hidden_dims": [8],
-    "sdf_latent_size": 8,
-}
 
 
 # ---------------------------------------------------------------------------
@@ -223,67 +207,6 @@ class TestZeroAndMissingConfigValuesRefuse:
 # ---------------------------------------------------------------------------
 # Sites this slice deliberately does not change, asserted so they cannot rot
 # ---------------------------------------------------------------------------
-
-
-class TestTheEvidenceForSlicesThatOwnTheFix:
-    """
-    A finding whose remedy belongs to another slice, recorded as a passing test rather
-    than a sentence, because the sentence is what goes stale.
-
-    This class held a second one until §8.0.P: a `two_stage` config carried a misspelled
-    architecture key into `TriplanarDecoder`'s unread `**kwargs`, which was §8.0.S item
-    (4)'s only *config* path to the swallow. The `two_stage` model type is deleted, so
-    that path is gone -- and item (4) is back to having no config route, which is worth
-    knowing before S re-derives one.
-    """
-
-    def test_the_implicit_translator_ignores_the_activation_both_siblings_read(self):
-        """
-        A third independent way the `implicit` model type is unreachable as configured,
-        alongside the two `SCOPE` §2.6 already records. `block_type: "linear"` builds
-        `LinearBlockFactory()` at its `nn.ReLU` default whatever `activation` says.
-
-        Not fixed here: §2.6 rules that any fix folds into the registration pathway, and
-        patching one translator in isolation is what that ruling exists to prevent.
-        """
-        _, params = _get_implicit_params(
-            {
-                "latent_dim": 8,
-                "hidden_dim": 8,
-                "num_layers": 2,
-                "block_type": "linear",
-                "activation": "sin",
-            }
-        )
-
-        assert params["block_factory"].activation_cls is torch.nn.ReLU
-        assert _get_deepsdf_params(dict(BOTH_MODEL_TYPES, activation="sin"))[1]["activation"] == (
-            "sin"
-        )
-
-
-class TestPolymorphicConformanceIsNotTheAcceptedAndIgnoredClass:
-    """
-    Four of the five parameters the sweep found accepted-and-never-read are the same
-    `epoch`, on the decoders and on the schedules, and deleting any of them would break
-    the caller: `train_epoch` calls every decoder as `model(inputs, epoch=epoch)` and
-    `adjust_learning_rate` calls every schedule as `get_learning_rate(epoch)`.
-
-    **The discriminator is the sibling**, and it is what #20's standing remedy -- delete
-    the parameter -- has always needed to be safe. This test is that discriminator,
-    executed.
-    """
-
-    def test_a_sibling_implementation_reads_the_epoch_the_others_ignore(self):
-        from NSM.models.deep_sdf import Decoder
-        from NSM.models.modulated_periodic_activations import ImplicitDecoder
-
-        for cls in (Decoder, TriplanarDecoder, ImplicitDecoder):
-            assert "epoch" in inspect.signature(cls.forward).parameters
-
-        source = inspect.getsource(Decoder.forward)
-
-        assert "epoch" in source, "the sibling that reads it is what makes the rest conformance"
 
 
 class TestUpgradeCachedLayoutKeepsItsCachePath:

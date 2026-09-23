@@ -72,8 +72,8 @@ pytest --cov=NSM --cov-report=html
 # Test model loader
 pytest testing/NSM/models/test_loader.py -v
 
-# Test triplanar model
-pytest testing/NSM/models/test_triplanar.py -v
+# Test every model option
+pytest testing/NSM/models/test_model_options.py -v
 ```
 
 ### Run tests in parallel (faster)

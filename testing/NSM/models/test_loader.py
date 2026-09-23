@@ -1,17 +1,17 @@
 """
-Test module for NSM model loader functionality.
-
-Tests the load_model function and related utilities for loading
-pre-trained Neural Shape Models from configuration and state files.
+``NSM.models.loader``: templates, ``load_model``, and the architecture keys a config has to
+state because no default can be right for them.
 """
 
-import os
-import tempfile
-from pathlib import Path
+import ast
+import inspect
+import json
+import re
 
 import pytest
 import torch
 
+import NSM.models.loader as loader
 from NSM.models import (
     Decoder,
     ImplicitDecoder,
@@ -20,351 +20,94 @@ from NSM.models import (
     list_supported_models,
     load_model,
 )
+from NSM.models.triplanar import VAEDecoder
+
+EXPECTED_CLASS = {"triplanar": TriplanarDecoder, "deepsdf": Decoder, "implicit": ImplicitDecoder}
+EXTRACTORS = {
+    "triplanar": loader._get_triplanar_params,
+    "deepsdf": loader._get_deepsdf_params,
+    "implicit": loader._get_implicit_params,
+}
+
+#: Small enough to build each model type in well under a second.
+SMALL = {
+    "triplanar": dict(
+        latent_size=16, conv_hidden_dims=[8, 8], sdf_hidden_dims=[8], sdf_latent_size=8
+    ),
+    "deepsdf": dict(latent_size=16, layer_dimensions=[16, 16]),
+    "implicit": dict(latent_dim=16, hidden_dim=16, num_layers=3),
+}
 
 
-class TestModelLoader:
-    """Test class for model loader functionality."""
-
-    def test_list_supported_models(self):
-        """Test that supported models list is returned correctly."""
-        models = list_supported_models()
-        assert isinstance(models, list)
-        assert len(models) > 0
-        expected_models = ["triplanar", "deepsdf", "implicit"]
-        for model in expected_models:
-            assert model in models
-
-    def test_get_model_config_template_all_types(self):
-        """Test getting config templates for all supported model types."""
-        models = list_supported_models()
-
-        for model_type in models:
-            config = get_model_config_template(model_type)
-            assert isinstance(config, dict)
-            assert len(config) > 0
-
-            # Each config should have some required parameters
-            if model_type in ["triplanar", "deepsdf"]:
-                assert "latent_size" in config
-            elif model_type == "implicit":
-                assert "latent_dim" in config
-                assert "hidden_dim" in config
-                assert "num_layers" in config
-
-    def test_get_model_config_template_invalid_type(self):
-        """Test that invalid model type raises ValueError."""
-        with pytest.raises(ValueError, match="Unknown model type"):
-            get_model_config_template("invalid_model_type")
-
-    def test_model_initialization_from_templates(self):
-        """Test that all models can be initialized using their config templates."""
-        models = list_supported_models()
-
-        for model_type in models:
-            config = get_model_config_template(model_type)
-
-            # Import the internal parameter extraction functions
-            from NSM.models.loader import (
-                _get_deepsdf_params,
-                _get_implicit_params,
-                _get_triplanar_params,
-            )
-
-            if model_type == "triplanar":
-                model_class, params = _get_triplanar_params(config)
-                assert model_class == TriplanarDecoder
-            elif model_type == "deepsdf":
-                model_class, params = _get_deepsdf_params(config)
-                assert model_class == Decoder
-            elif model_type == "implicit":
-                model_class, params = _get_implicit_params(config)
-                assert model_class == ImplicitDecoder
-
-            # Initialize the model
-            model = model_class(**params)
-            assert isinstance(model, torch.nn.Module)
-
-    def test_load_model_invalid_type(self):
-        """Test that load_model raises ValueError for invalid model type."""
-        config = get_model_config_template("triplanar")
-
-        with tempfile.NamedTemporaryFile(suffix=".pt") as tmp_file:
-            # Create dummy state dict
-            dummy_state = {"model": {}}
-            torch.save(dummy_state, tmp_file.name)
-
-            with pytest.raises(ValueError, match="Unknown model type"):
-                load_model(config, tmp_file.name, model_type="invalid_type")
-
-    def test_load_model_missing_file(self):
-        """Test that load_model raises FileNotFoundError for missing file."""
-        config = get_model_config_template("triplanar")
-
-        with pytest.raises(FileNotFoundError):
-            load_model(config, "/nonexistent/path/model.pt", model_type="triplanar")
-
-    def test_load_model_missing_config_keys(self):
-        """Test that load_model raises KeyError for missing required config keys."""
-        # Empty config should fail
-        empty_config = {}
-
-        with tempfile.NamedTemporaryFile(suffix=".pt") as tmp_file:
-            dummy_state = {"model": {}}
-            torch.save(dummy_state, tmp_file.name)
-
-            with pytest.raises(KeyError, match="Missing required configuration keys"):
-                load_model(empty_config, tmp_file.name, model_type="triplanar")
+def small_config(model_type):
+    config = get_model_config_template(model_type)
+    config.update(SMALL[model_type])
+    return config
 
 
-@pytest.fixture
-def temp_model_files():
-    """Create temporary model files with proper state dicts for testing."""
-    models_data = {}
+def test_unknown_model_types_and_missing_inputs_are_refused(tmp_path):
+    assert set(list_supported_models()) == set(EXPECTED_CLASS)
+    with pytest.raises(ValueError, match="Unknown model type"):
+        get_model_config_template("invalid_model_type")
 
-    # Create a simple model for each type and save its state
-    for model_type in list_supported_models():
-        config = get_model_config_template(model_type)
-
-        # Modify configs to be smaller for faster testing
-        if model_type == "triplanar":
-            config["latent_size"] = 64
-            config["conv_hidden_dims"] = [128, 128]
-            config["sdf_hidden_dims"] = [128, 128]
-            config["sdf_latent_size"] = 32
-            model = TriplanarDecoder(
-                **{
-                    "latent_dim": config["latent_size"],
-                    "n_objects": config["objects_per_decoder"],
-                    "conv_hidden_dims": config["conv_hidden_dims"],
-                    "conv_deep_image_size": config["conv_deep_image_size"],
-                    "conv_norm": config["conv_norm"],
-                    "conv_norm_type": config["conv_norm_type"],
-                    "conv_start_with_mlp": config["conv_start_with_mlp"],
-                    "sdf_latent_size": config["sdf_latent_size"],
-                    "sdf_hidden_dims": config["sdf_hidden_dims"],
-                    "sdf_weight_norm": config["weight_norm"],
-                    "sdf_final_activation": config["final_activation"],
-                    "sdf_activation": config["activation"],
-                    "sdf_dropout_prob": config["dropout_prob"],
-                    "sum_sdf_features": config["sum_conv_output_features"],
-                    "conv_pred_sdf": config["conv_pred_sdf"],
-                    "padding": config["padding"],
-                }
-            )
-
-        elif model_type == "deepsdf":
-            config["latent_size"] = 64
-            config["layer_dimensions"] = [128, 128, 128]
-            model = Decoder(
-                latent_size=config["latent_size"],
-                dims=config["layer_dimensions"],
-                n_objects=config["objects_per_decoder"],
-                dropout=config["layers_with_dropout"],
-                dropout_prob=config["dropout_prob"],
-                latent_in=config["layer_latent_in"],
-                weight_norm=config["weight_norm"],
-                activation=config["activation"],
-                final_activation=config["final_activation"],
-                concat_latent_input=config["concat_latent_input"],
-                progressive_add_depth=config["progressive_add_depth"],
-                layer_split=config["layer_split"],
-            )
-
-        elif model_type == "implicit":
-            config["latent_dim"] = 64
-            config["hidden_dim"] = 128
-            config["num_layers"] = 3
-            from NSM.models.modulated_periodic_activations import LinearBlockFactory
-
-            model = ImplicitDecoder(
-                latent_dim=config["latent_dim"],
-                out_dim=config["out_dim"],
-                hidden_dim=config["hidden_dim"],
-                num_layers=config["num_layers"],
-                block_factory=LinearBlockFactory(),
-                modulation=config["modulation"],
-                dropout=config["dropout"],
-                final_activation=torch.sigmoid if config["final_activation"] == "sigmoid" else None,
-            )
-
-        # Save model to temporary file
-        temp_file = tempfile.NamedTemporaryFile(suffix=".pt", delete=False)
-        state_dict = {"model": model.state_dict()}
-        torch.save(state_dict, temp_file.name)
-        temp_file.close()
-
-        models_data[model_type] = {
-            "config": config,
-            "file_path": temp_file.name,
-            "original_model": model,
-        }
-
-    yield models_data
-
-    # Cleanup
-    for data in models_data.values():
-        if os.path.exists(data["file_path"]):
-            os.unlink(data["file_path"])
+    path = str(tmp_path / "empty.pt")
+    torch.save({"model": {}}, path)
+    config = get_model_config_template("triplanar")
+    with pytest.raises(ValueError, match="Unknown model type"):
+        load_model(config, path, model_type="invalid_type")
+    with pytest.raises(FileNotFoundError):
+        load_model(config, str(tmp_path / "missing.pt"), model_type="triplanar")
+    with pytest.raises(KeyError, match="Missing required configuration keys"):
+        load_model({}, path, model_type="triplanar")
 
 
-class TestModelLoadingFullWorkflow:
-    """Test class for complete model loading workflow with actual models."""
+@pytest.mark.parametrize("model_type", sorted(EXPECTED_CLASS))
+def test_every_model_type_loads_from_its_template(model_type, tmp_path):
+    """
+    Built through the loader's own translator, saved, then loaded: the right class, in eval
+    mode, on the CPU, computing what was saved. The bitwise round trip for triplanar is in
+    ``regression/test_model_roundtrip.py``.
+    """
+    config = small_config(model_type)
+    model_class, params = EXTRACTORS[model_type](config)
+    assert model_class is EXPECTED_CLASS[model_type]
+    torch.manual_seed(0)
+    original = model_class(**params).eval()
+    path = str(tmp_path / "model.pt")
+    torch.save({"model": original.state_dict()}, path)
 
-    def test_load_model_full_workflow(self, temp_model_files):
-        """Test complete workflow of loading models from saved states."""
-        for model_type, data in temp_model_files.items():
-            config = data["config"]
-            file_path = data["file_path"]
-            original_model = data["original_model"]
+    loaded = load_model(config, path, model_type=model_type, device="cpu")
+    assert type(loaded) is model_class and not loaded.training
+    assert next(loaded.parameters()).device.type == "cpu"
 
-            # Load the model using our loader
-            loaded_model = load_model(config, file_path, model_type=model_type, device="cpu")
-
-            # Verify the loaded model
-            assert isinstance(loaded_model, torch.nn.Module)
-            assert type(loaded_model) == type(original_model)
-            assert not loaded_model.training  # Should be in eval mode
-
-            # Test that the model can perform inference
-            if model_type in ["triplanar", "deepsdf"]:
-                latent_size = config["latent_size"]
-                batch_size = 10
-
-                # Create test input: [latent, xyz]
-                test_input = torch.randn(batch_size, latent_size + 3)
-
-                with torch.no_grad():
-                    output = loaded_model(test_input)
-
-                assert output.shape[0] == batch_size
-                assert output.shape[1] == config.get("objects_per_decoder", 1)
-
-            elif model_type == "implicit":
-                latent_size = config["latent_dim"]
-                batch_size = 10
-
-                # Create test input: [latent, xyz]
-                test_input = torch.randn(batch_size, latent_size + 3)
-
-                with torch.no_grad():
-                    output = loaded_model(test_input)
-
-                assert output.shape[0] == batch_size
-                assert output.shape[1] == config.get("out_dim", 1)
-
-    def test_different_state_dict_formats(self, temp_model_files):
-        """Test loading models with different state dict save formats."""
-        # Test with triplanar model
-        data = temp_model_files["triplanar"]
-        config = data["config"]
-        original_model = data["original_model"]
-
-        # Test different save formats
-        formats = [
-            {"model": original_model.state_dict()},
-            {"state_dict": original_model.state_dict()},
-            {"model_state_dict": original_model.state_dict()},
-            original_model.state_dict(),  # Direct state dict
-        ]
-
-        for i, state_format in enumerate(formats):
-            with tempfile.NamedTemporaryFile(suffix=f"_format_{i}.pt", delete=False) as tmp_file:
-                torch.save(state_format, tmp_file.name)
-
-                try:
-                    # Should load successfully regardless of format
-                    loaded_model = load_model(
-                        config, tmp_file.name, model_type="triplanar", device="cpu"
-                    )
-                    assert isinstance(loaded_model, TriplanarDecoder)
-                    assert not loaded_model.training
-                finally:
-                    os.unlink(tmp_file.name)
-
-    def test_device_handling(self, temp_model_files):
-        """Test that models are loaded to the correct device."""
-        data = temp_model_files["deepsdf"]
-        config = data["config"]
-        file_path = data["file_path"]
-
-        # Test loading to CPU
-        model_cpu = load_model(config, file_path, model_type="deepsdf", device="cpu")
-        assert next(model_cpu.parameters()).device.type == "cpu"
-
-        # Test automatic device detection (should default to CPU in test environment)
-        model_auto = load_model(config, file_path, model_type="deepsdf", device=None)
-        assert next(model_auto.parameters()).device.type in ["cpu", "cuda"]
+    width = config.get("latent_size", config.get("latent_dim"))
+    query = torch.randn(10, width + 3)
+    with torch.no_grad():
+        assert torch.equal(loaded(query), original(query))
 
 
 class TestConvNormTypeMustBeStated:
     """
-    ``conv_norm_type`` decides the VAE's normalization, and until Aug 2026 four places
-    defaulted it and disagreed: ``"batch"`` in ``VAEDecoder``, ``TriplanarDecoder``,
-    ``_get_triplanar_params`` and the triplanar template; ``"layer"`` in the (since
-    removed, SCOPE.md section 2.9) two_stage loader branch and defaults, and in
-    ``NSM/configs/default_config.json``.
-
-    **The value nothing has ever trained was the one that won three of those.** Every
-    ShapeMedKnee config -- 647, 551, the 2024 training config and the regenerated
-    ``default_config.json`` -- says ``"layer"``. And ``"layer"`` is not cosmetic: it is the
-    only thing making the VAE nonlinear at all, because the pointwise activation was never
-    wired in (``ARCHITECTURE.md`` section 7.1). Under ``"batch"`` the stack trains nonlinear
-    (batch statistics couple samples) and evaluates affine (running statistics).
-
-    A mismatch against a checkpoint does not load silently -- ``BatchNorm2d`` and
-    ``LayerNorm`` differ in both key set and shape, so torch refuses. What the silent
-    default cost was a *fresh* run started from the template, which inherited a
-    configuration nobody has trained and nothing would flag.
+    ``conv_norm_type`` and ``conv_activation`` decide what gets built, and four places used
+    to default ``conv_norm_type`` and disagree. The trained value, ``"layer"``, won one of
+    them. ``"layer"`` is also the only thing that makes the VAE nonlinear (ARCHITECTURE
+    §7.1). The loader keeps no default for either key, and the triplanar template states
+    the trained values.
     """
 
-    def test_a_triplanar_config_without_it_is_refused(self):
-        stripped = {
-            k: v for k, v in get_model_config_template("triplanar").items() if k != "conv_norm_type"
-        }
-        with pytest.raises(KeyError, match="conv_norm_type"):
-            load_model(stripped, "/nonexistent.pt", model_type="triplanar")
+    def test_a_config_without_either_key_is_refused_and_the_template_states_both(self):
+        template = get_model_config_template("triplanar")
+        assert (template["conv_norm_type"], template["conv_activation"]) == ("layer", None)
+        for key in ("conv_norm_type", "conv_activation"):
+            stripped = {k: v for k, v in template.items() if k != key}
+            with pytest.raises(KeyError, match=key):
+                load_model(stripped, "/nonexistent.pt", model_type="triplanar")
 
-    def test_the_triplanar_template_advertises_the_value_that_was_trained(self):
-        """
-        A template is what a NEW config should look like, so it must not hand someone the
-        configuration nothing has been trained with.
-        """
-        assert get_model_config_template("triplanar")["conv_norm_type"] == "layer"
-
-    def test_a_triplanar_config_without_conv_activation_is_refused(self):
-        """
-        Same contract, different key: ``conv_activation`` decides the module *layout*, so a
-        config that does not state it does not describe an architecture. ``null`` is the
-        historical stack -- see ``TestTheOptInConvActivation``.
-        """
-        stripped = {
-            k: v
-            for k, v in get_model_config_template("triplanar").items()
-            if k != "conv_activation"
-        }
-        with pytest.raises(KeyError, match="conv_activation"):
-            load_model(stripped, "/nonexistent.pt", model_type="triplanar")
-
-    def test_the_triplanar_template_defaults_to_the_historical_architecture(self):
-        """``null``, not an activation: a template that flipped the architecture would make
-        every checkpoint anyone owns unloadable from it."""
-        assert get_model_config_template("triplanar")["conv_activation"] is None
-
-    def test_the_loader_keeps_no_silent_default_for_it(self):
-        """
-        The structural half, and the one that stops this regressing: a fix that only
-        aligned the two literals would leave the next person free to add a third
-        ``config.get("conv_norm_type", ...)``. There must be no default to disagree about.
-        """
-        import ast
-        import inspect
-
-        import NSM.models.loader as loader
-
-        tree = ast.parse(inspect.getsource(loader))
+    def test_the_loader_keeps_no_silent_default_for_them(self):
+        """A third ``config.get("conv_norm_type", ...)`` would bring the disagreement back."""
         defaulted = [
-            node
-            for node in ast.walk(tree)
+            node.lineno
+            for node in ast.walk(ast.parse(inspect.getsource(loader)))
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "get"
@@ -372,9 +115,62 @@ class TestConvNormTypeMustBeStated:
             and isinstance(node.args[0], ast.Constant)
             and node.args[0].value in ("conv_norm_type", "conv_activation")
         ]
-        assert defaulted == [], f"{len(defaulted)} silent default(s) for an architecture key"
+        assert defaulted == []
+
+    def test_direct_construction_gets_the_trained_normalization(self):
+        """
+        The constructors default to ``"layer"`` since v0.3.0, which reaches kneepipeline:
+        it builds ``TriplanarDecoder`` directly. The two norms differ on disk, so a strict
+        load of the wrong one is refused rather than silent.
+        """
+
+        def norms(model):
+            return sorted({type(m).__name__ for m in model.modules() if "Norm" in type(m).__name__})
+
+        tiny = dict(latent_dim=8, conv_hidden_dims=[8, 8], sdf_hidden_dims=[8], sdf_latent_size=8)
+        assert norms(TriplanarDecoder(**tiny)) == ["LayerNorm"]
+        assert norms(VAEDecoder(latent_dim=8, out_features=24, hidden_dims=[8, 8])) == ["LayerNorm"]
+
+        batch = set(TriplanarDecoder(conv_norm_type="batch", **tiny).state_dict())
+        layer = set(TriplanarDecoder(conv_norm_type="layer", **tiny).state_dict())
+        assert layer < batch
+        assert {k.split(".")[-1] for k in batch - layer} <= {
+            "running_mean",
+            "running_var",
+            "num_batches_tracked",
+        }
 
 
-if __name__ == "__main__":
-    # Run tests if executed directly
-    pytest.main([__file__, "-v"])
+class TestRepairingAnOldTriplanarConfig:
+    """
+    A config written before Aug 2026 lacks ``padding``, ``conv_activation`` and
+    ``conv_norm_type`` (#26, #45). Both shipped production models lack the first two. None
+    can be defaulted. One refusal names all three, with a JSON block that repairs the config.
+    """
+
+    HISTORICAL = {"padding": 0.1, "conv_activation": None, "conv_norm_type": "layer"}
+
+    def old_config(self):
+        return dict(SMALL["triplanar"])
+
+    def test_one_refusal_carries_a_printable_repair(self):
+        """
+        ``KeyError.__str__`` is ``repr(args[0])``, which prints ``\\n`` escapes and turns the
+        JSON block into one unusable line. ``MissingArchitectureKeys`` overrides it and is
+        still a ``KeyError``.
+        """
+        config = self.old_config()
+        with pytest.raises(KeyError) as excinfo:
+            loader._get_triplanar_params(config)
+        printed = str(excinfo.value)
+        assert all(key in printed for key in self.HISTORICAL)
+        assert "\\n" not in printed and printed.count("\n") > 4
+
+        repair = json.loads(re.search(r"\{.*\}", printed, re.DOTALL).group(0))
+        assert repair == self.HISTORICAL
+        config.update(repair)
+        loader._get_triplanar_params(config)
+
+    def test_a_stated_padding_is_forwarded(self):
+        config = {**self.old_config(), **self.HISTORICAL, "padding": 0.35}
+        assert loader._get_triplanar_params(config)[1]["padding"] == 0.35

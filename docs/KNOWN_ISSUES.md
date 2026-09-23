@@ -1138,7 +1138,7 @@ reproduces the original architecture exactly**. `"progressive_add_depth": true` 
 everything else in the run is unchanged.
 
 *Pinned by:* `test_model_options.test_layer_split_false_is_the_same_model_as_no_layer_split`,
-`test_model_options.test_layer_split_zero_still_splits_at_layer_zero`,
+which also checks that `layer_split: 0` still splits, and
 `test_model_options.test_a_block_phases_in_continuously_across_its_start_epoch`.
 
 ## 15. `sum_conv_output_features: false` trained on one plane of three
@@ -1188,8 +1188,8 @@ the reason this entry exists.
 comparison drawn against a summed model is meaningful — retrain rather than re-evaluate,
 since the checkpoint loads either way.
 
-*Pinned by:* `test_model_options.test_concatenation_uses_all_three_planes`,
-`test_model_options.test_the_concatenating_vae_keeps_the_width_it_always_had`,
+*Pinned by:* `test_model_options.test_concatenation_uses_all_three_planes`, which also
+checks that the VAE keeps its width, and
 `test_model_options.test_triplanar_feature_combination_works_or_refuses`.
 
 ## 16. A `padding` a config did not state was silently defaulted, at any trained value

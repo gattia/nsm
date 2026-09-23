@@ -1,18 +1,7 @@
 """
-Every documented option of every model type: does it build, and does it survive one
-forward?
-
-``models/`` is the only package in NSM with no test that constructs anything but the
-default. The audit's "constructible-but-uncallable configuration" class (five instances,
-`ARCHITECTURE.md` section 7) is what that gap hides: a config key is accepted, the model
-builds, and the failure arrives on the first forward pass -- or, worse, does not arrive at
-all and the model trains degraded.
-
-The matrix below is issue #46's closure criterion written out: **each documented option
-value either works or refuses at construction.** Anything else is a defect, and the
-strict xfails name which one. The option values come from
-``loader.get_model_config_template``, which is what the README tells a reader to start
-from, plus the values ``NSM/configs/default_config.json`` actually ships.
+Every documented option of every model type builds and forwards, or refuses at
+construction (#46's closure criterion). The option values come from
+``loader.get_model_config_template`` and from ``NSM/configs/default_config.json``.
 """
 
 import inspect
@@ -20,7 +9,7 @@ import inspect
 import pytest
 import torch
 
-from NSM.models.deep_sdf import DELETED_DECODER_ARGUMENTS, Decoder
+from NSM.models.deep_sdf import DELETED_DECODER_ARGUMENTS, PROGRESSIVE_PARAMS, Decoder
 from NSM.models.loader import (
     _get_deepsdf_params,
     _get_implicit_params,
@@ -29,8 +18,7 @@ from NSM.models.loader import (
 )
 from NSM.models.triplanar import TriplanarDecoder
 
-#: Small enough that the whole matrix runs in about a second, large enough that the
-#: DeepSDF branch has the eight hidden layers ``PROGRESSIVE_PARAMS`` indexes (5, 6, 7).
+#: Eight hidden layers, because ``PROGRESSIVE_PARAMS`` phases in layers 5, 6 and 7.
 LATENT = 8
 N_POINTS = 6
 N_LAYERS = 8
@@ -42,43 +30,31 @@ EXTRACTORS = {
 }
 
 
-def small_config(model_type, **overrides):
-    """``get_model_config_template`` shrunk to CPU-test size, then overridden."""
-    config = get_model_config_template(model_type)
-    if model_type == "deepsdf":
-        config.update(latent_size=LATENT, layer_dimensions=[16] * N_LAYERS)
-    elif model_type == "triplanar":
-        config.update(
-            latent_size=LATENT * 4,
-            conv_hidden_dims=[8, 8],
-            sdf_latent_size=12,
-            sdf_hidden_dims=[16, 16],
-        )
-    elif model_type == "implicit":
-        config.update(latent_dim=LATENT, hidden_dim=16, num_layers=4)
-    config.update(overrides)
-    return config
-
-
 def build(model_type, **overrides):
-    """Construct exactly the way ``load_model`` does, minus the checkpoint."""
-    model_class, params = EXTRACTORS[model_type](small_config(model_type, **overrides))
+    """The template shrunk to CPU size, built the way ``load_model`` builds it."""
+    config = get_model_config_template(model_type)
+    config.update(
+        {
+            "deepsdf": dict(latent_size=LATENT, layer_dimensions=[16] * N_LAYERS),
+            "triplanar": dict(
+                latent_size=LATENT * 4,
+                conv_hidden_dims=[8, 8],
+                sdf_latent_size=12,
+                sdf_hidden_dims=[16, 16],
+            ),
+            "implicit": dict(latent_dim=LATENT, hidden_dim=16, num_layers=4),
+        }[model_type]
+    )
+    config.update(overrides)
+    model_class, params = EXTRACTORS[model_type](config)
     torch.manual_seed(0)
     return model_class(**params)
 
 
-def latent_width(model_type, model):
-    if model_type == "triplanar":
-        return model.latent_dim
-    if model_type == "implicit":
-        return model.latent_dim
-    return model.dims[0] - 3
-
-
-def forward_once(model_type, model, epoch=None):
-    """One forward on the legacy concatenated ``[latent | xyz]`` input every type takes."""
+def forward(model, epoch=None):
+    """One forward on the concatenated ``[latent | xyz]`` input every type takes."""
+    width = model.latent_dim if hasattr(model, "latent_dim") else model.dims[0] - 3
     torch.manual_seed(0)
-    width = latent_width(model_type, model)
     latent = torch.randn(1, width).repeat(N_POINTS, 1) * 0.05
     xyz = torch.rand(N_POINTS, 3) * 2 - 1
     model.eval()
@@ -86,385 +62,214 @@ def forward_once(model_type, model, epoch=None):
         return model(torch.cat([latent, xyz], dim=1), epoch=epoch)
 
 
-def build_and_forward(model_type, epoch=None, **overrides):
-    return forward_once(model_type, build(model_type, **overrides), epoch=epoch)
-
-
-# ---------------------------------------------------------------------------
-# The matrix
-# ---------------------------------------------------------------------------
-
-DEFECT_46 = "https://github.com/gattia/nsm/issues/46"
-
-
-def broken(reason):
-    return pytest.mark.xfail(strict=True, reason=f"#46: {reason} ({DEFECT_46})")
-
-
 ACTIVATIONS = ["relu", "leaky_relu", "sigmoid", "tanh", "softplus", "elu", "selu", "swish", "sin"]
 
 
-@pytest.mark.parametrize("activation", ACTIVATIONS)
-def test_every_hidden_activation_forwards(activation):
-    """``get_activation``'s own branch list, minus ``'linear'`` which is its own case."""
-    assert build_and_forward("deepsdf", activation=activation).shape == (N_POINTS, 1)
-
-
-@pytest.mark.parametrize("final_activation", ACTIVATIONS + ["linear"])
-def test_every_final_activation_forwards(final_activation):
-    """``'linear'`` belongs here and works: ``forward`` guards ``final_activation is None``."""
-    assert build_and_forward("deepsdf", final_activation=final_activation).shape == (N_POINTS, 1)
-
-
-def test_a_linear_hidden_activation_works_or_refuses_at_construction():
+def test_every_deepsdf_option_forwards():
     """
-    ``get_activation('linear')`` returns ``None``, correctly for the final position and
-    fatally for the hidden one, where until Aug 2026 ``forward`` called it (#46).
-
-    Written as "refuses OR forwards" rather than ``pytest.raises`` on purpose: an
-    implementation that made hidden ``'linear'`` mean ``nn.Identity`` would also be a fix,
-    and this test should not forbid it.
+    Hidden ``'linear'`` is the one activation that may refuse instead: ``get_activation``
+    returns ``None`` for it, which is right for the final layer and was fatal in a hidden
+    one (#46). Mapping it to ``nn.Identity`` would also be a fix, so either is allowed.
     """
+    options = [dict(activation=a) for a in ACTIVATIONS]
+    options += [dict(final_activation=a) for a in ACTIVATIONS + ["linear"]]
+    options += [
+        dict(layer_split=split, objects_per_decoder=objects)
+        for split in (None, 2)
+        for objects in (1, 2)
+    ]
+    options += [
+        dict(concat_latent_input=concat, layer_latent_in=latent_in)
+        for concat in (False, True)
+        for latent_in in ((), (4,))
+    ]
+    options += [dict(layers_with_dropout=list(range(N_LAYERS)), dropout_prob=p) for p in (0.0, 0.2)]
+    for option in options:
+        objects = option.get("objects_per_decoder", 1)
+        assert forward(build("deepsdf", **option)).shape == (N_POINTS, objects), option
+
     try:
         model = build("deepsdf", activation="linear")
     except (ValueError, TypeError):
         return
-    assert forward_once("deepsdf", model).shape == (N_POINTS, 1)
+    assert forward(model).shape == (N_POINTS, 1)
 
 
-@pytest.mark.parametrize("epoch", [0, 100, 300, 700, 1300])
-def test_progressive_add_depth_forwards_at_every_epoch(epoch):
-    """
-    ``PROGRESSIVE_PARAMS`` phases layers 5, 6 and 7 in at epochs 200, 600 and 1010, so
-    every epoch below 1010 has at least one not-yet-started block. Until Aug 2026
-    ``forward_branch_`` returned ``None`` for those and the next layer was handed it, so
-    1300 was the only value in this list that worked (#46).
-    """
-    assert build_and_forward("deepsdf", progressive_add_depth=True, epoch=epoch).shape == (
-        N_POINTS,
-        1,
-    )
-
-
-def test_progressive_add_depth_refuses_a_forward_with_no_epoch():
-    """``self.epoch`` starts as ``None``, and ``None >= int`` is a TypeError from inside."""
-    model = build("deepsdf", progressive_add_depth=True)
-    with pytest.raises(ValueError, match="epoch"):
-        forward_once("deepsdf", model)
-
-
-def test_a_block_phases_in_continuously_across_its_start_epoch():
-    """
-    The phase-in weight is ``((epoch - start) / warmup) ** 2``, so at ``epoch == start`` it
-    is zero and the block is an identity -- the same thing skipping it does one epoch
-    earlier. Until Aug 2026 the warmup branch tested ``start < epoch``, so ``epoch ==
-    start`` fell through to applying the block at FULL weight for exactly one epoch before
-    dropping back to ``(1/warmup)**2``.
-
-    Asserted as a ratio against the step the phase-in actually takes, not a fixed
-    tolerance: the step from ``start`` to ``start + 1`` is what the schedule intends to
-    move, and the step across ``start`` must not be larger than it.
-    """
-    from NSM.models.deep_sdf import PROGRESSIVE_PARAMS
-
-    start = PROGRESSIVE_PARAMS["layers"][5]["start_epoch"]
-    model = build("deepsdf", progressive_add_depth=True)
-    before, at, after = (
-        forward_once("deepsdf", model, epoch=e) for e in (start - 1, start, start + 1)
-    )
-
-    across = (at - before).abs().max().item()
-    intended = (after - at).abs().max().item()
-    assert (
-        across <= intended
-    ), f"jump across start_epoch {across:.3e} > one warmup step {intended:.3e}"
-
-
-#: Config keys whose ``Decoder`` argument was deleted in Aug 2026 (#20), with a truthy
-#: value and the falsy value every NSM-owned config carries. Both were documented, stored
-#: or dropped, and never read by ``forward``: no run has ever had either.
-#:
-#: ``layers_with_norm`` is deliberately NOT here -- it was not always inert, so it gets
-#: ``TestNormLayersWasReachableOnlyOneWay`` below rather than this blanket treatment.
-DELETED_OPTIONS = [
-    ("xyz_in_all", True, False),
-    ("latent_noise_sigma", 0.01, None),
-]
-
-
-@pytest.mark.parametrize(
-    "key, truthy, _falsy", DELETED_OPTIONS, ids=[o[0] for o in DELETED_OPTIONS]
-)
-def test_a_deleted_option_asked_for_is_refused(key, truthy, _falsy):
-    """
-    ``Decoder`` keeps ``**kwargs``, so deleting the named parameter would put each of these
-    straight back to being silently ignored -- the exact defect being fixed. They are
-    refused instead, and the message names the config spelling rather than the argument.
-    """
-    with pytest.raises(TypeError, match=key):
-        build("deepsdf", **{key: truthy})
-
-
-@pytest.mark.parametrize(
-    "key, _truthy, falsy", DELETED_OPTIONS, ids=[o[0] for o in DELETED_OPTIONS]
-)
-def test_a_deleted_option_left_at_its_old_default_is_accepted(key, _truthy, falsy):
-    """
-    Every NSM-owned config carries these falsy, and a falsy value asked for nothing and got
-    nothing -- so refusing it would break configs over a key that never did anything.
-    """
-    assert build_and_forward("deepsdf", **{key: falsy}).shape == (N_POINTS, 1)
-
-
-class TestNormLayersWasReachableOnlyOneWay:
-    """
-    ``norm_layers`` was deleted in Aug 2026 (#46), but it was **not** simply inert, so the
-    two cases have to be answered differently -- and getting that wrong breaks real configs.
-
-    The branch that built the LayerNorms is an ``elif`` under ``weight_norm``
-    (``deep_sdf.py``, commit ``01d774a``, Jun 2023, whose message says the goal was to
-    "separate wieght norm and batch norm so can use both" -- which the ``elif`` is exactly
-    what prevents). So with weight norm **on**, the shipped setting, nothing was ever
-    appended to the norm list and the key was provably a no-op; with it **off**, LayerNorm
-    really was applied, the checkpoint carries ``bn.*`` keys, and a set not starting at
-    layer 0 raised ``IndexError`` on the first forward.
-    """
-
-    @pytest.mark.parametrize("layers_with_norm", [(0, 1), (1, 2), tuple(range(8))])
-    def test_it_is_accepted_where_it_never_did_anything(self, layers_with_norm):
+class TestProgressiveAddDepth:
+    def test_it_forwards_at_every_epoch_and_refuses_none(self):
         """
-        The case that matters in practice: ``weight_norm: true`` with a full
-        ``layers_with_norm``, which is what ``default_config.json`` shipped and what real
-        training configs carry. Refusing it would break a config the defect never touched.
+        Every epoch below 1010 has a block that has not started. Those used to return
+        ``None`` into the next layer, so only 1300 worked (#46).
         """
-        forwarded = build_and_forward(
-            "deepsdf", layers_with_norm=layers_with_norm, weight_norm=True
-        )
-        assert forwarded.shape == (N_POINTS, 1)
+        model = build("deepsdf", progressive_add_depth=True)
+        for epoch in (0, 100, 300, 700, 1300):
+            assert forward(model, epoch=epoch).shape == (N_POINTS, 1)
+        with pytest.raises(ValueError, match="epoch"):
+            forward(build("deepsdf", progressive_add_depth=True))
 
-    @pytest.mark.parametrize("layers_with_norm", [(0, 1), (1, 2)])
-    def test_it_is_refused_where_it_built_layers_the_checkpoint_still_carries(
-        self, layers_with_norm
-    ):
-        """Weight norm off is the configuration whose architecture can no longer be built."""
+    def test_a_block_phases_in_continuously_across_its_start_epoch(self):
+        """
+        The weight is ``((epoch - start) / warmup) ** 2``, zero at ``start``. The warmup
+        branch used to test ``start < epoch``, so ``epoch == start`` applied the block at
+        full weight for one epoch. The step across ``start`` must be no larger than the
+        next warmup step.
+        """
+        start = PROGRESSIVE_PARAMS["layers"][5]["start_epoch"]
+        model = build("deepsdf", progressive_add_depth=True)
+        before, at, after = (forward(model, epoch=e) for e in (start - 1, start, start + 1))
+        assert (at - before).abs().max() <= (after - at).abs().max()
+
+
+def test_deleted_options_refuse_when_asked_for_and_pass_when_off():
+    """
+    ``xyz_in_all`` and ``latent_noise_sigma`` were never read by ``forward`` (#20), so no
+    run ever had them. Asking for one is refused by its config name. The falsy value every
+    NSM config carries asked for nothing and is accepted.
+
+    ``layers_with_norm`` was not always inert. The LayerNorm branch was an ``elif`` under
+    weight norm, so with weight norm on (the shipped setting) it did nothing and is
+    accepted. With weight norm off it built ``bn.*`` layers a checkpoint carries, and that
+    architecture can no longer be built.
+    """
+    for key, truthy, falsy in (("xyz_in_all", True, False), ("latent_noise_sigma", 0.01, None)):
+        with pytest.raises(TypeError, match=key):
+            build("deepsdf", **{key: truthy})
+        assert forward(build("deepsdf", **{key: falsy})).shape == (N_POINTS, 1)
+
+    for layers in ((0, 1), (1, 2), tuple(range(8)), ()):
+        assert forward(build("deepsdf", layers_with_norm=layers, weight_norm=True)) is not None
+    assert forward(build("deepsdf", layers_with_norm=(), weight_norm=False)) is not None
+    for layers in ((0, 1), (1, 2)):
         with pytest.raises(TypeError, match="bn"):
-            build("deepsdf", layers_with_norm=layers_with_norm, weight_norm=False)
-
-    @pytest.mark.parametrize("weight_norm", [True, False])
-    def test_an_empty_norm_layers_is_silent_either_way(self, weight_norm):
-        forwarded = build_and_forward("deepsdf", layers_with_norm=(), weight_norm=weight_norm)
-        assert forwarded.shape == (N_POINTS, 1)
-
-
-@pytest.mark.parametrize("layer_split", [None, 2])
-@pytest.mark.parametrize("objects_per_decoder", [1, 2])
-def test_layer_split_forwards(layer_split, objects_per_decoder):
-    forwarded = build_and_forward(
-        "deepsdf", layer_split=layer_split, objects_per_decoder=objects_per_decoder
-    )
-    assert forwarded.shape == (N_POINTS, objects_per_decoder)
+            build("deepsdf", layers_with_norm=layers, weight_norm=False)
 
 
 def test_layer_split_false_is_the_same_model_as_no_layer_split():
     """
-    ``default_config.json`` ships ``"layer_split": false``. ``Decoder`` tests
-    ``self.layer_split is not None``, and ``False is not None``, so until Aug 2026 every
-    layer was split -- which moves every state-dict key from ``layers.N.weight`` to
-    ``layers.N.0.weight``, and with ``objects_per_decoder > 1`` builds a different
-    architecture entirely (#46). ``False == 0`` in Python, so a value check cannot tell the
-    shipped "off" from a deliberate split at layer 0; only ``is`` can.
+    ``default_config.json`` ships ``"layer_split": false``, and ``is not None`` used to
+    treat it as a split: every state-dict key moved. ``False == 0``, so only ``is`` tells
+    the shipped "off" from a deliberate split at layer 0, which must still split.
     """
-    absent = build("deepsdf", layer_split=None)
-    shipped = build("deepsdf", layer_split=False)
-    assert list(shipped.state_dict()) == list(absent.state_dict())
+    absent = list(build("deepsdf", layer_split=None).state_dict())
+    assert list(build("deepsdf", layer_split=False).state_dict()) == absent
+    at_zero = build("deepsdf", layer_split=0).state_dict()
+    assert all(key.split(".")[2].isdigit() for key in at_zero)
 
 
-def test_layer_split_zero_still_splits_at_layer_zero():
-    """The other half: normalizing ``False`` must not take ``0`` with it."""
-    split = build("deepsdf", layer_split=0)
-    assert all(
-        key.startswith("layers.") and key.split(".")[2].isdigit() for key in split.state_dict()
-    )
-
-
-@pytest.mark.parametrize("concat_latent_input", [False, True])
-@pytest.mark.parametrize("layer_latent_in", [(), (4,)])
-def test_latent_reinjection_forwards(concat_latent_input, layer_latent_in):
-    forwarded = build_and_forward(
-        "deepsdf", concat_latent_input=concat_latent_input, layer_latent_in=layer_latent_in
-    )
-    assert forwarded.shape == (N_POINTS, 1)
-
-
-@pytest.mark.parametrize("dropout_prob", [0.0, 0.2])
-def test_dropout_forwards(dropout_prob):
-    forwarded = build_and_forward(
-        "deepsdf", layers_with_dropout=list(range(N_LAYERS)), dropout_prob=dropout_prob
-    )
-    assert forwarded.shape == (N_POINTS, 1)
-
-
-# --- triplanar ---------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "conv_norm, conv_norm_type", [(False, "batch"), (True, "batch"), (True, "layer")]
-)
-@pytest.mark.parametrize("conv_start_with_mlp", [False, True])
-def test_triplanar_vae_options_forward(conv_norm, conv_norm_type, conv_start_with_mlp):
-    forwarded = build_and_forward(
-        "triplanar",
-        conv_norm=conv_norm,
-        conv_norm_type=conv_norm_type,
-        conv_start_with_mlp=conv_start_with_mlp,
-    )
-    assert forwarded.shape == (N_POINTS, 1)
-
-
-@pytest.mark.parametrize(
-    "sum_conv_output_features, conv_pred_sdf",
-    [
-        (True, False),
-        (True, True),
-        (False, False),
-        (False, True),
-    ],
-)
-def test_triplanar_feature_combination_works_or_refuses(sum_conv_output_features, conv_pred_sdf):
-    """
-    Four combinations; only the two that sum are correct today.
-
-    Concatenation with ``conv_pred_sdf`` is the one that refuses, and it has no defined
-    repair: with three planes concatenated there are three low-frequency SDF channels, one
-    per plane, and nothing has ever said how they combine. Until Aug 2026 it built and
-    then handed the SDF decoder 17 features where 15 were sized (#45).
-    """
-    try:
-        model = build(
-            "triplanar",
-            sum_conv_output_features=sum_conv_output_features,
-            conv_pred_sdf=conv_pred_sdf,
-        )
-    except (ValueError, TypeError):
-        assert not sum_conv_output_features, "summing must not refuse"
-        return
-    assert forward_once("triplanar", model).shape == (N_POINTS, 1)
-
-
-def test_concatenation_uses_all_three_planes():
-    """
-    ``__init__`` sizes the VAE output by ``sdf_latent_size`` when not summing, and until
-    Aug 2026 ``forward_with_plane_features`` sliced ``sdf_latent_size`` **per plane**: xz
-    took everything and yz and xy took zero-width slices, so the concatenated result was
-    ``torch.equal`` to sampling the xz plane alone -- exact equality, not an approximation,
-    which is what makes it assertable in both directions (#45).
-
-    Each plane's slice is asserted to be non-empty as well, because a width that is merely
-    *different* from the old one would satisfy the inequality without fixing anything.
-    """
-    model = build("triplanar", sum_conv_output_features=False)
-    torch.manual_seed(0)
-    latent = torch.randn(1, model.latent_dim)
-    xyz = torch.rand(N_POINTS, 3) * 2 - 1
-    model.eval()
-    with torch.no_grad():
-        planes = model.vae_decoder(latent)[0]
-        combined = model.forward_with_plane_features(planes, xyz)
-        per_plane = model.sdf_latent_size // 3
-        slices = [planes[i * per_plane : (i + 1) * per_plane] for i in range(3)]
-        sampled = [
-            model.sample_plane_features(xyz, plane, name)
-            for plane, name in zip(slices, ("xz", "yz", "xy"))
-        ]
-    assert combined.shape == (N_POINTS, model.sdf_latent_size)
-    assert all(part.shape[1] == per_plane and per_plane > 0 for part in sampled)
-    assert torch.equal(combined, torch.cat(sampled, dim=1))
-    assert not torch.equal(combined, sampled[0].repeat(1, 3))
-
-
-def test_the_concatenating_vae_keeps_the_width_it_always_had():
-    """
-    What makes #45's fix loadable rather than breaking: the VAE emitted
-    ``sdf_latent_size`` channels before the fix and emits ``sdf_latent_size`` after, so
-    every parameter shape is unchanged and a pre-fix checkpoint still loads. What changed
-    is only how those channels are divided among the planes.
-    """
-    concat = build("triplanar", sum_conv_output_features=False)
-    assert concat.vae_decoder.out_features == concat.sdf_latent_size
-
-
-@pytest.mark.parametrize("objects_per_decoder", [1, 2, 3])
-def test_triplanar_multi_object_forwards(objects_per_decoder):
-    forwarded = build_and_forward("triplanar", objects_per_decoder=objects_per_decoder)
-    assert forwarded.shape == (N_POINTS, objects_per_decoder)
-
-
-# --- implicit ----------------------------------------------------------------
-
-
-@pytest.mark.parametrize("block_type", ["linear", "siren"])
-@pytest.mark.parametrize("modulation", [False, True])
-def test_implicit_options_forward(block_type, modulation):
-    forwarded = build_and_forward("implicit", block_type=block_type, modulation=modulation)
-    assert forwarded.shape == (N_POINTS, 1)
-
-
-@pytest.mark.parametrize("final_activation", ["sigmoid", "tanh", "linear"])
-def test_implicit_final_activations_forward(final_activation):
-    forwarded = build_and_forward("implicit", final_activation=final_activation)
-    assert forwarded.shape == (N_POINTS, 1)
-
-
-# --- what the two constructors do not name -----------------------------------
-
-
-class TestUnknownConstructorKeywordsAreRefused:
-    """
-    Until v0.4.0 both constructors silently ignored unknown keywords, so a misspelled
-    parameter built the model at its default. For ``padding`` that means sampling the
-    feature planes at the wrong scale, with no error (#26). ``load_model`` always passes
-    known keys; this covers direct construction, which kneepipeline uses.
-    """
-
-    def test_deepsdf_refuses_a_misspelled_key(self):
-        with pytest.raises(TypeError, match="paddding"):
-            Decoder(latent_size=LATENT, dims=[16, 16], paddding=0.35)
-
-    def test_triplanar_refuses_a_misspelled_key(self):
-        with pytest.raises(TypeError, match="paddding"):
-            TriplanarDecoder(
-                latent_dim=LATENT, conv_hidden_dims=[16], sdf_hidden_dims=[16], paddding=0.35
+class TestTriplanar:
+    def test_every_vae_option_and_object_count_forwards(self):
+        for norm, norm_type in ((False, "batch"), (True, "batch"), (True, "layer")):
+            for start_with_mlp in (False, True):
+                model = build(
+                    "triplanar",
+                    conv_norm=norm,
+                    conv_norm_type=norm_type,
+                    conv_start_with_mlp=start_with_mlp,
+                )
+                assert forward(model).shape == (N_POINTS, 1)
+        for objects in (2, 3):
+            assert forward(build("triplanar", objects_per_decoder=objects)).shape == (
+                N_POINTS,
+                objects,
             )
 
-    @pytest.mark.parametrize("deleted", sorted(DELETED_DECODER_ARGUMENTS))
-    def test_the_four_deleted_arguments_keep_their_own_answers(self, deleted):
+    def test_triplanar_feature_combination_works_or_refuses(self):
         """
-        These keep their own messages in ``Decoder.__init__``. A falsy value, which every
-        NSM config ships, is still accepted.
+        Summing works either way. Concatenating with ``conv_pred_sdf`` refuses: three planes
+        give three SDF channels, and nothing defines how they combine. It used to build and
+        hand the SDF decoder 17 features sized for 15 (#45).
         """
+        for summed in (True, False):
+            for pred_sdf in (False, True):
+                if not summed and pred_sdf:
+                    with pytest.raises((ValueError, TypeError)):
+                        build("triplanar", sum_conv_output_features=False, conv_pred_sdf=True)
+                    continue
+                model = build("triplanar", sum_conv_output_features=summed, conv_pred_sdf=pred_sdf)
+                assert forward(model).shape == (N_POINTS, 1)
+
+    def test_concatenation_uses_all_three_planes(self):
+        """
+        The VAE emits ``sdf_latent_size`` channels, as it always did, so pre-#45
+        checkpoints load. ``forward_with_plane_features`` used to slice
+        ``sdf_latent_size`` per plane, so xz took everything and the result was exactly
+        the xz plane alone.
+        """
+        model = build("triplanar", sum_conv_output_features=False)
+        assert model.vae_decoder.out_features == model.sdf_latent_size
+
+        torch.manual_seed(0)
+        latent, xyz = torch.randn(1, model.latent_dim), torch.rand(N_POINTS, 3) * 2 - 1
+        with torch.no_grad():
+            planes = model.vae_decoder(latent)[0]
+            combined = model.forward_with_plane_features(planes, xyz)
+            width = model.sdf_latent_size // 3
+            sampled = [
+                model.sample_plane_features(xyz, planes[i * width : (i + 1) * width], name)
+                for i, name in enumerate(("xz", "yz", "xy"))
+            ]
+        assert width > 0 and all(part.shape[1] == width for part in sampled)
+        assert torch.equal(combined, torch.cat(sampled, dim=1))
+        assert not torch.equal(combined, sampled[0].repeat(1, 3))
+
+
+def test_every_implicit_option_forwards():
+    for block_type in ("linear", "siren"):
+        for modulation in (False, True):
+            model = build("implicit", block_type=block_type, modulation=modulation)
+            assert forward(model).shape == (N_POINTS, 1)
+    for final in ("sigmoid", "tanh", "linear"):
+        assert forward(build("implicit", final_activation=final)).shape == (N_POINTS, 1)
+
+
+class TestTheEvidenceForSlicesThatOwnTheFix:
+    def test_the_implicit_translator_ignores_the_activation_both_siblings_read(self):
+        """
+        ``block_type: "linear"`` builds ``LinearBlockFactory()`` at its ReLU default whatever
+        ``activation`` says; the DeepSDF translator reads it. Not fixed here: ``SCOPE`` §2.6
+        folds any fix into the registration work.
+        """
+        _, params = _get_implicit_params(
+            dict(latent_dim=8, hidden_dim=8, num_layers=2, block_type="linear", activation="sin")
+        )
+        assert params["block_factory"].activation_cls is torch.nn.ReLU
+        _, params = _get_deepsdf_params(
+            dict(latent_size=16, layer_dimensions=[8], activation="sin")
+        )
+        assert params["activation"] == "sin"
+
+
+def test_the_constructors_refuse_unknown_keywords():
+    """
+    Until v0.4.0 both ignored unknown keywords, so a misspelled ``padding`` built the model
+    at its default and sampled the planes at the wrong scale (#26). The four deleted
+    ``Decoder`` arguments keep their own messages and accept a falsy value. The 15 keys
+    kneepipeline passes to ``TriplanarDecoder`` (``steps/run_nsm.py``) are all parameters.
+    """
+    with pytest.raises(TypeError, match="paddding"):
+        Decoder(latent_size=LATENT, dims=[16, 16], paddding=0.35)
+    with pytest.raises(TypeError, match="paddding"):
+        TriplanarDecoder(
+            latent_dim=LATENT, conv_hidden_dims=[16], sdf_hidden_dims=[16], paddding=0.35
+        )
+    for deleted in DELETED_DECODER_ARGUMENTS:
         assert Decoder(latent_size=LATENT, dims=[16, 16], **{deleted: None}) is not None
 
-    def test_the_production_consumers_keys_are_all_named(self):
-        """
-        The 15 keys kneepipeline passes to ``TriplanarDecoder`` (``steps/run_nsm.py:112``)
-        are all real parameters.
-        """
-        named = set(inspect.signature(TriplanarDecoder.__init__).parameters)
-        consumer_keys = {
-            "latent_dim",
-            "n_objects",
-            "conv_hidden_dims",
-            "conv_deep_image_size",
-            "conv_norm",
-            "conv_norm_type",
-            "conv_start_with_mlp",
-            "sdf_latent_size",
-            "sdf_hidden_dims",
-            "sdf_weight_norm",
-            "sdf_final_activation",
-            "sdf_activation",
-            "sdf_dropout_prob",
-            "sum_sdf_features",
-            "conv_pred_sdf",
-        }
-        assert consumer_keys - named == set()
+    consumer_keys = {
+        "latent_dim",
+        "n_objects",
+        "conv_hidden_dims",
+        "conv_deep_image_size",
+        "conv_norm",
+        "conv_norm_type",
+        "conv_start_with_mlp",
+        "sdf_latent_size",
+        "sdf_hidden_dims",
+        "sdf_weight_norm",
+        "sdf_final_activation",
+        "sdf_activation",
+        "sdf_dropout_prob",
+        "sum_sdf_features",
+        "conv_pred_sdf",
+    }
+    assert consumer_keys <= set(inspect.signature(TriplanarDecoder.__init__).parameters)
