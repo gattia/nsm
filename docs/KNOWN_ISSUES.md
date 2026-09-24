@@ -227,7 +227,7 @@ tellable apart one file at a time, which is what lifting the ignore would take.
 ### Hybrid / LBFGS reconstruction is unvalidated on current NSM
 
 `optimizer_name="lbfgs"` and `hybrid_optimizer=True` run, and nothing in production uses
-them: both shipped configs and kneepipeline fit with Adam. Four things a caller should
+them: both shipped configs and kneepipeline fit with Adam. Three things a caller should
 know before relying on either.
 
 **torch's LBFGS here has no line search.** `line_search_fn` is never set, so `lbfgs_lr` is
@@ -245,12 +245,6 @@ size, so a budget equal to the cloud size still subsamples when the surfaces are
 **The one multi-case result on record was produced on a code path that no longer exists**
 (a triplanar feature cache added and removed the same afternoon, Aug 2025), so it cannot be
 reproduced as measured.
-
-**Under `recon_loss` or `overall_loss`, LBFGS records the latent after its best step.**
-History 32 fixed this for Adam only. LBFGS re-measures its recon loss after the step, so
-under `recon_loss` the recorded latent is the one that loss was measured on. The returned
-loss is not: it is LBFGS's first evaluation, made before the step. Under `overall_loss` the
-recorded latent is one step late.
 
 *Fix:* not filed. The measurements, the validated configuration and what it would take to
 resurrect are in `.claude/plans/HYBRID_OPTIMIZER_REPORT.md`.
@@ -1887,30 +1881,36 @@ Removing the keys now changes no result, because nothing has read them since.
 v0.3.0:NSM/train/deprecated/train_deep_sdf_orig.py` plus a `.detach()` on the weight —
 `SCOPE.md` §2.2 records why it was not carried forward.
 
-## 32. `reconstruct_latent` returned the latent one Adam step after its best loss
+## 32. `reconstruct_latent` returned a latent one step away from its loss
 
 | | |
 |---|---|
-| **Affected** | Every Adam fit under `convergence="recon_loss"` or `"overall_loss"`, through `reconstruct_latent`, `reconstruct_mesh` or `get_mean_errors`. That is every kneepipeline fit: both shipped configs set `convergence_type_recon: "recon_loss"`. From at least `5188417` (31 Aug 2023) → Sep 2026 |
-| **Unaffected** | `convergence="num_iterations"`, which still returns the latent after the last step; LBFGS, which was not changed (see Open, *Hybrid / LBFGS reconstruction is unvalidated*) |
-| **Severity** | Silent, and smaller than a change of seed: at most 4.5e-04 BScore on 10 production knees |
+| **Affected** | Fits through `reconstruct_latent`, `reconstruct_mesh` or `get_mean_errors`, from at least `5188417` (31 Aug 2023) → Sep 2026. **Adam** under `convergence="recon_loss"` or `"overall_loss"` returned the latent one step after its best loss. That includes both shipped models, whose configs set `convergence_type_recon: "recon_loss"`. **LBFGS** did the same under `"overall_loss"`, and in every mode returned a loss measured one step before its latent |
+| **Unaffected** | Adam under `convergence="num_iterations"`. It still returns the latent after the last step, with the loss measured before that step |
+| **Severity** | Silent. For Adam, smaller than a change of seed: at most 4.5e-04 BScore on 10 knees. For LBFGS, not measured on real data |
 | **Fixed in** | `step-u`, Sep 2026 ([#117](https://github.com/gattia/nsm/pull/117)) |
 
 ### What was wrong
 
-Each step measured the loss, then stepped, then copied the latent if the loss was the best
-so far. The copy came after `optimizer.step()`, so the returned latent was one step past the
-one the returned loss was measured on. The fit's trajectory was the same; only the latent
-it returned was late.
+Adam measured the loss, then stepped, then copied the latent if the loss was the best so
+far. The copy came after `optimizer.step()`, so the returned latent was one step past the
+one its loss was measured on. The fit's trajectory was the same; only the returned latent
+was late.
+
+LBFGS measures its losses again after each step, and `recon_loss` compared those, so it
+picked the right latent. The loss it returned, and the loss `overall_loss` compared, was
+the one `LBFGS.step()` returns, which is measured before the step.
 
 ### How to tell whether one of your runs is affected
 
-An Adam fit under `recon_loss` or `overall_loss` made before the fix is affected. For
-kneepipeline, that is every job whose manifest's `nsm` stamp predates #117's merge.
+Fits made before the fix are affected if they used Adam under `recon_loss` or
+`overall_loss`, or LBFGS (alone or in hybrid mode) under `overall_loss`. LBFGS under
+`recon_loss` or `num_iterations` returned the right latent with a stale loss.
 
-**The size of it.** Measured 2026-09-24 on 10 archived production knees with both production
-models. The fix's effect is taken within one fit, where the old and new latents share a
-trajectory. The re-run row is the same code fitted twice on the production T4.
+**The size of it, for Adam.** Measured 2026-09-24 on 10 archived knees with both shipped
+models. Each knee was fitted once, keeping both the new latent and the one the old code
+would have returned, so their difference is the fix alone. The re-run row is the same code
+fitted twice on a T4.
 
 | BScore change | bone+cart | bone-only |
 |---|---|---|
@@ -1924,7 +1924,9 @@ Aug 2026). No result needs re-running.
 
 ### Reproducing old behaviour
 
-No switch. The old latent is one Adam step further along than the best one the fit saw.
+No switch. For Adam, the old latent is one step further along than the best one the fit
+saw.
 
 *Pinned by:*
-`test_reconstruct_latent.TestTheReturnedLossIsALoss::test_the_best_step_s_latent_is_returned`.
+`test_reconstruct_latent.TestTheReturnedLossIsALoss::test_the_best_step_s_latent_is_returned`,
+for both optimizers.

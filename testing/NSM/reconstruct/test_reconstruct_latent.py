@@ -218,12 +218,12 @@ class TestTheReturnedLossIsALoss:
     def test_the_best_step_s_latent_is_returned(self):
         """
         Fails if ``reconstruct_latent`` under ``convergence="recon_loss"`` or
-        ``"overall_loss"`` returns a latent other than the one its returned loss was measured
-        on, such as the latent after that step, the initial one or the last one
-        (KNOWN_ISSUES History 32). kneepipeline fits both shipped models with ``recon_loss``.
+        ``"overall_loss"``, with Adam or LBFGS, returns a latent other than the best one it
+        measured, or a loss other than that latent's (KNOWN_ISSUES History 32).
 
-        At ``lr=0.05`` the fit overshoots a constant target, so the initial, best, next and
-        last latents all differ.
+        At a step size of 0.05 the fit overshoots a constant target, so the initial, best,
+        next and last latents all differ. LBFGS runs one iteration per step, so every latent
+        it measures is the start or the end of a step.
         """
 
         class LatentRecorder(torch.nn.Module):
@@ -235,23 +235,28 @@ class TestTheReturnedLossIsALoss:
                 self.latents.append(latent.detach().clone())
                 return xyz[:, :1] * 0 + latent.sum()
 
-        for convergence in ("recon_loss", "overall_loss"):
-            decoder = LatentRecorder()
-            loss, latent = fit(
-                decoder,
-                num_iterations=40,
-                latent_size=4,
-                sdf_gt=torch.full((64, 1), 0.3),
-                lr=0.05,
-                n_lr_updates=0,
-                convergence=convergence,
-                convergence_patience=5,
-            )
-            losses = [abs(float(seen.sum()) - 0.3) for seen in decoder.latents]
-            best = losses.index(min(losses))
-            assert 0 < best < len(losses) - 2, convergence
-            assert float(loss) == pytest.approx(losses[best], abs=1e-6)
-            assert torch.equal(latent[0], decoder.latents[best]), convergence
+        for optimizer in ("adam", "lbfgs"):
+            for convergence in ("recon_loss", "overall_loss"):
+                decoder = LatentRecorder()
+                loss, latent = fit(
+                    decoder,
+                    num_iterations=40,
+                    latent_size=4,
+                    sdf_gt=torch.full((64, 1), 0.3),
+                    optimizer_name=optimizer,
+                    lr=0.05,
+                    lbfgs_lr=0.05,
+                    lbfgs_max_iter=1,
+                    n_lr_updates=0,
+                    convergence=convergence,
+                    convergence_patience=5,
+                )
+                losses = [abs(float(seen.sum()) - 0.3) for seen in decoder.latents]
+                best = losses.index(min(losses))
+                case = (optimizer, convergence)
+                assert 0 < best < len(losses) - 2, case
+                assert float(loss) == pytest.approx(losses[best], abs=1e-6), case
+                assert torch.equal(latent[0], decoder.latents[best]), case
 
 
 _ADJUST_LEARNING_RATE = latent_fit.adjust_learning_rate
