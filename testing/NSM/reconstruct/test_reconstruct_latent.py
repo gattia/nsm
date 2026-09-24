@@ -218,13 +218,12 @@ class TestTheReturnedLossIsALoss:
     def test_the_best_step_s_latent_is_returned(self):
         """
         Fails if ``reconstruct_latent`` under ``convergence="recon_loss"`` or
-        ``"overall_loss"`` returns a latent other than the one its lowest-loss step produced,
-        such as the initial or the last one. kneepipeline fits both shipped models with
-        ``recon_loss``.
+        ``"overall_loss"`` returns a latent other than the one its returned loss was measured
+        on, such as the latent after that step, the initial one or the last one
+        (KNOWN_ISSUES History 32). kneepipeline fits both shipped models with ``recon_loss``.
 
-        The latent is copied after that step's update, so it is one step past the latent the
-        returned loss was measured on (KNOWN_ISSUES Open). At ``lr=0.05`` the fit overshoots
-        a constant target, so the initial, best and last latents all differ.
+        At ``lr=0.05`` the fit overshoots a constant target, so the initial, best, next and
+        last latents all differ.
         """
 
         class LatentRecorder(torch.nn.Module):
@@ -252,7 +251,7 @@ class TestTheReturnedLossIsALoss:
             best = losses.index(min(losses))
             assert 0 < best < len(losses) - 2, convergence
             assert float(loss) == pytest.approx(losses[best], abs=1e-6)
-            assert torch.equal(latent[0], decoder.latents[best + 1]), convergence
+            assert torch.equal(latent[0], decoder.latents[best]), convergence
 
 
 _ADJUST_LEARNING_RATE = latent_fit.adjust_learning_rate

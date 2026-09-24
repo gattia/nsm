@@ -636,7 +636,10 @@ def reconstruct_latent(
     are in ``TestChunkedForwardAndBackward``'s docstring, where they can be re-run.
 
     Returns:
-        (loss, latent): the final loss value and the fitted latent tensor.
+        (loss, latent). Under ``"recon_loss"`` or ``"overall_loss"`` with Adam, the best
+        step's loss and the latent it was measured on. Under ``"num_iterations"``, the latent
+        after the last step, with the loss measured before that step's update. LBFGS records
+        the latent after its best step (``docs/KNOWN_ISSUES.md``, Open).
     """
     refuse_unknown_kwargs(kwargs, function_name="reconstruct_latent")
 
@@ -998,8 +1001,12 @@ def reconstruct_latent(
 
             return total_loss
 
-        # Run the appropriate optimizer step
+        # Run the appropriate optimizer step. `latent_evaluated` is the latent the tracked
+        # losses were measured on, and is what convergence records as best.
         if current_optimizer_name == "adam":
+            # Adam's losses are measured before its step moves the latent. Until Sep 2026 the
+            # moved latent was recorded instead (KNOWN_ISSUES History 32).
+            latent_evaluated = torch.clone(latent)
             current_optimizer.zero_grad()
             loss_, recon_loss_, latent_loss_, eikonal_loss_, norm_penalty_loss_ = (
                 loss_with_gradient()
@@ -1008,6 +1015,10 @@ def reconstruct_latent(
         elif current_optimizer_name == "lbfgs":
             # L-BFGS optimization step
             loss_ = current_optimizer.step(step_closure)
+            # The tracked losses below are re-measured after the step, so the latent they
+            # belong to is the moved one. `loss_` is not: LBFGS returns its first evaluation,
+            # made before the step.
+            latent_evaluated = torch.clone(latent)
             # Compute final losses for tracking (without gradients)
             with torch.no_grad():
                 _, recon_loss_, latent_loss_, eikonal_loss_, norm_penalty_loss_ = (
@@ -1080,7 +1091,7 @@ def reconstruct_latent(
         if convergence == "overall_loss":
             if loss_ < loss:
                 loss = loss_
-                latent_ = torch.clone(latent)
+                latent_ = latent_evaluated
                 patience = 0
             else:
                 patience += 1
@@ -1098,7 +1109,7 @@ def reconstruct_latent(
                 # returned loss was the initial sentinel -- on the mode
                 # `default_config.json` ships (`convergence_type_recon`).
                 loss = loss_
-                latent_ = torch.clone(latent)
+                latent_ = latent_evaluated
                 patience = 0
             else:
                 patience += 1
