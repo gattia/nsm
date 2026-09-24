@@ -21,10 +21,10 @@ under the same number.
 
 ## State
 
-**Updated:** 2026-09-23 · **Status:** open
+**Updated:** 2026-09-24 · **Status:** open
 
-- **Next:** the maintainer reviews PR #117 (Step U) and rules on decision 3 below. After
-  the merge, pull this checkout and restart the worker once it is idle. Then Step Close.
+- **Next:** the maintainer reviews PR #117 (Step U). After the merge, pull this checkout
+  and restart the worker once it is idle. Then Step Close.
 - **Blocked on:** the maintainer's review of PR #117.
 - **Done:**
   - Phases 0–3, and slices A–R, each with its own PR. v0.2.0 (PR #36) and v0.3.0 shipped.
@@ -46,13 +46,16 @@ under the same number.
     a "Fails if" line, and `test_docs_references` checks it. See Step T's Result.
     Production tree on `main` and worker restarted. #115 and #116 filed for Step U.
   - Step U executed 2026-09-23 on `step-u`, PR #117 open: a test for each of the nine
-    rows, #115 and #116 fixed. See Step U's Result.
+    rows, #115 and #116 fixed. Row 1's finding measured on 10 production knees and fixed
+    on the same PR, 2026-09-24 (`KNOWN_ISSUES.md` History 32). See Step U's Result.
 - **Surprises:**
   - **Pinning a behaviour can show it is wrong.** Row 1's test found that
-    `reconstruct_latent` returns the latent from after its best step's update, one step
-    past the latent the returned loss belongs to. Every production fit is affected. The
-    test pins the offset, `KNOWN_ISSUES.md` § Open records it, and decision 3 asks whether
-    to fix it.
+    `reconstruct_latent` returned the latent from after its best step's update, one step
+    past the latent the returned loss belongs to. Every production fit was affected. It
+    moved BScore by at most 4.5e-04, and is fixed (decision 3).
+  - **A within-fit pair measures an effect smaller than GPU noise.** For decision 3, the
+    fixed tree also saved the latent the old code would have returned. Both latents then
+    share one trajectory, so their BScore difference carries no run-to-run noise.
   - **`flag is True` is library-wide.** A truthy non-bool silently means `False` wherever a
     flag is read that way, and `grep -rn "is True" NSM/` finds it in the readers, the
     datasets, the models and the trainer. #116 fixed the two in `reconstruct_latent`, which
@@ -478,13 +481,14 @@ protect kneepipeline's BScore. Then 4 and 5, then 6 with the #115 fix, then 7 to
 
 #### Result (2026-09-23, branch `step-u`, PR #117)
 
-Ten commits, one per row plus the #116 fix. Every edit in the table fails its new test.
-Tests collected 260 → 268, `testing/` 8,785 → 9,078 lines, suite 72 s → 73 s. `NSM/`
-changed by +8 / −1 lines: the #115 fix and the #116 refusal.
+Ten commits, one per row plus the #116 fix, then the fix for row 1's finding. Every edit
+in the table fails its new test. Tests collected 260 → 268, `testing/` 8,785 → 9,078 lines,
+suite 72 s → 73 s. `NSM/` changed only in the three fixes.
 
 **Diverged:**
 - **Row 1 found a defect instead of pinning a correct behaviour.** See Surprises and
-  decision 3. The test pins today's offset, so a fix changes one index in it.
+  decision 3. The fix landed on the same PR after a 10-knee A/B. The test first pinned the
+  old offset; the fix changed one index in it.
 - **Three rows replaced a test rather than adding one.** Row 4's continuation test replaces
   the weights-only resume test. Row 6's gradient test absorbs the three forward-only option
   tests into one `OPTIONS` table. Row 9's test replaces the one that ran its own copy of the
@@ -512,8 +516,8 @@ waiting on its own §2 layout ruling.
 
 ## Decisions the maintainer owes
 
-**1 and 2 were ruled 2026-09-22 and are struck through below.** They are kept rather
-than deleted because each records an argument that outlives its answer. **3 is open.**
+**All three are ruled and struck through below.** They are kept rather than deleted
+because each records an argument that outlives its answer.
 
 1. ~~**Does slice S shrink the four public signatures, or does the config initiative?**~~
    **Ruled 2026-09-22: the config initiative.** S ships its other six items and leaves the
@@ -540,23 +544,13 @@ than deleted because each records an argument that outlives its answer. **3 is o
    experiment; dropping it moves the row out of § Open. A test already pins the current
    behaviour (`test_train_epoch.TestGradClipReachesTheModelOnly`).
 
-3. **Fix the one-step-late latent, or leave it documented?** Found by Step U row 1.
-   Under `recon_loss` and `overall_loss`, `reconstruct_latent` copies the latent after
-   `optimizer.step()`. It returns the best step's loss with the next step's latent.
-   Copying before the step fixes it. That moves every production latent by one Adam step,
-   so the fix needs a `KNOWN_ISSUES.md` § History entry and an A/B on archived job
-   `8ff02ee4`, as in Step 0. How far it moves a BScore has not been measured. Draft issue,
-   for approval before filing:
-
-   > **`reconstruct_latent` returns the latent one step after its best loss**
-   >
-   > Under `convergence="recon_loss"` or `"overall_loss"`, `reconstruct_latent` runs
-   > `latent_ = torch.clone(latent)` after `optimizer.step()`. It returns the best step's
-   > loss with the latent after that step's update, and the two do not belong together.
-   > `test_reconstruct_latent.TestTheReturnedLossIsALoss::test_the_best_step_s_latent_is_returned`
-   > pins the offset. Both kneepipeline models fit with `recon_loss`. Fixed means the returned
-   > latent is the one the returned loss was measured on, with a `KNOWN_ISSUES.md` § History
-   > entry and a production A/B of the BScore change.
+3. ~~**Fix the one-step-late latent, or leave it documented?**~~ **Ruled 2026-09-24: fix
+   it on the Step U PR, after measuring it.** Found by Step U row 1: Adam's best latent was
+   copied after `optimizer.step()`. The A/B re-fitted 10 archived production knees with both
+   models, from scratch copies of the tree. The fix moved BScore by at most 2.7e-04
+   (bone+cart) and 4.5e-04 (bone-only), with no consistent sign, against a same-code re-run
+   of up to 2.3e-04 and a seed SD of 0.0136. `KNOWN_ISSUES.md` History 32 holds the table.
+   LBFGS was left unchanged; its offset is in the Open LBFGS entry.
 
 **Also available, not required.** The 1,450-line State narrative now in the history file is
 superseded by PR descriptions, `CHANGELOG.md` and `docs/KNOWN_ISSUES.md`. It was archived
