@@ -665,8 +665,8 @@ def reconstruct_latent(
             "optimizer_name for you and says what else in the config was never read."
         )
 
-    # Both are read with `is True` below, so a truthy 1 used to turn the L2 term or the
-    # logging off without a word (#116).
+    # Both are read with `is True` below, so a truthy 1 silently turned off the L2 term or
+    # the logging (#116).
     for name, flag in (("l2reg", l2reg), ("log_wandb", log_wandb)):
         if not isinstance(flag, bool):
             raise TypeError(f"{name} must be True or False, got {flag!r}")

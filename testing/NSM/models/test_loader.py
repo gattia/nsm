@@ -196,7 +196,8 @@ class TestRepairingAnOldTriplanarConfig:
     def test_direct_construction_gets_the_historical_values(self):
         """
         Fails if ``TriplanarDecoder`` built without the three keys computes differently from
-        one built with ``HISTORICAL``. kneepipeline builds both shipped models that way.
+        one built with ``HISTORICAL``. Both shipped models' configs lack ``padding`` and
+        ``conv_activation``, so building either directly from its config uses these defaults.
 
         Compared on a forward pass, because ``padding`` is not a parameter: a wrong default
         still loads a checkpoint strictly, then samples the planes at the wrong scale.

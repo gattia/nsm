@@ -263,7 +263,7 @@ class TestResumeContract:
         trains it differently from the uninterrupted run: in its losses, learning rates,
         latent norms or final weights (#49; KNOWN_ISSUES History 11).
 
-        So skipping the model, optimizer or latent restore fails it. The resumed model starts
+        Skipping the model, optimizer or latent restore fails it. The resumed model starts
         from a different seed. Checkpoints hold no random state, so the test records it at
         each save and restores it after the resume.
         """

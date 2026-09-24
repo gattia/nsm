@@ -4,7 +4,7 @@ they run, what they report, and what they hand their collaborators.
 
 Most end-to-end runs use the sampled branch, ``get_rand_pts=True``, on one sphere path.
 ``TestASubjectMissingASurface`` passes two paths, one of them ``None``.
-``TestTheProductionBranch`` runs kneepipeline's keywords on moved ellipsoids.
+``TestTheShippedSettings`` fits moved ellipsoids with the shipped models' settings.
 """
 
 import inspect
@@ -224,11 +224,11 @@ def test_a_host_at_debug_sees_the_stage_records(sphere_path, caplog):
     assert "Loaded mesh in" in caplog.text and "Created mesh in" in caplog.text
 
 
-class TestTheProductionBranch:
+class TestTheShippedSettings:
     """
-    kneepipeline's 551 and 647 fits: ``register_similarity``, ``scale_jointly``,
-    ``convergence="recon_loss"`` and ``get_rand_pts=False``, on a list of one or two paths.
-    No other test takes all four.
+    The settings both shipped models reconstruct with: ``register_similarity``,
+    ``scale_jointly``, ``convergence="recon_loss"`` and ``get_rand_pts=False``, on a list of
+    one or two paths. No other test takes all four.
     """
 
     AXES = torch.tensor([0.5, 0.35, 0.25])
@@ -259,7 +259,8 @@ class TestTheProductionBranch:
         )
         similarity[:3, 3] = [5.0, -3.0, 2.0]
         paths = []
-        for index, grow in enumerate((1.0, 1.08)):  # 0.02 / 0.25 = 0.08
+        # The second surface is the SDF's 0.02 level set, 0.02 / 0.25 = 8% larger.
+        for index, grow in enumerate((1.0, 1.08)):
             surface = pv.Sphere(radius=1.0, theta_resolution=30, phi_resolution=30).triangulate()
             points = surface.points * self.AXES.numpy() * grow
             surface.points = points @ similarity[:3, :3].T + similarity[:3, 3]
@@ -268,15 +269,15 @@ class TestTheProductionBranch:
         return paths, similarity
 
     @pytest.mark.parametrize("n_surfaces", [1, 2])
-    def test_the_consumer_s_fit_undoes_a_known_similarity(self, moved, n_surfaces):
+    def test_the_fit_undoes_a_known_similarity(self, moved, n_surfaces):
         """
-        Fails if ``reconstruct_mesh`` with kneepipeline's keywords does not recover the
-        similarity the subject was moved by, returns meshes outside the subject's frame,
-        or returns registration parameters kneepipeline cannot write to JSON.
+        Fails if ``reconstruct_mesh`` with these settings does not recover the similarity the
+        subject was moved by, returns meshes outside the subject's frame, or returns
+        registration parameters that cannot be written to JSON.
 
         ``scale_jointly`` leaves normalization to the registration, so ``center`` is zeros
         and ``scale`` is 1. Measured: the transform is within 0.012 of the inverse and the
-        ASSD is at most 0.013. A mesh left in the model's frame is about 6 away.
+        ASSD is at most 0.013. A mesh left in the model's frame has an ASSD of about 6.
         """
         from pymskt.mesh.meshTransform import get_linear_transform_matrix
 
@@ -288,7 +289,6 @@ class TestTheProductionBranch:
             latent_size=8,
             num_iterations=30,
             l2reg=False,
-            latent_reg_weight=False,
             loss_type="l1",
             lr=0.005,
             lr_update_factor=1.1,
@@ -319,7 +319,7 @@ class TestTheProductionBranch:
         assert len(result["mesh"]) == n_surfaces
         assert all(result[f"assd_{index}"] < 0.05 for index in range(n_surfaces))
 
-        # kneepipeline's steps/run_nsm.py writes these to NSM_recon_params.json.
+        # A caller that saves the fit writes these to JSON.
         params = {
             "latent": result["latent"].detach().cpu().numpy().tolist(),
             "icp_transform": icp_transform.tolist(),

@@ -227,7 +227,8 @@ class TestTriplanar:
         ``conv_pred_sdf: true`` (KNOWN_ISSUES History 15).
 
         Concatenating with ``conv_pred_sdf`` gives three SDF channels, one per plane, and
-        nothing defines how they combine. The other three combinations are in ``OPTIONS``.
+        nothing defines how they combine. Of the other three combinations, two are in
+        ``OPTIONS`` and the third is the default.
         """
         with pytest.raises((ValueError, TypeError)):
             build("triplanar", sum_conv_output_features=False, conv_pred_sdf=True)

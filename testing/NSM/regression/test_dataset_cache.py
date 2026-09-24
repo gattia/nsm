@@ -257,7 +257,8 @@ class TestHashedParametersChangeTheKey:
         """
         Fails if ``MultiSurfaceSDFSamples.create_hash`` ignores a change to any entry of
         ``get_hash_params``, ``CACHE_FORMAT`` included, or to the order of a subject's
-        surfaces, or ``get_hash_params`` gains an entry this test does not change (#19).
+        surfaces (#19). Also fails if ``get_hash_params`` gains an entry this test does not
+        change.
         """
         import NSM.datasets.sdf_dataset as sdf_dataset
 
