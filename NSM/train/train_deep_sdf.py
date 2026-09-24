@@ -134,6 +134,11 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
             stacklevel=2,
         )
 
+    # Validation first runs at a checkpoint epoch, which can be hours in. Build its
+    # arguments now, so a missing key or a bad value fails before training starts.
+    if config.get("val_paths") is not None:
+        _validation_arguments(config)
+
     config = add_plain_lr_to_config(config)
     config["checkpoints"] = get_checkpoints(config)
     config["lr_schedules"] = get_learning_rate_schedules(config)
@@ -328,20 +333,29 @@ def _save_checkpoint(config, epoch, model, latent_vecs, optimizer, sdf_dataset):
 
 
 def _run_validation(config, model):
-    """
-    Reconstruct the ``val_paths`` subjects and return ``get_mean_errors``' metric dict.
-
-    The kwarg block is the config→``get_mean_errors`` mapping; the commented-out lines
-    name parameters deliberately left at their defaults.
-    """
+    """Reconstruct the ``val_paths`` subjects and return ``get_mean_errors``' metric dict."""
     clear_gpu_cache(config["device"])
+    return get_mean_errors(decoders=model, **_validation_arguments(config))
+
+
+def _validation_arguments(config):
+    """
+    ``get_mean_errors``' arguments for validation, apart from the model.
+
+    This is the config→``get_mean_errors`` mapping; the commented-out lines name
+    parameters deliberately left at their defaults.
+    """
+    # `reconstruct_latent` refuses this too (#116), but only once validation runs.
+    if not isinstance(config["l2reg_recon"], bool):
+        raise TypeError(
+            f"config['l2reg_recon'] must be true or false, got {config['l2reg_recon']!r}"
+        )
 
     # TODO: Change this to just accept the config?
     # or... update all parameters to be the same in the config and the function call?
     # this will just allow unpacking of the config dict.
-    return get_mean_errors(
+    return dict(
         mesh_paths=config["val_paths"],
-        decoders=model,
         num_iterations=config["num_iterations_recon"],
         register_similarity=True,
         latent_size=config["latent_size"],
