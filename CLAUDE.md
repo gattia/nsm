@@ -333,7 +333,7 @@ tested in Aug 2026 and found unrunnable on three independent counts — it crash
 first backward pass, it cannot work at all for triplanar models (`grid_sample` has no
 second derivative), and it opposes the clamped regime NSM actually trains in. Production
 has never touched it. Evidence and the repair order:
-`.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §8.2; the research thread is
+`.claude/plans/completed/NSM_CODE_HEALTH_REFACTOR.md` §8.2; the research thread is
 `NSM_TRAINING_IDEAS.md` Idea 3.
 
 ### Key Concepts

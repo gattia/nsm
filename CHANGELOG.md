@@ -990,7 +990,7 @@ Three things a reader upgrading should know before the list:
 ## v0.2.0
 
 Sampling can now be reproduced, and a numerical regression harness exists to make the
-decomposition work in `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` safe to start.
+decomposition work in `.claude/plans/completed/NSM_CODE_HEALTH_REFACTOR.md` safe to start.
 
 ### Breaking
 

@@ -1,6 +1,6 @@
 # NSM scope
 
-**Phase 0 deliverable of `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md`.**
+**Phase 0 deliverable of `.claude/plans/completed/NSM_CODE_HEALTH_REFACTOR.md`.**
 **Verified:** 2026-08-15, against `main` at commit `73a0326`.
 **§2.8 and the 2026-08-22 amendments to §1, §2.6 and §3.1:** verified 2026-08-22, against
 `main` at `986fded` (post-PR #64) — every claim in them was re-run, not transcribed.

@@ -1,6 +1,6 @@
 # NSM architecture
 
-**Phase 1 deliverable of `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md`.**
+**Phase 1 deliverable of `.claude/plans/completed/NSM_CODE_HEALTH_REFACTOR.md`.**
 **Verified:** 2026-08-15, against `main` at commit `73a0326`. The `NSM.datasets`
 subgraph and its §3 rows re-verified 2026-08-22 after the §8.0 slice-A split of
 `sdf_dataset.py` into `datasets/utils.py` + `datasets/mesh_sampling.py`.
