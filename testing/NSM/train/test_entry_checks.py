@@ -73,20 +73,51 @@ def test_the_dataset_declares_the_names_and_the_trainer_adopts_them():
         )
 
 
-def test_a_bad_validation_config_fails_before_the_first_epoch():
+def test_a_config_validation_would_fail_on_is_refused_before_training(tmp_path):
     """
-    Fails if ``train_deep_sdf`` with ``val_paths`` set starts training with a non-bool
-    ``l2reg_recon`` or a missing validation key. Validation first runs at a checkpoint
+    Fails if ``train_deep_sdf`` with ``val_paths`` set starts training on a config that
+    validation would fail on, or refuses a valid one. Validation first runs at a checkpoint
     epoch, which can be hours in.
+
+    Each case is one mistake: a missing key, a non-bool ``l2reg_recon``, an unknown
+    ``convergence_type_recon``, a validator for another surface count, a subject with the
+    wrong number of meshes or a missing file, and ``predict_val_variables`` the path names
+    do not carry.
     """
     with open(DEFAULT_CONFIG_PATH, encoding="utf-8") as f:
-        config = json.load(f)
-    config.update(val_paths=["subject.vtk"], l2reg_recon=1)
-    with patch(STOP_AFTER_VALIDATION, side_effect=StopIteration):
-        with pytest.raises(TypeError, match="l2reg_recon"):
-            train_deep_sdf(dict(config), model=MagicMock(), sdf_dataset=MagicMock(mesh_names=None))
+        default = json.load(f)
+    bone, cart = tmp_path / "bone_age_30-.vtk", tmp_path / "cart_age_30-.vtk"
+    bone.touch()
+    cart.touch()
+    subject = [str(bone), str(cart)]
+    valid = dict(default, val_paths=[subject])
+    missing_key = dict(valid)
+    del missing_key["chamfer"]
 
-        config["l2reg_recon"] = False
-        del config["chamfer"]
-        with pytest.raises(KeyError, match="chamfer"):
-            train_deep_sdf(dict(config), model=MagicMock(), sdf_dataset=MagicMock(mesh_names=None))
+    cases = [
+        (missing_key, KeyError, "chamfer"),
+        (dict(valid, l2reg_recon=1), TypeError, "l2reg_recon"),
+        (dict(valid, convergence_type_recon="recon-loss"), ValueError, "convergence_type_recon"),
+        (dict(valid, recon_val_func_name="compare_cart_thickness_whole_joint"), ValueError, "6"),
+        (dict(valid, val_paths=[subject[:1]]), ValueError, "objects_per_decoder"),
+        (
+            dict(valid, val_paths=[[str(bone), str(tmp_path / "gone.vtk")]]),
+            FileNotFoundError,
+            "gone",
+        ),
+        (dict(valid, predict_val_variables=["weight"]), ValueError, "predict_val_variables"),
+    ]
+    single = dict(
+        valid,
+        objects_per_decoder=1,
+        mesh_names=["bone"],
+        val_paths=[str(bone)],
+        predict_val_variables=["age"],
+    )
+    with patch(STOP_AFTER_VALIDATION, side_effect=StopIteration):
+        for config, error, match in cases:
+            with pytest.raises(error, match=match):
+                train_deep_sdf(config, model=MagicMock(), sdf_dataset=MagicMock(mesh_names=None))
+        for config in (valid, single):
+            with pytest.raises(StopIteration):
+                train_deep_sdf(config, model=MagicMock(), sdf_dataset=MagicMock(mesh_names=None))

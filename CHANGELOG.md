@@ -52,9 +52,12 @@ nsm @ git+https://github.com/gattia/nsm@v0.4.0
   ([#115](https://github.com/gattia/nsm/issues/115)). Its first `backward()` raised.
   Forward values are unchanged.
 
-- **`train_deep_sdf` checks the validation config before the first epoch** when
-  `val_paths` is set. A non-bool `l2reg_recon`, a missing key or an unknown
-  `recon_val_func_name` used to raise at the first validation, at a checkpoint epoch.
+- **`train_deep_sdf` checks what validation needs before the first epoch** when
+  `val_paths` is set. Each of these used to raise at the first validation, at a checkpoint
+  epoch: a missing key, a non-bool `l2reg_recon`, an unknown `convergence_type_recon` or
+  `recon_val_func_name`, a validator for another surface count, a val subject with the
+  wrong number of meshes or a missing file, and `predict_val_variables` that the path
+  names do not carry.
 
 ## v0.4.0
 
