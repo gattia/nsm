@@ -500,14 +500,19 @@ only in the five fixes.
 
 ### Step Close — retire this plan
 
-Move both this file and `NSM_CODE_HEALTH_REFACTOR_HISTORY.md` to `.claude/plans/completed/`,
-adding the two sections `CLAUDE.md` requires: **Delivered** (what shipped, with PR links)
-and **Diverged** (where reality differed from the plan, and why). `Diverged` is the most
-valuable thing in the file and exists nowhere else, so do not compress it — the Surprises
-above and the eighteen slice statements in the history file are its raw material.
+Ruled 2026-09-25. One PR, after #117 merges:
 
-Then start `NSM_CONFIG_SECTIONS_AND_MODEL_REGISTRY.md`, which is already written and
-waiting on its own §2 layout ruling.
+- Move this file and `NSM_CODE_HEALTH_REFACTOR_HISTORY.md` to `.claude/plans/completed/`.
+  Write nothing new: the State block's Done list and each step's Diverged are the record.
+- Re-point every citation of the old path; `git grep -n NSM_CODE_HEALTH_REFACTOR` lists
+  them. `EIKONAL_UNSUPPORTED` in `NSM/losses.py` is a user-facing error, and a pip install
+  has no `.claude/`, so it should not point at a plan at all.
+- Give §8.1 and §8.2 a home under `CLAUDE.md`'s rules: an issue if one meets the issue bar,
+  otherwise `docs/`. §8.1 may already be covered by
+  `NSM_CONFIG_SECTIONS_AND_MODEL_REGISTRY.md`.
+- Drop §9's open bullets and §10.1's 1.0.0 bullet. Nothing replaces them.
+
+What starts next is the maintainer's call.
 
 ---
 
@@ -563,7 +568,7 @@ nothing posted to the public tracker without the maintainer approving the exact 
 
 Five that bite on the slices below:
 
-- Plan-only text commits straight to `main` with no PR.
+- Plan edits ride on a PR. They no longer go straight to `main` (ruled 2026-09-25).
 - A test that reads a file needs `encoding="utf-8"` explicitly.
 - **This checkout is production's NSM.** kneepipeline imports `DEPENDENCIES/nsm`, so a
   branch checked out here runs in production. Work in a worktree, for example
