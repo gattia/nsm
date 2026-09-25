@@ -86,8 +86,7 @@ large sigmas (> 0.5) with `scale_jointly=False`, indicate a probable mismatch.
 *Planned fix:* an explicit `sigma_coordinate_space` parameter, standardizing on original
 coordinate space, with a migration guard of the same shape as History §1's. Written up in
 `.claude/plans/BREAKING_CHANGE_PROPOSAL.md` and
-`.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md`, scheduled into
-`.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §8. Tracked as
+`.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md`. Tracked as
 [#3](https://github.com/gattia/nsm/issues/3), open since Sept 2025.
 
 ### A `None` surface cannot build
@@ -541,7 +540,7 @@ current production models before assuming either is better. Not yet done.
 - `NSM/_lr_migration.py` — the migration error text. Not permanent API; delete the file
   once no config still in use predates the `Target` key.
 - `testing/NSM/test_lr_schedules.py` — regression and equivalence tests
-- `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §4 — this fix as the migration template
+- `.claude/plans/completed/NSM_CODE_HEALTH_REFACTOR.md` §4 — this fix as the migration template
 
 ---
 
@@ -582,7 +581,7 @@ silent-training defect crashes first on the default config.
 
 The module now emits a `DeprecationWarning`. Use `NSM.train.train_deep_sdf` with
 `objects_per_decoder > 1` instead. Whether to repair or delete this file is a Phase 0
-decision in `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md`.
+decision in `.claude/plans/completed/NSM_CODE_HEALTH_REFACTOR.md`.
 
 ---
 
@@ -1225,7 +1224,7 @@ exactly, and stating it restores bitwise-identical output.
 This is option 1 of the three the issue lists. Options 2 (write it into the checkpoint) and
 3 (a public "build the model this config describes" call) are not done: option 2 would put
 a key in the state dict that no shipped checkpoint has, and option 3 is the model-registry
-work in `.claude/plans/NSM_CODE_HEALTH_REFACTOR.md` §8.1.
+work in `.claude/plans/NSM_CONFIG_SECTIONS_AND_MODEL_REGISTRY.md`.
 
 **`kneepipeline` is not covered by this fix and does not need to be.** It hand-rolls the
 config→constructor mapping (`steps/run_nsm.py:94-112`, 15 of 16 meaningful arguments) and

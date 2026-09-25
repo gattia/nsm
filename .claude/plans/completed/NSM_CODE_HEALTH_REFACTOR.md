@@ -21,11 +21,10 @@ under the same number.
 
 ## State
 
-**Updated:** 2026-09-24 · **Status:** open
+**Updated:** 2026-09-25 · **Status:** done
 
-- **Next:** the maintainer reviews PR #117 (Step U). After the merge, pull this checkout
-  and restart the worker once it is idle. Then Step Close.
-- **Blocked on:** the maintainer's review of PR #117.
+- **Next:** nothing. What starts next is the maintainer's call.
+- **Blocked on:** nothing.
 - **Done:**
   - Phases 0–3, and slices A–R, each with its own PR. v0.2.0 (PR #36) and v0.3.0 shipped.
   - Both post-v0.3.0 validation runs passed: §7.5a on the production box (PR #102), §7.5b
@@ -45,9 +44,11 @@ under the same number.
     16,143 lines to 8,785, 110 s to 72 s, coverage kept. Every test opens its docstring with
     a "Fails if" line, and `test_docs_references` checks it. See Step T's Result.
     Production tree on `main` and worker restarted. #115 and #116 filed for Step U.
-  - Step U executed 2026-09-23 on `step-u`, PR #117 open: a test for each of the nine
-    rows, #115 and #116 fixed, and row 1's late latent fixed (decision 3). See Step U's
-    Result.
+  - Step U merged 2026-09-25 (PR #117, `e584240`): a test for each of the nine rows,
+    #115 and #116 fixed, and row 1's late latent fixed (decision 3). See Step U's Result.
+    Production tree pulled and worker restarted. Archived job `8ff02ee4` re-fits to BScore
+    −0.2025669 against its archived −0.2026352, inside History 32's range.
+  - Step Close 2026-09-25: this file and the history file moved to `completed/`.
 - **Surprises:**
   - **Pinning a behaviour can show it is wrong.** Row 1's test found that
     `reconstruct_latent` returned a latent one step away from its loss (decision 3).
@@ -96,10 +97,9 @@ under the same number.
 
 ---
 
-## What is left
+## What was left at the 2026-09-21 split
 
-Six steps, in order. 0, P, S and T are done, U is in review on PR #117, and Close retires
-this plan.
+Six steps, in order. All six are done.
 
 ### Step 0 — clear the decks (no code)
 
@@ -432,7 +432,7 @@ docstrings and comments that named renamed tests.
   which coverage does not measure. `remove_overlapping_points`' early return for fewer
   than two surfaces gives the same result as the count without it.
 
-### Step U — slice §8.0.U: test the gaps slice T's audit found — **executed 2026-09-23, PR #117 open**
+### Step U — slice §8.0.U: test the gaps slice T's audit found — **done 2026-09-25, PR #117**
 
 Found 2026-09-23 by an audit of slice T (PR #114). The audit made single edits to `NSM/` and
 ran the old 1,184-test suite and the trimmed suite against each. The trim lost nothing. The
@@ -498,7 +498,7 @@ only in the five fixes.
   `l2reg_recon`. `train_deep_sdf` now checks everything validation reads from the config
   and the `val_paths` names before the first epoch.
 
-### Step Close — retire this plan
+### Step Close — retire this plan — **done 2026-09-25**
 
 Ruled 2026-09-25. One PR, after #117 merges:
 
@@ -818,7 +818,7 @@ land, the library is still meaningfully safer than it is today.
 
 | Document | Status | Relationship |
 |---|---|---|
-| `.claude/plans/NSM_CODE_HEALTH_REFACTOR_HISTORY.md` | Executed record | This plan's own history — the pre-2026-09-21 State narrative and all eighteen slice statements §8.0.A–R, verbatim. Retires to `completed/` with this file |
+| `.claude/plans/completed/NSM_CODE_HEALTH_REFACTOR_HISTORY.md` | Executed record | This plan's own history — the pre-2026-09-21 State narrative and all eighteen slice statements §8.0.A–R, verbatim. Retires to `completed/` with this file |
 | `.claude/plans/NSM_CONFIG_SECTIONS_AND_MODEL_REGISTRY.md` | Open, blocked on its §2 | **The next initiative after this one closes.** Started by §8.0.R's finding that every live accepted-and-ignored parameter is in `models/loader.py`. Also owns the MPA loader fix, which is unblocked but deliberately held until after v0.4.0 |
 | `.claude/plans/BREAKING_CHANGE_PROPOSAL.md` | Own initiative since 2026-08-30 | Was "fold into Phase 4"; §8.0.Q re-homed to it instead — the *what and why* of #3 |
 | `.claude/plans/SIGMA_COORDINATE_IMPLEMENTATION_PLAN.md` | Own initiative since 2026-08-30 | Was "fold into Phase 4"; the *how* of #3 — its excerpts are stale, re-verify before executing |

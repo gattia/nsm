@@ -11,8 +11,9 @@ import torch
 import torch.nn.functional as F
 
 EIKONAL_UNSUPPORTED = (
-    "eikonal_weight > 0 is not supported: the eikonal loss has never worked. "
-    "See .claude/plans/NSM_CODE_HEALTH_REFACTOR.md section 8.2."
+    "eikonal_weight > 0 is not supported: the eikonal loss has never worked. It crashes on "
+    "its first backward pass, cannot run on triplanar models (grid_sample has no second "
+    "derivative), and works against the clamped SDF targets NSM trains on."
 )
 
 
