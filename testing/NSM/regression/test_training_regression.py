@@ -264,8 +264,8 @@ class TestResumeContract:
         latent norms or final weights (#49; KNOWN_ISSUES History 11).
 
         Skipping the model, optimizer or latent restore fails it. The resumed model starts
-        from a different seed. Checkpoints hold no random state, so the test records it at
-        each save and restores it after the resume.
+        from a different seed. Checkpoints hold no random state (#119), so the test records
+        it at each save and restores it after the resume.
         """
         import NSM.train.train_deep_sdf as trainer
 
