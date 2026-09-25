@@ -23,9 +23,8 @@ under the same number.
 
 **Updated:** 2026-09-24 · **Status:** open
 
-- **Next:** the maintainer reviews PR #117 (Step U) and approves or edits the two issues
-  drafted under Step U. After the merge, pull this checkout and restart the worker once it
-  is idle. Then Step Close.
+- **Next:** the maintainer reviews PR #117 (Step U). After the merge, pull this checkout
+  and restart the worker once it is idle. Then Step Close.
 - **Blocked on:** the maintainer's review of PR #117.
 - **Done:**
   - Phases 0–3, and slices A–R, each with its own PR. v0.2.0 (PR #36) and v0.3.0 shipped.
@@ -58,8 +57,7 @@ under the same number.
     half as much, so an A/B across two runs would have mixed that noise in.
   - **`flag is True` is library-wide.** A truthy non-bool such as `1` or `numpy.True_`
     silently takes the `False` branch. An AST count finds 94 `is True` / `is False`
-    comparisons in 13 files. #116 fixed the two in `reconstruct_latent`. The rest is drafted
-    as an issue under Step U.
+    comparisons in 13 files. #116 fixed the two in `reconstruct_latent`. The rest is #118.
   - **Deferred items get lost or are already done.** Five `reconstruct_latent` sites
     deferred to R had already been fixed. In S, one item was already closed by R, and two
     items deferred to S were missing from its table. Build a slice's item list by
@@ -491,61 +489,13 @@ only in the five fixes.
   chunk loop.
 - **Row 4 needed the random state carried across the resume.** Checkpoints do not save it,
   so an exact comparison fails without it. The test records it at each save and restores
-  it after the resume. Drafted as issue 2 below.
+  it after the resume. Filed as #119.
 - **Row 8 found a fourth unchecked key.** Dropping `scale_method` from the cache key also
   passed. The hash test now changes every entry of `get_hash_params` and fails on an
   entry it does not change.
 - **#116 covers `log_wandb` too.** It has the same `is True` read in the same function.
 - **#116 moved a bad `l2reg_recon` to the first validation**, which can be hours into
   training. `train_deep_sdf` now builds the validation arguments before the first epoch.
-
-#### Issues drafted 2026-09-24, for the maintainer's approval
-
-**1. A flag that is not a bool silently takes the `False` branch**
-
-> NSM reads most boolean flags with `flag is True` or `flag is False`. A truthy value that
-> is not `True`, such as `1` or `numpy.True_`, takes the `False` branch with no error. #116
-> fixed this for `reconstruct_latent`'s `l2reg` and `log_wandb`.
->
-> Reproduced on `main` at `761c234`:
->
-> - `Decoder(latent_size=8, dims=[16, 16], weight_norm=1)` builds without weight norm. So
->   does `weight_norm=numpy.True_`.
-> - `get_latent_vecs(3, {"latent_size": 4, "variational": 1, "latent_bound": None})` builds
->   a 4-wide embedding. With `True` it is 8 wide.
->
-> `NSM/` has 94 `is True` / `is False` comparisons in 13 files, counted from the AST. Most
-> are in `datasets/sdf_dataset.py` (33), `datasets/mesh_sampling.py` (18),
-> `train/train_deep_sdf.py` (10) and the three model files (14).
-> `git grep -nE "is (True|False)\b" -- NSM` lists them, along with some comments. Some
-> compare a function's result, such as `os.path.exists(path) is False`, and are fine.
->
-> **Fixed means:** every public function, constructor and config key whose flag is read
-> this way raises `TypeError` for anything but `True` or `False`, as `reconstruct_latent`
-> does since #116. Config keys are checked when `train_deep_sdf` starts, as `l2reg_recon`
-> is. Parameters that take other values by design keep them: `Decoder`'s `layer_split`
-> takes an int, `False` or `None`, and its `concat_latent_input` documents `None`. Raise,
-> do not honour: honouring `1` would change results for anyone passing it today, and would
-> need a `KNOWN_ISSUES.md` History entry. Each entry point gets a test that passes `1`.
->
-> Out of scope: `reconstruct/reconstruct_latent_S3.py`, which `SCOPE.md` §2.4 rules
-> deferred research.
-
-**2. A resumed training run does not reproduce the uninterrupted run**
-
-> Checkpoints hold the model, the optimizer and the latents, but no random number generator
-> state. A run resumed from a checkpoint draws different samples from the run that was
-> never interrupted, so its losses differ from its first epoch on.
->
-> Reproduced with `test_training_regression.TestResumeContract`, added in #117. The test
-> saves torch's and numpy's RNG state at each checkpoint and restores it after resuming.
-> With the restore removed, epoch 2 of a run resumed at epoch 1 has loss 0.2063, and the
-> uninterrupted run's epoch 2 has 0.2128.
->
-> **Fixed means:** `_save_checkpoint` stores the torch, numpy and CUDA RNG states, and
-> `_resume_from_checkpoint` restores them. The test drops its own save and restore and
-> still passes, with `num_data_loader_threads` at 0 and at 2. A checkpoint without the
-> state still loads, with a warning that the run will not match an uninterrupted one.
 
 ### Step Close — retire this plan
 
