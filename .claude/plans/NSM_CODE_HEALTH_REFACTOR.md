@@ -477,7 +477,7 @@ protect kneepipeline's BScore. Then 4 and 5, then 6 with the #115 fix, then 7 to
 One commit per row and one for #116, then the fix for row 1's finding, for Adam and then
 LBFGS. Review added a check of the validation config at training start, CHANGELOG entries
 and plainer test wording. Every edit in the table fails its new test. Tests collected
-260 → 269, `testing/` 8,785 → 9,107 lines, suite 72 s → 70 s. `NSM/` changed
+260 → 269, `testing/` 8,785 → 9,138 lines, suite 72 s → 71 s. `NSM/` changed
 only in the five fixes.
 
 **Diverged:**
@@ -494,8 +494,9 @@ only in the five fixes.
   passed. The hash test now changes every entry of `get_hash_params` and fails on an
   entry it does not change.
 - **#116 covers `log_wandb` too.** It has the same `is True` read in the same function.
-- **#116 moved a bad `l2reg_recon` to the first validation**, which can be hours into
-  training. `train_deep_sdf` now builds the validation arguments before the first epoch.
+- **Validation could fail hours into training**, and #116 added a way: a non-bool
+  `l2reg_recon`. `train_deep_sdf` now checks everything validation reads from the config
+  and the `val_paths` names before the first epoch.
 
 ### Step Close — retire this plan
 
