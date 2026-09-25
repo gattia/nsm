@@ -28,6 +28,37 @@ nsm @ git+https://github.com/gattia/nsm@v0.4.0
 
 ---
 
+## Unreleased
+
+### Breaking
+
+- **`reconstruct_latent` refuses an `l2reg` or `log_wandb` that is not a bool**
+  ([#116](https://github.com/gattia/nsm/issues/116)). Both were read with `is True`, so
+  `l2reg=1` silently meant `False`. They now raise `TypeError`, through `reconstruct_mesh`
+  and `get_mean_errors` too. Pass `True` or `False`.
+
+### Fixed — affects results
+
+- **`reconstruct_latent` returns the latent its loss was measured on.** With Adam under
+  `convergence="recon_loss"` or `"overall_loss"`, which includes both shipped models, it
+  returned the latent one step later. On 10 knees this moved BScore by at most 4.5e-04,
+  about a hundredth of the seed spread. With LBFGS, `overall_loss` returned a latent one
+  step late, and every mode returned the previous step's loss. See
+  `docs/KNOWN_ISSUES.md` § History 32.
+
+### Fixed
+
+- **`ImplicitDecoder` with `block_type: "linear"` and `modulation: true` trains**
+  ([#115](https://github.com/gattia/nsm/issues/115)). Its first `backward()` raised.
+  Forward values are unchanged.
+
+- **`train_deep_sdf` checks what validation needs before the first epoch** when
+  `val_paths` is set. Each of these used to raise at the first validation, at a checkpoint
+  epoch: a missing key, a non-bool `l2reg_recon`, an unknown `convergence_type_recon` or
+  `recon_val_func_name`, a validator for another surface count, a val subject with the
+  wrong number of meshes or a missing file, and `predict_val_variables` that the path
+  names do not carry.
+
 ## v0.4.0
 
 **Before upgrading:** if you pass `verbose=` to anything in NSM, delete it. It now raises

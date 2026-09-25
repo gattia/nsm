@@ -987,8 +987,8 @@ initialization, not from the epoch-1 checkpoint it named.
 No switch. The old behaviour was a fresh run whose epoch numbering started at 2 —
 `resume_epoch: 0` is the supported way to train from scratch, with epoch 1 included.
 
-*Pinned by:* `test_training_regression.TestResumeContract` (all three boundaries:
-0 runs every epoch, 1 and 2 load their checkpoints).
+*Pinned by:* `test_training_regression.TestResumeContract`: 0 trains every epoch, and 1
+loads its checkpoint and continues exactly as the uninterrupted run.
 
 ## 12. The logged latent-norm stats were the last batch's, scaled down by the batch count
 
@@ -1191,7 +1191,7 @@ since the checkpoint loads either way.
 
 *Pinned by:* `test_model_options.test_concatenation_uses_all_three_planes`, which also
 checks that the VAE keeps its width, and
-`test_model_options.test_triplanar_feature_combination_works_or_refuses`.
+`test_model_options.TestTriplanar::test_concatenation_refuses_conv_pred_sdf`.
 
 ## 16. A `padding` a config did not state was silently defaulted, at any trained value
 
@@ -1880,3 +1880,53 @@ Removing the keys now changes no result, because nothing has read them since.
 **If you want this weighting**, it is `git show
 v0.3.0:NSM/train/deprecated/train_deep_sdf_orig.py` plus a `.detach()` on the weight —
 `SCOPE.md` §2.2 records why it was not carried forward.
+
+## 32. `reconstruct_latent` returned a latent one step away from its loss
+
+| | |
+|---|---|
+| **Affected** | Fits through `reconstruct_latent`, `reconstruct_mesh` or `get_mean_errors`, from at least `5188417` (31 Aug 2023) → Sep 2026. **Adam** under `convergence="recon_loss"` or `"overall_loss"` returned the latent one step after its best loss. That includes both shipped models, whose configs set `convergence_type_recon: "recon_loss"`. **LBFGS** did the same under `"overall_loss"`, and in every mode returned a loss measured one step before its latent |
+| **Unaffected** | Adam under `convergence="num_iterations"`. It still returns the latent after the last step, with the loss measured before that step |
+| **Severity** | Silent. For Adam, smaller than a change of seed: at most 4.5e-04 BScore on 10 knees. For LBFGS, not measured on real data |
+| **Fixed in** | `step-u`, Sep 2026 ([#117](https://github.com/gattia/nsm/pull/117)) |
+
+### What was wrong
+
+Adam measured the loss, then stepped, then copied the latent if the loss was the best so
+far. The copy came after `optimizer.step()`, so the returned latent was one step past the
+one its loss was measured on. The fit's trajectory was the same; only the returned latent
+was late.
+
+LBFGS measures its losses again after each step, and `recon_loss` compared those, so it
+picked the right latent. The loss it returned, and the loss `overall_loss` compared, was
+the one `LBFGS.step()` returns, which is measured before the step.
+
+### How to tell whether one of your runs is affected
+
+Fits made before the fix are affected if they used Adam under `recon_loss` or
+`overall_loss`, or LBFGS (alone or in hybrid mode) under `overall_loss`. LBFGS under
+`recon_loss` or `num_iterations` returned the right latent with a stale loss.
+
+**The size of it, for Adam.** Measured 2026-09-24 on 10 archived knees with both shipped
+models. Each knee was fitted once, keeping both the new latent and the one the old code
+would have returned, so their difference is the fix alone. The re-run row is the same code
+fitted twice on a T4.
+
+| BScore change | bone+cart | bone-only |
+|---|---|---|
+| from the fix, mean absolute / max | 1.1e-04 / 2.7e-04 | 1.5e-04 / 4.5e-04 |
+| from the fix, mean signed | −8e-06 | −6.3e-05 |
+| same code re-run, mean absolute / max | 3.3e-05 / 6.9e-05 | 8.6e-05 / 2.3e-04 |
+
+The change has no consistent sign (paired t = −0.19 and −0.89). It is two to three times
+what a re-run moves, and about a hundredth of the spread across seeds (SD 0.0136, measured
+Aug 2026). No result needs re-running.
+
+### Reproducing old behaviour
+
+No switch. For Adam, the old latent is one step further along than the best one the fit
+saw.
+
+*Pinned by:*
+`test_reconstruct_latent.TestTheReturnedLossIsALoss::test_the_best_step_s_latent_is_returned`,
+for both optimizers.

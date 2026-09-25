@@ -636,7 +636,9 @@ def reconstruct_latent(
     are in ``TestChunkedForwardAndBackward``'s docstring, where they can be re-run.
 
     Returns:
-        (loss, latent): the final loss value and the fitted latent tensor.
+        (loss, latent). Under ``"recon_loss"`` or ``"overall_loss"``, the best loss and the
+        latent it was measured on. Under ``"num_iterations"``, the latent after the last step.
+        Its loss is measured before that step with Adam, and after it with LBFGS.
     """
     refuse_unknown_kwargs(kwargs, function_name="reconstruct_latent")
 
@@ -662,6 +664,12 @@ def reconstruct_latent(
             "NSM.reconstruct._config_migration.migrate_reconstruct_config() removes the "
             "optimizer_name for you and says what else in the config was never read."
         )
+
+    # Both are read with `is True` below, so a truthy 1 silently turned off the L2 term or
+    # the logging (#116).
+    for name, flag in (("l2reg", l2reg), ("log_wandb", log_wandb)):
+        if not isinstance(flag, bool):
+            raise TypeError(f"{name} must be True or False, got {flag!r}")
 
     if log_wandb and wandb is None:
         raise ImportError("log_wandb=True requires wandb, which is not installed")
@@ -992,19 +1000,25 @@ def reconstruct_latent(
 
             return total_loss
 
-        # Run the appropriate optimizer step
+        # Run the appropriate optimizer step. `latent_evaluated` is the latent the tracked
+        # losses were measured on, and is what convergence records as best.
         if current_optimizer_name == "adam":
+            # Adam's losses are measured before its step moves the latent. Until Sep 2026 the
+            # moved latent was recorded instead (KNOWN_ISSUES History 32).
+            latent_evaluated = torch.clone(latent)
             current_optimizer.zero_grad()
             loss_, recon_loss_, latent_loss_, eikonal_loss_, norm_penalty_loss_ = (
                 loss_with_gradient()
             )
             current_optimizer.step()
         elif current_optimizer_name == "lbfgs":
-            # L-BFGS optimization step
-            loss_ = current_optimizer.step(step_closure)
-            # Compute final losses for tracking (without gradients)
+            # LBFGS returns the loss from before its step, so every loss is measured again on
+            # the moved latent. Until Sep 2026 the returned loss was kept (KNOWN_ISSUES
+            # History 32).
+            current_optimizer.step(step_closure)
+            latent_evaluated = torch.clone(latent)
             with torch.no_grad():
-                _, recon_loss_, latent_loss_, eikonal_loss_, norm_penalty_loss_ = (
+                loss_, recon_loss_, latent_loss_, eikonal_loss_, norm_penalty_loss_ = (
                     compute_loss()
                     if n_samples_per_chunk is None
                     else compute_loss_chunked(backward=False)
@@ -1074,7 +1088,7 @@ def reconstruct_latent(
         if convergence == "overall_loss":
             if loss_ < loss:
                 loss = loss_
-                latent_ = torch.clone(latent)
+                latent_ = latent_evaluated
                 patience = 0
             else:
                 patience += 1
@@ -1092,7 +1106,7 @@ def reconstruct_latent(
                 # returned loss was the initial sentinel -- on the mode
                 # `default_config.json` ships (`convergence_type_recon`).
                 loss = loss_
-                latent_ = torch.clone(latent)
+                latent_ = latent_evaluated
                 patience = 0
             else:
                 patience += 1

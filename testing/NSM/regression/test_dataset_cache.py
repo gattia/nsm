@@ -12,6 +12,7 @@ import sys
 
 import numpy as np
 import pytest
+import torch
 from _harness import (
     build_dataset,
     build_model,
@@ -252,14 +253,17 @@ class TestCacheHitRepair:
 
 
 class TestHashedParametersChangeTheKey:
-    def test_every_hashed_parameter_changes_the_key(self, dataset, meshes):
+    def test_every_hashed_parameter_changes_the_key(self, dataset, meshes, monkeypatch):
         """
-        Fails if ``MultiSurfaceSDFSamples.create_hash`` ignores a change to any listed
-        sampling, normalization or registration parameter, ``random_seed``, or the order of a
-        subject's surfaces (#19).
+        Fails if ``MultiSurfaceSDFSamples.create_hash`` ignores a change to any entry of
+        ``get_hash_params``, ``CACHE_FORMAT`` included, or to the order of a subject's
+        surfaces (#19). Also fails if ``get_hash_params`` gains an entry this test does not
+        change.
         """
+        import NSM.datasets.sdf_dataset as sdf_dataset
+
         baseline = dataset.create_hash(meshes[0])
-        for attribute, value in (
+        changes = (
             ("center_pts", False),
             ("norm_pts", False),
             ("fix_mesh", True),
@@ -275,9 +279,18 @@ class TestHashedParametersChangeTheKey:
             ("sigma_far", [0.2, None]),
             ("rand_function", "laplace"),
             ("random_seed", 7),
-        ):
+            ("scale_method", "other"),
+            ("uniform_pts_buffer", 0.5),
+            ("mesh_to_scale", 1),
+        )
+        for attribute, value in changes:
             assert rehash(dataset, meshes[0], **{attribute: value}) != baseline, attribute
         assert dataset.create_hash([meshes[0][1], meshes[0][0]]) != baseline
+
+        monkeypatch.setattr(sdf_dataset, "CACHE_FORMAT", sdf_dataset.CACHE_FORMAT + 1)
+        assert rehash(dataset, meshes[0]) != baseline
+        tested = {attribute for attribute, _ in changes} | {"cache_format"}
+        assert set(dataset.get_hash_params()) == tested
 
 
 class TestFormerlyCollidingParameters:
@@ -616,6 +629,36 @@ class TestFormerlyUncallableConfigurations:
         np.testing.assert_allclose(disk.max_radius, memory.max_radius, rtol=1e-6)
         assert disk[0][0]["xyz"].norm(dim=1).max() < 0.25
         assert memory[0][0]["xyz"].norm(dim=1).max() < 0.25
+
+    @pytest.mark.parametrize("single", [True, False], ids=["single", "multi"])
+    def test_scale_jointly_scales_the_sdf_with_the_points(
+        self, single, meshes, bone_meshes, tmp_path_factory
+    ):
+        """
+        Fails if ``SDFSamples`` or ``MultiSurfaceSDFSamples`` under ``scale_jointly`` moves a
+        batch's points into the joint frame and leaves its ``gt_sdf`` unscaled.
+
+        ``default_config.json`` trains this way. The same seeded batch is drawn with the
+        joint frame and without it, so the two must differ by exactly that frame.
+        """
+        joint = dict(scale_jointly=True, center_pts=False, norm_pts=False)
+        cache = tmp_path_factory.mktemp("joint_sdf")
+        if single:
+            dataset = build_single_surface_dataset(bone_meshes[:1], cache, **SMALL_SINGLE, **joint)
+        else:
+            dataset = build_dataset(meshes, cache, **SMALL, **joint)
+        radius, center = dataset.max_radius, dataset.center
+
+        batches = []
+        for frame_radius in (radius, None):
+            dataset.max_radius = frame_radius
+            torch.manual_seed(0)
+            np.random.seed(0)
+            batch = dataset[0][0]
+            batches.append({key: batch[key].numpy() for key in ("xyz", "gt_sdf")})
+        scaled, unscaled = batches
+        np.testing.assert_allclose(scaled["gt_sdf"] * radius, unscaled["gt_sdf"], rtol=1e-5)
+        np.testing.assert_allclose(scaled["xyz"] * radius + center, unscaled["xyz"], rtol=1e-5)
 
 
 def test_the_cache_location_is_read_when_the_dataset_is_built(

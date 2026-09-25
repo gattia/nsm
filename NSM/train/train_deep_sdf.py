@@ -38,6 +38,9 @@ from NSM.reconstruct import (
     compare_cart_thickness_whole_joint,
     get_mean_errors,
 )
+from NSM.reconstruct.cartilage_func import MESH_COUNTS
+from NSM.reconstruct.latent_fit import _CONVERGENCE_TYPES, _normalized_choice
+from NSM.reconstruct.predictive_validation_class import Regress
 from NSM.train.utils import (
     NoOpProfiler,
     add_plain_lr_to_config,
@@ -133,6 +136,9 @@ def train_deep_sdf(config, model, sdf_dataset, use_wandb=False):
             UserWarning,
             stacklevel=2,
         )
+
+    if config.get("val_paths") is not None:
+        _check_validation_config(config)
 
     config = add_plain_lr_to_config(config)
     config["checkpoints"] = get_checkpoints(config)
@@ -328,20 +334,23 @@ def _save_checkpoint(config, epoch, model, latent_vecs, optimizer, sdf_dataset):
 
 
 def _run_validation(config, model):
-    """
-    Reconstruct the ``val_paths`` subjects and return ``get_mean_errors``' metric dict.
-
-    The kwarg block is the config→``get_mean_errors`` mapping; the commented-out lines
-    name parameters deliberately left at their defaults.
-    """
+    """Reconstruct the ``val_paths`` subjects and return ``get_mean_errors``' metric dict."""
     clear_gpu_cache(config["device"])
+    return get_mean_errors(decoders=model, **_validation_arguments(config))
 
+
+def _validation_arguments(config):
+    """
+    ``get_mean_errors``' arguments for validation, apart from the model.
+
+    This is the config→``get_mean_errors`` mapping; the commented-out lines name
+    parameters deliberately left at their defaults.
+    """
     # TODO: Change this to just accept the config?
     # or... update all parameters to be the same in the config and the function call?
     # this will just allow unpacking of the config dict.
-    return get_mean_errors(
+    return dict(
         mesh_paths=config["val_paths"],
-        decoders=model,
         num_iterations=config["num_iterations_recon"],
         register_similarity=True,
         latent_size=config["latent_size"],
@@ -380,6 +389,51 @@ def _run_validation(config, model):
         fix_mesh=config["fix_mesh_recon"],
         device=config["device"],
     )
+
+
+def _check_validation_config(config):
+    """
+    Refuse, before the first epoch, a config that validation would fail on.
+
+    Validation first runs at a checkpoint epoch, which can be hours in. This checks what it
+    reads from the config and from the ``val_paths`` names. It does not read the meshes.
+    """
+    # Building the arguments raises on a missing key or an unknown recon_val_func_name.
+    arguments = _validation_arguments(config)
+    if not isinstance(arguments["l2reg"], bool):
+        raise TypeError(f"config['l2reg_recon'] must be true or false, got {arguments['l2reg']!r}")
+    _normalized_choice(
+        arguments["convergence"], allowed=_CONVERGENCE_TYPES, parameter="convergence_type_recon"
+    )
+
+    n_surfaces = config["objects_per_decoder"]
+    n_scored = MESH_COUNTS.get(config.get("recon_val_func_name"))
+    if n_scored is not None and n_scored != n_surfaces:
+        raise ValueError(
+            f"recon_val_func_name {config['recon_val_func_name']!r} scores {n_scored} "
+            f"meshes, but objects_per_decoder is {n_surfaces}."
+        )
+
+    for subject in config["val_paths"]:
+        paths = [subject] if isinstance(subject, str) else list(subject)
+        if len(paths) != n_surfaces:
+            raise ValueError(
+                f"val_paths entry {subject!r} has {len(paths)} meshes, but "
+                f"objects_per_decoder is {n_surfaces}."
+            )
+        missing = [path for path in paths if path is not None and not os.path.isfile(path)]
+        if missing:
+            raise FileNotFoundError(f"val_paths names files that do not exist: {missing}")
+
+    # Regress reads each subject's factor values from its path name when it is built.
+    if config.get("predict_val_variables") is not None:
+        try:
+            Regress(list_factors=config["predict_val_variables"], list_paths=config["val_paths"])
+        except (AttributeError, IndexError, ValueError) as error:
+            raise ValueError(
+                f"predict_val_variables {config['predict_val_variables']} cannot be read from "
+                f"the val_paths names: {error!r}"
+            ) from error
 
 
 def _surface_l1_loss(

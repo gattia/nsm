@@ -36,8 +36,18 @@ CART_REGIONS_DICT = {
 #: in ``recon_val_func_name`` for a tibia or patella model gets NaN for every region.
 CART_REGIONS = CART_REGIONS_DICT["femur"]
 
+#: How many meshes each validator takes. ``train_deep_sdf`` checks it against
+#: ``objects_per_decoder`` before training starts.
+MESH_COUNTS = {
+    "compare_cart_thickness": 2,
+    "compare_cart_thickness_tibia": 2,
+    "compare_cart_thickness_patella": 2,
+    "compare_cart_thickness_femur": 2,
+    "compare_cart_thickness_whole_joint": 6,
+}
 
-def _require_meshes(caller, n_expected, layout, orig_meshes, recon_meshes):
+
+def _require_meshes(caller, layout, orig_meshes, recon_meshes):
     """
     Refuse a mesh list of the wrong length, at the function that slices it.
 
@@ -46,6 +56,7 @@ def _require_meshes(caller, n_expected, layout, orig_meshes, recon_meshes):
     ``testing/NSM/reconstruct/test_cartilage_func.py::TestTheMeshListLength`` has the
     measurements.
     """
+    n_expected = MESH_COUNTS[caller]
     for name, meshes in (("orig_meshes", orig_meshes), ("recon_meshes", recon_meshes)):
         if len(meshes) != n_expected:
             raise ValueError(
@@ -60,7 +71,6 @@ def compare_cart_thickness_tibia(orig_meshes, recon_meshes):
     """``compare_cart_thickness`` over the two tibial plateaus, for a tibia model."""
     _require_meshes(
         "compare_cart_thickness_tibia",
-        2,
         "tibia bone, tibia cartilage",
         orig_meshes,
         recon_meshes,
@@ -76,7 +86,6 @@ def compare_cart_thickness_patella(orig_meshes, recon_meshes):
     """``compare_cart_thickness`` over the patellar cartilage, for a patella model."""
     _require_meshes(
         "compare_cart_thickness_patella",
-        2,
         "patella bone, patella cartilage",
         orig_meshes,
         recon_meshes,
@@ -97,7 +106,6 @@ def compare_cart_thickness_femur(orig_meshes, recon_meshes):
     """
     _require_meshes(
         "compare_cart_thickness_femur",
-        2,
         "femur bone, femur cartilage",
         orig_meshes,
         recon_meshes,
@@ -121,7 +129,6 @@ def compare_cart_thickness_whole_joint(orig_meshes, recon_meshes):
     """
     _require_meshes(
         "compare_cart_thickness_whole_joint",
-        6,
         "femur bone, femur cartilage, tibia bone, tibia cartilage, "
         "patella bone, patella cartilage",
         orig_meshes,
@@ -216,7 +223,7 @@ def compare_cart_thickness(
 
     A ``BoneMesh`` or ``CartilageMesh`` argument is **mutated** -- see ``_as_mesh``.
     """
-    _require_meshes("compare_cart_thickness", 2, "bone, cartilage", orig_meshes, recon_meshes)
+    _require_meshes("compare_cart_thickness", "bone, cartilage", orig_meshes, recon_meshes)
 
     orig_bone, orig_cart = orig_meshes
     recon_bone, recon_cart = recon_meshes

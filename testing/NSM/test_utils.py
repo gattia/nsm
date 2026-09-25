@@ -22,6 +22,7 @@ from NSM.utils import (
     clear_gpu_cache,
     filter_non_jsonable,
     get_checkpoints,
+    get_latent_vecs,
     get_learning_rate_schedules,
     is_jsonable,
     save_model_params,
@@ -239,3 +240,14 @@ class TestCheckpointList:
         """
         with pytest.raises(KeyError, match=r"additional_checkpoints.*\[\]"):
             get_checkpoints({"checkpoint_epochs": 10, "n_epochs": 30})
+
+
+def test_latent_bound_caps_a_looked_up_latent():
+    """
+    Fails if ``get_latent_vecs`` stops passing ``latent_bound`` to the embedding as
+    ``max_norm``, so a training latent can grow past it.
+    """
+    latents = get_latent_vecs(2, {"latent_size": 4, "latent_bound": 1.0, "variational": False})
+    with torch.no_grad():
+        latents.weight[0] = 5.0
+    assert float(latents(torch.tensor([0])).norm()) == pytest.approx(1.0)

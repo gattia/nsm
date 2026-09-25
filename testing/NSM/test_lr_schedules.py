@@ -294,6 +294,37 @@ class TestCheckpoints:
         )
         assert torch.load(tmp_path / "model" / "1.pth", weights_only=False)["optimizer"] is None
 
+    def test_resuming_refuses_a_checkpoint_it_cannot_schedule(self, tmp_path):
+        """
+        Fails if ``_resume_from_checkpoint`` loads a checkpoint with no optimizer state,
+        stored as ``None`` or the older string ``"None"``, or one whose param groups carry no
+        ``target``, instead of raising ``ValueError``.
+
+        A checkpoint saved before Aug 2026 has no targets (KNOWN_ISSUES History 1).
+        """
+        from NSM.train.train_deep_sdf import _resume_from_checkpoint
+        from NSM.utils import save_latent_vectors
+
+        config = {"experiment_directory": str(tmp_path), "resume_epoch": 1}
+        model, latents = torch.nn.Linear(4, 1), torch.nn.Embedding(3, 4)
+        _, optimizer = build(make_config(), models=model)
+        save_latent_vectors(config, epoch=1, latent_vec=latents)
+        save_model(config, epoch=1, decoder=model, optimizer=optimizer)
+        path = tmp_path / "model" / "1.pth"
+        saved = torch.load(path, weights_only=False)
+
+        untargeted = copy.deepcopy(saved)
+        for group in untargeted["optimizer"]["param_groups"]:
+            del group["target"]
+        for checkpoint, match in (
+            (dict(saved, optimizer=None), "without optimizer state"),
+            (dict(saved, optimizer="None"), "without optimizer state"),
+            (untargeted, "no optimizer param-group targets"),
+        ):
+            torch.save(checkpoint, path)
+            with pytest.raises(ValueError, match=match):
+                _resume_from_checkpoint(config, model, latents, optimizer)
+
 
 class TestLoggedLearningRates:
     """``add_plain_lr_to_config`` flattens the schedules into scalar keys for wandb."""

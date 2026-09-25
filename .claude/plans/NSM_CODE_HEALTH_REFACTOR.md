@@ -21,11 +21,11 @@ under the same number.
 
 ## State
 
-**Updated:** 2026-09-23 · **Status:** open
+**Updated:** 2026-09-24 · **Status:** open
 
-- **Next:** Step U, on a new branch in a `git worktree` (see Working conventions). Then
-  Step Close.
-- **Blocked on:** nothing.
+- **Next:** the maintainer reviews PR #117 (Step U). After the merge, pull this checkout
+  and restart the worker once it is idle. Then Step Close.
+- **Blocked on:** the maintainer's review of PR #117.
 - **Done:**
   - Phases 0–3, and slices A–R, each with its own PR. v0.2.0 (PR #36) and v0.3.0 shipped.
   - Both post-v0.3.0 validation runs passed: §7.5a on the production box (PR #102), §7.5b
@@ -45,7 +45,19 @@ under the same number.
     16,143 lines to 8,785, 110 s to 72 s, coverage kept. Every test opens its docstring with
     a "Fails if" line, and `test_docs_references` checks it. See Step T's Result.
     Production tree on `main` and worker restarted. #115 and #116 filed for Step U.
+  - Step U executed 2026-09-23 on `step-u`, PR #117 open: a test for each of the nine
+    rows, #115 and #116 fixed, and row 1's late latent fixed (decision 3). See Step U's
+    Result.
 - **Surprises:**
+  - **Pinning a behaviour can show it is wrong.** Row 1's test found that
+    `reconstruct_latent` returned a latent one step away from its loss (decision 3).
+  - **Two latents from one fit measure a small change without run-to-run noise.** For
+    decision 3 the fixed code also saved the latent the old code would have returned. The
+    fix moved BScore by about 1% of the seed SD. A same-code re-run moves it a third to a
+    half as much, so an A/B across two runs would have mixed that noise in.
+  - **`flag is True` is library-wide.** A truthy non-bool such as `1` or `numpy.True_`
+    silently takes the `False` branch. An AST count finds 94 `is True` / `is False`
+    comparisons in 13 files. #116 fixed the two in `reconstruct_latent`. The rest is #118.
   - **Deferred items get lost or are already done.** Five `reconstruct_latent` sites
     deferred to R had already been fixed. In S, one item was already closed by R, and two
     items deferred to S were missing from its table. Build a slice's item list by
@@ -86,8 +98,8 @@ under the same number.
 
 ## What is left
 
-Five steps, in order. Nothing here is blocked. Steps 0 and P are small, S is a release,
-T is the one with judgment in it.
+Six steps, in order. 0, P, S and T are done, U is in review on PR #117, and Close retires
+this plan.
 
 ### Step 0 — clear the decks (no code)
 
@@ -179,7 +191,7 @@ T is the one with judgment in it.
       are scratch with a lifetime of days — `CLAUDE.md` names them as something this repo
       does not keep, and the plan's State block is the real handoff.
 
-### Step P — slice §8.0.P: quarantine and delete — **executed, PR #110 open**
+### Step P — slice §8.0.P: quarantine and delete — **done 2026-09-22, PRs #110 and #111**
 
 *Four commits on `slice-p-quarantine-and-delete`, **284 lines added and 1,608 deleted**
 (`NSM/` itself: 13,998 from 15,106). Suite 1189 passed / 4 skipped / 3 xfailed, `make lint`
@@ -235,7 +247,7 @@ second config-key sweep also had its own copy of the exemption the first one dro
 **Grep for the deleted name in prose as well as code, and count the things a sentence
 claims to count.**
 
-**Ruled 2026-09-22, executed next as its own PR: remove `train_deep_sdf_multi_head.py`**
+**Ruled 2026-09-22, executed in PR #111: remove `train_deep_sdf_multi_head.py`**
 (443 lines). Not a model type — a training loop taking N ordinary decoders, defining no
 model class, 47% of its non-comment lines verbatim copies of `train_deep_sdf.py`. Broken
 since 2023 (only the last decoder trains), last feature work 2025-01-27, and every 2026
@@ -243,10 +255,6 @@ commit to it is a refactor sweep that touched every file. `SCOPE.md` §2.1's
 unsupported-until-needed ruling and #51's repair checklist are superseded: the checklist
 moves to `SCOPE.md` or the issue closes there. It rides its own PR because #110 is already
 23 files.
-
-*Left for the maintainer: reviewing and merging #110, and approving the #18 close text.
-The working tree is on `main`, so production is not running branch code; after the merge,
-pull and restart the worker.*
 
 ### Step S — slice §8.0.S: v0.4.0, the public signatures — **done 2026-09-22, PR #113**
 
@@ -424,7 +432,7 @@ docstrings and comments that named renamed tests.
   which coverage does not measure. `remove_overlapping_points`' early return for fewer
   than two surfaces gives the same result as the count without it.
 
-### Step U — slice §8.0.U: test the gaps slice T's audit found
+### Step U — slice §8.0.U: test the gaps slice T's audit found — **executed 2026-09-23, PR #117 open**
 
 Found 2026-09-23 by an audit of slice T (PR #114). The audit made single edits to `NSM/` and
 ran the old 1,184-test suite and the trimmed suite against each. The trim lost nothing. The
@@ -439,7 +447,7 @@ by hand, confirm the test fails, revert. That is the item's verification. The te
 |---|---|---|---|
 | 1 | `reconstruct_latent` returns the best latent under `convergence="recon_loss"` and `"overall_loss"` | Delete `latent_ = torch.clone(latent)` in either branch | kneepipeline: both shipped models fit with `recon_loss` |
 | 2 | `TriplanarDecoder`'s `padding=0.1` and `conv_activation=None` defaults, in CI | `padding=0.1` to `0.2` | kneepipeline builds the decoder without passing either |
-| 3 | `reconstruct_mesh` on the production branch: `scale_jointly=True`, `convergence="recon_loss"`, one- and two-surface path lists. `icp_transform` recovers a known similarity. `center` supports `.tolist()` and `scale` is JSON-serializable | None: this branch never runs. The harness uses `scale_jointly=False` and `"num_iterations"` | kneepipeline's 551 and 647 fits |
+| 3 | `reconstruct_mesh` on the production branch: `scale_jointly=True`, `convergence="recon_loss"`, one- and two-surface path lists. `icp_transform` recovers a known similarity. `center` supports `.tolist()` and `scale` is JSON-serializable | None: this branch never runs. The harness uses `scale_jointly=False` and `"num_iterations"` | kneepipeline's two production fits (models 551 and 647) |
 | 4 | A resumed run continues the uninterrupted one: same losses and latents after N/2 + N/2 epochs as after N | Delete `optimizer.load_state_dict(...)` or `latent_vecs.load_state_dict(...)` in `_resume_from_checkpoint` | Anyone resuming training |
 | 5 | `_resume_from_checkpoint` refuses a checkpoint with no optimizer, and one whose groups carry no `target` | None: both raises are untested | Resuming a pre-Aug-2026 run |
 | 6 | Every trainable parameter gets a non-zero gradient, for every model type and option, in train mode | None. Fails today on `ImplicitDecoder` with linear blocks and modulation (#115) | All training |
@@ -464,23 +472,54 @@ few lines for each fix. Nothing transitional.
 **Order.** One branch and PR, one commit per row. Rows 1 to 3 come first, because they
 protect kneepipeline's BScore. Then 4 and 5, then 6 with the #115 fix, then 7 to 9, then the #116 fix.
 
+#### Result (2026-09-23 and 24, branch `step-u`, PR #117)
+
+One commit per row and one for #116, then the fix for row 1's finding, for Adam and then
+LBFGS. Review added a check of the validation config at training start, CHANGELOG entries
+and plainer test wording. Every edit in the table fails its new test. Tests collected
+260 → 269, `testing/` 8,785 → 9,138 lines, suite 72 s → 71 s. `NSM/` changed
+only in the five fixes.
+
+**Diverged:**
+- **Row 1 found a defect**, fixed on the same PR (decision 3). The test first pinned the
+  old offset; the fix changed one index in it. It now runs Adam and LBFGS.
+- **Three rows replaced a test rather than adding one.** Row 4's continuation test replaces
+  the weights-only resume test. Row 6's gradient test absorbs the three forward-only option
+  tests into one `OPTIONS` table. Row 9's test replaces the one that ran its own copy of the
+  chunk loop.
+- **Row 4 needed the random state carried across the resume.** Checkpoints do not save it,
+  so an exact comparison fails without it. The test records it at each save and restores
+  it after the resume. Filed as #119.
+- **Row 8 found a fourth unchecked key.** Dropping `scale_method` from the cache key also
+  passed. The hash test now changes every entry of `get_hash_params` and fails on an
+  entry it does not change.
+- **#116 covers `log_wandb` too.** It has the same `is True` read in the same function.
+- **Validation could fail hours into training**, and #116 added a way: a non-bool
+  `l2reg_recon`. `train_deep_sdf` now checks everything validation reads from the config
+  and the `val_paths` names before the first epoch.
+
 ### Step Close — retire this plan
 
-Move both this file and `NSM_CODE_HEALTH_REFACTOR_HISTORY.md` to `.claude/plans/completed/`,
-adding the two sections `CLAUDE.md` requires: **Delivered** (what shipped, with PR links)
-and **Diverged** (where reality differed from the plan, and why). `Diverged` is the most
-valuable thing in the file and exists nowhere else, so do not compress it — the Surprises
-above and the eighteen slice statements in the history file are its raw material.
+Ruled 2026-09-25. One PR, after #117 merges:
 
-Then start `NSM_CONFIG_SECTIONS_AND_MODEL_REGISTRY.md`, which is already written and
-waiting on its own §2 layout ruling.
+- Move this file and `NSM_CODE_HEALTH_REFACTOR_HISTORY.md` to `.claude/plans/completed/`.
+  Write nothing new: the State block's Done list and each step's Diverged are the record.
+- Re-point every citation of the old path; `git grep -n NSM_CODE_HEALTH_REFACTOR` lists
+  them. `EIKONAL_UNSUPPORTED` in `NSM/losses.py` is a user-facing error, and a pip install
+  has no `.claude/`, so it should not point at a plan at all.
+- Give §8.1 and §8.2 a home under `CLAUDE.md`'s rules: an issue if one meets the issue bar,
+  otherwise `docs/`. §8.1 may already be covered by
+  `NSM_CONFIG_SECTIONS_AND_MODEL_REGISTRY.md`.
+- Drop §9's open bullets and §10.1's 1.0.0 bullet. Nothing replaces them.
+
+What starts next is the maintainer's call.
 
 ---
 
-## Decisions the maintainer owes
+## Maintainer decisions
 
-**Both were ruled 2026-09-22 and are struck through below.** Nothing is outstanding. They
-are kept rather than deleted because each records an argument that outlives its answer.
+**All three are ruled and struck through below.** They are kept rather than deleted
+because each records an argument that outlives its answer.
 
 1. ~~**Does slice S shrink the four public signatures, or does the config initiative?**~~
    **Ruled 2026-09-22: the config initiative.** S ships its other six items and leaves the
@@ -490,8 +529,7 @@ are kept rather than deleted because each records an argument that outlives its 
    result.**
    The 59-parameter `reconstruct_mesh` is exactly where the wanted "set the reference mesh"
    option lands, and the config plan's `recon` section is what that signature should
-   mirror. Shrinking it now and regrouping it later is two breaking changes for one result.
-   This is narrower than the config plan's own §5 proposal to absorb **all** of S, which
+   mirror. This is narrower than the config plan's own §5 proposal to absorb **all** of S, which
    should be declined — that would tie the refactor's ending to a new feature being
    designed and built.
 2. ~~**Close the `grad_clip` entry in `docs/KNOWN_ISSUES.md` § Open as working by design?**~~
@@ -507,6 +545,16 @@ are kept rather than deleted because each records an argument that outlives its 
    experiment; dropping it moves the row out of § Open. A test already pins the current
    behaviour (`test_train_epoch.TestGradClipReachesTheModelOnly`).
 
+3. ~~**Fix the one-step-late latent, or leave it documented?**~~ **Ruled 2026-09-24: fix
+   it on the Step U PR, after measuring it.** Found by Step U row 1: Adam's best latent was
+   copied after `optimizer.step()`. Each of 10 archived production knees was fitted once
+   with both models, saving the new latent and the one the old code would have returned.
+   The fix moved BScore by at most 2.7e-04 (bone+cart) and 4.5e-04 (bone-only), with no
+   consistent sign: about 1% of the seed SD (0.0136) on average. A same-code re-run moves
+   it a third to a half as much. `KNOWN_ISSUES.md` History 32 holds the table.
+   LBFGS had the same defect under `overall_loss`, and returned the previous step's loss in
+   every mode. Checked and fixed on the same PR, 2026-09-24.
+
 **Also available, not required.** The 1,450-line State narrative now in the history file is
 superseded by PR descriptions, `CHANGELOG.md` and `docs/KNOWN_ISSUES.md`. It was archived
 rather than deleted so the choice stays open. Deleting it is safe — git history keeps it.
@@ -520,7 +568,7 @@ nothing posted to the public tracker without the maintainer approving the exact 
 
 Five that bite on the slices below:
 
-- Plan-only text commits straight to `main` with no PR.
+- Plan edits ride on a PR. They no longer go straight to `main` (ruled 2026-09-25).
 - A test that reads a file needs `encoding="utf-8"` explicitly.
 - **This checkout is production's NSM.** kneepipeline imports `DEPENDENCIES/nsm`, so a
   branch checked out here runs in production. Work in a worktree, for example
